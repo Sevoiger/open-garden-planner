@@ -38,7 +38,11 @@ from open_garden_planner.core.scene3d import (
     srgb_to_linear,
     verify_builder,
 )
-from open_garden_planner.core.scene3d.build import HOLE_COVER_LIMIT, PLAN_MARGIN_CM
+from open_garden_planner.core.scene3d.build import (
+    HOLE_COVER_LIMIT,
+    HOLE_MIN_WIDTH_CM,
+    PLAN_MARGIN_CM,
+)
 
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
 L_SHAPE = ((0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (50.0, 50.0), (50.0, 100.0), (0.0, 100.0))
@@ -188,6 +192,43 @@ class TestValidate:
         array[0, 0] = np.inf
         with pytest.raises(MeshError, match=f"non-finite.*{name}"):
             _replace(triangle(), **{name: array}).validate()
+
+    # ── fix round 2: a mesh never holds a number that is not finite ──────────
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf, 1e300, -3.5e38],
+                             ids=["nan", "inf", "-inf", "1e300", "beyond float32"])
+    @pytest.mark.parametrize("name", ["positions", "normals", "colors", "uvs"])
+    def test_from_arrays_refuses_what_is_not_finite_in_float32(self, name: str, bad: float) -> None:
+        """``1e300`` is a finite float64 and an infinite float32. ``validate()``
+        catches it — but production runs with ``validate=False``, so the one
+        constructor every builder uses refuses it."""
+        good = triangle()
+        arrays = {attribute: getattr(good, attribute).astype(np.float64)
+                  for attribute in ("positions", "normals", "colors", "uvs")}
+        arrays[name][0, 0] = bad
+        with pytest.raises(MeshError, match=f"non-finite values in {name} once they are float32"):
+            Mesh.from_arrays(**arrays, indices=good.indices)
+        arrays[name][0, 0] = 3.0e38  # the largest order of magnitude float32 holds: let through
+        assert Mesh.from_arrays(**arrays, indices=good.indices).vertex_count == 3
+
+    def test_prism_mesh_refuses_a_height_that_is_not_finite_in_float32(self) -> None:
+        for height in (1e300, 3.5e38, float("inf"), float("nan")):
+            with pytest.raises(MeshError, match="a height of .* is not finite in float32"):
+                prism_mesh((SQUARE,), height)
+        for bad in (1e300, -3.5e38, float("inf"), float("nan")):
+            with pytest.raises(MeshError, match="a footprint coordinate .* is not finite in float32"):
+                prism_mesh((((0.0, 0.0), (bad, 0.0), (5.0, 5.0)),), 40.0)
+            with pytest.raises(MeshError, match="a footprint coordinate"):
+                prism_mesh((FRAME,), 40.0, ((((0.0, 0.0), (0.0, bad), (5.0, 5.0)),),))
+        assert float(prism_mesh((SQUARE,), 1e6).bounds()[1][2]) == 1e6  # the record's bound builds
+        assert prism_mesh((SQUARE,), 0.0) == Mesh.empty() and prism_mesh((SQUARE,), -1e300) == Mesh.empty()
+
+    def test_merge_refuses_a_part_that_is_not_finite(self) -> None:
+        positions = triangle().positions.copy()
+        positions[0, 0] = np.inf
+        broken = _replace(triangle(), positions=positions)  # only reachable by hand
+        with pytest.raises(MeshError, match="non-finite"):
+            Mesh.merge([triangle(), broken])
 
     def test_index_out_of_bounds(self) -> None:
         with pytest.raises(MeshError, match="index 3 .* 3 vertices"):
@@ -400,6 +441,57 @@ class TestDefaultBuilder:
         np.testing.assert_array_equal(mesh.positions, np.array(positions, np.float32).reshape(-1, 3))
         np.testing.assert_array_equal(mesh.normals, np.array(normals, np.float32).reshape(-1, 3))
 
+    # ── any sequence of pairs is a ring (fix round 2, P2-7) ───────────────────
+
+    def test_prism_mesh_takes_lists_and_numpy_rows(self) -> None:
+        """At ``aaec048`` it took any sequence; with the cached polygon functions
+        a list of lists raised ``TypeError: unhashable type``. Coerced now."""
+        reference = prism_mesh((L_SHAPE,), 40.0)
+        assert prism_mesh([[list(p) for p in L_SHAPE]], 40.0) == reference
+        assert prism_mesh([np.array(L_SHAPE)], 40.0) == reference
+        assert prism_mesh(np.array([L_SHAPE]), 40.0) == reference
+        assert prism_mesh([np.array(L_SHAPE, dtype=np.float32)], 40.0) == reference
+        assert prism_mesh([[(0, 0), (100, 0), (100, 50), (50, 50), (50, 100), (0, 100)]], 40.0) == reference
+        holed = prism_mesh((FRAME,), 40.0, ((FRAME_HOLE,),))
+        assert prism_mesh([np.array(FRAME)], 40.0, [[np.array(FRAME_HOLE)]]) == holed
+        assert prism_mesh([[list(p) for p in FRAME]], 40.0, [[[list(p) for p in FRAME_HOLE]]]) == holed
+        assert prism_mesh(np.array([FRAME]), 40.0, np.array([[FRAME_HOLE]])) == holed
+        assert prism_mesh([], 40.0) == Mesh.empty() and prism_mesh(np.zeros((0, 4, 2)), 40.0) == Mesh.empty()
+
+    # ── a triangle that is nothing in float32 (fix round 2) ───────────────────
+
+    def test_a_cap_triangle_that_is_nothing_in_float32_is_left_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A mesh is float32. This ring is a sliver 71 cm long and 0.00001 cm wide:
+        counter-clockwise in float64, and its one cap triangle comes out wound
+        DOWNWARDS once its corners are rounded to float32 — a flat face lit from
+        below. Such a triangle is not emitted (``_FLOAT32_SLIVER``)."""
+        from open_garden_planner.core.scene3d import build as build_module
+        from open_garden_planner.core.scene3d import is_simple_ring, signed_area
+
+        sliver = ((890.43, 864.001), (925.0150023, 872.1739903), (959.6, 880.347))
+        assert is_simple_ring(sliver) and 0.0 < signed_area(sliver) < 0.001
+        mesh = prism_mesh((sliver,), 40.0)
+        mesh.validate()
+        assert mesh.triangle_count == 6  # three walls and no cap
+        monkeypatch.setattr(build_module, "_FLOAT32_SLIVER", 0.0)
+        unfiltered = prism_mesh((sliver,), 40.0)
+        assert unfiltered.triangle_count == 7
+        with pytest.raises(MeshError, match="not its winding normal"):
+            unfiltered.validate()
+
+    def test_an_ordinary_cap_loses_nothing_to_that_rule(self) -> None:
+        """The threshold is far below anything drawn: the smallest things the
+        suite builds — a speck of a hundredth of a centimetre, a sliver a
+        thousandth wide — keep every cap triangle."""
+        for ring, triangles in (
+            (((0.0, 0.0), (0.01, 0.0), (0.01, 0.01), (0.0, 0.01)), 8 + 2),
+            (((0.0, 0.0), (1000.0, 0.0), (1000.0, 0.001), (0.0, 0.001)), 8 + 2),
+            (tuple((x + 4000.0, y + 4000.0) for x, y in L_SHAPE), 12 + 4),
+        ):
+            assert prism_mesh((ring,), 40.0).triangle_count == triangles
+
     # ── self-crossing rings (fix round 1, P2-6) ───────────────────────────────
 
     def test_a_bow_tie_is_refused_not_built_wrong(self) -> None:
@@ -482,6 +574,24 @@ class TestRegistry:
         registry.register_many(("RAISED_BED", "CONTAINER"), default_builder)
         assert registry.builder_for("TREE") is _roof_builder
         assert registry.builder_for("CONTAINER") is default_builder
+
+    def test_the_version_moves_with_every_registration_and_only_then(self) -> None:
+        """Fix round 2, P2-6: ``SceneSync`` matches items to builders by identity and
+        looks for items to rebuild only when this number moved."""
+        registry = BuilderRegistry()
+        assert registry.version == 0
+        registry.register("HOUSE", _roof_builder)
+        assert registry.version == 1
+        registry.builder_for("HOUSE"), registry.build(record()), registry.kinds()
+        assert registry.version == 1  # reading changes nothing
+        with pytest.raises(ValueError):
+            registry.register("HOUSE", default_builder)
+        assert registry.version == 1  # a refused registration changes nothing
+        registry.register("HOUSE", default_builder, replace=True)
+        registry.register_many(("A", "B"), _roof_builder)
+        assert registry.version == 4
+        assert all(registry.builder_for(kind) is registry.builder_for(kind)
+                   for kind in ("HOUSE", "A", "NO SUCH KIND"))  # the same object, call after call
 
 
 # ── verify_builder: the test instrument L1.6 / L1.7 use ───────────────────────
@@ -613,6 +723,70 @@ class TestVerifyBuilder:
         with pytest.raises(BuilderContractError, match="covers 100% of a hole"):
             verify_builder(lambda rec: (MeshPart(prism_mesh(rec.footprints, 40.0)),), well)
         verify_builder(default_builder, well)
+
+    # ── the hole bound has a floor (fix round 2, P2-9) ────────────────────────
+
+    #: Two runs of a 10 cm stroke, 12 cm apart: the 2 cm x 490 cm sliver between them is a hole.
+    SLIVER_OUTER = ((0.0, 0.0), (22.0, 0.0), (22.0, 500.0), (0.0, 500.0))
+    SLIVER = ((10.0, 5.0), (10.0, 495.0), (12.0, 495.0), (12.0, 5.0))  # clockwise
+
+    @staticmethod
+    def _panels(rec: Record) -> tuple[MeshPart, ...]:
+        """An honest fence: a 12 cm panel on each 10 cm run. They meet over the sliver."""
+        assert rec.height_cm is not None
+        runs = [((-1.0, 0.0), (11.0, 0.0), (11.0, 500.0), (-1.0, 500.0)),
+                ((11.0, 0.0), (23.0, 0.0), (23.0, 500.0), (11.0, 500.0))]
+        return (MeshPart(prism_mesh(runs, rec.height_cm), name="panels"),)
+
+    def test_a_sliver_of_a_hole_is_not_judged(self) -> None:
+        """The re-review's case: this fence was refused for "covering 100 %" of a
+        hole 2 cm wide. A hole into which no circle of ``HOLE_MIN_WIDTH_CM``
+        fits is a sliver and is not judged."""
+        assert HOLE_MIN_WIDTH_CM == 10.0
+        fence = record(kind="FENCE", shape="polyline", footprints=(self.SLIVER_OUTER,),
+                       holes=((self.SLIVER,),), height_cm=120.0)
+        parts = verify_builder(self._panels, fence)
+        assert plan_overreach(parts, fence.regions, PLAN_MARGIN_CM) == (0.0, 0.0)
+        verify_builder(default_builder, fence)
+
+    @pytest.mark.parametrize("width", [8.0, 9.5])
+    def test_just_under_the_floor_is_still_a_sliver(self, width: float) -> None:
+        outer = ((0.0, 0.0), (20.0 + width, 0.0), (20.0 + width, 500.0), (0.0, 500.0))
+        hole = ((10.0, 5.0), (10.0, 495.0), (10.0 + width, 495.0), (10.0 + width, 5.0))
+        fence = record(kind="FENCE", shape="polyline", footprints=(outer,), holes=((hole,),),
+                       height_cm=120.0)
+        slab = (MeshPart(prism_mesh(fence.footprints, 120.0)),)
+        assert plan_overreach(slab, fence.regions, PLAN_MARGIN_CM)[1] == 0.0
+
+    @pytest.mark.parametrize("width", [14.0, 20.0, 60.0])
+    def test_a_hole_wider_than_the_floor_is_judged_whole_as_before(self, width: float) -> None:
+        """A floor, not another measure: from 10 cm on a hole is judged on every
+        point of it, rim included — the numbers other stories pinned stand."""
+        outer = ((0.0, 0.0), (20.0 + width, 0.0), (20.0 + width, 500.0), (0.0, 500.0))
+        hole = ((10.0, 5.0), (10.0, 495.0), (10.0 + width, 495.0), (10.0 + width, 5.0))
+        fence = record(kind="FENCE", shape="polyline", footprints=(outer,), holes=((hole,),),
+                       height_cm=120.0)
+
+        def slab(rec: Record) -> tuple[MeshPart, ...]:
+            return (MeshPart(prism_mesh(rec.footprints, 120.0)),)  # the hole filled
+
+        assert plan_overreach(slab(fence), fence.regions, PLAN_MARGIN_CM)[1] == 1.0
+        with pytest.raises(BuilderContractError, match="covers 100% of a hole"):
+            verify_builder(slab, fence)
+
+        def rim(rec: Record) -> tuple[MeshPart, ...]:
+            """Panels that overhang the stroke by 4 cm on the hole's side: 8 cm of its width."""
+            runs = [((0.0, 0.0), (14.0, 0.0), (14.0, 500.0), (0.0, 500.0)),
+                    ((6.0 + width, 0.0), (20.0 + width, 0.0), (20.0 + width, 500.0), (6.0 + width, 500.0))]
+            return (MeshPart(prism_mesh(runs, 120.0)),)
+
+        cover = plan_overreach(rim(fence), fence.regions, PLAN_MARGIN_CM)[1]
+        assert cover == pytest.approx(8.0 / width, abs=0.05)  # the rim counts, as it always did
+        if cover > HOLE_COVER_LIMIT:
+            with pytest.raises(BuilderContractError, match="of a hole"):
+                verify_builder(rim, fence)
+        else:
+            verify_builder(rim, fence)
 
     def test_half_a_hole_covered_is_half(self) -> None:
         outer = ((-100.0, -100.0), (100.0, -100.0), (100.0, 100.0), (-100.0, 100.0))

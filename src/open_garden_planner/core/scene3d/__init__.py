@@ -95,8 +95,10 @@ from .mesh import (
 from .polygon import (
     Region,
     ccw,
+    cut_region,
     cw,
     group_rings,
+    is_buildable_region,
     is_flat_ring,
     is_simple_ring,
     point_in_regions,
@@ -114,7 +116,9 @@ from .record import (
     GEOMETRY_FIELDS,
     LENGTH_DECIMALS,
     MATERIAL_FIELDS,
+    MAX_LENGTH_CM,
     PARAM_CONTAINER_MATERIAL,
+    PARAM_OUTLINE_RESOLVED,
     PARAM_PATH_STYLE,
     PARAM_PLANT_CATEGORY,
     PARAM_RADIUS_CM,
@@ -136,6 +140,7 @@ from .record import (
     ParamValue,
     Point,
     Record,
+    RecordRangeError,
     Ring,
     Transform,
     quantize_cm,
@@ -173,6 +178,7 @@ __all__ = [
     "MATERIAL_KINDS",
     "NORMAL_OFFSET",
     "PARAM_CONTAINER_MATERIAL",
+    "PARAM_OUTLINE_RESOLVED",
     "PARAM_PATH_STYLE",
     "PARAM_PLANT_CATEGORY",
     "PARAM_RADIUS_CM",
@@ -210,6 +216,7 @@ __all__ = [
     "Params",
     "Point",
     "Record",
+    "RecordRangeError",
     "RecordingSink",
     "Region",
     "Rgba",
@@ -225,6 +232,7 @@ __all__ = [
     "SyncStateError",
     "Transform",
     "ccw",
+    "cut_region",
     "cw",
     "default_builder",
     "diff",
@@ -235,6 +243,7 @@ __all__ = [
     "engine_to_scene_vectors",
     "extrude_footprint",
     "group_rings",
+    "is_buildable_region",
     "is_flat_ring",
     "is_simple_ring",
     "item_seed",
@@ -264,3 +273,6 @@ __all__ = [
     "triangulate_region",
     "verify_builder",
 ]
+# Appended, not sorted into the list above: the engine package (L1.2) inserts a name at the
+# very line this one would take, and two insertions at one line do not merge.
+__all__ += ["MAX_LENGTH_CM"]

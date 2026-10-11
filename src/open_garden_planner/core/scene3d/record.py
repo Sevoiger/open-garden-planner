@@ -57,6 +57,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Final, TypeAlias
 
 from .color import Rgba, srgb8_to_linear
@@ -92,10 +93,48 @@ PARAM_SPECIES_NAME: Final = "species_name"  # str — common name (archetype loo
 PARAM_PLANT_CATEGORY: Final = "plant_category"  # str — PlantCategory name
 PARAM_PATH_STYLE: Final = "path_style"  # str — PathFenceStyle name, when not NONE
 PARAM_CONTAINER_MATERIAL: Final = "container_material"  # str — container_model key
+#: True — present ONLY when the drawn polygon could not be used as it was (it
+#: crosses or touches itself) and ``footprints`` / ``holes`` are what the snapshot
+#: resolved it into: not the drawn vertices, possibly several rings, and anything
+#: that referred to the drawn outline (a HOUSE's ``ridge``) is left out.
+PARAM_OUTLINE_RESOLVED: Final = "outline_resolved"
 
 #: Tint of a part whose item has neither a fill nor a stroke colour (the legacy
 #: collector's fallback, ``ui/view3d/snapshot._FALLBACK_COLOR``).
 FALLBACK_RGBA: Final[Rgba] = (158, 158, 148, 255)
+
+
+#: The largest length a record may hold, in cm: 10 km. A height, a stroke width,
+#: a radius, a coordinate of the local geometry, a position, a float param —
+#: nothing in a garden plan is taller, wider or farther from its origin. The
+#: bound is decided HERE, once, for every consumer: a plan file edited by hand
+#: can hold ``"object_height_cm": 1e300`` — a finite, positive float, which the
+#: mesh's float32 turns into infinity — and no builder should have to know. At
+#: the bound a float32 coordinate still resolves 0.06 cm.
+MAX_LENGTH_CM: Final = 1e6
+
+
+class RecordRangeError(ValueError):
+    """A length of a record lies beyond ``MAX_LENGTH_CM`` (or is infinite)."""
+
+
+def _beyond(reach: float) -> str:
+    return f"a coordinate of {reach!r} cm is beyond what a plan can hold (±{MAX_LENGTH_CM:g} cm)"
+
+
+def _check_length(what: str, value: float) -> None:
+    if not -MAX_LENGTH_CM <= value <= MAX_LENGTH_CM:
+        raise RecordRangeError(
+            f"{what} of {value!r} cm is beyond what a plan can hold (±{MAX_LENGTH_CM:g} cm)"
+        )
+
+
+@lru_cache(maxsize=8192)
+def _ring_facts(ring: Ring) -> tuple[float, float]:
+    """``(signed area, largest absolute coordinate)`` of a ring — the two things a
+    record checks on every ring of every snapshot, behind ONE cache lookup (a
+    tuple's hash is recomputed on each lookup, and that is most of the cost)."""
+    return ring_area(ring), max((max(abs(x), abs(y)) for x, y in ring), default=0.0)
 
 
 def quantize_cm(value: float) -> float:
@@ -131,6 +170,9 @@ class Transform:
             bad = [name for name in ("east_cm", "north_cm", "rotation_deg", "base_cm")
                    if not math.isfinite(getattr(self, name))]
             raise ValueError(f"Transform has non-finite {', '.join(bad)}: {self!r}")
+        _check_length("a position east", self.east_cm)
+        _check_length("a position north", self.north_cm)
+        _check_length("a base height", self.base_cm)
 
     def with_base(self, base_cm: float) -> Transform:
         """The same pose standing on another ground height."""
@@ -188,6 +230,7 @@ def _check_param_value(key: str, value: object) -> None:
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError(f"param {key!r} holds a non-finite float")
+        _check_length(f"param {key!r}: a value", value)
         return
     if isinstance(value, tuple):
         for element in value:
@@ -285,17 +328,22 @@ class Record:
     - ``footprints``: the ground the item covers, as OUTER rings only — simple
       item-local polygons in cm, counter-clockwise seen from above (signed area
       > 0; a clockwise or area-less ring is refused). One ring for most items;
-      several for a polyline whose stroke falls apart and for a self-crossing
-      polygon, which the snapshot resolves into simple rings. The orientation is
-      enforced here; that a ring is SIMPLE is the producer's duty (testing it is
-      quadratic) — the snapshot guarantees it, and ``build.prism_mesh`` refuses
-      a ring that is not.
+      possibly several for a polyline whose stroke falls apart and for a polygon
+      that crosses itself, which the snapshot resolves (``params`` then says
+      ``outline_resolved``; the ring COUNT says nothing — such a polygon may
+      resolve into one ring, several, or rings with holes). The orientation is
+      enforced here; that a region can be BUILT is the producer's duty (testing
+      it means triangulating it): the snapshot keeps only regions for which
+      ``polygon.is_buildable_region`` holds — simple rings, holes inside,
+      a proven triangulation — and ``build.prism_mesh`` refuses any other.
     - ``holes``: what is cut out of them. ``holes[i]`` are the hole rings of
       ``footprints[i]`` — simple, CLOCKWISE (signed area < 0), inside that outer.
       ``()`` when no ring has a hole (the usual case); otherwise one entry per
       outer. A closed fence is the case that needs it: its stroke is one outer
       ring and one hole, and a builder that extrudes the hole as a solid turns
-      3.6 m² of fence into an 80 m² slab. Iterate ``regions`` to get both.
+      3.6 m² of fence into an 80 m² slab. A polygon drawn crossing itself can
+      enclose a pocket, so holes are not a stroke's alone. Iterate ``regions``
+      to get both.
     - ``path`` / ``path_width_cm``: a polyline's centre line (item-local) and
       stroke width — fences and walls are built from these, not from the strip.
       ``()`` / ``None`` for every other shape.
@@ -332,17 +380,28 @@ class Record:
     def __post_init__(self) -> None:
         if self.shape not in SHAPES:
             raise ValueError(f"unknown shape {self.shape!r}; expected one of {SHAPES}")
-        if self.height_cm is not None and not 0.0 < self.height_cm < math.inf:
-            raise ValueError(
-                f"height_cm is a positive finite number or None, got {self.height_cm!r}"
-            )
+        if self.height_cm is not None:
+            if not self.height_cm > 0.0:
+                raise ValueError(
+                    f"height_cm is a positive finite number or None, got {self.height_cm!r}"
+                )
+            _check_length("a height", self.height_cm)  # an infinite one too
+        if self.path_width_cm is not None:
+            if not math.isfinite(self.path_width_cm):
+                raise ValueError(f"path_width_cm is finite or None, got {self.path_width_cm!r}")
+            _check_length("a stroke width", self.path_width_cm)
         for ring in self.footprints:
-            if not ring_area(ring) > 0.0:
+            area, reach = _ring_facts(ring)
+            if not reach <= MAX_LENGTH_CM:
+                raise RecordRangeError(_beyond(reach))
+            if not area > 0.0:
                 raise ValueError(
                     "footprints holds OUTER rings: counter-clockwise with a positive area "
-                    f"(got signed area {ring_area(ring)!r} cm² for a ring of {len(ring)} vertices); "
+                    f"(got signed area {area!r} cm² for a ring of {len(ring)} vertices); "
                     "holes go into `holes`"
                 )
+        if self.path and not _ring_facts(self.path)[1] <= MAX_LENGTH_CM:
+            raise RecordRangeError(_beyond(_ring_facts(self.path)[1]))
         if self.holes:
             if len(self.holes) != len(self.footprints):
                 raise ValueError(
@@ -353,10 +412,13 @@ class Record:
                 object.__setattr__(self, "holes", ())  # one spelling of "no holes"
             for group in self.holes:
                 for ring in group:
-                    if not ring_area(ring) < 0.0:
+                    area, reach = _ring_facts(ring)
+                    if not reach <= MAX_LENGTH_CM:
+                        raise RecordRangeError(_beyond(reach))
+                    if not area < 0.0:
                         raise ValueError(
                             "a hole ring is clockwise with a negative signed area "
-                            f"(got {ring_area(ring)!r} cm²)"
+                            f"(got {area!r} cm²)"
                         )
         object.__setattr__(self, "geometry_sig", hash((
             self.kind, self.shape, self.footprints, self.path, self.path_width_cm,
