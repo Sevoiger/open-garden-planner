@@ -1,0 +1,300 @@
+"""Base stacking in the shared 2D caster model (Phase 17 L1.6, #385, gate G4).
+
+A caster is a solid ``footprint x [base_cm, base_cm + height_cm]``. With the sun
+at elevation α its ground shadow is
+
+    S(F, b, h) = { p + t·d : p ∈ F, t ∈ [b / tan α, (b + h) / tan α] }
+
+(``d`` = the unit shadow direction): the footprint projected from the base, swept
+on to its projection from the top. The part below the base is somebody else's
+shadow — the bed the plant stands on.
+
+Qt-free. Three independent proofs of that definition:
+
+1. the tip moves by exactly ``b / tan α`` (the gate's number);
+2. ``S(F, b, h)`` is ``S(F, 0, h)`` translated by ``(b / tan α)·d``;
+3. a ray oracle that knows nothing about polygons: a ground point is shaded iff
+   the ray from it toward the sun passes through the solid.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+
+from open_garden_planner.core import shadow_geometry as sg
+from open_garden_planner.core.object_height import (
+    SOIL_DROP_CM,
+    soil_surface_cm,
+    standing_base_cm,
+)
+from open_garden_planner.core.shade_aggregation import (
+    HeatmapGrid,
+    compute_heatmap,
+    point_rasterizer_reference,
+)
+from open_garden_planner.core.shadow_geometry import (
+    ShadowCaster,
+    circle_footprint,
+    compute_scene_shadows,
+    shadow_direction_scene,
+    shadow_polygon,
+)
+
+SQUARE = [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]
+L_SHAPE = [(0.0, 0.0), (300.0, 0.0), (300.0, 120.0), (120.0, 120.0), (120.0, 400.0), (0.0, 400.0)]
+CIRCLE = circle_footprint(40.0, -25.0, 30.0)
+FOOTPRINTS = {"square": SQUARE, "l_shape": L_SHAPE, "circle": CIRCLE}
+ELEVATIONS = [15.0, 35.0, 60.0]
+AZIMUTHS = [0.0, 90.0, 135.0, 203.74, 300.0]
+GRID_CM = 1.0 / sg.CLIPPER_SCALE  # pyclipper's integer grid: 1e-3 cm
+
+
+def _reach(polygons: list[list[tuple[float, float]]], direction: tuple[float, float]) -> tuple[float, float]:
+    """(nearest, farthest) extent of a polygon set along ``direction``."""
+    along = [x * direction[0] + y * direction[1] for polygon in polygons for x, y in polygon]
+    return min(along), max(along)
+
+
+def _inside(polygons: list[list[tuple[float, float]]], x: float, y: float) -> bool:
+    """Even-odd point-in-polygon over a polygon set (holes come as extra rings)."""
+    hit = False
+    for polygon in polygons:
+        count = len(polygon)
+        for index in range(count):
+            x1, y1 = polygon[index]
+            x2, y2 = polygon[(index + 1) % count]
+            if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                hit = not hit
+    return hit
+
+
+class TestTipShift:
+    """Gate G4: the shadow tip of a raised caster lies base / tan α further from the sun."""
+
+    @pytest.mark.parametrize("azimuth", AZIMUTHS)
+    @pytest.mark.parametrize("elevation", ELEVATIONS)
+    @pytest.mark.parametrize("name", sorted(FOOTPRINTS))
+    def test_tip_and_near_edge_move_by_base_over_tan_alpha(
+        self, name: str, elevation: float, azimuth: float
+    ) -> None:
+        footprint, height, base = FOOTPRINTS[name], 60.0, 38.0
+        direction = shadow_direction_scene(azimuth)
+        ground = shadow_polygon(footprint, height, elevation, azimuth)
+        raised = shadow_polygon(footprint, height, elevation, azimuth, base_cm=base)
+        expected = base / math.tan(math.radians(elevation))
+        near0, far0 = _reach(ground, direction)
+        near1, far1 = _reach(raised, direction)
+        assert far1 - far0 == pytest.approx(expected, abs=0.1)
+        assert near1 - near0 == pytest.approx(expected, abs=0.1)
+        # measured: the only error is the integer grid (two roundings of 0.5e-3 cm)
+        assert abs((far1 - far0) - expected) <= 2.0 * GRID_CM
+        # and the tip itself: farthest footprint point + (base + height) / tan α
+        footprint_far = max(x * direction[0] + y * direction[1] for x, y in footprint)
+        assert far1 == pytest.approx(
+            footprint_far + (base + height) / math.tan(math.radians(elevation)), abs=0.1)
+
+    def test_the_gate_s_own_numbers(self) -> None:
+        """A 60 cm plant on the soil of a 40 cm bed (base 38), sun at 35°: the tip
+        was 85.7 cm from the plant and is now 140.0 cm — 54.3 cm further."""
+        direction = shadow_direction_scene(180.0)  # sun in the south: shadow due north
+        tip = _reach(shadow_polygon(SQUARE, 60.0, 35.0, 180.0, base_cm=38.0), direction)[1]
+        old = _reach(shadow_polygon(SQUARE, 60.0, 35.0, 180.0), direction)[1]
+        assert old - 100.0 == pytest.approx(85.69, abs=0.01)
+        assert tip - 100.0 == pytest.approx(139.96, abs=0.01)
+        assert tip - old == pytest.approx(38.0 / math.tan(math.radians(35.0)), abs=2e-3)
+
+
+class TestSweptShadowDefinition:
+    @pytest.mark.parametrize("azimuth", AZIMUTHS)
+    @pytest.mark.parametrize("elevation", ELEVATIONS)
+    @pytest.mark.parametrize("name", sorted(FOOTPRINTS))
+    def test_it_is_the_ground_shadow_translated_by_the_base_offset(
+        self, name: str, elevation: float, azimuth: float
+    ) -> None:
+        footprint, height, base = FOOTPRINTS[name], 120.0, 75.0
+        dx, dy = shadow_direction_scene(azimuth)
+        offset = base / math.tan(math.radians(elevation))
+        ground = shadow_polygon(footprint, height, elevation, azimuth)
+        raised = shadow_polygon(footprint, height, elevation, azimuth, base_cm=base)
+        assert len(raised) == len(ground) == 1
+        moved = sorted((x + dx * offset, y + dy * offset) for x, y in ground[0])
+        actual = sorted(raised[0])
+        assert len(actual) == len(moved)
+        worst = max(math.hypot(a[0] - m[0], a[1] - m[1]) for a, m in zip(actual, moved, strict=True))
+        assert worst <= 2.0 * GRID_CM  # one rounding of the offset, one of the vertex
+
+    @pytest.mark.parametrize("azimuth", [135.0, 203.74])
+    @pytest.mark.parametrize("elevation", ELEVATIONS)
+    def test_a_ray_oracle_agrees_point_by_point(self, elevation: float, azimuth: float) -> None:
+        """Independent of the polygon machinery: a ground point q is shaded iff the
+        ray from q toward the sun crosses the solid, i.e. ``q - t·d`` lies in the
+        footprint for some t in [b / tan α, (b + h) / tan α]. For the axis-aligned
+        square that set of t is an interval (slab clipping)."""
+        height, base = 80.0, 50.0
+        dx, dy = shadow_direction_scene(azimuth)
+        tan_a = math.tan(math.radians(elevation))
+        t0, t1 = base / tan_a, (base + height) / tan_a
+        shadow = shadow_polygon(SQUARE, height, elevation, azimuth, base_cm=base)
+        rng = np.random.default_rng(385)
+        reach = t1 + 150.0
+        checked = shaded = 0
+        for qx, qy in rng.uniform(-reach, reach + 100.0, size=(4000, 2)):
+            low, high = t0, t1
+            for q, d in ((qx, dx), (qy, dy)):  # 0 <= q - t·d <= 100, per axis
+                if abs(d) < 1e-12:
+                    if not 0.0 <= q <= 100.0:
+                        low, high = 1.0, 0.0
+                    continue
+                a, b = (q - 100.0) / d, q / d
+                low, high = max(low, min(a, b)), min(high, max(a, b))
+            margin = high - low
+            if abs(margin) < 0.05:  # within half a millimetre of the outline: skip
+                continue
+            checked += 1
+            expected = bool(margin > 0.0)
+            shaded += expected
+            assert _inside(shadow, float(qx), float(qy)) is expected
+        assert checked > 3500 and shaded > 20  # the oracle saw both sides
+
+    @pytest.mark.parametrize("elevation", ELEVATIONS)
+    def test_a_raised_shadow_leaves_its_own_footprint_when_the_base_is_high_enough(
+        self, elevation: float
+    ) -> None:
+        """The ground under a floating solid is lit once base / tan α exceeds the
+        footprint: nothing below the base casts for this caster."""
+        base = 150.0 * math.tan(math.radians(elevation))  # offset 150 cm > the 100 cm square
+        shadow = shadow_polygon(SQUARE, 10.0, elevation, 180.0, base_cm=base)
+        assert not _inside(shadow, 50.0, 50.0)
+        assert _inside(shadow, 50.0, 50.0 + 150.0 + 1.0)
+
+    def test_the_bed_casts_the_part_below(self) -> None:
+        """A plant on a bed's soil: the union of the bed's shadow and the raised
+        plant's is ONE region reaching from the bed to the plant's tip — the stretch
+        the plant no longer claims is the bed's own shadow."""
+        bed = [(0.0, 0.0), (200.0, 0.0), (200.0, 100.0), (0.0, 100.0)]
+        plant = circle_footprint(100.0, 50.0, 20.0)
+        base = soil_surface_cm(40.0)
+        union = compute_scene_shadows(
+            [ShadowCaster(bed, 40.0), ShadowCaster(plant, 60.0, base)], 35.0, 180.0)
+        assert len(union) == 1
+        tan_a = math.tan(math.radians(35.0))
+        top = max(y for _x, y in union[0])
+        assert top == pytest.approx(70.0 + (base + 60.0) / tan_a, abs=0.01)
+        assert _inside(union, 100.0, 100.0 + 40.0 / tan_a - 1.0)  # the bed's shadow
+        assert _inside(union, 100.0, 70.0 + (base + 60.0) / tan_a - 1.0)  # the plant's tip
+        # Before L1.6 the same plant cast from the ground: its tip (70 + 60 / tan α =
+        # 155.7) did not even leave the bed's own shadow (100 + 40 / tan α = 157.1),
+        # so the plant was invisible in the shadow map.
+        from_the_ground = compute_scene_shadows(
+            [ShadowCaster(bed, 40.0), ShadowCaster(plant, 60.0)], 35.0, 180.0)
+        old_top = max(y for _x, y in from_the_ground[0])
+        assert old_top == pytest.approx(100.0 + 40.0 / tan_a, abs=0.01)
+        assert 70.0 + 60.0 / tan_a < old_top < top
+        assert top - (70.0 + 60.0 / tan_a) == pytest.approx(base / tan_a, abs=0.01)
+
+
+class TestBaseZeroIsToday:
+    @pytest.mark.parametrize("azimuth", AZIMUTHS)
+    @pytest.mark.parametrize("elevation", [0.5, 15.0, 35.0, 60.0, 90.0])
+    def test_a_caster_on_the_ground_equals_the_plain_pair(self, elevation: float, azimuth: float) -> None:
+        pairs = [(SQUARE, 100.0), (L_SHAPE, 37.5), (CIRCLE, 450.0)]
+        casters = [ShadowCaster(fp, h) for fp, h in pairs]
+        assert casters[0].base_cm == 0.0
+        assert compute_scene_shadows(casters, elevation, azimuth) == compute_scene_shadows(
+            pairs, elevation, azimuth)
+        for (fp, h), caster in zip(pairs, casters, strict=True):
+            assert shadow_polygon(fp, h, elevation, azimuth) == shadow_polygon(
+                fp, h, elevation, azimuth, base_cm=caster.base_cm)
+
+    @pytest.mark.parametrize("bad", [-5.0, float("nan"), float("inf"), float("-inf")])
+    def test_a_base_that_is_no_height_above_ground_is_the_ground(self, bad: float) -> None:
+        assert shadow_polygon(SQUARE, 100.0, 35.0, 180.0, base_cm=bad) == shadow_polygon(
+            SQUARE, 100.0, 35.0, 180.0)
+        assert compute_scene_shadows([ShadowCaster(SQUARE, 100.0, bad)], 35.0, 180.0) == (
+            compute_scene_shadows([(SQUARE, 100.0)], 35.0, 180.0))
+
+    def test_no_height_still_casts_nothing_whatever_the_base(self) -> None:
+        assert shadow_polygon(SQUARE, None, 35.0, 180.0, base_cm=40.0) == []
+        assert compute_scene_shadows([ShadowCaster(SQUARE, 0.0, 40.0)], 35.0, 180.0) == []
+
+    def test_night_is_empty_for_a_raised_caster_too(self) -> None:
+        assert compute_scene_shadows([ShadowCaster(SQUARE, 100.0, 40.0)], -3.0, 180.0) == []
+
+    def test_the_fallback_sweep_carries_the_base(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        reference = shadow_polygon(SQUARE, 100.0, 59.29, 203.74, base_cm=38.0)
+
+        def broken(*_args: object, **_kwargs: object) -> None:
+            raise sg.pyclipper.ClipperException("no MinkowskiSum on this build")
+
+        monkeypatch.setattr(sg.pyclipper, "MinkowskiSum", broken)
+        fallback = sg.shadow_polygon(SQUARE, 100.0, 59.29, 203.74, base_cm=38.0)
+        direction = shadow_direction_scene(203.74)
+        assert _reach(fallback, direction) == pytest.approx(_reach(reference, direction), abs=1e-3)
+
+
+class TestHeatmapConsumesTheBase:
+    def test_every_sample_rasterises_the_raised_shadow(self) -> None:
+        """The heatmap worker hands its casters to the same shadow function as the
+        overlay: what reaches the rasteriser is ``compute_scene_shadows`` of the
+        casters WITH their base."""
+        from datetime import date
+
+        from open_garden_planner.core.shade_aggregation import daylight_samples
+        from open_garden_planner.core.shadow_geometry import MIN_SUN_ELEVATION_DEG
+
+        casters = [ShadowCaster(SQUARE, 60.0, 38.0)]
+        grid = HeatmapGrid.for_rect(-200.0, -200.0, 500.0, 500.0, cell_cm=50.0)
+        seen: list[list[list[tuple[float, float]]]] = []
+
+        def rasterise(polygons: list[list[tuple[float, float]]], g: HeatmapGrid) -> np.ndarray:
+            seen.append(polygons)
+            return point_rasterizer_reference(polygons, g)
+
+        day = date(2026, 6, 21)
+        raised = compute_heatmap(casters, 52.52, 13.405, day, grid, rasterise)
+        samples = daylight_samples(52.52, 13.405, day)
+        assert len(seen) == len(samples) > 60
+        for polygons, sample in zip(seen, samples, strict=True):
+            assert polygons == compute_scene_shadows(
+                casters, max(sample.elevation_deg, MIN_SUN_ELEVATION_DEG), sample.azimuth_deg)
+        grounded = compute_heatmap([(SQUARE, 60.0)], 52.52, 13.405, day, grid,
+                                   point_rasterizer_reference)
+        assert raised is not None and grounded is not None
+        assert not np.array_equal(raised, grounded)  # the map really changes
+        # the ground under the raised solid's own footprint gets sun the grounded one never does
+        row, col = grid.cell_at(50.0, 50.0)
+        assert grounded[row, col] == 0.0 and raised[row, col] > 0.0
+
+
+class TestSoilRule:
+    """ONE rule for where a plant stands: the soil of a soil container with a height."""
+
+    def test_the_soil_lies_two_centimetres_below_the_rim(self) -> None:
+        assert SOIL_DROP_CM == 2.0
+        assert soil_surface_cm(40.0) == 38.0
+        assert soil_surface_cm(30.0) == 28.0
+
+    @pytest.mark.parametrize("height", [None, 0.0, -3.0, float("nan"), float("inf")])
+    def test_no_height_means_the_ground(self, height: float | None) -> None:
+        assert soil_surface_cm(height) == 0.0
+
+    def test_a_rim_lower_than_the_drop_is_soil_at_ground_level(self) -> None:
+        assert soil_surface_cm(1.5) == 0.0 and soil_surface_cm(2.0) == 0.0
+
+    @pytest.mark.parametrize(("kind", "metadata", "expected"), [
+        ("RAISED_BED", None, 38.0),                             # the type default, 40 cm
+        ("RAISED_BED", {"object_height_cm": 75.0}, 73.0),       # an explicit height
+        ("CONTAINER", None, 28.0),                              # the default fill height, 30 cm
+        ("CONTAINER_ROUND", {"container_height_cm": 45.0}, 43.0),
+        ("WALL_PLANTER", None, 28.0),
+        ("GARDEN_BED", None, 0.0),                              # in the ground
+        ("GARDEN_BED", {"object_height_cm": 25.0}, 23.0),       # the user raised it
+        ("TRELLIS", None, 0.0),                                 # a plant parent that holds no soil
+        ("HOUSE", None, 0.0),
+        (None, None, 0.0),
+    ])
+    def test_standing_base(self, kind: str | None, metadata: dict | None, expected: float) -> None:
+        assert standing_base_cm(kind, metadata) == expected

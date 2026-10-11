@@ -636,7 +636,7 @@ class TestRecordContent:
         expected = effective_height_cm(stage.item.object_type, stage.item.metadata, at_date=stage.at)
         assert stage.record.height_cm == expected
         assert stage.record.casts_shadow is (expected is not None)
-        assert stage.record.base_cm == 0.0  # L1.6 fills it from the parent bed
+        assert stage.record.base_cm == 0.0  # no parent bed: on the ground (L1.6, test_scene3d_base_stacking)
 
     def test_shape_specific_fields(self, stage: Stage) -> None:
         record = stage.record
@@ -702,7 +702,19 @@ class TestRecordContent:
         plant.parent_bed_id = bed.item_id
         after = snapshot_records(canvas.scene())
         assert after[str(plant.item_id)].parent_id == str(bed.item_id)
-        assert diff(before, after).is_empty  # a link, not geometry: L1.6 turns it into base_cm
+        # A link, not geometry and not material: L1.6 turns it into ``base_cm`` — the
+        # plant now stands on the soil of the 40 cm bed — so it is a TRANSFORM change.
+        assert diff(before, after) == SceneDiff(transform=(str(plant.item_id),))
+        assert after[str(plant.item_id)].transform.base_cm == 38.0
+        # onto a parent that holds no raised soil the link changes nothing at all
+        lawn_bed = RectangleItem(400.0, 0.0, 300.0, 200.0, object_type=ObjectType.GARDEN_BED)
+        canvas.scene().addItem(lawn_bed)
+        on_raised = snapshot_records(canvas.scene())
+        plant.parent_bed_id = None
+        loose = snapshot_records(canvas.scene())
+        plant.parent_bed_id = lawn_bed.item_id
+        assert diff(loose, snapshot_records(canvas.scene())).is_empty
+        assert diff(on_raised, loose) == SceneDiff(transform=(str(plant.item_id),))
 
     def test_path_style_and_container_material(self, canvas: CanvasView) -> None:
         fence = PolylineItem([QPointF(0.0, 0.0), QPointF(500.0, 0.0)], object_type=ObjectType.FENCE,

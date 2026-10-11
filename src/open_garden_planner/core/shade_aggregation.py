@@ -28,6 +28,7 @@ import numpy as np
 
 from .shadow_geometry import (
     MIN_SUN_ELEVATION_DEG,
+    CasterLike,
     Polygon,
     compute_scene_shadows,
 )
@@ -159,7 +160,7 @@ def point_rasterizer_reference(
 
 
 def compute_heatmap(
-    casters: Sequence[tuple[Sequence[tuple[float, float]], float | None]],
+    casters: Sequence[CasterLike],
     lat_deg: float,
     lon_deg: float,
     day: date,
@@ -175,6 +176,8 @@ def compute_heatmap(
     For each daylight sample: shadow polygons via the US-E3 machinery →
     injected rasterizer → unshaded cells collect ``step_minutes``. Cells
     under no shadow all day accumulate the full daylight duration.
+    ``casters`` are the overlay's own (``ShadowCaster``, base included — a
+    plant in a raised bed casts from its soil here exactly as it does there).
 
     Grazing samples (0 < α < 0.5°) are counted as daylight but their
     shadows are computed at a clamped 0.5° elevation — the shadow module

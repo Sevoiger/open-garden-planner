@@ -19,17 +19,24 @@ Two views of one enumeration:
 
 Both come from ``item_outline``, so there is one place that decides what an
 item's footprint is.
+
+And one place that decides how high an item STANDS (Phase 17 L1.6, ADR-037
+addendum): ``item_base_cm`` — the soil of its parent bed or container. The 2D
+shadow casters (overlay and heatmap) and the 3D records both ask it, so a
+plant's shadow and its 3D solid start at the same height.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 from PyQt6.QtCore import QPointF
 
+from open_garden_planner.core.object_height import standing_base_cm
 from open_garden_planner.core.shadow_geometry import (
     Point,
     Polygon,
@@ -121,6 +128,52 @@ def plant_canopy_radius_cm(item: Any, at_date: date | None) -> float | None:
     if current is not None:
         return current / 2.0
     return None
+
+
+class ItemLookup:
+    """A scene's items by id, built on first use.
+
+    One per walk over ``scene.items()``: most plans have few parented items, and
+    a walk that meets none never pays for the dictionary.
+    """
+
+    __slots__ = ("_by_id", "_items")
+
+    def __init__(self, items: Iterable[Any]) -> None:
+        self._items = items
+        self._by_id: dict[str, Any] | None = None
+
+    def get(self, item_id: Any) -> Any | None:
+        """The item with that id (a ``UUID`` or its string), or None."""
+        if self._by_id is None:
+            self._by_id = {str(item.item_id): item for item in self._items
+                           if hasattr(item, "item_id")}
+        return self._by_id.get(str(item_id))
+
+
+def item_base_cm(item: Any, lookup: ItemLookup, at_date: date | None = None) -> float:
+    """How high above the garden floor the item stands, in cm.
+
+    A plant whose ``parent_bed_id`` (a ``GardenItem`` PROPERTY, never a metadata
+    key) names a soil container with a height stands on that container's soil —
+    ``core.object_height.standing_base_cm``: the parent's effective height minus
+    the soil drop. Everything else stands on the ground: no parent, an in-ground
+    bed, a trellis, a dangling link. A parent that is not VISIBLE is not there
+    either — it casts no shadow and has no 3D solid, so its plants do not float
+    above nothing (the visibility rule of ``collect_shadow_casters``).
+
+    ONE rule, asked by the 2D shadow casters and by ``snapshot_records``.
+    Parents do not nest (only plants are parented), so there is nothing to sum.
+    """
+    parent_id = getattr(item, "parent_bed_id", None)
+    if parent_id is None:
+        return 0.0
+    parent = lookup.get(parent_id)
+    if parent is None or not parent.isVisible():
+        return 0.0
+    return standing_base_cm(
+        getattr(parent, "object_type", None), getattr(parent, "metadata", None), at_date
+    )
 
 
 def _bounding_center(points: tuple[Point, ...]) -> Point:

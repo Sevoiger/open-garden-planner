@@ -53,6 +53,8 @@ from open_garden_planner.models.plant_data import species_key
 from open_garden_planner.ui.canvas.footprints import (
     OUTLINE_CIRCLE,
     OUTLINE_POLYLINE,
+    ItemLookup,
+    item_base_cm,
     item_footprints,
     item_outline,
 )
@@ -200,12 +202,15 @@ def snapshot_records(
       is not rigid (an item in a scaled group) is baked into the local geometry.
     - ``height_cm``: ``effective_height_cm(..., at_date)`` — the 2D shadow's
       resolver; None means decoration that casts no shadow.
-    - ``transform.base_cm`` is 0.0 here; L1.6 stands a plant on its parent bed
-      (``parent_id``) with it.
+    - ``transform.base_cm`` (L1.6): where the item STANDS — the soil of its
+      parent bed or container (``footprints.item_base_cm``, the rule the 2D
+      shadow casters use: the parent's effective height minus the soil drop),
+      0.0 on the ground. It is part of the transform, so a bed that changes
+      height re-poses its plants and rebuilds none of them.
     - ``at_date`` (US-E8) grows dated plants: canopy radius and height.
     """
     items: list[Any] = scene.items()  # top-first; garden items are duck-typed below
-    by_id: dict[str, Any] | None = None
+    lookup = ItemLookup(items)
     records: dict[str, Record] = {}
     for item in reversed(items):
         if not item.isVisible():
@@ -269,10 +274,7 @@ def snapshot_records(
         if kind == "HOUSE":
             ridge_id = metadata.get("ridge_item_id")
             if ridge_id:
-                if by_id is None:
-                    by_id = {str(other.item_id): other for other in items
-                             if hasattr(other, "item_id")}
-                ridge = _ridge_param(frame, by_id.get(str(ridge_id)))
+                ridge = _ridge_param(frame, lookup.get(ridge_id))
                 if ridge is not None:
                     params[PARAM_RIDGE] = ridge
         stroke = getattr(item, "stroke_color", None)
@@ -283,12 +285,13 @@ def snapshot_records(
             height = None  # e.g. a hand-edited "Infinity": not a height, so no solid
         pattern = getattr(item, "fill_pattern", None)
         parent = getattr(item, "parent_bed_id", None)
+        base = item_base_cm(item, lookup, at_date) if parent is not None else 0.0
         records[item_id] = Record(
             item_id=item_id,
             kind=kind,
             shape=shape,
             footprints=footprints,
-            transform=frame.transform(),
+            transform=frame.transform(quantize_cm(base)),
             material=_material(kind, _rgba(getattr(item, "fill_color", None)), _rgba(stroke),
                                pattern.name if pattern is not None else None),
             height_cm=height,

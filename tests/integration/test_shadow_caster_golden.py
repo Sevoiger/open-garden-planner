@@ -350,6 +350,54 @@ def test_the_matrix_is_complete(golden: dict[str, Any]) -> None:
     assert max(map(max, summer)) > 600.0 and min(map(min, winter)) == 0.0
 
 
+def _assert_summary(now: dict[str, Any], then: dict[str, Any], exact: bool) -> None:
+    if exact:
+        assert now == then
+    else:
+        assert (now["polygons"], now["vertices"]) == (then["polygons"], then["vertices"])
+        assert now["area_cm2"] == pytest.approx(then["area_cm2"], rel=1e-6)
+
+
+@pytest.mark.parametrize("plan", PLAN_NAMES)
+def test_with_the_real_casters_only_the_plants_on_raised_soil_changed(
+    qtbot: Any, golden: dict[str, Any], plan: str  # noqa: ARG001
+) -> None:
+    """The statement of what L1.6 changes in the shipped 2D shadows, on real plans.
+
+    ``collect_shadow_casters`` now returns ``ShadowCaster``s with a base. Against
+    the golden generated BEFORE that existed:
+
+    - the walk finds the same footprints and heights, in the same order;
+    - with every base forced to 0 — and as plain pre-L1.6 pairs — the union of
+      all shadows is what it was;
+    - the casters whose real base is 0 give, on their own, the golden's
+      "ground casters only" union: nothing that stands on the ground moved;
+    - the casters with a base are exactly the plants on raised soil the
+      independent oracle counted (22 and 240), and with them the picture differs.
+    """
+    entry = golden["plans"][plan]
+    exact = sys.platform == golden["meta"]["platform"]
+    casters = collect_shadow_casters(_load(plan), at_date=JUNE)
+    pairs = [(c.footprint, c.height_cm) for c in casters]
+    assert len(pairs) == entry["casters"]
+    if exact:
+        assert _sha(pairs) == entry["casters_sha256"]
+    on_the_ground = [c for c in casters if c.base_cm == 0.0]
+    raised = [c for c in casters if c.base_cm > 0.0]
+    assert len(raised) == entry["on_raised_soil"] > 0
+    assert len(on_the_ground) + len(raised) == len(casters)
+    for sun in entry["suns"]:
+        elevation, azimuth = sun["elevation_deg"], sun["azimuth_deg"]
+        before = sun["all_from_the_ground"]
+        grounded = [c._replace(base_cm=0.0) for c in casters]
+        _assert_summary(_summary(compute_scene_shadows(grounded, elevation, azimuth)), before, exact)
+        _assert_summary(_summary(compute_scene_shadows(pairs, elevation, azimuth)), before, exact)
+        _assert_summary(_summary(compute_scene_shadows(on_the_ground, elevation, azimuth)),
+                        sun["ground_casters_only"], exact)
+        now = _summary(compute_scene_shadows(casters, elevation, azimuth))
+        assert now["sha256"] != before["sha256"]  # the visible change: raised plants cast further
+
+
 @pytest.mark.parametrize("plan", PLAN_NAMES)
 def test_the_oracle_walk_is_the_production_walk(qtbot: Any, plan: str) -> None:  # noqa: ARG001
     """``_walk`` is an independent re-derivation; it must see exactly the casters
