@@ -16,6 +16,10 @@ scene), ``mesh``, ``sink``, ``build`` (builder seam + default prism builder),
 ``sync``, ``color``. Nothing here imports Qt (pinned by an AST scan); numpy and
 the standard library only.
 
+The production builders are the sub-package ``builders`` (L1.6: buildings,
+fences, walls, beds, hedges — ``builders.production_registry()``). It is not
+re-exported here: a consumer of the contract does not need the built world.
+
 ``legacy`` is the pre-L1.1 contract (the former ``core/scene3d.py``, moved
 verbatim): it feeds the shipped Qt 3D window and the dormant spike until L1.10
 removes both. Every name it had is re-exported here, so no importer changed.

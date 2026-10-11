@@ -17,10 +17,13 @@ Truth:
 - the seed is the item's id: two hedges are never clones, one hedge never
   changes between runs.
 
-Two parts: ``core`` (kind ``vc``, flat faces) and ``leaves`` (kind ``foliage``:
-bent normals, uv = wind weight and phase for the sway shader). Leaf count follows
-the shell's AREA — one leaf per 30 cm², 200 … 6,000 (the L0 board's hedge) —
-never a magic number per hedge.
+ONE part, kind ``foliage`` — core and leaves in one mesh, as on the L0 board:
+the core is drawn with the foliage material too (a hedge's dark inside is not a
+polished box; a scratch render with the core in the plain material showed its
+flat top glare against a low sun). uv = (wind weight, phase) for the sway
+shader; the core's is (0, 0), so it stands still. Leaf count follows the shell's
+AREA — one leaf per 30 cm², 200 … 6,000 (the L0 board's hedge) — never a magic
+number per hedge.
 """
 
 from __future__ import annotations
@@ -204,12 +207,9 @@ def seed_of(record: Record) -> int:
 
 def hedge_parts(core: Mesh, shell: Shell, height_cm: float, seed: int, *,
                 tinted: bool) -> tuple[MeshPart, ...]:
-    """The two parts of any hedge: its core and its leaves."""
-    return (
-        MeshPart(core, "vc", tinted=tinted, name="core"),
-        MeshPart(leaf_shell(shell, height_cm, seed, tinted=tinted), "foliage", tinted=tinted,
-                 name="leaves"),
-    )
+    """Any hedge as its one part: the core, then the leaves, in one foliage mesh."""
+    leaves = leaf_shell(shell, height_cm, seed, tinted=tinted)
+    return (MeshPart(Mesh.merge([core, leaves]), "foliage", tinted=tinted, name="hedge"),)
 
 
 def _hedge(record: Record, height_cm: float) -> tuple[MeshPart, ...]:

@@ -2701,11 +2701,11 @@ item stands is one rule shared with the 2D shadows (ADR-037 addendum "base stack
 |---|---|---|---|
 | `HOUSE` | `buildings`, `roofs` | `walls`: vc · `roof`: roof | walls tinted (the item's fill), roof = clay tile; no usable ridge → one tinted `walls` block |
 | `GARAGE_SHED`, `TOOL_SHED` | `buildings`, `roofs` | `walls`: vc · `roof`: roof | walls tinted, roof = shingle |
-| `FENCE` | `fences` | `fence`: vc — or `core` + `leaves` (hedge style), `wall` (stone style) | tinted (the item's stroke) |
+| `FENCE` | `fences` | `fence`: vc — or `hedge`: foliage (hedge style), `wall`: vc (stone style) | tinted (the item's stroke) |
 | `WALL` | `walls` | `wall`: vc | tinted |
 | `RAISED_BED` | `beds` | `bed`: vc | baked: oak planks, soil |
 | `CONTAINER`, `WALL_PLANTER`, `CONTAINER_ROUND`, a `GARDEN_BED` with a height | `beds` | `walls`: vc · `soil`: vc | walls tinted, soil baked |
-| `HEDGE_SECTION`, `HEDGE_POLYGON` | `hedges` | `core`: vc · `leaves`: foliage | baked: the hedge texture's greens |
+| `HEDGE_SECTION`, `HEDGE_POLYGON` | `hedges` | `hedge`: foliage (the dark core and the leaf shell in one mesh) | baked: the hedge texture's greens |
 | everything else | `build.default_builder` | one tinted prism, or nothing without a height | tinted |
 
 A polyline's style (`params["path_style"]`) picks the fence: picket for `WOODEN_FENCE`, for no

@@ -530,7 +530,7 @@ class TestPolylinesAreBuiltFromTheCentreLine:
             assert all(part.tinted for part in parts)  # a fence is seen in its own stroke colour
         assert signatures[None] == signatures["WOODEN_FENCE"] == signatures["GRAVEL_PATH"]
         assert len({signatures[s] for s in FENCE_STYLES}) == len(FENCE_STYLES)  # five different fences
-        assert signatures["HEDGE_FENCE"][0] == ("core", "leaves")
+        assert signatures["HEDGE_FENCE"][0] == ("hedge",)
         assert signatures["STONE_WALL"][0] == ("wall",)
 
     def test_a_fence_style_on_a_wall_builds_that_fence(self) -> None:
@@ -684,72 +684,90 @@ class TestSoilRule:
 # ── hedges: gate G6 ──────────────────────────────────────────────────────────
 
 
-class TestHedges:
-    def test_parts(self) -> None:
-        core, leaves = built(polygon_record("HEDGE_SECTION", rectangle(200.0, 50.0), 150.0))
-        assert (core.name, core.material_kind, core.tinted) == ("core", "vc", False)
-        assert (leaves.name, leaves.material_kind, leaves.tinted) == ("leaves", "foliage", False)
-        assert float(core.mesh.positions[:, 2].max()) == 147.0  # under the clipped top
-        assert float(leaves.mesh.positions[:, 2].max()) == 150.0  # the clipped top IS the height
-        assert float(leaves.mesh.positions[:, 2].min()) >= 0.0  # no leaf in the ground
+def hedge_anatomy(record: Record) -> tuple[MeshPart, np.ndarray, np.ndarray]:
+    """A hedge's one part, and which of its vertices are the core's and the leaves'.
+    The core carries uv (0, 0) — it does not sway; every leaf has a wind weight > 0."""
+    (part,) = built(record)
+    is_leaf = (part.mesh.uvs != 0.0).any(axis=1)
+    return part, ~is_leaf, is_leaf
 
-    def test_the_top_is_clipped_flat(self) -> None:
-        _core, leaves = built(polygon_record("HEDGE_SECTION", rectangle(200.0, 50.0), 150.0))
-        z = leaves.mesh.positions[:, 2]
-        assert int((z == 150.0).sum()) > 50  # many leaf vertices lie ON the trimmed top
+
+class TestHedges:
+    def test_one_foliage_part_core_and_leaves(self) -> None:
+        part, core, leaves = hedge_anatomy(polygon_record("HEDGE_SECTION", rectangle(200.0, 50.0), 150.0))
+        assert (part.name, part.material_kind, part.tinted) == ("hedge", "foliage", False)
+        z = part.mesh.positions[:, 2]
+        assert core.any() and leaves.any()
+        assert float(z[core].max()) == 147.0  # the core ends under the trimmed top
+        assert float(z[leaves].max()) == 150.0  # the trimmed top IS the height
+        assert float(z[leaves].min()) >= 0.0 and float(z[core].min()) == 0.0  # no leaf in the ground
+        dark = np.asarray(palette.HEDGE_CORE.linear, dtype=np.float32)
+        assert np.allclose(part.mesh.colors[core], dark, atol=1e-6)
+        assert not np.isclose(part.mesh.colors[leaves], dark, atol=1e-6).all(axis=1).any()
+
+    def test_the_top_is_trimmed(self) -> None:
+        """Leaves that reached above the height were pushed down onto it, whole:
+        many tips lie ON the trim line, and every leaf still looks the way it faces."""
+        part, _core, leaves = hedge_anatomy(polygon_record("HEDGE_SECTION", rectangle(200.0, 50.0), 150.0))
+        z = part.mesh.positions[leaves][:, 2].reshape(-1, 4)
+        assert int((z.max(axis=1) == 150.0).sum()) > 50
+        dots, flat = normal_vs_winding(part.mesh)
+        assert flat.all() and float(dots.min()) > 0.999
 
     def test_leaf_count_follows_the_shell_area(self) -> None:
         assert hedges.leaf_count(3000.0) == 200 and hedges.leaf_count(30000.0) == 1000
         assert hedges.leaf_count(1e9) == hedges.MAX_LEAVES == 6000
-        small = built(polygon_record("HEDGE_SECTION", rectangle(100.0, 40.0), 60.0))[1].mesh
-        large = built(polygon_record("HEDGE_SECTION", rectangle(300.0, 60.0), 150.0))[1].mesh
+        _part, _core, small = hedge_anatomy(polygon_record("HEDGE_SECTION", rectangle(100.0, 40.0), 60.0))
+        _part, _core, large = hedge_anatomy(polygon_record("HEDGE_SECTION", rectangle(300.0, 60.0), 150.0))
         ring = hedges.core_ring(rectangle(100.0, 40.0))
         expected = hedges.leaf_count(hedges.shell_area_cm2(hedges.ring_shell(ring, 60.0)))
-        assert small.triangle_count == 2 * expected
-        assert large.triangle_count > small.triangle_count
+        assert int(small.sum()) == 4 * expected  # four vertices a leaf
+        assert int(large.sum()) > int(small.sum())
 
     def test_wind_weights(self) -> None:
-        _core, leaves = built(polygon_record("HEDGE_SECTION", rectangle(200.0, 50.0), 150.0))
-        uv = leaves.mesh.uvs
+        part, core, leaves = hedge_anatomy(polygon_record("HEDGE_SECTION", rectangle(200.0, 50.0), 150.0))
+        uv = part.mesh.uvs
         assert float(uv.min()) >= 0.0 and float(uv.max()) <= 1.0
-        assert float(uv[:, 0].max()) > 0.95 and float(uv[:, 0].min()) < 0.1  # crown sways, foot does not
-        assert len(np.unique(uv[:, 1])) > 100  # a phase per leaf
+        assert np.all(uv[core] == 0.0)  # the core stands still
+        assert float(uv[leaves][:, 0].max()) > 0.95 and float(uv[leaves][:, 0].min()) < 0.1
+        assert len(np.unique(uv[leaves][:, 1])) > 100  # a phase per leaf
 
     def test_the_same_hedge_is_the_same_mesh(self) -> None:
         record = polygon_record("HEDGE_POLYGON", L_SHAPE, 150.0, item_id="hedge-a")
-        first, second = built(record), built(record)
-        for a, b in zip(first, second, strict=True):
-            assert float(np.abs(a.mesh.positions - b.mesh.positions).max()) <= 1e-6
-            assert float(np.abs(a.mesh.colors - b.mesh.colors).max()) <= 1e-6
-            assert np.array_equal(a.mesh.indices, b.mesh.indices)
+        (first,), (second,) = REGISTRY.build(record), REGISTRY.build(record)  # two real builds
+        assert float(np.abs(first.mesh.positions - second.mesh.positions).max()) <= 1e-6
+        assert float(np.abs(first.mesh.colors - second.mesh.colors).max()) <= 1e-6
+        assert float(np.abs(first.mesh.uvs - second.mesh.uvs).max()) <= 1e-6
+        assert np.array_equal(first.mesh.indices, second.mesh.indices)
 
     def test_two_hedges_are_never_clones(self) -> None:
         """Same footprint, same height, another item: another hedge."""
-        one = built(polygon_record("HEDGE_POLYGON", L_SHAPE, 150.0, item_id="hedge-a"))
-        two = built(polygon_record("HEDGE_POLYGON", L_SHAPE, 150.0, item_id="hedge-b"))
-        assert one[0].mesh == two[0].mesh  # the core is the footprint: identical
-        a, b = one[1].mesh.positions, two[1].mesh.positions
+        one, core, leaves = hedge_anatomy(polygon_record("HEDGE_POLYGON", L_SHAPE, 150.0, item_id="hedge-a"))
+        two, _core, _leaves = hedge_anatomy(polygon_record("HEDGE_POLYGON", L_SHAPE, 150.0, item_id="hedge-b"))
+        a, b = one.mesh.positions.astype(np.float64), two.mesh.positions.astype(np.float64)
         assert a.shape == b.shape
-        moved = np.linalg.norm(a.astype(np.float64) - b.astype(np.float64), axis=1) > 1.0
+        assert np.array_equal(a[core], b[core])  # the core is the footprint: identical
+        moved = np.linalg.norm(a[leaves] - b[leaves], axis=1) > 1.0
         assert float(moved.mean()) > 0.95  # practically every leaf sits elsewhere
         fence_one = built(line_record("FENCE", BENT_PATH, 120.0, style="HEDGE_FENCE", item_id="f-1"))
         fence_two = built(line_record("FENCE", BENT_PATH, 120.0, style="HEDGE_FENCE", item_id="f-2"))
-        assert fence_one[1].mesh != fence_two[1].mesh
+        assert fence_one[0].mesh != fence_two[0].mesh
 
     def test_the_seed_is_the_record_s_param_and_nothing_else(self) -> None:
         record = polygon_record("HEDGE_POLYGON", L_SHAPE, 150.0, item_id="hedge-a")
         renamed = dataclasses.replace(record, item_id="another-id", name="Yew")
         assert built(renamed) == built(record)  # the id is not read: params["seed"] is
         reseeded = dataclasses.replace(record, params=Params({"seed": "hedge-z"}))
-        assert built(reseeded)[1].mesh != built(record)[1].mesh
+        assert built(reseeded)[0].mesh != built(record)[0].mesh
 
     def test_a_hedge_fence_is_tinted_and_as_thick_as_a_hedge(self) -> None:
         record = line_record("FENCE", ((-250.0, 0.0), (250.0, 0.0)), 120.0, width=8.0, style="HEDGE_FENCE")
-        core, leaves = built(record)
-        assert core.tinted and leaves.tinted and leaves.material_kind == "foliage"
-        assert np.all(leaves.mesh.colors == 1.0) and np.all(core.mesh.colors == 1.0)
-        assert float(np.abs(core.mesh.positions[:, 1]).max()) == pytest.approx(16.0, abs=1e-4)  # 40/2 − 4
-        assert float(np.abs(leaves.mesh.positions[:, 1]).max()) < 20.0 + 6.0
+        part, core, leaves = hedge_anatomy(record)
+        assert part.tinted and part.material_kind == "foliage" and part.name == "hedge"
+        assert np.all(part.mesh.colors == 1.0)
+        across = np.abs(part.mesh.positions[:, 1])
+        assert float(across[core].max()) == pytest.approx(16.0, abs=1e-4)  # 40 / 2 − 4
+        assert float(across[leaves].max()) < 20.0 + 6.0
 
 
 # ── gate G5: colours ─────────────────────────────────────────────────────────

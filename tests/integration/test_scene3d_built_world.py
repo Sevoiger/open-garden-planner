@@ -233,11 +233,11 @@ def test_kinds_builders_heights_and_bases(garden: Garden) -> None:
     assert names(garden.shed) == ["walls", "roof"]
     assert names(garden.bed) == ["bed"]
     assert names(garden.pot) == ["walls", "soil"]
-    assert names(garden.hedge) == names(garden.hedge_polygon) == ["core", "leaves"]
+    assert names(garden.hedge) == names(garden.hedge_polygon) == ["hedge"]
     assert names(garden.wall) == ["wall"]
     assert names(garden.fences["NONE"]) == names(garden.fences["WOODEN_FENCE"]) == ["fence"]
     assert names(garden.fences["METAL_FENCE"]) == names(garden.fences["CHAIN_LINK"]) == ["fence"]
-    assert names(garden.fences["HEDGE_FENCE"]) == ["core", "leaves"]
+    assert names(garden.fences["HEDGE_FENCE"]) == ["hedge"]
     assert names(garden.fences["STONE_WALL"]) == ["wall"]
     triangles = {style: sum(p.mesh.triangle_count for p in pipeline.sink.item(Garden.id(f)).parts)
                  for style, f in garden.fences.items()}
