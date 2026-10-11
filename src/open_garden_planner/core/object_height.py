@@ -113,9 +113,13 @@ _SOIL_PARENT_TYPE_NAMES = frozenset(
     {"GARDEN_BED", "RAISED_BED", "CONTAINER", "CONTAINER_ROUND", "WALL_PLANTER"}
 )
 
-#: The soil of a raised bed or container lies this far below its rim. ONE
-#: constant for the 3D bed meshes, the height a plant stands at and the base of
-#: its 2D shadow caster (Phase 17 L1.6, ``ogp-lush-cinematic`` §1 "Base").
+#: The soil of a BED lies this far below its rim. A modelling ASSUMPTION, not a
+#: datum of the plan: a bed has a height (its rim) and nothing says how full it
+#: is. ONE constant for the 3D bed meshes, the height a plant stands at and the
+#: base of its 2D shadow caster (Phase 17 L1.6, ``ogp-lush-cinematic`` §1
+#: "Base") — so it moves a raised plant's shadow by ``2 / tan α``: 7.5 cm at a
+#: 15° sun, 1.2 cm at 60°. A CONTAINER has no drop: its height IS its soil fill
+#: height (``soil_surface_cm``).
 SOIL_DROP_CM = 2.0
 
 # height_source() return values (stable identifiers, not user-visible text).
@@ -218,15 +222,28 @@ def effective_height_cm(
     return DEFAULT_HEIGHTS_CM.get(name)
 
 
-def soil_surface_cm(height_cm: float | None) -> float:
-    """Height above ground of the soil in a soil container ``height_cm`` tall.
+def soil_surface_cm(object_type: Any, height_cm: float | None) -> float:
+    """Height above ground of the soil in a soil parent of that type, ``height_cm``
+    tall. 0.0 without a usable height (an in-ground bed).
 
-    ``SOIL_DROP_CM`` below the rim, never below the ground; 0.0 for a container
-    without a usable height (an in-ground bed). The 3D bed builders put their
-    soil here and plants stand here, so a plant is never inside its box.
+    Two kinds of soil parent, because the plan says two different things:
+
+    - a **container** (pot, box, wall planter): its resolved height IS its soil
+      fill height (``effective_height_cm``: the fill stands in for the height),
+      so the soil is AT that height. The plan's one soil datum is not moved for
+      the look of a lip — and where the user overrode the height, the soil is at
+      the top they gave, so a plant never stands inside the solid;
+    - a **bed** (raised bed, an edged garden bed): the plan holds a rim height
+      and no fill, so the soil is assumed ``SOIL_DROP_CM`` below the rim, never
+      below the ground.
+
+    The 3D bed builders put their soil here and plants stand here
+    (``standing_base_cm``), so a plant is on its soil by construction.
     """
     if height_cm is None or not math.isfinite(height_cm) or height_cm <= 0.0:
         return 0.0
+    if _type_name(object_type) in _CONTAINER_TYPE_NAMES:
+        return height_cm
     return max(height_cm - SOIL_DROP_CM, 0.0)
 
 
@@ -246,7 +263,8 @@ def standing_base_cm(
     """
     if parent_type is None or _type_name(parent_type) not in _SOIL_PARENT_TYPE_NAMES:
         return 0.0
-    return soil_surface_cm(effective_height_cm(parent_type, parent_metadata, at_date=at_date))
+    return soil_surface_cm(
+        parent_type, effective_height_cm(parent_type, parent_metadata, at_date=at_date))
 
 
 def height_source(object_type: Any, metadata: dict[str, Any] | None) -> str:

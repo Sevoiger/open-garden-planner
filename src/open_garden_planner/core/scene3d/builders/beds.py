@@ -6,10 +6,14 @@ height (an edged bed). An in-ground ``GARDEN_BED`` — no height — has no soli
 it is ground, painted by the ground bake.
 
 **The soil rule, once.** The soil surface is ``object_height.soil_surface_cm``
-of the item's height — ``SOIL_DROP_CM`` (2 cm) below the rim. The same function
-gives the height a plant stands at (``standing_base_cm``) and the base of its 2D
-shadow, so a plant is on the soil by construction: never inside the box, never
-floating over it (truth gate "Base").
+of the item's kind and height: ``SOIL_DROP_CM`` (2 cm) below the rim of a BED —
+an assumption, the plan holds no fill for a bed — and AT the height of a
+CONTAINER, whose height is its soil fill height. The same function gives the
+height a plant stands at (``standing_base_cm``) and the base of its 2D shadow,
+so a plant is on the soil by construction: never inside the box, never floating
+over it (truth gate "Base"). A container therefore has no lip above its soil:
+the plan does not hold one, and drawing one would lower the plan's own soil
+level by 2 cm for the look of it.
 
 **Footprint.** The frame's OUTER face is the footprint; a round container's rim
 is the footprint's own 24-gon (``lathe``).
@@ -69,26 +73,35 @@ def plank_rows(height_cm: float) -> int:
     return max(1, round(height_cm / PLANK_ROW_CM))
 
 
-def _inner_bottom(height_cm: float) -> tuple[float, float]:
-    """(soil surface, where the frame's inner face may stop — just under the soil)."""
-    soil = soil_surface_cm(height_cm)
-    return soil, max(soil - 1.0, 0.0)
+def _chamfer(height_cm: float, thickness_cm: float) -> float:
+    return max(0.0, min(CHAMFER_CM, thickness_cm / 3.0, height_cm / 4.0))
 
 
-def frame_profile(height_cm: float, thickness_cm: float, *, rows: int, foot_inset_cm: float,
-                  face: Color, groove: Color) -> tuple[list[tuple[float, float]], list[Color]]:
+def _is_flush(soil_cm: float, height_cm: float, chamfer: float) -> bool:
+    """The soil reaches the top of the frame (a container): no inner face, no lip."""
+    return soil_cm >= height_cm - chamfer
+
+
+def frame_profile(height_cm: float, thickness_cm: float, soil_cm: float, *, rows: int,
+                  foot_inset_cm: float, face: Color, groove: Color
+                  ) -> tuple[list[tuple[float, float]], list[Color]]:
     """A frame's cross-section for ``primitives.sweep`` round a counter-clockwise
     footprint: ``(lateral, z)`` with lateral = cm INTO the bed, as an open sheet
-    from the inner face (just under the soil) over the chamfered top and down the
-    outer face to the ground — grooved between plank rows when ``rows > 1``, drawn
-    in by ``foot_inset_cm`` at the ground for a tapered pot. Returns the points
-    and one colour per edge."""
-    chamfer = max(0.0, min(CHAMFER_CM, thickness_cm / 3.0, height_cm / 4.0))
-    _soil, inner_bottom = _inner_bottom(height_cm)
-    inner_bottom = min(inner_bottom, height_cm - chamfer - 0.1)
-    points = [(thickness_cm, max(inner_bottom, 0.0)), (thickness_cm, height_cm - chamfer),
-              (thickness_cm - chamfer, height_cm), (chamfer, height_cm), (0.0, height_cm - chamfer)]
-    colors = [face, face, face, face]
+    from the inner face (just under the soil at ``soil_cm``) over the chamfered top
+    and down the outer face to the ground — grooved between plank rows when
+    ``rows > 1``, drawn in by ``foot_inset_cm`` at the ground for a tapered pot.
+    Where the soil is flush with the top (a container) the top runs straight into
+    it: no inner chamfer and no inner face. Returns the points and one colour per
+    edge."""
+    chamfer = _chamfer(height_cm, thickness_cm)
+    if _is_flush(soil_cm, height_cm, chamfer):
+        points = [(thickness_cm, height_cm), (chamfer, height_cm), (0.0, height_cm - chamfer)]
+        colors = [face, face]
+    else:
+        inner_bottom = max(min(soil_cm - 1.0, height_cm - chamfer - 0.1), 0.0)
+        points = [(thickness_cm, inner_bottom), (thickness_cm, height_cm - chamfer),
+                  (thickness_cm - chamfer, height_cm), (chamfer, height_cm), (0.0, height_cm - chamfer)]
+        colors = [face, face, face, face]
     depth = min(GROOVE_CM, thickness_cm / 3.0)
     half = min(GROOVE_CM, height_cm / (4.0 * rows))
     for joint in range(rows - 1, 0, -1):
@@ -106,21 +119,20 @@ def thickness_cm(ring: F64, nominal_cm: float) -> float:
     return float(min(nominal_cm, MAX_THICKNESS_SHARE * float(span.min())))
 
 
-def soil_mesh(ring: F64, thickness: float, height_cm: float) -> Mesh:
-    """The soil: the footprint drawn in by the frame, at the soil surface."""
-    soil, _bottom = _inner_bottom(height_cm)
-    if soil < MIN_SOIL_CM:
+def soil_mesh(ring: F64, thickness: float, soil_cm: float) -> Mesh:
+    """The soil: the footprint drawn in by the frame, at the soil surface ``soil_cm``."""
+    if soil_cm < MIN_SOIL_CM:
         return Mesh.empty()
     inner = offset_ring(ring, -thickness)
     if signed_area(inner) <= 0.0:
         return Mesh.empty()
-    return polygon_cap(inner, soil, palette.SOIL.linear)
+    return polygon_cap(inner, soil_cm, palette.SOIL.linear)
 
 
-def _frame(ring: F64, height_cm: float, thickness: float, *, rows: int, foot_inset_cm: float,
-           face: Color, groove: Color) -> Mesh:
-    profile, colors = frame_profile(height_cm, thickness, rows=rows, foot_inset_cm=foot_inset_cm,
-                                    face=face, groove=groove)
+def _frame(ring: F64, height_cm: float, thickness: float, soil_cm: float, *, rows: int,
+           foot_inset_cm: float, face: Color, groove: Color) -> Mesh:
+    profile, colors = frame_profile(height_cm, thickness, soil_cm, rows=rows,
+                                    foot_inset_cm=foot_inset_cm, face=face, groove=groove)
     return sweep(profile, ring, colors, closed=True, profile_closed=False)
 
 
@@ -129,9 +141,10 @@ def _raised_bed(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
     if len(ring) < 3:
         return ()
     thickness = thickness_cm(ring, PLANK_THICKNESS_CM)
-    frame = _frame(ring, height_cm, thickness, rows=plank_rows(height_cm), foot_inset_cm=0.0,
+    soil = soil_surface_cm(record.kind, height_cm)
+    frame = _frame(ring, height_cm, thickness, soil, rows=plank_rows(height_cm), foot_inset_cm=0.0,
                    face=palette.PLANK.linear, groove=palette.PLANK_GROOVE.linear)
-    bed = Mesh.merge([frame, soil_mesh(ring, thickness, height_cm)])
+    bed = Mesh.merge([frame, soil_mesh(ring, thickness, soil)])
     return (MeshPart(bed, "vc", name="bed"),)
 
 
@@ -152,10 +165,11 @@ def _box(record: Record, height_cm: float, material: str) -> tuple[MeshPart, ...
     thickness = thickness_cm(ring, _wall_thickness(material))
     planked = material == WOOD
     foot = 0.0 if planked else min(0.5 * thickness, 0.06 * height_cm)
-    walls = _frame(ring, height_cm, thickness, rows=plank_rows(height_cm) if planked else 1,
+    soil = soil_surface_cm(record.kind, height_cm)  # a container: its height; an edged bed: 2 cm under
+    walls = _frame(ring, height_cm, thickness, soil, rows=plank_rows(height_cm) if planked else 1,
                    foot_inset_cm=foot, face=palette.TINT, groove=palette.TINT)
     return (MeshPart(walls, "vc", tinted=True, name="walls"),
-            MeshPart(soil_mesh(ring, thickness, height_cm), "vc", name="soil"))
+            MeshPart(soil_mesh(ring, thickness, soil), "vc", name="soil"))
 
 
 def _container(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
@@ -168,17 +182,20 @@ def _garden_bed(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
     return _box(record, height_cm, WOOD)
 
 
-def round_profile(radius_cm: float, height_cm: float, material: str
+def round_profile(radius_cm: float, height_cm: float, material: str, soil_cm: float
                   ) -> tuple[list[tuple[float, float]], float]:
     """A round container's ``lathe`` profile (radius, z) — up the outside, over the
-    rim, down the inside to just under the soil — and its wall thickness. The rim
-    is the widest point: exactly ``radius_cm``."""
+    rim and in to the soil at ``soil_cm`` (down the inside to just under it, where
+    the soil lies below the rim) — and its wall thickness. The rim is the widest
+    point: exactly ``radius_cm``."""
     wall = min(_wall_thickness(material), MAX_THICKNESS_SHARE * radius_cm)
-    chamfer = max(0.0, min(CHAMFER_CM, wall / 3.0, height_cm / 4.0))
-    _soil, inner_bottom = _inner_bottom(height_cm)
-    inner_bottom = max(0.0, min(inner_bottom, height_cm - chamfer - 0.1))
-    inside = [(radius_cm - chamfer, height_cm), (radius_cm - wall + chamfer, height_cm),
-              (radius_cm - wall, height_cm - chamfer), (radius_cm - wall, inner_bottom)]
+    chamfer = _chamfer(height_cm, wall)
+    if _is_flush(soil_cm, height_cm, chamfer):
+        inside = [(radius_cm - chamfer, height_cm), (radius_cm - wall, height_cm)]
+    else:
+        inner_bottom = max(0.0, min(soil_cm - 1.0, height_cm - chamfer - 0.1))
+        inside = [(radius_cm - chamfer, height_cm), (radius_cm - wall + chamfer, height_cm),
+                  (radius_cm - wall, height_cm - chamfer), (radius_cm - wall, inner_bottom)]
     if material == TERRACOTTA:  # a tapered pot with a rim band
         rim = min(0.18 * height_cm, 6.0)
         outside = [(0.72 * radius_cm, 0.0), (0.92 * radius_cm, height_cm - rim),
@@ -194,9 +211,9 @@ def _round_container(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
             or not isinstance(radius, int | float) or radius <= 0.0:
         return _container(record, height_cm)  # not a circle after all: a box on its footprint
     material = _material(record)
-    profile, wall = round_profile(float(radius), height_cm, material)
+    soil = soil_surface_cm(record.kind, height_cm)
+    profile, wall = round_profile(float(radius), height_cm, material, soil)
     walls = lathe(profile, palette.TINT, LATHE_SEGMENTS)
-    soil, _bottom = _inner_bottom(height_cm)
     soil_part = Mesh.empty()
     inner = float(radius) - wall
     if soil >= MIN_SOIL_CM and inner > 0.0:

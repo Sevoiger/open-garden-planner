@@ -179,10 +179,10 @@ PARENT_CASES = [
     # parent type, parent metadata, expected base
     (ObjectType.RAISED_BED, {}, 38.0),
     (ObjectType.RAISED_BED, {METADATA_KEY: 90.0}, 88.0),
-    (ObjectType.CONTAINER, {}, 28.0),
-    (ObjectType.CONTAINER, {"container_height_cm": 45.0}, 43.0),
-    (ObjectType.WALL_PLANTER, {}, 28.0),
-    (ObjectType.CONTAINER_ROUND, {}, 28.0),
+    (ObjectType.CONTAINER, {}, 30.0),                      # a container: AT its fill height
+    (ObjectType.CONTAINER, {"container_height_cm": 45.0}, 45.0),
+    (ObjectType.WALL_PLANTER, {}, 30.0),
+    (ObjectType.CONTAINER_ROUND, {}, 30.0),
     (ObjectType.GARDEN_BED, {}, 0.0),                      # in the ground
     (ObjectType.GARDEN_BED, {METADATA_KEY: 25.0}, 23.0),   # the user raised it
     (ObjectType.TRELLIS, {}, 0.0),                         # a plant parent without soil
@@ -267,7 +267,7 @@ class TestTheOneRule:
         bases = {rid: r.transform.base_cm for rid, r in records.items()}
         on_soil = [rid for rid, base in bases.items() if base > 0.0]
         assert len(on_soil) == raised
-        expected = {"RAISED_BED": (40.0, 38.0), "CONTAINER_ROUND": (30.0, 28.0)}
+        expected = {"RAISED_BED": (40.0, 38.0), "CONTAINER_ROUND": (30.0, 30.0)}
         for rid in on_soil:
             parent = records[records[rid].parent_id or ""]
             assert (parent.height_cm, bases[rid]) == expected[parent.kind]
@@ -276,7 +276,7 @@ class TestTheOneRule:
         assert {records[r.parent_id or ""].kind for r in in_ground} <= {"GARDEN_BED", "TRELLIS"}
         casters = collect_shadow_casters(scene, at_date=JUNE)
         assert sum(1 for c in casters if c.base_cm > 0.0) == raised
-        assert {c.base_cm for c in casters} <= {0.0, 28.0, 38.0}
+        assert {c.base_cm for c in casters} <= {0.0, 30.0, 38.0}
 
 
 def _add(garden: Garden, item: Any, name: str) -> Any:
@@ -386,10 +386,10 @@ class TestTheLinkAloneNeverLifts:
     def test_d_a_pot_on_a_raised_bed_stands_on_the_ground_with_its_plant_at_the_pot_s_soil(
         self, canvas: CanvasView
     ) -> None:
-        """Expected: plant 28 (the pot's soil), pot 0 — a KNOWN LIMIT. WHY: only plants
-        carry a parent link; a container has none, so it stands on the ground whatever
-        it is drawn on, and its plant stands on the pot's own soil (30 − 2), not at
-        38 + 28 = 66."""
+        """Expected: plant 30 (the pot's soil: its fill height), pot 0 — a KNOWN LIMIT.
+        WHY: only plants carry a parent link; a container has none, so it stands on the
+        ground whatever it is drawn on, and its plant stands on the pot's own soil, not
+        at 38 + 30 = 68."""
         garden = Garden(canvas)
         pot = _add(garden, CircleItem(620.0, 440.0, 30.0, object_type=ObjectType.CONTAINER_ROUND,
                                       layer_id=garden.scene.active_layer.id), "pot")
@@ -399,7 +399,7 @@ class TestTheLinkAloneNeverLifts:
         assert records[str(pot.item_id)].height_cm == 30.0
         assert records[str(pot.item_id)].transform.base_cm == 0.0
         assert records[str(pot.item_id)].parent_id is None
-        assert _bases(garden, potted) == (28.0, 28.0)
+        assert _bases(garden, potted) == (30.0, 30.0)
 
     def test_an_explicit_link_without_containment_does_not_lift(self, canvas: CanvasView) -> None:
         """The agent's ``set_parent_bed`` and the panel's Link action may link a plant

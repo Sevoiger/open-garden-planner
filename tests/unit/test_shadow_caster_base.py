@@ -176,7 +176,7 @@ class TestSweptShadowDefinition:
         the plant no longer claims is the bed's own shadow."""
         bed = [(0.0, 0.0), (200.0, 0.0), (200.0, 100.0), (0.0, 100.0)]
         plant = circle_footprint(100.0, 50.0, 20.0)
-        base = soil_surface_cm(40.0)
+        base = soil_surface_cm("RAISED_BED", 40.0)
         union = compute_scene_shadows(
             [ShadowCaster(bed, 40.0), ShadowCaster(plant, 60.0, base)], 35.0, 180.0)
         assert len(union) == 1
@@ -440,24 +440,44 @@ class TestHeatmapConsumesTheBase:
 class TestSoilRule:
     """ONE rule for where a plant stands: the soil of a soil container with a height."""
 
-    def test_the_soil_lies_two_centimetres_below_the_rim(self) -> None:
+    def test_a_bed_s_soil_lies_two_centimetres_below_its_rim(self) -> None:
+        """A bed has a rim height and no fill in the plan: the drop is an assumption."""
         assert SOIL_DROP_CM == 2.0
-        assert soil_surface_cm(40.0) == 38.0
-        assert soil_surface_cm(30.0) == 28.0
+        assert soil_surface_cm("RAISED_BED", 40.0) == 38.0
+        assert soil_surface_cm("GARDEN_BED", 25.0) == 23.0
+
+    @pytest.mark.parametrize("kind", ["CONTAINER", "CONTAINER_ROUND", "WALL_PLANTER"])
+    def test_a_container_s_soil_is_at_its_height(self, kind: str) -> None:
+        """Review round 1, P2-7. A container's resolved height IS its soil fill height
+        (FR-SUN-02: the fill stands in for the height), so that is where the soil is.
+        Round 0 put it 2 cm lower — below the plan's own soil level, for a lip the plan
+        does not hold."""
+        from open_garden_planner.core.container_model import container_height_cm
+        from open_garden_planner.core.object_height import effective_height_cm
+
+        assert soil_surface_cm(kind, 30.0) == 30.0
+        for metadata in (None, {}, {"container_height_cm": 45.0}):
+            fill = container_height_cm(metadata)
+            assert effective_height_cm(kind, metadata) == fill       # the datum …
+            assert standing_base_cm(kind, metadata) == fill          # … is where a plant stands
+        # an explicit height wins over the fill; the soil is at the top the user gave
+        assert standing_base_cm(kind, {"container_height_cm": 20.0, "object_height_cm": 90.0}) == 90.0
 
     @pytest.mark.parametrize("height", [None, 0.0, -3.0, float("nan"), float("inf")])
     def test_no_height_means_the_ground(self, height: float | None) -> None:
-        assert soil_surface_cm(height) == 0.0
+        assert soil_surface_cm("RAISED_BED", height) == 0.0
+        assert soil_surface_cm("CONTAINER", height) == 0.0
 
     def test_a_rim_lower_than_the_drop_is_soil_at_ground_level(self) -> None:
-        assert soil_surface_cm(1.5) == 0.0 and soil_surface_cm(2.0) == 0.0
+        assert soil_surface_cm("RAISED_BED", 1.5) == 0.0 and soil_surface_cm("RAISED_BED", 2.0) == 0.0
+        assert soil_surface_cm("CONTAINER", 1.5) == 1.5  # no drop to fall below
 
     @pytest.mark.parametrize(("kind", "metadata", "expected"), [
         ("RAISED_BED", None, 38.0),                             # the type default, 40 cm
         ("RAISED_BED", {"object_height_cm": 75.0}, 73.0),       # an explicit height
-        ("CONTAINER", None, 28.0),                              # the default fill height, 30 cm
-        ("CONTAINER_ROUND", {"container_height_cm": 45.0}, 43.0),
-        ("WALL_PLANTER", None, 28.0),
+        ("CONTAINER", None, 30.0),                              # the default fill height: the soil
+        ("CONTAINER_ROUND", {"container_height_cm": 45.0}, 45.0),
+        ("WALL_PLANTER", None, 30.0),
         ("GARDEN_BED", None, 0.0),                              # in the ground
         ("GARDEN_BED", {"object_height_cm": 25.0}, 23.0),       # the user raised it
         ("TRELLIS", None, 0.0),                                 # a plant parent that holds no soil

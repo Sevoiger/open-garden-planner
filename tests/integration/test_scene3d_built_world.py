@@ -262,8 +262,9 @@ def test_kinds_builders_heights_and_bases(garden: Garden) -> None:
         assert pipeline.bottom(Garden.id(plant)) == 38.0
         assert pipeline.top(Garden.id(plant)) == 38.0 + height
     pot_plant = records[Garden.id(garden.pot_plant)]
-    assert pot_plant.parent_id == Garden.id(garden.pot) and pot_plant.transform.base_cm == 28.0
-    assert pipeline.bottom(Garden.id(garden.pot_plant)) == 28.0
+    # a pot's soil is AT its fill height (30 cm): the plan's own soil datum, no lip
+    assert pot_plant.parent_id == Garden.id(garden.pot) and pot_plant.transform.base_cm == 30.0
+    assert pipeline.bottom(Garden.id(garden.pot_plant)) == 30.0
 
     # … and that soil is where the meshes have it: nothing floats, nothing sinks
     soil = np.asarray(palette.SOIL.linear, dtype=np.float32)
@@ -275,7 +276,7 @@ def test_kinds_builders_heights_and_bases(garden: Garden) -> None:
                 return float(part.mesh.positions[mine][:, 2].max())
         raise AssertionError("no soil")
 
-    assert soil_level(garden.bed) == 38.0 and soil_level(garden.pot) == 28.0
+    assert soil_level(garden.bed) == 38.0 and soil_level(garden.pot) == 30.0
 
     # ── colour: a fence is tinted with the item's own stroke, a bed is baked ──
     wooden = pipeline.sink.item(Garden.id(garden.fences["WOODEN_FENCE"]))
@@ -328,7 +329,7 @@ def test_edit_session_sends_exact_sink_calls(garden: Garden) -> None:
     assert built == [bed_id]  # no plant mesh was rebuilt
     assert pipeline.top(bed_id) == 75.0
     assert [pipeline.bottom(plant_id) for plant_id in plant_ids] == [73.0, 73.0]
-    assert pipeline.sink.item(Garden.id(garden.pot_plant)).transform.base_cm == 28.0  # untouched
+    assert pipeline.sink.item(Garden.id(garden.pot_plant)).transform.base_cm == 30.0  # untouched
 
     # ── move the house: ONE update_transform, no builder call ────────────────
     commands.execute(MoveItemsCommand([garden.house], QPointF(137.25, -42.5)))

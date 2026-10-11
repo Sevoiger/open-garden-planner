@@ -25,7 +25,11 @@ import math
 import numpy as np
 import pytest
 
-from open_garden_planner.core.object_height import SOIL_DROP_CM, soil_surface_cm
+from open_garden_planner.core.object_height import (
+    SOIL_DROP_CM,
+    soil_surface_cm,
+    standing_base_cm,
+)
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
     MeshPart,
@@ -790,16 +794,46 @@ class TestSoilRule:
         lambda h: circle_record("CONTAINER_ROUND", 25.0, h, params={"container_material": "terracotta"}),
         lambda h: polygon_record("GARDEN_BED", TRAPEZOID, h),
     ], ids=["raised-bed", "container", "wall-planter", "tub", "pot", "garden-bed"])
-    def test_the_soil_lies_two_cm_below_the_rim_where_plants_stand(self, make, height: float) -> None:
-        """Truth gate "Base": the mesh's soil and the plant's base are ONE function."""
-        parts = built(make(height))
-        assert soil_level(parts) == float(np.float32(soil_surface_cm(height)))
-        assert soil_level(parts) == float(np.float32(height - SOIL_DROP_CM))
+    def test_the_soil_is_where_plants_stand(self, make, height: float) -> None:
+        """Truth gate "Base": the mesh's soil and the plant's base are ONE function —
+        2 cm under the rim of a bed, AT the height of a container (its fill height)."""
+        record = make(height)
+        parts = built(record)
+        assert soil_level(parts) == float(np.float32(soil_surface_cm(record.kind, height)))
+        assert soil_level(parts) == float(np.float32(standing_base_cm(record.kind, {
+            "object_height_cm": height})))  # what a plant in it is given as its base
+        is_bed = record.kind in ("RAISED_BED", "GARDEN_BED")
+        assert soil_level(parts) == float(np.float32(height - SOIL_DROP_CM if is_bed else height))
         assert float(positions(parts)[:, 2].max()) == float(np.float32(height))  # the rim
+
+    def test_a_container_has_no_lip_and_no_crack_at_its_soil(self) -> None:
+        """Soil flush with the top (review round 1, P2-7): the frame's top runs straight
+        into it — no inner face left hanging above nothing, nothing above the soil."""
+        for record in (polygon_record("CONTAINER", rectangle(80.0, 40.0), 30.0),
+                       circle_record("CONTAINER_ROUND", 25.0, 30.0),
+                       circle_record("CONTAINER_ROUND", 25.0, 30.0,
+                                     params={"container_material": "terracotta"})):
+            walls_part, soil_part = built(record)
+            assert float(soil_part.mesh.positions[:, 2].min()) == 30.0 == float(
+                walls_part.mesh.positions[:, 2].max())
+            soil_plan = soil_part.mesh.positions.astype(np.float64)[:, :2]
+            top = walls_part.mesh.positions.astype(np.float64)
+            top = top[top[:, 2] == 30.0][:, :2]
+            # the soil's outline is the inner edge of the frame's top: every soil corner
+            # coincides with a top vertex of the walls
+            for corner in soil_plan:
+                assert float(np.linalg.norm(top - corner, axis=1).min()) < 1e-3
+            # and no wall face looks inward over the soil
+            if record.shape != "circle":
+                normals = walls_part.mesh.normals.astype(np.float64)
+                centres = walls_part.mesh.positions.astype(np.float64)[walls_part.mesh.indices].mean(axis=1)
+                inward = (normals[walls_part.mesh.indices[:, 0]][:, :2] * -centres[:, :2]).sum(axis=1)
+                vertical = np.abs(normals[walls_part.mesh.indices[:, 0]][:, 2]) < 0.5
+                assert not (vertical & (inward > 1e-6)).any()
 
     def test_a_rim_lower_than_the_drop_has_no_soil_face(self) -> None:
         parts = built(polygon_record("RAISED_BED", rectangle(300.0, 120.0), 1.5))
-        assert soil_surface_cm(1.5) == 0.0
+        assert soil_surface_cm("RAISED_BED", 1.5) == 0.0
         with pytest.raises(AssertionError, match="no soil"):
             soil_level(parts)
 
