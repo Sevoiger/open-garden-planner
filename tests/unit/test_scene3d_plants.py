@@ -59,7 +59,9 @@ from open_garden_planner.core.scene3d import (
     PARAM_PLANT_CATEGORY,
     PARAM_RADIUS_CM,
     PARAM_SEED,
+    PARAM_SPECIES_KEY,
     PARAM_SPECIES_NAME,
+    PARAM_SPRITE_SPECIES,
     BuilderContractError,
     BuilderRegistry,
     Material,
@@ -150,7 +152,7 @@ def record_for(sprite: SpriteRef, height_cm: float | None, radius_cm: float,
     by the name the gallery sets, a category by its ``PlantCategory`` name."""
     params: dict[str, object] = {PARAM_SEED: seed, PARAM_RADIUS_CM: radius_cm}
     if sprite.group == "species":
-        params[PARAM_SPECIES_NAME] = sprite.name.replace("_", " ")
+        params[PARAM_SPRITE_SPECIES] = sprite.name.replace("_", " ")
         kind = "PERENNIAL"
     else:
         params[PARAM_PLANT_CATEGORY] = CATEGORY_OF_SPRITE[sprite.name]
@@ -443,7 +445,7 @@ def test_every_bundled_species_builds_at_its_mature_size(species: dict) -> None:
         record = dataclasses.replace(
             record_for(SpriteRef("species", "tomato"), height, radius),
             kind=kind, params=Params({PARAM_SEED: "bundled", PARAM_RADIUS_CM: radius,
-                                      PARAM_SPECIES_NAME: species["common_name"]}))
+                                      PARAM_SPRITE_SPECIES: species["common_name"]}))
         parts = verify_builder(build_plant, record, height_tolerance=0.03)
         expected = resolve_recipe(kind, species["common_name"], None)
         assert expected is not None and plant_sprite(record) == expected[0]
@@ -536,7 +538,7 @@ class TestCoverage:
                 continue
             params: dict[str, object] = {PARAM_SEED: "x", PARAM_RADIUS_CM: 30.0}
             if species:
-                params[PARAM_SPECIES_NAME] = species
+                params[PARAM_SPRITE_SPECIES] = species
             if category:
                 params[PARAM_PLANT_CATEGORY] = category
             record = dataclasses.replace(
@@ -548,11 +550,34 @@ class TestCoverage:
             checked += 1
         assert checked > 1400
 
+    def test_the_sprite_is_resolved_from_the_item_s_own_string_as_it_is(self) -> None:
+        """Ruling R14: 3D resolves from exactly what 2D resolves from — the item's own
+        species string, RAW. Not from the species data's names: a "Pumpkin" dropped
+        from the gallery carries the data of "Winter Squash", 2D draws the pumpkin's
+        sprite and 3D built the squash's (review round 1, P1-2)."""
+        tomato = record_for(SpriteRef("species", "tomato"), 60.0, 180.0)
+
+        def sprite_of(**params: object) -> SpriteRef | None:
+            full = {PARAM_SEED: "x", PARAM_RADIUS_CM: 180.0, **params}
+            return plant_sprite(dataclasses.replace(tomato, params=Params(full)))  # type: ignore[arg-type]
+
+        pumpkin = sprite_of(**{PARAM_SPRITE_SPECIES: "pumpkin", PARAM_SPECIES_NAME: "Winter Squash",
+                               PARAM_SPECIES_KEY: "cucurbita maxima"})
+        assert pumpkin == SpriteRef("species", "pumpkin")
+        # the data's names alone pick nothing: the type's default category, as in 2D
+        assert sprite_of(**{PARAM_SPECIES_NAME: "Winter Squash", PARAM_SPECIES_KEY: "cucurbita maxima"})             == SpriteRef("categories", "flowering_perennial")
+        # raw means raw: blanks are not stripped away before the rule sees them — the 2D
+        # rule answers the rose for a string of blanks, and so does 3D
+        assert resolve_sprite("PERENNIAL", "  ", None) == SpriteRef("species", "rose")
+        assert sprite_of(**{PARAM_SPRITE_SPECIES: "  "}) == SpriteRef("species", "rose")
+        assert sprite_of(**{PARAM_SPRITE_SPECIES: " Tomato "}) == SpriteRef("species", "tomato")
+        assert sprite_of() == SpriteRef("categories", "flowering_perennial")
+
     def test_a_category_fallback_gets_the_category_s_recipe(self) -> None:
         """Echinacea has no sprite of its own: 2D draws the flowering perennial,
         so 3D builds the flowering perennial's recipe."""
         record = record_for(SpriteRef("species", "tomato"), 90.0, 25.0,
-                            **{PARAM_SPECIES_NAME: "Echinacea"})
+                            **{PARAM_SPRITE_SPECIES: "Echinacea"})
         assert plant_sprite(record) == SpriteRef("categories", "flowering_perennial")
         assert plant_archetype(record) == "mound"
 
@@ -577,7 +602,7 @@ class TestCoverage:
         """``plant_archetype`` says what ``build_plant`` builds — for a plant record
         with no usable radius too: the default builder, so None (it said "mound"
         while the builder returned the prism)."""
-        params: dict[str, object] = {PARAM_SEED: "x", PARAM_SPECIES_NAME: "tomato"}
+        params: dict[str, object] = {PARAM_SEED: "x", PARAM_SPRITE_SPECIES: "tomato"}
         if radius is not None:
             params[PARAM_RADIUS_CM] = radius
         tomato = record_for(SpriteRef("species", "tomato"), 120.0, 40.0)

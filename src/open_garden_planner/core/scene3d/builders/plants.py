@@ -74,7 +74,7 @@ from open_garden_planner.core.scene3d import (
     PARAM_PLANT_CATEGORY,
     PARAM_RADIUS_CM,
     PARAM_SEED,
-    PARAM_SPECIES_NAME,
+    PARAM_SPRITE_SPECIES,
     BuilderRegistry,
     Mesh,
     MeshPart,
@@ -1570,17 +1570,19 @@ def plant_sprite(record: Record) -> SpriteRef | None:
     """The sprite — and so the recipe — of a plant record, or None when the record
     is not a plant.
 
-    The 2D rule (``plant_art.resolve_sprite``) on the record's ``species_name``
-    and ``plant_category``. Note what the record carries: ``species_name`` is the
-    species' common name when the item has species data, else the item's own
-    species string. The 2D renderer reads the item's species string only — the
-    two agree for every plant placed from the gallery or a plant list, and can
-    differ after a species was assigned from the plant database (ADR-054
-    addendum, "plant art v0").
+    The 2D rule (``plant_art.resolve_sprite``) on EXACTLY the 2D renderer's
+    inputs: the item's type, its own species string as it is (the record's
+    ``sprite_species`` — raw: a string of blanks picks the rose's sprite in 2D,
+    and so it does here) and its plant category. Not ``species_name``: that is
+    the species DATA's common name where the item has data, and the two differ
+    — a "Pumpkin" from the gallery has the data of "Winter Squash", and a
+    species assigned from the plant database leaves the item's string as it
+    was. What 2D draws is what 3D builds; whether 2D should draw the assigned
+    species is a 2D question (ADR-054 addendum "plant art v0", ruling R14).
     """
     if record.kind not in PLANT_KINDS:
         return None
-    species = record.params.get(PARAM_SPECIES_NAME)
+    species = record.params.get(PARAM_SPRITE_SPECIES)
     category = record.params.get(PARAM_PLANT_CATEGORY)
     return _resolve(record.kind, species if isinstance(species, str) else "",
                     category if isinstance(category, str) else None)

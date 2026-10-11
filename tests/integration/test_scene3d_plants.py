@@ -28,7 +28,10 @@ from PyQt6.QtGui import QDropEvent
 from open_garden_planner.core import plant_renderer
 from open_garden_planner.core.commands import MoveItemsCommand
 from open_garden_planner.core.object_height import METADATA_KEY, effective_height_cm
+from open_garden_planner.core.plant_art import SPECIES_SPRITES, SpriteRef
 from open_garden_planner.core.scene3d import (
+    PARAM_SPECIES_NAME,
+    PARAM_SPRITE_SPECIES,
     BuilderRegistry,
     Record,
     RecordingSink,
@@ -52,6 +55,11 @@ from open_garden_planner.ui.canvas.footprints import plant_canopy_radius_cm
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.plant_species_assignment import apply_species_to_item
 from open_garden_planner.ui.view3d.snapshot import snapshot_records
+from open_garden_planner.ui.widgets.gallery_data import (
+    GalleryItem,
+    all_items,
+    build_toolbar_categories,
+)
 
 JUNE_2026, JUNE_2027 = date(2026, 6, 21), date(2027, 6, 21)
 BEGIN, COMMIT = ("begin", None), ("commit", None)
@@ -261,18 +269,18 @@ def test_a_typed_height_turns_the_placeholder_into_a_tree_and_back(garden: Garde
     assert records[item_id].height_cm is None
 
 
-def test_known_gap_a_species_assigned_from_the_database(garden: Garden) -> None:
-    """Where 3D and 2D can still disagree — pinned so it cannot go unnoticed.
-
-    Assigning a species from the plant database (``ApplySpeciesCommand``) writes
+def test_a_species_assigned_from_the_database_is_built_as_the_canvas_draws_it(
+    garden: Garden,
+) -> None:
+    """Assigning a species from the plant database (``ApplySpeciesCommand``) writes
     the item's species DATA and leaves its species STRING alone. The canvas
     resolves its sprite from the string, so it keeps drawing the tree's default
-    sprite; the record's ``species_name`` prefers the data's common name, so 3D
-    builds the oak. Both go through the one shared rule — on different inputs.
-    The record does not carry the item's sprite string separately; when the
-    snapshot adds it, the builder reads it and the last two assertions flip
-    (ADR-054 addendum "plant art v0", the L1.7 report §5).
-    """
+    sprite — and 3D builds that same sprite's recipe (ruling R14: the record
+    carries the item's own string, and the builder resolves from it). The data
+    still decides the size: the oak's 40 m. Whether the 2D sprite should follow
+    an assigned species is a question for 2D, not a difference between the views
+    any more (it was one: 3D built the oak — pinned as a known gap in the first
+    version of this test)."""
     unknown, item_id = garden.plants["unknown"], garden.item_id("unknown")
     oak = lookup_species("oak")
     assert oak is not None
@@ -281,11 +289,85 @@ def test_known_gap_a_species_assigned_from_the_database(garden: Garden) -> None:
     _changes, _calls, records = garden.tick(JUNE_2026)
     record = records[item_id]
     assert record.height_cm == 4000.0                          # the data gives a height now
+    assert record.params[PARAM_SPECIES_NAME] == "Oak"          # ... and a name, for labels
+    assert PARAM_SPRITE_SPECIES not in record.params           # the item's own string is empty
     drawn = plant_renderer._resolve_svg_path(
         unknown.object_type, unknown.plant_species, unknown.plant_category)
     sprite = plant_sprite(record)
     assert drawn is not None and sprite is not None
     assert (drawn.parent.name, drawn.stem) == ("categories", "round_deciduous")   # 2D
-    assert (sprite.group, sprite.name) == ("species", "oak")                      # 3D
-    # same archetype here (both canopy) — the palettes differ: fresh vs dark
-    assert plant_archetype(record) == "canopy"
+    assert (sprite.group, sprite.name) == ("categories", "round_deciduous")       # 3D: the same
+
+
+def _drag_data(entry: GalleryItem) -> str:
+    """What the gallery puts on the drag (``ui/widgets/category_dropdown.py``)."""
+    data = entry.tool_type.name
+    if entry.species:
+        data += f":species={entry.species}"
+    if entry.plant_category:
+        data += f":category={entry.plant_category.name}"
+    return data
+
+
+def _drawn_and_built(view: CanvasView, items: list[CircleItem]) -> list[tuple[str, str, str]]:
+    """(species string, sprite the canvas draws, sprite 3D builds) of every item where
+    the two differ — through the real scene and ``snapshot_records``."""
+    records = snapshot_records(view.scene(), JUNE_2026)
+    different = []
+    for item in items:
+        record = records[str(item.item_id)]
+        drawn = plant_renderer._resolve_svg_path(
+            item.object_type, item.plant_species, item.plant_category)
+        built = plant_sprite(record)
+        assert drawn is not None and built is not None
+        if (drawn.parent.name, drawn.stem) != (built.group, built.name):
+            different.append((item.plant_species, f"{drawn.parent.name}/{drawn.stem}",
+                              f"{built.group}/{built.name}"))
+        assert record.params.get(PARAM_SPRITE_SPECIES, "") == item.plant_species   # raw
+    return different
+
+
+def test_every_gallery_plant_is_built_as_the_sprite_the_canvas_draws(canvas: CanvasView) -> None:
+    """ALL plants of the gallery — every species and every category it offers —
+    dropped through the real ``dropEvent`` with the drag data the gallery
+    composes: the sprite the canvas draws is the recipe 3D builds. The first
+    version of this file checked 11 of them and missed the pumpkin: its gallery
+    string is "pumpkin", its bundled species data is named "Winter Squash", and
+    3D — which resolved from the data's name — built the squash (review round 1,
+    P1-2)."""
+    plant_tools = (ToolType.TREE, ToolType.SHRUB, ToolType.PERENNIAL)
+    entries = [entry for entry in all_items(build_toolbar_categories())
+               if entry.tool_type in plant_tools and (entry.species or entry.plant_category)]
+    with_species = [entry for entry in entries if entry.species]
+    assert len(with_species) >= 85 and len(entries) - len(with_species) >= 12
+    items = [drop(canvas, _drag_data(entry),
+                  QPointF(80.0 + 110.0 * (n % 40), 200.0 + 400.0 * (n // 40)))
+             for n, entry in enumerate(entries)]
+    assert _drawn_and_built(canvas, items) == []
+    pumpkin = next(item for item in items if item.plant_species == "pumpkin")
+    assert pumpkin.metadata["plant_species"]["common_name"] == "Winter Squash"   # the trap
+    record = snapshot_records(canvas.scene(), JUNE_2026)[str(pumpkin.item_id)]
+    assert record.params[PARAM_SPECIES_NAME] == "Winter Squash"
+    assert record.params[PARAM_SPRITE_SPECIES] == "pumpkin"
+    assert plant_sprite(record) == SpriteRef("species", "pumpkin")
+
+
+def test_every_species_string_is_built_as_the_sprite_the_canvas_draws(canvas: CanvasView) -> None:
+    """Every key of the species map — 222 strings, on a tree, a shrub and a
+    perennial in turn — and the strings the 2D rule is odd about (title case,
+    blanks around, blanks ONLY, a name that partially matches another plant's
+    key, a name the tables do not know): drawn and built from the same sprite."""
+    odd = [" Rose ", "ROSE", "   ", " \t ", "Lemon Balm", "Melon", "Bean (Bush)", "Sweet Cherry",
+           "no such plant", "e", "Wild Rose Hip", "sweet potato", "Winter Squash", "Watermelon"]
+    strings = [*SPECIES_SPRITES, *(key.title() for key in list(SPECIES_SPRITES)[::9]), *odd]
+    assert len(SPECIES_SPRITES) == 222 and not any(":" in text for text in strings)
+    tools = ("TREE", "SHRUB", "PERENNIAL")
+    items = [drop(canvas, f"{tools[n % 3]}:species={text}",
+                  QPointF(80.0 + 110.0 * (n % 40), 200.0 + 300.0 * (n // 40)))
+             for n, text in enumerate(strings)]
+    assert [item.plant_species for item in items] == strings        # set as dropped, untouched
+    assert _drawn_and_built(canvas, items) == []
+    # ... and the canvas does draw a string of blanks as a rose (the quirk 3D now shares)
+    blanks = items[strings.index("   ")]
+    drawn = plant_renderer._resolve_svg_path(blanks.object_type, blanks.plant_species, None)
+    assert drawn is not None and (drawn.parent.name, drawn.stem) == ("species", "rose")
