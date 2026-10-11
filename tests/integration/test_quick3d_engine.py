@@ -92,6 +92,7 @@ class TestAgainstARecordingEngine:
             for sync in syncs:
                 sync.apply(records)
             assert quick.state() == recording.state()
+            assert quick.state() == syncs[0].expected_state()  # incremental == full rebuild
             assert syncs[0].failures == {}
             expected = {}
             for item_id, held in recording.state().items.items():
@@ -110,7 +111,8 @@ class TestAgainstARecordingEngine:
 
         fresh_pipelines()
         tick()
-        assert len(quick.item_ids()) == 99 and len(engine.parts) == 87  # 12 items have no height
+        # 98 records (a roof ridge has none: it is a param of its house), 11 of them flat
+        assert len(quick.item_ids()) == 98 and len(engine.parts) == 87
         uploads = quick.geometry_uploads
         target, victim = largest_solids(scene, {p.spec.item_id for p in engine.parts})
 
@@ -203,7 +205,7 @@ class TestOnTheRealRenderer:
                 assert got["position"] == pytest.approx(want["position"], abs=1e-2), (step["name"], key)
                 assert got["yaw"] == pytest.approx(want["yaw"], abs=1e-3), (step["name"], key)
         first = steps[0]
-        assert first["records"] == 99 and len(first["engine_parts"]) == 87
+        assert first["records"] == 98 and len(first["engine_parts"]) == 87
 
     def test_the_frame_shows_the_plan(self, run: tuple[dict[str, Any], Path]) -> None:
         result, out = run
@@ -255,7 +257,7 @@ class TestOnTheRealRenderer:
     def test_an_edit_is_on_screen_within_the_frame_budget(
             self, run: tuple[dict[str, Any], Path]) -> None:
         """ADR-048 entries 5/6 (moved here by ADR-054): edit → snapshot → diff → engine →
-        FINISHED READBACK. Measured on the dev box (RTX 4070, 99 records, 640 x 400):
+        FINISHED READBACK. Measured on the dev box (RTX 4070, 98 records, 640 x 400):
         median 7.1 ms, p95 17.9 ms; WARP: median 23.2 ms. The bound is asserted on a
         hardware adapter only — a software rasteriser says nothing about a GPU."""
         result, _ = run
@@ -295,7 +297,7 @@ class TestOnTheRealRenderer:
     def test_the_plan_opens_in_a_reportable_time(self, run: tuple[dict[str, Any], Path]) -> None:
         """Not a budget (ADR-048 criterion 5 is judged on the owner's hardware in L1.3) — a
         tripwire that the numbers the report quotes exist and are sane: request → first
-        finished readback of the 99-record plan, and the engine package's import."""
+        finished readback of the 98-record plan, and the engine package's import."""
         result, _ = run
         integration = result["scenarios"]["integration"]
         assert 0.0 < integration["open_ms"] < 120_000.0, integration["open_ms"]

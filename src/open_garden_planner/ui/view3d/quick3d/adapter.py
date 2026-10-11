@@ -15,15 +15,15 @@ What the sink guarantees:
   is asked itself (a camera placement, a pick result), with the same
   ``core/scene3d/frame.py`` functions, and the QML converts nothing.
 - **One teardown, and one owner.** The engine scene OWNS every Model; the sink
-  holds handles as names. ``clear()`` — the tenth ``EngineSink`` method (it joins
-  the protocol with the L1.1 review) — asks the scene to drop everything
-  (``EngineScene.clear``) and empties the sink's books whether or not that
-  succeeds. It is legal at any time: inside a transaction, also one an engine
-  error broke; twice in a row; and when the engine is gone (the host was
-  closed, or Qt destroyed its window with the main window) — then there is
-  nothing left to destroy and it simply forgets. ``SceneSync.reset()`` calls it
-  and then re-sends everything; ``attach`` points the emptied sink at a fresh
-  engine scene.
+  holds handles as names. ``clear()`` — the tenth ``EngineSink`` method — asks
+  the scene to drop everything (``EngineScene.clear``) and empties the sink's
+  books whether or not that succeeds. It is legal at any time: inside a
+  transaction, also one an engine error broke half way; twice in a row; and
+  when the engine is gone (the host was closed, or Qt destroyed its window with
+  the main window) — then there is nothing left to destroy and it simply
+  forgets. ``SceneSync.reset()`` calls it — the recovery after a sink failure —
+  and the next ``apply`` re-sends everything; ``attach`` points the emptied
+  sink at a fresh engine scene.
 - **One Model per mesh part, one geometry per Model lifetime.** ``add`` creates
   the Models, ``remove`` destroys them, ``replace_geometry`` destroys and
   creates. A geometry object is never handed to a second Model: the L0 spike
@@ -177,10 +177,13 @@ class Quick3DSink:
 
         The tenth ``EngineSink`` method. Legal at any time: inside an open
         ``begin``/``commit`` (it aborts the transaction — also one an engine
-        error broke), outside one, and on a sink that is empty already.
-        ``SceneSync.reset()`` calls it, then re-sends items, sun and ground. Every
-        Model is destroyed together with its geometry, so the items added
-        afterwards get fresh ones (the re-attach rule, ``ogp-3d-renderer`` §2).
+        error broke half way; a ``commit()`` after it is a protocol error),
+        outside one, and on a sink that is empty already. ``SceneSync.reset()``
+        calls it; the next ``apply`` re-sends items, sun and ground. Every Model
+        is destroyed together with its geometry — also one a failed call left
+        behind without a handle in these books: the scene owns them all — so the
+        items added afterwards get fresh ones (the re-attach rule,
+        ``ogp-3d-renderer`` §2).
 
         Exception-safe and idempotent: the books are emptied in a ``finally``. An
         engine that is gone raises nothing; a LIVE engine that fails to clear

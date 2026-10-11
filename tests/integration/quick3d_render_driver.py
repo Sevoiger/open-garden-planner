@@ -508,15 +508,18 @@ def scenario_edits(ctx: Context) -> dict[str, Any]:
         step("3_replace", {"a": EDIT_A_WIDE, "b": EDIT_B}, picks=("a",), at={"a": a1})
         step("4_remove", {"b": EDIT_B}, picks=("gone", "b"), at={"gone": a1, "b": b0})
         step("5_readd", {"a": EDIT_A_WIDE, "b": EDIT_B}, picks=("a", "b"), at={"a": a1, "b": b0})
-        # what SceneSync.reset() does: clear the sink, then send everything again
-        sink.clear()
+        # SceneSync.reset(): it calls the sink's clear() — the engine holds nothing —
+        # and the next apply sends everything again
         sync.reset()
         after_clear = ctx.save("edits_6a_cleared", host.grab("edits_6a_cleared"))
         after_clear["engine_parts"] = _parts(host)
+        after_clear["sun_up"] = bool(host.scene_property("sunUp"))
+        after_clear["ground_visible"] = bool(host.scene_property("groundVisible"))
         sync.set_ground(GROUND)
         sync.set_sun(HIGH_SUN)
         step("6_clear_readd", {"a": EDIT_A_WIDE, "b": EDIT_B}, picks=("a", "b"),
              at={"a": a1, "b": b0})
+        steps[-1]["state_equals_expected"] = sink.state() == sync.expected_state()
         host.hide()
         _pump(50)
         started = time.perf_counter()
@@ -526,6 +529,93 @@ def scenario_edits(ctx: Context) -> dict[str, Any]:
         reentry_ms = (time.perf_counter() - started) * 1000.0
         return {"steps": steps, "cleared": after_clear, "reentry_ms": round(reentry_ms, 1),
                 "frames_presented": host.frames_presented}
+    finally:
+        host.close()
+        _pump()
+
+
+RECOVERY_BEFORE = {"a": EDIT_A, "b": EDIT_B}
+RECOVERY_C = box("c", 250.0, 150.0, 120.0, 80.0, 60.0, YELLOW)
+RECOVERY_D = box("d", -150.0, -220.0, 80.0, 120.0, 60.0, YELLOW, rotation=25.0)
+RECOVERY_AFTER = {"a": EDIT_A_MOVED, "b": EDIT_B, "c": RECOVERY_C, "d": RECOVERY_D}
+
+
+def _expected_parts(sync: SceneSync) -> list[dict[str, Any]]:
+    """What the engine SHOULD hold, from ``sync.expected_state()`` — the reference a
+    from-scratch apply gives an empty recording sink (rows like ``_parts``)."""
+    rows = []
+    for item_id, held in sync.expected_state().items.items():
+        pose = engine_pose(held.transform)
+        for index, part in enumerate(held.parts):
+            if part.mesh.vertex_count:
+                tint = held.material.tint_rgba if part.tinted else (255, 255, 255, 255)
+                rows.append({"id": item_id, "part": index, "kind": part.material_kind,
+                             "position": list(pose.position), "yaw": pose.yaw_deg,
+                             "tint": list(tint[:3]), "casts": part.casts_shadow})
+    return rows
+
+
+def scenario_recovery(ctx: Context) -> dict[str, Any]:
+    """The L1.1 recipe for a sink, on the REAL engine: one engine call fails in the
+    middle of a transaction, ``sync.reset()``, ``sync.apply(...)`` — and what the
+    engine holds is compared with ``sync.expected_state()``, and looked at."""
+    from open_garden_planner.ui.view3d.quick3d.adapter import Quick3DSink
+    from open_garden_planner.ui.view3d.quick3d.host import EngineError
+
+    host = ctx.shown_host()
+    out: dict[str, Any] = {}
+    try:
+        sink = Quick3DSink(host)
+        sync = SceneSync(sink, validate=True)
+        host.set_shot(TOP)
+        sync.apply(RECOVERY_BEFORE, sun=HIGH_SUN, ground=GROUND)
+        out["before"] = ctx.save("recovery_0_before", host.grab("recovery_before"))
+        out["before"]["state_equals_expected"] = sink.state() == sync.expected_state()
+
+        # the engine refuses the SECOND Model of the next transaction: "c" is built,
+        # "d" is not, "a" is not moved yet — a transaction applied half way
+        real_create = host.create_part
+        calls = {"n": 0}
+
+        def refusing(spec: Any, pose: Any, tint: Any) -> object:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise EngineError("injected: the engine refused this Model")
+            return real_create(spec, pose, tint)
+
+        host.create_part = refusing  # type: ignore[method-assign]
+        try:
+            sync.apply(RECOVERY_AFTER)
+            out["failure"] = "no error"
+        except EngineError as error:
+            out["failure"] = f"EngineError: {error}"
+        finally:
+            del host.create_part  # the engine works again
+        out["poisoned"] = sync.poisoned
+        out["transaction_left_open"] = sink.in_transaction
+        try:
+            sync.apply(RECOVERY_AFTER)
+            out["apply_while_poisoned"] = "applied"
+        except Exception as error:  # noqa: BLE001 - recorded, judged by the test
+            out["apply_while_poisoned"] = type(error).__name__
+        out["half_applied"] = ctx.save("recovery_1_half", host.grab("recovery_half"))
+        out["half_applied"]["engine_parts"] = _parts(host)
+
+        sync.reset()
+        out["reset"] = {"poisoned": sync.poisoned, "transaction_open": sink.in_transaction,
+                        "engine_parts": _parts(host), "sink_items": list(sink.item_ids()),
+                        "sun_up": bool(host.scene_property("sunUp")),
+                        "ground_visible": bool(host.scene_property("groundVisible"))}
+        out["reset"].update(ctx.save("recovery_2_reset", host.grab("recovery_reset")))
+
+        sync.apply(RECOVERY_AFTER, sun=HIGH_SUN, ground=GROUND)
+        after = ctx.save("recovery_3_after", host.grab("recovery_after"))
+        after.update({"state_equals_expected": sink.state() == sync.expected_state(),
+                      "engine_parts": _parts(host), "expected_parts": _expected_parts(sync),
+                      "picks": {name: _pick(host, r.transform.east_cm, r.transform.north_cm)
+                                for name, r in RECOVERY_AFTER.items()}})
+        out["after"] = after
+        return out
     finally:
         host.close()
         _pump()
@@ -889,6 +979,7 @@ SCENARIOS: dict[str, Callable[[Context], dict[str, Any]]] = {
     "pick": scenario_pick,
     "states": scenario_states,
     "rest": scenario_rest,
+    "recovery": scenario_recovery,
     "integration": scenario_integration,
     "embed": scenario_embed,
 }

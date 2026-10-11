@@ -178,11 +178,7 @@ def render_records(
             mark = time.perf_counter()
             sink = Quick3DSink(host)
             sync = SceneSync(sink, registry)
-            sync.apply(records)
-            if ground is not None:
-                sync.set_ground(ground)
-            if sun is not None:
-                sync.set_sun(sun)
+            sync.apply(records, sun=sun, ground=ground)  # one transaction
             host.set_shot(shot)
             breakdown["scene_apply"] = (time.perf_counter() - mark) * 1000.0
             parts = sum(sink.part_count(item_id) for item_id in sink.item_ids())

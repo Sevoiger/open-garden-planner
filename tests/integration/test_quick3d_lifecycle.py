@@ -325,14 +325,26 @@ def test_clear_is_clean_whenever_the_host_died(clear_orders: dict[str, Any], ord
     assert row["state"] == "closed"
 
 
-def test_a_fresh_host_renders_after_the_old_one_died(clear_orders: dict[str, Any]) -> None:
-    """The recovery: the SAME sink and sync, cleared and reset on a dead host, pointed
-    at a fresh host (``Quick3DSink.attach``) and applied again — the scene is back."""
+def test_reset_alone_recovers_from_a_dead_engine_and_a_fresh_host_renders(
+        clear_orders: dict[str, Any]) -> None:
+    """The recovery as L1.3 will meet it. The main window is gone and took the engine
+    with it; the next ``apply`` raises ``HostStateError`` and poisons the sync.
+    ``SceneSync.reset()`` — which calls ``Quick3DSink.clear()`` and stays poisoned if
+    that raises — succeeds on the dead engine. The SAME sink and sync, pointed at a
+    fresh host (``Quick3DSink.attach``) and applied again: the scene is back, and
+    the sink holds what a from-scratch apply would."""
+    dead = clear_orders["reset_alone_on_a_dead_engine"]
+    assert_refused(dead["apply_on_dead_engine"], "apply on a dead engine", "closed")
+    assert dead["poisoned"] is True
+    assert dead["reset"] is None, "reset() must not raise on an engine that is gone"
+    assert dead["poisoned_after_reset"] is False
+    assert dead["items"] == [] and dead["in_transaction"] is False and dead["state"] == "closed"
     fresh = clear_orders["fresh"]
     assert fresh["ready"] is True
     assert_scene(fresh["grab"], "the fresh host's frame")
     assert_hit(fresh["pick"], "the fresh host's pick")
     assert fresh["parts"] == 1 and fresh["items"] == ["w"]
+    assert fresh["state_equals_expected"] is True
 
 
 @pytest.fixture(scope="module")

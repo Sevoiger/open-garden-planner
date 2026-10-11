@@ -779,6 +779,55 @@ class TestClosedAndDestroyedHosts:
         finally:
             fresh.close()
 
+    def test_an_engine_call_that_fails_mid_transaction_is_recovered_by_reset(self, host) -> None:
+        """The L1.1 recipe for a sink on the REAL host (no pixels here; the render tier
+        looks at them): the engine refuses the second Model of a transaction, the sync
+        is poisoned, ``reset()`` empties the engine through ``Quick3DSink.clear()`` —
+        also the Model the failed call left behind — and after ``apply`` the engine
+        holds what ``sync.expected_state()`` says."""
+        from open_garden_planner.core.scene3d import SyncStateError, engine_pose
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError
+
+        sink = Quick3DSink(host)
+        sync = SceneSync(sink, validate=True)
+        sun, ground = SunState(40.0, 180.0), GroundSpec(800.0, 600.0)
+        sync.apply({"a": _record("a"), "b": _record("b", 300.0, colour=BLUE)}, sun=sun, ground=ground)
+        after = {"a": _record("a", 50.0, 20.0, 30.0), "b": _record("b", 300.0, colour=BLUE),
+                 "c": _record("c", -300.0), "d": _record("d", 0.0, 400.0)}
+
+        real_create, calls = host.create_part, [0]
+
+        def refusing(spec: Any, pose: Any, tint: Any) -> object:
+            calls[0] += 1
+            if calls[0] == 2:
+                raise EngineError("injected: the engine refused this Model")
+            return real_create(spec, pose, tint)
+
+        host.create_part = refusing
+        with pytest.raises(EngineError, match="injected"):
+            sync.apply(after)
+        del host.create_part
+        assert sync.poisoned and sink.in_transaction
+        assert sorted(p.item_id for p in host.engine_parts()) == ["a", "b", "c"]  # half applied
+        with pytest.raises(SyncStateError):
+            sync.apply(after)
+
+        sync.reset()
+        assert not sync.poisoned and not sink.in_transaction
+        assert host.engine_parts() == [] and sink.item_ids() == ()
+        assert host.scene_property("sunUp") is False and host.scene_property("groundVisible") is False
+
+        sync.apply(after, sun=sun, ground=ground)
+        expected = sync.expected_state()
+        assert sink.state() == expected
+        want = sorted((item_id, index, engine_pose(held.transform).position,
+                       held.material.tint_rgba[:3])
+                      for item_id, held in expected.items.items()
+                      for index, part in enumerate(held.parts) if part.mesh.vertex_count)
+        have = sorted((p.item_id, p.part_index, p.position, p.tint_rgb) for p in host.engine_parts())
+        assert have == want and len(have) == 4
+        assert host.scene_property("sunUp") is True and host.scene_property("groundVisible") is True
+
     def test_close_destroys_every_model_and_is_idempotent(self, qtbot) -> None:  # noqa: ARG002
         made = _new_host()
         sink = Quick3DSink(made)

@@ -39,6 +39,7 @@ from open_garden_planner.core.scene3d import (
     SyncStateError,
     Transform,
     engine_buffers,
+    engine_pose,
     prism_mesh,
 )
 from open_garden_planner.core.shadow_geometry import MIN_SUN_ELEVATION_DEG
@@ -82,12 +83,16 @@ class FakeScene:
     ground: Any = "unset"
     fail_on_create: int | None = None  # raise on the n-th create_part (1-based)
     fail_on_clear: bool = False        # a LIVE engine that cannot clear
+    fail_once: str | None = None       # the next call of that name raises (then it works again)
     dead: bool = False                 # the engine is gone (closed host, destroyed window)
     created: int = 0
 
-    def _alive(self) -> None:
+    def _alive(self, call: str = "") -> None:
         if self.dead:
             raise EngineGone("the engine is gone")
+        if call and self.fail_once == call:
+            self.fail_once = None
+            raise RuntimeError(f"engine failed in {call}")
 
     def clear(self) -> None:
         self.calls.append(("clear",))
@@ -103,7 +108,7 @@ class FakeScene:
 
     def create_part(self, spec: PartSpec, pose: EnginePose,
                     tint_rgba: tuple[int, int, int, int]) -> FakePart:
-        self._alive()
+        self._alive("create_part")
         self.created += 1
         if self.fail_on_create == self.created:
             raise RuntimeError("engine refused the part")
@@ -121,29 +126,29 @@ class FakeScene:
         self.calls.append(("destroy", handle.spec.item_id))
 
     def pose_part(self, handle: object, pose: EnginePose) -> None:
-        self._alive()
+        self._alive("pose_part")
         assert isinstance(handle, FakePart) and handle.alive
         handle.pose = pose
         self.calls.append(("pose", handle.spec.item_id))
 
     def tint_part(self, handle: object, tint_rgba: tuple[int, int, int, int]) -> None:
-        self._alive()
+        self._alive("tint_part")
         assert isinstance(handle, FakePart) and handle.alive
         handle.tint = tint_rgba
         self.calls.append(("tint", handle.spec.item_id))
 
     def set_sun(self, travel: tuple[float, float, float] | None) -> None:
-        self._alive()
+        self._alive("set_sun")
         self.sun = travel
         self.calls.append(("sun",))
 
     def set_ground(self, ground: GroundPlacement | None) -> None:
-        self._alive()
+        self._alive("set_ground")
         self.ground = ground
         self.calls.append(("ground",))
 
     def request_frame(self) -> None:
-        self._alive()
+        self._alive("request_frame")
         self.calls.append(("frame",))
 
     def of(self, item_id: str) -> list[FakePart]:
@@ -603,13 +608,124 @@ class TestThroughSceneSync:
         assert sync.poisoned
         with pytest.raises(SyncStateError):
             sync.apply({})
-        # SceneSync.reset() calls sink.clear() once the L1.1 fix round lands; until then
-        # the owner tears both down — clear() twice is legal either way
-        sink.clear()
-        sync.reset()
+        sync.reset()  # the recovery: it calls sink.clear() itself
+        assert not sync.poisoned and scene.parts == [] and sink.item_ids() == ()
         scene.fail_on_create = None
         sync.apply({"a": self._record("a")})
         assert [p.spec.item_id for p in scene.parts] == ["a"]
+        assert sink.state() == sync.expected_state()
+
+    def _engine_matches(self, scene: FakeScene, sync: SceneSync) -> None:
+        """What the ENGINE boundary holds, against the reference: one live part per
+        drawable mesh part of ``expected_state()``, with its pose and tint."""
+        expected = sync.expected_state()
+        want = sorted((item_id, index, engine_pose(held.transform),
+                       held.material.tint_rgba if part.tinted else WHITE)
+                      for item_id, held in expected.items.items()
+                      for index, part in enumerate(held.parts) if part.mesh.vertex_count)
+        have = sorted((p.spec.item_id, p.spec.part_index, p.pose, p.tint) for p in scene.parts)
+        assert have == want
+        nothing = (None, "unset")  # a fresh FakeScene was never told either
+        assert (scene.sun not in nothing) == (expected.sun is not None and expected.sun.is_up)
+        assert (scene.ground not in nothing) == (expected.ground is not None)
+
+    @pytest.mark.parametrize(("call", "trigger"), [
+        ("create_part", "add"), ("create_part", "replace"), ("pose_part", "move"),
+        ("tint_part", "recolour"), ("set_sun", "sun"), ("set_ground", "ground"),
+        ("request_frame", "move"),
+    ], ids=["add", "replace_geometry", "update_transform", "update_material", "set_sun",
+            "set_ground", "commit"])
+    def test_any_engine_call_failing_mid_transaction_is_recovered_by_reset(
+            self, call: str, trigger: str) -> None:
+        """The L1.1 recipe for a sink (its report, F.2): make ONE engine call fail in the
+        middle of a transaction, ``sync.reset()``, ``sync.apply(...)`` — and what the
+        sink holds is what one from-scratch apply would hold (``expected_state()``).
+        For every engine call the sink makes, including the frame request of ``commit``.
+
+        The transaction that fails changes TWO things, and the failing call is the
+        second of its kind where that is possible — so there is something half done
+        to clean up."""
+        scene = FakeScene()
+        sink = Quick3DSink(scene)
+        sync = SceneSync(sink, validate=True)
+        sun, ground = SunState(30.0, 100.0), GroundSpec(500.0, 400.0)
+        before = {"a": self._record("a"), "b": self._record("b", 300.0)}
+        sync.apply(before, sun=sun, ground=ground)
+        self._engine_matches(scene, sync)
+
+        after = dict(before)
+        new_sun, new_ground = sun, ground
+        if trigger == "add":
+            after.update(c=self._record("c", 600.0), d=self._record("d", 900.0))
+            scene.fail_on_create = scene.created + 2   # c is built, d fails
+        elif trigger == "replace":
+            after.update(a=self._record("a", height=250.0), b=self._record("b", 300.0, height=50.0))
+            scene.fail_on_create = scene.created + 2   # a is rebuilt, b is destroyed and fails
+        elif trigger == "move":
+            after.update(a=self._record("a", east=40.0), b=self._record("b", 340.0))
+        elif trigger == "recolour":
+            after.update(a=self._record("a", colour=(1, 2, 3, 255)))
+        elif trigger == "sun":
+            new_sun = SunState(55.0, 200.0)
+        else:
+            new_ground = GroundSpec(900.0, 700.0)
+        if call != "create_part":
+            scene.fail_once = call
+
+        with pytest.raises(RuntimeError, match="engine"):
+            sync.apply(after, sun=new_sun, ground=new_ground)
+        assert sync.poisoned
+        with pytest.raises(SyncStateError):
+            sync.apply(after)
+        if call != "request_frame":
+            assert sink.in_transaction, "the failure left the transaction open"
+
+        scene.fail_on_create = None
+        sync.reset()
+        assert not sync.poisoned and not sink.in_transaction
+        assert scene.parts == [] and scene.sun is None and scene.ground is None
+        assert sink.state() == RecordingSink().state()
+
+        sync.apply(after, sun=new_sun, ground=new_ground)
+        assert sink.state() == sync.expected_state()   # incremental == full rebuild
+        self._engine_matches(scene, sync)
+
+    def test_reset_on_an_engine_that_is_gone_succeeds_and_a_fresh_one_takes_over(self) -> None:
+        """``reset()`` propagates what ``clear()`` raises and stays poisoned — so a sink
+        whose ``clear()`` raised on a dead engine would poison the sync for good. It
+        does not raise there; the sync comes back clean and drives a fresh engine."""
+        old, new = FakeScene(), FakeScene()
+        sink = Quick3DSink(old)
+        sync = SceneSync(sink)
+        records = {"a": self._record("a"), "b": self._record("b", 300.0)}
+        sync.apply(records, sun=SunState(30.0, 100.0))
+        old.dead = True
+        with pytest.raises(EngineGone):
+            sync.apply({"a": self._record("a", east=5.0), "b": self._record("b", 300.0)})
+        assert sync.poisoned
+        sync.reset()
+        assert not sync.poisoned and sink.item_ids() == ()
+        sink.attach(new)
+        sync.apply(records, sun=SunState(30.0, 100.0))
+        assert sink.state() == sync.expected_state()
+        self._engine_matches(new, sync)
+
+    def test_a_live_engine_that_cannot_clear_keeps_the_sync_poisoned(self) -> None:
+        """The other half of the rule: when the engine is THERE and fails to clear, the
+        error is not swallowed — ``reset()`` raises, the sync stays poisoned, and the
+        next ``reset()`` asks again."""
+        scene = FakeScene()
+        sink = Quick3DSink(scene)
+        sync = SceneSync(sink)
+        sync.apply({"a": self._record("a")})
+        scene.fail_on_clear = True
+        with pytest.raises(RuntimeError, match="could not clear"):
+            sync.reset()
+        assert sync.poisoned
+        scene.fail_on_clear = False
+        sync.reset()
+        sync.apply({"a": self._record("a")})
+        assert not sync.poisoned and sink.state() == sync.expected_state()
 
     def test_the_default_registry_builds_what_the_sink_uploads(self) -> None:
         scene = FakeScene()

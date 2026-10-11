@@ -56,7 +56,7 @@ Run = tuple[dict[str, Any], Path]
 @pytest.fixture(scope="module")
 def run(tmp_path_factory: pytest.TempPathFactory) -> Run:
     out = tmp_path_factory.mktemp("quick3d_render")
-    proc, result = run_driver(out, "truth,materials,rest,states,edits,pick,sun")
+    proc, result = run_driver(out, "truth,materials,rest,states,edits,recovery,pick,sun")
     assert proc.returncode == 0 and result.get("status") == "ok", failure_report(proc, out)
     return result, out
 
@@ -269,20 +269,74 @@ def test_an_item_removed_and_added_again_renders_and_picks(run: Run) -> None:
     assert step["picks"]["a"]["point"] == pytest.approx([-250.0, -150.0, 80.0], abs=0.5)
 
 
-def test_clear_then_the_same_items_again_renders_and_picks(run: Run) -> None:
-    """``EngineSink.clear()`` — what ``SceneSync.reset()`` calls: the engine holds
-    nothing, then everything is sent again and comes back identical."""
+def test_reset_then_the_same_items_again_renders_and_picks(run: Run) -> None:
+    """``SceneSync.reset()`` calls ``EngineSink.clear()``: the engine holds nothing — no
+    Model, no sun, no plan ground — then everything is sent again and comes back
+    identical, and the sink's state is the from-scratch reference."""
     edits = run[0]["scenarios"]["edits"]
     steps = _steps(run)
     cleared, _ = _frame(run, edits["cleared"])
     assert edits["cleared"]["engine_parts"] == []
+    assert edits["cleared"]["sun_up"] is False and edits["cleared"]["ground_visible"] is False
     assert int((red_mask(cleared) | blue_mask(cleared) | yellow_mask(cleared)).sum()) == 0
     step = steps["6_clear_readd"]
     before, _ = _frame(run, steps["5_readd"])
     after, _ = _frame(run, step)
     assert float(np.abs(after - before).mean()) < 0.5
     assert step["uploads_delta"] == 2
+    assert step["state_equals_expected"] is True
     assert step["picks"]["a"]["hit"] == "a" and step["picks"]["b"]["hit"] == "b"
+
+
+def test_an_engine_call_that_fails_mid_transaction_is_recovered_by_reset(run: Run) -> None:
+    """The L1.1 recipe for a sink (its report, F.2), on the real engine and in pixels.
+
+    The engine refuses the second Model of a transaction that adds two items and moves
+    one. Then: the error propagates, the sync is poisoned and refuses to go on, and the
+    ENGINE is in a state nobody asked for — one of the two new boxes is on screen, the
+    move did not happen. ``sync.reset()`` empties it (through ``Quick3DSink.clear()``,
+    inside the transaction the failure left open); ``sync.apply(...)`` rebuilds it; and
+    what the engine holds is what ``sync.expected_state()`` says, part for part and
+    pixel for pixel."""
+    recovery = run[0]["scenarios"]["recovery"]
+    assert recovery["before"]["state_equals_expected"] is True
+    assert recovery["failure"].startswith("EngineError: injected")
+    assert recovery["poisoned"] is True and recovery["transaction_left_open"] is True
+    assert recovery["apply_while_poisoned"] == "SyncStateError"
+
+    # half applied: "c" was built before the failure, "d" was not, "a" was not moved
+    half = recovery["half_applied"]
+    assert sorted(part["id"] for part in half["engine_parts"]) == ["a", "b", "c"]
+    rgb, dpr = _frame(run, half)
+    assert iou(red_mask(rgb), footprint_mask(driver.EDIT_A, driver.TOP, rgb.shape, dpr)) >= 0.95
+    assert iou(yellow_mask(rgb), footprint_mask(driver.RECOVERY_C, driver.TOP, rgb.shape, dpr)) >= 0.95
+
+    reset = recovery["reset"]
+    assert reset["poisoned"] is False and reset["transaction_open"] is False
+    assert reset["engine_parts"] == [] and reset["sink_items"] == []
+    assert reset["sun_up"] is False and reset["ground_visible"] is False
+    empty, _ = _frame(run, reset)
+    assert int((red_mask(empty) | blue_mask(empty) | yellow_mask(empty)).sum()) == 0
+
+    after = recovery["after"]
+    assert after["state_equals_expected"] is True, "incremental == full rebuild, after a failure"
+
+    def rows(parts: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+        return sorted((p["id"], p["part"], p["kind"], tuple(p["position"]), p["yaw"],
+                       tuple(p["tint"]), p["casts"]) for p in parts)
+
+    assert rows(after["engine_parts"]) == rows(after["expected_parts"])
+    assert [p["id"] for p in after["engine_parts"]].count("c") == 1, "no orphan of the failed call"
+    assert all(p["geometry"] and p["visible"] for p in after["engine_parts"])
+    rgb, dpr = _frame(run, after)
+    red = footprint_mask(driver.EDIT_A_MOVED, driver.TOP, rgb.shape, dpr)
+    blue = footprint_mask(driver.EDIT_B, driver.TOP, rgb.shape, dpr)
+    yellow = (footprint_mask(driver.RECOVERY_C, driver.TOP, rgb.shape, dpr)
+              | footprint_mask(driver.RECOVERY_D, driver.TOP, rgb.shape, dpr))
+    assert iou(red_mask(rgb), red) >= 0.95 and iou(blue_mask(rgb), blue) >= 0.95
+    assert iou(yellow_mask(rgb), yellow) >= 0.95
+    assert {name: pick["hit"] for name, pick in after["picks"].items()} == {
+        "a": "a", "b": "b", "c": "c", "d": "d"}
 
 
 def test_hide_and_show_brings_the_same_frame_back(run: Run) -> None:

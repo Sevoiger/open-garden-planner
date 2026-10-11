@@ -362,8 +362,9 @@ def embed_after_show(app: Any, _qml: Path | None = None) -> dict[str, Any]:
 
 
 def sink_clear_orders(app: Any, _qml: Path | None = None) -> dict[str, Any]:
-    """P1-3: the sink's teardown in every order relative to the host's death — and a
-    fresh host afterwards, through the same sink and sync."""
+    """P1-3: the sink's teardown in every order relative to the host's death — and
+    ``SceneSync.reset()`` alone on a dead engine, then a fresh host through the same
+    sink and sync."""
     from PyQt6 import sip
     from PyQt6.QtWidgets import QWidget
 
@@ -373,7 +374,7 @@ def sink_clear_orders(app: Any, _qml: Path | None = None) -> dict[str, Any]:
 
     out: dict[str, Any] = {}
 
-    def teardown(label: str, kill: Callable[[Any, Any], None]) -> tuple[Any, Any]:
+    def dead_host(kill: Callable[[Any, Any], None]) -> tuple[Any, Any, Any]:
         host, sink, sync = _host()
         parent = QWidget()
         parent.resize(400, 300)
@@ -381,29 +382,45 @@ def sink_clear_orders(app: Any, _qml: Path | None = None) -> dict[str, Any]:
         parent.show()
         host.wait_ready(10.0)
         kill(host, parent)
+        return host, sink, sync
+
+    def teardown(label: str, kill: Callable[[Any, Any], None]) -> None:
+        host, sink, sync = dead_host(kill)
         out[label] = {"first_clear": _attempt(sink.clear), "items": list(sink.item_ids()),
                       "in_transaction": sink.in_transaction, "second_clear": _attempt(sink.clear),
                       "host_close": _attempt(host.close), "third_clear": _attempt(sink.clear),
                       "reset": _attempt(sync.reset), "state": host.state.value}
-        return sink, sync
 
     teardown("parent_destroyed_then_clear", lambda _unused, parent: sip.delete(parent))
     teardown("parent_destroyed_close_then_clear",
              lambda host, parent: (sip.delete(parent), host.close()))
-    sink, sync = teardown("close_then_clear", lambda host, _parent: host.close())
+    teardown("close_then_clear", lambda host, _parent: host.close())
     _pump(app, 200)
 
-    # a fresh host for the SAME sink and sync: the recovery after the engine died
+    # THE recovery, as L1.3 will run it: the main window took the engine with it, the
+    # next tick's apply fails, and SceneSync.reset() ALONE (it calls the sink's clear())
+    # must bring sink and sync back — then a fresh host, the same sink, the same sync.
+    record = Record(item_id="w", kind="SHED", shape="rectangle", footprints=(RING,),
+                    transform=Transform(), material=Material("SHED", fill_rgba=(230, 20, 20, 255)),
+                    height_cm=20.0, params=Params({"seed": "w"}))
+    moved = Record(item_id="w", kind="SHED", shape="rectangle", footprints=(RING,),
+                   transform=Transform(east_cm=10.0), material=record.material,
+                   height_cm=20.0, params=Params({"seed": "w"}))
+    host, sink, sync = dead_host(lambda _unused, parent: sip.delete(parent))
+    row: dict[str, Any] = {"apply_on_dead_engine": _attempt(lambda: sync.apply({"w": moved}))}
+    row.update(poisoned=sync.poisoned, reset=_attempt(sync.reset))
+    row.update(poisoned_after_reset=sync.poisoned, items=list(sink.item_ids()),
+               in_transaction=sink.in_transaction, state=host.state.value)
+    out["reset_alone_on_a_dead_engine"] = row
+
     fresh = Quick3DHost(SIZE)
     sink.attach(fresh)
-    sync.apply({"w": Record(item_id="w", kind="SHED", shape="rectangle", footprints=(RING,),
-                            transform=Transform(), material=Material("SHED", fill_rgba=(230, 20, 20, 255)),
-                            height_cm=20.0, params=Params({"seed": "w"}))})
-    sync.set_sun(SunState(45.0, 225.0))
+    sync.apply({"w": record}, sun=SunState(45.0, 225.0))
     fresh.set_shot(TopDownShot((0.0, 0.0), 0.5))
     fresh.show()
     out["fresh"] = {"ready": fresh.wait_ready(10.0), "grab": _grab(fresh), "pick": _centre_pick(fresh),
-                    "parts": len(fresh.engine_parts()), "items": list(sink.item_ids())}
+                    "parts": len(fresh.engine_parts()), "items": list(sink.item_ids()),
+                    "state_equals_expected": sink.state() == sync.expected_state()}
     _pump(app, 300)
     fresh.close()
     return out
