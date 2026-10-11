@@ -42,7 +42,30 @@ class TestExceptHook:
     "(the Windows dev/CI-release environment)",
 )
 class TestSelfTest:
-    def test_passes_on_a_consistent_qt_stack(self) -> None:
+    """The Qt3D and Agent API blocks run for real here. The Qt Quick 3D block
+    (L1.2) RENDERS, which this ``QT_QPA_PLATFORM=offscreen`` process cannot do
+    (software scene graph — no 3D), so it is replaced by a stand-in: what these
+    tests pin is that its verdict decides the exit code. The real block runs in
+    a subprocess with a real window system:
+    ``tests/integration/test_quick3d_selftest.py`` (render tier), and in the
+    frozen exe before every release."""
+
+    @staticmethod
+    def _stub_3d(monkeypatch, *, ok: bool = True, raises: bool = False) -> None:
+        from pathlib import Path
+
+        from open_garden_planner.ui.view3d.quick3d import selftest
+
+        def run_selftest() -> selftest.SelftestResult:
+            if raises:
+                raise RuntimeError("the engine package blew up")
+            line = "  OK   Qt Quick 3D frame (stand-in)" if ok else "  FAIL Qt Quick 3D frame: stand-in"
+            return selftest.SelftestResult(ok, (line,), Path("stand-in.log"))
+
+        monkeypatch.setattr(selftest, "run_selftest", run_selftest)
+
+    def test_passes_on_a_consistent_qt_stack(self, monkeypatch) -> None:
+        self._stub_3d(monkeypatch)
         assert _run_selftest() == 0
 
     def test_returns_nonzero_on_version_mismatch(self, monkeypatch) -> None:
@@ -50,6 +73,7 @@ class TestSelfTest:
         Qt3D wheel micro must fail (exit 1), even when the imports succeed."""
         import importlib.metadata as md
 
+        self._stub_3d(monkeypatch)
         real = md.version
         monkeypatch.setattr(
             md,
@@ -57,6 +81,33 @@ class TestSelfTest:
             lambda name: "0.0.0-mismatch" if name == "PyQt6-3D-Qt6" else real(name),
         )
         assert _run_selftest() == 1
+
+    def test_a_failed_3d_frame_fails_the_selftest(self, monkeypatch, capsys) -> None:
+        """Everything else healthy, the 3D engine not: exit 1, and the reason is said."""
+        self._stub_3d(monkeypatch, ok=False)
+        assert _run_selftest() == 1
+        out = capsys.readouterr().out
+        assert "FAIL Qt Quick 3D frame: stand-in" in out and "SELFTEST: FAIL" in out
+        assert "3D self-test log: stand-in.log" in out
+
+    def test_a_crashing_3d_selftest_fails_instead_of_escaping(self, monkeypatch, capsys) -> None:
+        self._stub_3d(monkeypatch, raises=True)
+        assert _run_selftest() == 1
+        assert "FAIL Qt Quick 3D selftest" in capsys.readouterr().out
+
+    def test_the_3d_block_does_not_import_the_engine_in_main(self) -> None:
+        """The import rule: ``main.py`` names no Qt Quick module — the engine imports of
+        the self-test live in ``ui/view3d/quick3d/selftest.py``."""
+        import ast
+        from pathlib import Path
+
+        import open_garden_planner.main as ogp_main
+
+        source = Path(ogp_main.__file__).read_text(encoding="utf-8")
+        strings = {node.value for node in ast.walk(ast.parse(source))
+                   if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+        assert not {s for s in strings if s.startswith(("PyQt6.QtQuick", "PyQt6.QtQml"))}
+        assert "open_garden_planner.ui.view3d.quick3d.selftest" in source
 
 
 class TestMainUtilities:

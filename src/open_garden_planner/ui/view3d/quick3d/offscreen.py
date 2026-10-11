@@ -13,22 +13,21 @@ What it guarantees:
 - **Errors are loud.** Every Qt message of the render is recorded; a QML error or
   a shader that does not compile raises ``RenderError`` — the frame would still
   have rendered, in the wrong colours (``qt_messages.py``).
-- **It cannot hang silently.** ``RenderLog`` is flushed per line, and
-  ``watchdog`` dumps every thread's stack into it and exits the process with a
-  non-zero code when the time is up. A frozen GUI exe has no stdout and no
-  stderr; the log file is the only witness.
+- **It cannot hang silently.** ``runlog.RenderLog`` is flushed per line, and
+  ``runlog.watchdog`` (around the call, in a process that owns itself) dumps
+  every thread's stack into it and exits with a non-zero code when the time is
+  up. A frozen GUI exe has no stdout and no stderr; the log file is the only
+  witness.
 """
 
 from __future__ import annotations
 
-import contextlib
-import faulthandler
 import sys
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -46,72 +45,15 @@ from . import qt_messages
 from .adapter import Quick3DSink
 from .host import Quick3DHost
 from .look import NEUTRAL_DAY, Look
+from .runlog import RenderLog, watchdog
 from .shots import Shot
+
+__all__ = ["OffscreenFrame", "RenderError", "RenderLog", "ensure_application", "image_rgba",
+           "render_records", "watchdog"]
 
 
 class RenderError(RuntimeError):
     """An offscreen render that must not be trusted (QML or shader error, no image)."""
-
-
-class RenderLog:
-    """Timestamped, line-flushed log — to ``path`` and to stdout when there is one.
-
-    ``log(phase, key=value, …)``. With ``path=None`` it only mirrors to stdout
-    (and is silent in a windowed frozen exe, which has none).
-    """
-
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = path
-        self._started = time.perf_counter()
-        self._file: IO[str] | None = None
-        self._crash_file: IO[str] | None = None
-        if path is not None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("", encoding="utf-8")  # a fresh log, then append-only:
-            self._file = path.open("a", encoding="utf-8", buffering=1)  # faulthandler appends too
-
-    def __call__(self, phase: str, **fields: Any) -> None:
-        detail = " ".join(f"{key}={value}" for key, value in fields.items())
-        line = f"{time.perf_counter() - self._started:9.3f}s [{phase}] {detail}".rstrip()
-        if self._file is not None and not self._file.closed:
-            self._file.write(line + "\n")
-            self._file.flush()
-        if sys.stdout is not None:
-            with contextlib.suppress(Exception):  # a closed or broken stdout must not fail a render
-                print(line, flush=True)
-
-    def crash_file(self) -> IO[str] | None:
-        """Where ``faulthandler`` writes: its OWN handle on the log (never closed, so a
-        crash in teardown still leaves its stack), else stderr, else None."""
-        if self.path is not None:
-            if self._crash_file is None:
-                self._crash_file = self.path.open("a", encoding="utf-8")
-            return self._crash_file
-        return sys.stderr
-
-    def close(self) -> None:
-        if self._file is not None:
-            self._file.close()
-
-
-@contextlib.contextmanager
-def watchdog(seconds: float, log: RenderLog) -> Iterator[None]:
-    """Bound the block: after ``seconds`` every thread's stack is dumped into the
-    log and the PROCESS exits with code 1 (``faulthandler``). A hang becomes a
-    failed run with a stack, not a job that never ends."""
-    target = log.crash_file() if seconds > 0 else None
-    if target is None:
-        log("watchdog", armed=False,
-            reason="disabled" if seconds <= 0 else "no log file and no stderr to dump into")
-        yield
-        return
-    log("watchdog", armed=True, seconds=seconds,
-        note="on timeout: 'Timeout' and all thread stacks follow, exit code 1")
-    faulthandler.dump_traceback_later(seconds, exit=True, file=target)
-    try:
-        yield
-    finally:
-        faulthandler.cancel_dump_traceback_later()
 
 
 _APPLICATION: list[QGuiApplication] = []  # keeps an application we had to create alive

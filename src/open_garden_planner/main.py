@@ -157,6 +157,33 @@ def _run_selftest() -> int:
         ok = False
         print(f"  FAIL Agent API server selftest -> {exc!r}")
 
+    # --- Qt Quick 3D engine (Phase 17 L1.2, ADR-048) ----------------------
+    #
+    # The new 3D engine is loaded lazily too, so the same reasoning applies as
+    # for Qt3D above -- and importing its bindings is not enough: its scene is
+    # QML and shader FILES in the bundle, and a shader that does not compile
+    # is only a Qt warning. So this block renders: it loads Garden.qml from the
+    # bundle, draws one 160x120 frame WITHOUT showing a window (a lit box, its
+    # shadow, one swatch per material kind) and checks the pixels. It needs no
+    # GPU: the release runner renders it with Direct3D 11 on WARP. A hang is
+    # bounded by a watchdog (stack dump into the log, exit code 1).
+    #
+    # The engine imports stay inside ui/view3d/quick3d/ (the import rule); the
+    # log path is printed because a detached windowed exe has no stdout and
+    # the exit code alone cannot say WHICH check failed.
+    try:
+        from open_garden_planner.ui.view3d.quick3d.selftest import run_selftest
+
+        quick3d = run_selftest()
+        for line in quick3d.lines:
+            print(line)
+        print(f"  3D self-test log: {quick3d.log_path}")
+        if not quick3d.ok:
+            ok = False
+    except Exception as exc:  # noqa: BLE001 - report every failure, never abort
+        ok = False
+        print(f"  FAIL Qt Quick 3D selftest -> {exc!r}")
+
     print("SELFTEST:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

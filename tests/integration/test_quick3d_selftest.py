@@ -1,0 +1,108 @@
+"""The 3D self-test on a real renderer, from source (Phase 17 L1.2, #385 — gate G10).
+
+``--selftest`` is the gate every release passes through in the frozen exe, on a
+runner without a GPU. Here the same code runs from source in a subprocess with a
+real window system: it passes on the default adapter, it passes on the software
+rasteriser (Windows: WARP — the release runner's condition), and it FAILS when a
+shader is broken or when nothing can render. The frozen-exe half is the build's
+(``ogp-change-control`` §2.8, ``docs/07-deployment-view``).
+
+Judge and wiring are unit-tested without a GPU: ``tests/unit/test_quick3d_selftest.py``,
+``tests/unit/test_main_hardening.py``.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from tests.integration.quick3d_render_support import QML_SOURCE, REPO, render_env, render_tier
+
+pytestmark = render_tier
+
+# Run the package's own self-test in a child and turn its verdict into an exit code.
+_RUN = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "from open_garden_planner.ui.view3d.quick3d.selftest import run_selftest\n"
+    "result = run_selftest(Path(sys.argv[1]), qml_dir=Path(sys.argv[2]) if len(sys.argv) > 2 else None)\n"
+    "print('\\n'.join(result.lines))\n"
+    "sys.exit(0 if result.ok else 1)\n"
+)
+
+
+def _selftest(tmp_path: Path, *args: str, **env: str) -> tuple[subprocess.CompletedProcess[str], str]:
+    log = tmp_path / "selftest.log"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
+        [sys.executable, "-c", _RUN, str(log), *args], env=render_env(tmp_path, **env),
+        capture_output=True, text=True, timeout=600, cwd=REPO)
+    return proc, log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+
+
+def test_the_3d_selftest_passes_on_the_default_adapter(tmp_path: Path) -> None:
+    proc, log = _selftest(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:] + log
+    lines = proc.stdout.splitlines()
+    assert [line for line in lines if "import" in line] == [
+        "  OK   import PyQt6.QtQml", "  OK   import PyQt6.QtQuick", "  OK   import PyQt6.QtQuick3D"]
+    (frame,) = [line for line in lines if "Qt Quick 3D frame" in line]
+    assert frame.startswith("  OK   Qt Quick 3D frame 160x120 on ") and "6 materials" in frame
+    assert "[watchdog] armed=True" in log and "result=PASS" in log
+    assert "adapter=None" not in log, "the log must name the graphics device"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="WARP is Direct3D's software rasteriser")
+def test_the_3d_selftest_passes_without_a_gpu(tmp_path: Path) -> None:
+    """The release runner's condition: Direct3D 11 on WARP. Forced here with
+    ``QSG_RHI_PREFER_SOFTWARE_RENDERER=1``; the log proves which adapter rendered."""
+    proc, log = _selftest(tmp_path, QSG_RHI_PREFER_SOFTWARE_RENDERER="1")
+    assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:] + log
+    assert "adapter=Microsoft Basic Render Driver" in log
+    assert "Microsoft Basic Render Driver" in proc.stdout
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="the whole --selftest also imports Qt3D, which needs the bundled Qt runtime")
+def test_the_whole_selftest_command_passes(tmp_path: Path) -> None:
+    """``python -m open_garden_planner --selftest`` — the Qt3D block, the Agent API
+    block and the new 3D block together, as the frozen exe runs them."""
+    log = tmp_path / "selftest.log"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
+        [sys.executable, "-m", "open_garden_planner", "--selftest"],
+        env=render_env(tmp_path, OGP_SELFTEST_LOG=str(log)), capture_output=True, text=True,
+        timeout=600, cwd=REPO)
+    assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:]
+    assert "SELFTEST: PASS" in proc.stdout
+    assert "OK   Qt Quick 3D frame 160x120" in proc.stdout
+    assert f"3D self-test log: {log}" in proc.stdout and log.is_file()
+
+
+def test_the_3d_selftest_fails_on_a_shader_that_does_not_compile(tmp_path: Path) -> None:
+    """Positive control: one renamed call in ``water.frag`` — a Qt WARNING, and a frame
+    that still renders — fails the self-test and says why."""
+    qml = tmp_path / "qml"
+    shutil.copytree(QML_SOURCE, qml)
+    shader = qml / "water.frag"
+    text = shader.read_text(encoding="utf-8")
+    assert "waterLuma(LIGHT_COLOR)" in text
+    shader.write_text(text.replace("waterLuma(LIGHT_COLOR)", "waterLumaRenamed(LIGHT_COLOR)"),
+                      encoding="utf-8")
+    proc, log = _selftest(tmp_path, str(qml))
+    assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
+    (failure,) = [line for line in proc.stdout.splitlines() if "FAIL" in line]
+    assert "Qt Quick 3D render -> RenderError" in failure and "shader" in failure.lower()
+    assert "result=FAIL" in log
+
+
+def test_the_3d_selftest_fails_where_nothing_renders(tmp_path: Path) -> None:
+    """Under the offscreen platform Qt Quick falls back to the software scene graph,
+    which has no 3D: the frame comes back white, and the judge says so. The
+    self-test cannot pass by accident."""
+    proc, log = _selftest(tmp_path, QT_QPA_PLATFORM="offscreen")
+    assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
+    assert "FAIL Qt Quick 3D frame" in proc.stdout and "the box is not there" in proc.stdout
+    assert "result=FAIL" in log
