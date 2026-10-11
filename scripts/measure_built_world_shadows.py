@@ -1,0 +1,321 @@
+"""How the built world's 3D shadows compare with the 2D shadow model, kind by kind.
+
+Committed (Phase 17 L1.6, review round 1) so the table in ADR-054's builders
+addendum, §8.26.6, FR-SUN-09 and the Shadows row of ``ogp-lush-cinematic`` §1 has a
+source a reader can re-run. From the repo root:
+
+    venv/Scripts/python.exe scripts/measure_built_world_shadows.py           # the table
+    venv/Scripts/python.exe scripts/measure_built_world_shadows.py --check   # exit 1 on drift
+
+What is compared, for one item at a sun elevation:
+
+* **2D** — what the sun & shade overlay and the hours-of-sun map cast for it:
+  ``core.shadow_geometry.compute_scene_shadows`` of its footprint (for a line item
+  the STROKE strip, ``polyline_footprint``) extruded to its height. A solid prism.
+* **3D** — the ground shadow of the mesh its production builder makes: every
+  triangle projected along the sun ray onto the ground, united. What a shadow map
+  of that mesh shows, without the map's resolution.
+
+and two numbers: the 3D area divided by the 2D area, and the intersection over
+union (IoU) of the two. The truth gate "Shadows" (``ogp-lush-cinematic`` §1,
+IoU >= 0.90) is defined on a solid box caster, where both models are the same
+solid. The built world departs from the prism in four stated ways, and this table
+is what each costs:
+
+* a LINE has no thickness in the plan (its stroke is a line weight), so the 3D
+  body has a nominal section: wider than the stroke for a wall, a stone-wall or
+  hedge fence — a wider shadow, more so at a high sun;
+* a PICKET, METAL or CHAIN-LINK fence is mostly air: its 3D shadow is the bars'
+  and wires', a fraction of the solid strip the 2D model casts;
+* a HOUSE or shed has a gable roof where 2D extrudes a flat-topped prism to the
+  ridge height — less shadow square to the ridge, and eaves that overhang;
+* a POT tapers and a hedge is a leaf shell drawn in from its outline.
+
+A raised bed and a box are prisms in both: IoU 1.00. A plain panel (a line in a
+style no builder knows) is the stroke strip itself: IoU 1.00.
+
+Qt-free: numpy, pyclipper and the Qt-free ``core`` modules.
+"""
+from __future__ import annotations
+
+import math
+import sys
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+import numpy as np  # noqa: E402
+import pyclipper  # noqa: E402
+
+from open_garden_planner.core.scene3d import (  # noqa: E402
+    Material,
+    MeshPart,
+    Params,
+    Record,
+    Transform,
+)
+from open_garden_planner.core.scene3d.builders import production_registry  # noqa: E402
+from open_garden_planner.core.shadow_geometry import (  # noqa: E402
+    circle_footprint,
+    compute_scene_shadows,
+    polyline_footprint,
+    shadow_direction_scene,
+)
+
+ELEVATIONS_DEG = (15.0, 35.0, 60.0)
+#: Clipper grid: 1 unit = 0.001 cm, as ``core.shadow_geometry``.
+SCALE = 1000.0
+#: ``--check`` and the test fail when a number has moved by more than this.
+TOLERANCE = 0.05
+#: A straight 10 m line running east-west; the sun due south is square to it.
+LINE = ((-500.0, 0.0), (500.0, 0.0))
+SOUTH, EAST = 180.0, 90.0
+
+Point = tuple[float, float]
+Ring = tuple[Point, ...]
+
+
+@dataclass(frozen=True)
+class Case:
+    """One item and the sun bearing it is measured at."""
+
+    name: str
+    record: Record
+    azimuth_deg: float
+    why: str
+
+
+@dataclass(frozen=True)
+class Row:
+    """One case's result: per elevation, 3D area / 2D area and the IoU."""
+
+    name: str
+    why: str
+    ratio: tuple[float, ...]
+    iou: tuple[float, ...]
+
+
+def _rectangle(width: float, depth: float) -> Ring:
+    w, d = width / 2.0, depth / 2.0
+    return ((-w, -d), (w, -d), (w, d), (-w, d))
+
+
+def _line(kind: str, style: str | None, stroke_cm: float, height_cm: float) -> Record:
+    """A polyline record as the snapshot makes it: centre line, stroke width, and
+    the stroke strip — the 2D caster's footprint — as its footprint."""
+    strips = tuple(tuple(ring) for ring in polyline_footprint(list(LINE), stroke_cm))
+    params: dict[str, object] = {"seed": f"{kind}-{style}"}
+    if style is not None:
+        params["path_style"] = style
+    return Record(f"{kind}-{style}", kind, "polyline", strips, Transform(),
+                  Material(kind, None, (139, 69, 19, 255)), height_cm=height_cm, path=LINE,
+                  path_width_cm=stroke_cm, params=Params(params))
+
+
+def _polygon(kind: str, ring: Ring, height_cm: float, **params: object) -> Record:
+    return Record(kind, kind, "polygon", (ring,), Transform(), Material(kind, (200, 180, 140, 255)),
+                  height_cm=height_cm, params=Params({"seed": kind, **params}))
+
+
+def _circle(kind: str, radius_cm: float, height_cm: float, **params: object) -> Record:
+    ring = tuple((round(x, 7) + 0.0, round(y, 7) + 0.0)
+                 for x, y in circle_footprint(0.0, 0.0, radius_cm))
+    return Record(kind, kind, "circle", (ring,), Transform(), Material(kind, (170, 110, 70, 255)),
+                  height_cm=height_cm,
+                  params=Params({"seed": kind, "radius_cm": radius_cm, **params}))
+
+
+#: Stroke widths are the 2D style presets' (``PATH_FENCE_STYLES`` / ``OBJECT_STYLES``;
+#: ``core/object_types.py`` imports Qt, so they are repeated here and pinned by
+#: ``tests/unit/test_scene3d_shadow_agreement.py``). Heights are the type defaults.
+STROKE_CM = {"WOODEN_FENCE": 3.0, "METAL_FENCE": 2.5, "CHAIN_LINK": 2.0, "HEDGE_FENCE": 8.0,
+             "STONE_WALL": 5.0, "WALL": 4.0}
+RIDGE = ((-450.0, 0.0), (450.0, 0.0))
+
+
+def cases() -> tuple[Case, ...]:
+    porous, section = "porosity", "nominal section"
+    return (
+        Case("picket fence", _line("FENCE", "WOODEN_FENCE", STROKE_CM["WOODEN_FENCE"], 120.0),
+             SOUTH, porous),
+        Case("metal fence", _line("FENCE", "METAL_FENCE", STROKE_CM["METAL_FENCE"], 120.0),
+             SOUTH, porous),
+        Case("chain-link fence", _line("FENCE", "CHAIN_LINK", STROKE_CM["CHAIN_LINK"], 120.0),
+             SOUTH, porous),
+        Case("hedge fence", _line("FENCE", "HEDGE_FENCE", STROKE_CM["HEDGE_FENCE"], 120.0),
+             SOUTH, section),
+        Case("stone-wall fence", _line("FENCE", "STONE_WALL", STROKE_CM["STONE_WALL"], 120.0),
+             SOUTH, section),
+        Case("plain panel (unknown style)", _line("FENCE", "GRAVEL_PATH", 3.0, 120.0),
+             SOUTH, "none: the stroke strip itself"),
+        Case("wall", _line("WALL", None, STROKE_CM["WALL"], 200.0), SOUTH, section),
+        Case("house, sun square to the ridge",
+             _polygon("HOUSE", _rectangle(900.0, 540.0), 450.0, ridge=RIDGE), SOUTH,
+             "gable roof vs prism"),
+        Case("house, sun along the ridge",
+             _polygon("HOUSE", _rectangle(900.0, 540.0), 450.0, ridge=RIDGE), EAST,
+             "gable roof vs prism"),
+        Case("shed, sun square to the ridge", _polygon("GARAGE_SHED", _rectangle(400.0, 300.0), 250.0),
+             SOUTH, "gable roof vs prism"),
+        Case("raised bed", _polygon("RAISED_BED", _rectangle(300.0, 120.0), 40.0), SOUTH,
+             "none: a prism"),
+        Case("container (box)", _polygon("CONTAINER", _rectangle(80.0, 40.0), 30.0,
+                                          container_material="wood"), SOUTH, "none: a prism"),
+        Case("terracotta pot", _circle("CONTAINER_ROUND", 25.0, 30.0, container_material="terracotta"),
+             SOUTH, "taper"),
+        Case("round tub", _circle("CONTAINER_ROUND", 25.0, 30.0, container_material="plastic"),
+             SOUTH, "taper"),
+        Case("hedge (polygon)", _polygon("HEDGE_POLYGON", _rectangle(400.0, 60.0), 150.0), SOUTH,
+             "leaf shell"),
+        Case("hedge (section)", _polygon("HEDGE_SECTION", _rectangle(200.0, 50.0), 150.0), SOUTH,
+             "leaf shell"),
+    )
+
+
+def _to_grid(polygon: Sequence[Sequence[float]]) -> list[tuple[int, int]]:
+    return [(round(x * SCALE), round(y * SCALE)) for x, y in polygon]
+
+
+def _area_cm2(paths: Sequence[Sequence[tuple[int, int]]]) -> float:
+    return float(sum(pyclipper.Area(path) for path in paths)) / (SCALE * SCALE)
+
+
+def _clip(subject: Sequence[Sequence[tuple[int, int]]], clip: Sequence[Sequence[tuple[int, int]]],
+          operation: int) -> list[list[tuple[int, int]]]:
+    clipper = pyclipper.Pyclipper()
+    clipper.AddPaths(subject, pyclipper.PT_SUBJECT, True)
+    clipper.AddPaths(clip, pyclipper.PT_CLIP, True)
+    result: list[list[tuple[int, int]]] = clipper.Execute(
+        operation, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+    return result
+
+
+def mesh_shadow(parts: Sequence[MeshPart], elevation_deg: float,
+                azimuth_deg: float) -> list[list[tuple[int, int]]]:
+    """The ground shadow of the shadow-casting parts: every triangle moved along the
+    sun ray onto z = 0 (a point at height z lands ``z / tan a`` along the shadow
+    direction), united. Item-local frame; +y is north, as in the scene."""
+    reach = 1.0 / math.tan(math.radians(elevation_deg))
+    direction = shadow_direction_scene(azimuth_deg)
+    clipper = pyclipper.Pyclipper()
+    added = False
+    for part in parts:
+        mesh = part.mesh
+        if not part.casts_shadow or not mesh.vertex_count:
+            continue
+        corners = mesh.positions.astype(np.float64)[mesh.indices]  # (t, 3, 3)
+        x = corners[:, :, 0] + corners[:, :, 2] * reach * direction[0]
+        y = corners[:, :, 1] + corners[:, :, 2] * reach * direction[1]
+        grid = np.rint(np.stack([x, y], axis=2) * SCALE).astype(np.int64)
+        for triangle in grid.tolist():
+            path = [tuple(point) for point in triangle]
+            if abs(pyclipper.Area(path)) < 1.0:
+                continue  # seen edge-on from the sun
+            if not pyclipper.Orientation(path):
+                path.reverse()
+            clipper.AddPath(path, pyclipper.PT_SUBJECT, True)
+            added = True
+    if not added:
+        return []
+    union: list[list[tuple[int, int]]] = clipper.Execute(
+        pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+    return union
+
+
+def caster_shadow(record: Record, elevation_deg: float,
+                  azimuth_deg: float) -> list[list[tuple[int, int]]]:
+    """The 2D model's shadow of the record: its footprint ring(s) to its height."""
+    polygons = compute_scene_shadows(
+        [(list(ring), record.height_cm) for ring in record.footprints], elevation_deg, azimuth_deg)
+    return [_to_grid(polygon) for polygon in polygons]
+
+
+def measure(selected: Sequence[Case] | None = None) -> tuple[Row, ...]:
+    registry = production_registry()
+    rows = []
+    for case in selected if selected is not None else cases():
+        parts = registry.build(case.record)
+        ratios, ious = [], []
+        for elevation in ELEVATIONS_DEG:
+            in_3d = mesh_shadow(parts, elevation, case.azimuth_deg)
+            in_2d = caster_shadow(case.record, elevation, case.azimuth_deg)
+            both = _area_cm2(_clip(in_3d, in_2d, pyclipper.CT_INTERSECTION))
+            either = _area_cm2(_clip(in_3d, in_2d, pyclipper.CT_UNION))
+            ratios.append(_area_cm2(in_3d) / _area_cm2(in_2d))
+            ious.append(both / either)
+        rows.append(Row(case.name, case.why, tuple(ratios), tuple(ious)))
+    return tuple(rows)
+
+
+#: The table as documented (ADR-054 builders addendum, §8.26.6, ``ogp-lush-cinematic``
+#: §1): name -> (3D / 2D area, IoU), each at 15 / 35 / 60 degrees. Measured by this
+#: script on 2026-10-11; ``--check`` and the test hold the builders to it within
+#: ``TOLERANCE``. A builder change that moves a number updates this table AND the docs.
+DOCUMENTED: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {
+    "picket fence": ((0.67, 0.68, 0.70), (0.65, 0.66, 0.68)),
+    "metal fence": ((0.19, 0.21, 0.24), (0.19, 0.20, 0.24)),
+    "chain-link fence": ((0.13, 0.14, 0.19), (0.12, 0.13, 0.19)),
+    "hedge fence": ((1.04, 1.13, 1.31), (0.96, 0.89, 0.76)),
+    "stone-wall fence": ((1.06, 1.15, 1.37), (0.94, 0.87, 0.73)),
+    "plain panel (unknown style)": ((1.00, 1.00, 1.00), (1.00, 1.00, 1.00)),
+    "wall": ((1.04, 1.10, 1.24), (0.96, 0.91, 0.81)),
+    "house, sun square to the ridge": ((0.92, 0.81, 0.92), (0.85, 0.74, 0.82)),
+    "house, sun along the ridge": ((0.90, 0.99, 1.06), (0.82, 0.86, 0.88)),
+    "shed, sun square to the ridge": ((0.92, 0.93, 1.03), (0.85, 0.83, 0.88)),
+    "raised bed": ((1.00, 1.00, 1.00), (1.00, 1.00, 1.00)),
+    "container (box)": ((1.00, 0.99, 0.99), (1.00, 0.99, 0.99)),
+    "terracotta pot": ((0.83, 0.81, 0.81), (0.83, 0.81, 0.81)),
+    "round tub": ((0.91, 0.89, 0.89), (0.91, 0.89, 0.89)),
+    "hedge (polygon)": ((0.98, 0.96, 0.94), (0.97, 0.96, 0.94)),
+    "hedge (section)": ((0.97, 0.96, 0.94), (0.96, 0.95, 0.93)),
+}
+
+
+def drift(rows: Sequence[Row]) -> list[str]:
+    """What differs from ``DOCUMENTED`` by more than ``TOLERANCE``, as sentences."""
+    problems = []
+    if {row.name for row in rows} != set(DOCUMENTED):
+        problems.append(f"cases differ: measured {sorted(row.name for row in rows)}, "
+                        f"documented {sorted(DOCUMENTED)}")
+    for row in rows:
+        if row.name not in DOCUMENTED:
+            continue
+        ratio, iou = DOCUMENTED[row.name]
+        for label, measured, documented in (("area ratio", row.ratio, ratio), ("IoU", row.iou, iou)):
+            for elevation, got, want in zip(ELEVATIONS_DEG, measured, documented, strict=True):
+                if abs(got - want) > TOLERANCE:
+                    problems.append(f"{row.name} at {elevation:g} deg: {label} {got:.2f}, "
+                                    f"documented {want:.2f}")
+    return problems
+
+
+def table(rows: Sequence[Row]) -> str:
+    lines = ["| Kind | 3D area / 2D area (15 / 35 / 60 deg) | IoU (15 / 35 / 60 deg) | Why they differ |",
+             "|---|---|---|---|"]
+    for row in rows:
+        ratio = " / ".join(f"{value:.2f}" for value in row.ratio)
+        iou = " / ".join(f"{value:.2f}" for value in row.iou)
+        lines.append(f"| {row.name} | {ratio} | {iou} | {row.why} |")
+    return "\n".join(lines)
+
+
+def main(argv: Sequence[str]) -> int:
+    rows = measure()
+    print(table(rows))
+    if "--python" in argv:
+        for row in rows:
+            ratio = ", ".join(f"{value:.2f}" for value in row.ratio)
+            iou = ", ".join(f"{value:.2f}" for value in row.iou)
+            print(f'    "{row.name}": (({ratio}), ({iou})),')
+    if "--check" in argv:
+        problems = drift(rows)
+        for problem in problems:
+            print("DRIFT:", problem)
+        return 1 if problems else 0
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
