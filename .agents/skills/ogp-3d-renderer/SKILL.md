@@ -213,7 +213,7 @@ are §12, and rows it added to the tables below say "(L1.2)".
 |---|---|---|
 | Frame signal | `frameSwapped` | **none** — count `quickWindow().afterRendering` |
 | Request a frame | `view.update()` | **`quickWindow().update()`**; `widget.update()` only re-composites the old texture |
-| "Is it on screen?" | `isExposed()` | `quickWindow().isExposed()` is **always False** (offscreen) → `isVisible()` |
+| "Is it on screen?" | `isExposed()` — and "can it give a frame?" needs `isSceneGraphInitialized()` and `isVisible()` as well (the predicate bullets below) | `quickWindow().isExposed()` is **always False** (offscreen) → `isVisible()` |
 | Screenshot | `grabWindow()` | `grabFramebuffer()` |
 
 - **A `QQuickWidget` in a window moves the whole top-level window onto RHI composition.**
@@ -370,9 +370,15 @@ topmost triangle under a vertical ray over every pickable mesh, merged per item)
   (ogp-change-control §2.8 is its home).
 - **L1.2:** the production package adds its five QML and shader files (a data loop in
   `installer/ogp.spec`) and eleven modules: **+79,008 bytes** (650,815,562 vs 650,736,554,
-  same machine, same day). `--selftest` now also RENDERS one hidden 160 × 120 frame from the
-  bundle's QML and shaders and judges its pixels (§12); frozen exe 3.0–4.1 s on an RTX 4070
-  and 3.0–3.1 s on WARP for the whole command (6.1–7.2 s on a busy machine).
+  same machine, same day, same shell). `--selftest` now also RENDERS one hidden 160 × 120
+  frame from the bundle's QML and shaders and judges its pixels (§12); frozen exe 2.9–4.1 s on
+  an RTX 4070 and 2.9–3.3 s on WARP for the whole command (6.1–7.2 s on a busy machine).
+- **A local bundle's content depends on PATH (L1.2, review round 1).** Built from Git Bash it
+  carries `libcrypto-3-x64.dll` and `libssl-3-x64.dll` (5,531,448 bytes) — byte for byte the
+  files in Git for Windows' `mingw64/bin`, which is on that shell's PATH; built from a plain
+  PowerShell process it does not (650,815,562 vs 645,326,627 bytes, 2,450 vs 2,448 files).
+  Both exes pass the smoke and `--selftest`. Compare bundle sizes only between builds made
+  from the same shell.
 
 ## 10. CPU-side baselines (not engine)
 
@@ -497,10 +503,11 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   `OGP_SELFTEST_LOG`. The whole `--selftest` runs under ONE watchdog (300 s, the reason in the
   log before the exit) — `faulthandler` has a single timer per process, so never nest
   `runlog.watchdog`. Never run `--selftest` under `QT_QPA_PLATFORM=offscreen`.
-- **Numbers** (RTX 4070 / WARP, 2026-10-11): open of `bench_small.ogp` (99 records, 87 Models)
-  to the first finished readback 1.11 s / 0.17 s; edit → finished readback median 7.1 ms
-  (p95 17.9) / 23.2 ms; pick 0.01–0.2 ms; shadow IoU vs the analytic 2D shadow 0.976–0.978
-  at 35° and 480 × 360; engine import 17 ms on top of 17 ms for `core/scene3d`.
+- **Numbers** (RTX 4070 / WARP, 2026-10-11): open of `bench_small.ogp` (98 records, 87 Models)
+  to the first finished readback 0.40–1.11 s / 0.17–0.39 s (the device creation varies);
+  edit → finished readback median 7.1–7.5 ms (p95 18.0) / 23.2–26.5 ms; pick 0.01–0.2 ms;
+  shadow IoU vs the analytic 2D shadow 0.976–0.978 at 35° and 480 × 360; engine import 17 ms
+  on top of 17 ms for `core/scene3d`. The render tier: 79 tests, 114 s / 112 s.
 - **Not measured:** on Linux everything added in review round 1 — the lifecycle matrix above
   all (the first three render files ran once on GitHub's ubuntu runner: 47 passed, 4 skipped
   by design, 1 failed on the API name); `frozen-selftest.yml` on any runner; an integrated

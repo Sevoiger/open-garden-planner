@@ -130,11 +130,14 @@ class TestReleaseWorkflow:
     def test_neither_the_step_nor_the_job_can_run_for_six_hours(self) -> None:
         """Review P1-4 (1): the step and the job are bounded — and so is the exe itself
         (``main.SELFTEST_WATCHDOG_S``), well inside the step's limit."""
-        from open_garden_planner.main import SELFTEST_WATCHDOG_S
-
+        # read, not imported: main.py imports QtWebEngine, which refuses to load once a
+        # QApplication exists — an import here would pass or fail by test order
+        source = (REPO / "src" / "open_garden_planner" / "main.py").read_text(encoding="utf-8")
+        watchdog = re.search(r"^SELFTEST_WATCHDOG_S = (\d+(?:\.\d+)?)$", source, re.MULTILINE)
+        assert watchdog is not None, "main.py no longer declares SELFTEST_WATCHDOG_S"
         step = self._step()
         assert "        timeout-minutes: 10\n" in step
-        assert SELFTEST_WATCHDOG_S <= 0.5 * 10 * 60, "the in-exe watchdog must fire first"
+        assert float(watchdog.group(1)) <= 0.5 * 10 * 60, "the in-exe watchdog must fire first"
         job = RELEASE[RELEASE.index("\n  release:\n"):RELEASE.index("\n    steps:\n")]
         assert re.search(r"\n    timeout-minutes: \d+\n", job), "the release job has no time limit"
 

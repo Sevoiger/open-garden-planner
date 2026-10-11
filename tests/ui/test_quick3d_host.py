@@ -387,6 +387,37 @@ class TestSinkCallsReachTheQmlScene:
         (part,) = host.engine_parts()  # no event loop ran: the destroyed Model still exists in Qt
         assert (part.item_id, part.visible, part.has_geometry) == ("kept", False, True)
 
+    def test_a_destroyed_model_is_deleted_not_only_retired(self, host) -> None:
+        """Destruction, counted in the QML scene itself. A Model that was only RETIRED —
+        flagged, unpickable, never deleted — is invisible to ``engine_parts()`` (which
+        skips retired Models by design) and to every pixel test (its geometry dies with
+        the Python handle, so it draws nothing): a leak nothing else would see. Found by
+        a mutant that survived the render tier."""
+        from PyQt6.QtCore import QCoreApplication, QEvent, QObject
+
+        from open_garden_planner.core.scene3d import engine_pose
+
+        def models_alive() -> int:
+            """Every part Model object in the scene, retired ones included."""
+            return sum(1 for child in host._root.findChildren(QObject)  # noqa: SLF001
+                       if child.metaObject().indexOfProperty("retired") >= 0)
+
+        def deliver_deferred_deletes() -> None:
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+        buffers = engine_buffers(prism_mesh([SQUARE], 10.0))
+        handles = [host.create_part(PartSpec(str(k), 0, "vc", buffers, True),
+                                    engine_pose(Transform()), RED) for k in range(3)]
+        assert models_alive() == 3
+        host.destroy_part(handles[0])
+        host.destroy_part(handles[1])
+        assert len(host.engine_parts()) == 1, "gone from the listing at once"
+        deliver_deferred_deletes()
+        assert models_alive() == 1, "and gone from the scene once Qt delivered the delete"
+        host.clear()
+        deliver_deferred_deletes()
+        assert models_alive() == 0
+
     def test_the_host_owns_every_model_and_clear_destroys_them_all(self, host) -> None:
         """One owner of Model lifetime (review P1-3): also parts no sink knows about."""
         from open_garden_planner.core.scene3d import engine_pose

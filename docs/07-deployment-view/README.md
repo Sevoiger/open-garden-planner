@@ -296,7 +296,11 @@ there): run `--selftest` with a real platform.
 **Bundle size (L1.2).** The Qt Quick 3D runtime already shipped; the engine package adds its
 five QML and shader files and eleven Python modules: 650,815,562 bytes against 650,736,554 for
 the base commit — **+79,008 bytes (+0.08 MB)**, both built on the same machine on 2026-10-11
-from `git archive` exports (PyInstaller 6.18, Python 3.12.9, no UPX). Spec trimming — the
+from `git archive` exports (PyInstaller 6.18, Python 3.12.9, no UPX), from the same shell. That
+last condition matters: a local bundle's content depends on PATH — built from Git Bash it
+carries Git for Windows' `libcrypto-3-x64.dll` and `libssl-3-x64.dll` (5.5 MB), built from a
+plain PowerShell process it does not (645,326,627 bytes for the head of review round 1). Both
+pass the smoke and `--selftest`. Spec trimming — the
 dormant spike's files and `PyQt6.QtQuickWidgets` — happens when the spike retires (L1.10).
 
 ### Release Workflow (`release.yml`)

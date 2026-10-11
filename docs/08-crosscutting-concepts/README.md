@@ -670,8 +670,10 @@ OGP_RENDER3D=1 QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1 \
 Without `OGP_RENDER3D=1` the tier skips with a reason; on Linux it also needs `DISPLAY`. The
 helper (`quick3d_render_support.render_env`) gives the DRIVER the real platform and this
 checkout's code — the pytest process itself stays offscreen. CI runs the tier in the `render3d`
-job (§7.4), which is not a required check. Measured 2026-10-11 on the dev box: 51 render-tier
-tests in about 50 s on an RTX 4070, the driver's eight scenarios in 22 s on WARP.
+job (§7.4), which is not a required check. Measured 2026-10-11 on the dev box: the tier's 79
+tests take 114 s on an RTX 4070 and 112 s on WARP (where the two hardware-only budgets skip);
+the lifecycle matrix, one process per call order, is 37–49 s of it. The driver's ten
+scenarios alone render in 30 s on the GPU and 27 s on WARP.
 
 **The tier below it.** Not everything about the engine needs pixels. Under the offscreen
 platform `Garden.qml` still loads and Models are still created, posed, tinted, destroyed and
