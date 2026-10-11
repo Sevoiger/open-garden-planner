@@ -354,6 +354,22 @@ class TestTubes:
         assert float(dots.min()) > 0.4  # 3 sides: a facet is 60° from its corner normals
         assert float(mesh.positions[:, 2].max()) == 100.0
 
+    def test_it_is_the_spike_s_tubes(self) -> None:
+        """Drift guard for the one primitive ported unchanged: the same frustums as
+        ``spike_q3d/meshes.tubes`` (until L1.10 deletes the spike)."""
+        from open_garden_planner.spike_q3d import meshes as spike
+
+        starts = np.array([[0.0, 0.0, 0.0], [10.0, 5.0, 2.0], [3.0, 3.0, 3.0]], np.float32)
+        ends = np.array([[0.0, 0.0, 100.0], [60.0, -5.0, 40.0], [3.0, 80.0, 3.0]], np.float32)
+        radius_start = np.array([1.0, 2.0, 0.5], np.float32)
+        radius_end = np.array([0.5, 2.0, 0.5], np.float32)
+        ours = tubes(starts, ends, radius_start, radius_end, RED, sides=6)
+        theirs = spike.tubes(starts, ends, radius_start, radius_end, "#ff0000", 6)
+        assert np.allclose(ours.positions, theirs.positions, atol=1e-5)
+        assert np.allclose(ours.normals, theirs.normals, atol=1e-6)
+        assert np.allclose(ours.colors, theirs.colors, atol=1e-6)
+        assert np.array_equal(ours.indices.reshape(-1), theirs.indices)
+
     def test_six_sides_are_smooth(self) -> None:
         mesh = tubes([(0, 0, 0)], [(100, 0, 0)], 3.0, 3.0)
         mesh.validate()
