@@ -13,7 +13,8 @@ The pipeline::
 Modules: ``record`` (the contract: ``Record``, ``Transform``, ``Material``,
 ``Params``, three signatures), ``scene_diff`` (the diff), ``frame`` (scene ↔ engine, local ↔
 scene), ``mesh``, ``sink``, ``build`` (builder seam + default prism builder),
-``sync``, ``color``. Nothing here imports Qt (pinned by an AST scan); numpy and
+``sync``, ``color``, ``interleave`` (a mesh as the bytes an engine uploads —
+L1.2). Nothing here imports Qt (pinned by an AST scan); numpy and
 the standard library only.
 
 The production builders are the sub-package ``builders`` (L1.6: buildings,
@@ -66,6 +67,15 @@ from .frame import (
     scene_to_engine_points,
     scene_to_engine_vectors,
     sun_direction_scene,
+)
+from .interleave import (
+    COLOR_OFFSET,
+    NORMAL_OFFSET,
+    POSITION_OFFSET,
+    UV_OFFSET,
+    VERTEX_STRIDE,
+    EngineBuffers,
+    engine_buffers,
 )
 from .legacy import (
     DECAL_LIFT_CM,
@@ -165,6 +175,7 @@ __all__ = [
     "ANGLE_DECIMALS",
     "BENT_NORMAL_KINDS",
     "BUILT_HEIGHT_TOLERANCE",
+    "COLOR_OFFSET",
     "DECAL_LIFT_CM",
     "DECAL_MAX_LIFT_CM",
     "DECAL_STACK_STEP_CM",
@@ -177,6 +188,7 @@ __all__ = [
     "LENGTH_DECIMALS",
     "MATERIAL_FIELDS",
     "MATERIAL_KINDS",
+    "NORMAL_OFFSET",
     "PARAM_CONTAINER_MATERIAL",
     "PARAM_OUTLINE_RESOLVED",
     "PARAM_PATH_STYLE",
@@ -187,6 +199,7 @@ __all__ = [
     "PARAM_SPECIES_KEY",
     "PARAM_SPECIES_NAME",
     "PARAM_SPRITE_SPECIES",
+    "POSITION_OFFSET",
     "SCENE_TO_ENGINE",
     "SHAPES",
     "SHAPE_CIRCLE",
@@ -197,10 +210,13 @@ __all__ = [
     "SIGNATURE_FIELDS",
     "TRANSFORM_FIELDS",
     "UNSIGNED_FIELDS",
+    "UV_OFFSET",
+    "VERTEX_STRIDE",
     "BuildFailure",
     "Builder",
     "BuilderContractError",
     "BuilderRegistry",
+    "EngineBuffers",
     "EnginePose",
     "EngineSink",
     "GroundSpec",
@@ -233,6 +249,7 @@ __all__ = [
     "cw",
     "default_builder",
     "diff",
+    "engine_buffers",
     "engine_model_matrix",
     "engine_pose",
     "engine_to_scene_points",

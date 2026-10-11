@@ -1788,3 +1788,305 @@ The point moved by 1.8 cm in x AND y. Nothing about the plant's geometry had cha
 **Fix**: the helper (`OverlayWatch.settled`) waits for the recompute count, THEN for a `scene.changed` delivered since that recompute, then for the debounce the echo starts. `tests/integration/test_scene3d_base_stacking.py::TestTheOverlaysOwnEcho` holds both halves of the race still by calling `recompute_now()` directly — the echo is then certainly undelivered — once without waiting for it (exactly one extra recompute) and once through the helper (none). With the old helper the second test fails three times out of three.
 
 **Lesson**: "the timer is idle" is not "nothing is pending". When a system answers its own action with a signal, wait for that signal. And a race is turned into a regression by taking the event loop out of the step that hides it: run that step synchronously, and the bad interleaving is the only one there is.
+## Case study: a broken shader failed the render, and the run's own summary counted 0 Qt errors (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: the positive control "a broken shader fails the render" did what it should: the
+render raised `RenderError` and the driver exited with its error code. The same run's summary
+(`result.json`, `qt_messages.counts.error`) said 0. The frame's own report listed the shader
+errors; the run's report had never heard of them.
+
+**Theories entertained**: none worth the name, and no instrumentation was added — say so
+rather than dress it up. The cause was found by reading the two places that install a Qt
+message handler. The entry is here because the SYMPTOM is the kind this skill exists for (a
+count that contradicts an exception raised a line earlier), and because the tempting first
+theory — "the summary is written before the error arrives" — would have sent the search into
+the order of events, where nothing was wrong.
+
+**Key evidence**: the two recorders themselves. `render_records` creates a `QtMessages`
+recorder for ONE frame and installs it with `qInstallMessageHandler`; the render driver had
+installed one for the WHOLE run with the same call. The inner one held the errors, the outer
+one held none.
+
+**Root cause**: `qInstallMessageHandler` keeps a single handler per process. Installing the
+inner recorder REPLACED the outer one for the duration of the frame — and a shader's compile
+messages arrive during exactly that frame.
+
+**Fix**: `qt_messages.install()` forwards every message to the handler it replaced and returns
+it; `uninstall(previous)` puts that one back. Recorders nest. Inside the running app the same
+chaining keeps the app's own handler hearing everything during an offscreen render. Pinned by
+`tests/unit/test_quick3d_pure.py::test_nested_recorders_both_hear_an_error` and
+`::test_a_recorder_listens_in_and_then_steps_aside`.
+
+**Lesson**: **a "one per process" API turns a second listener into a replacement** — when a
+count is 0 where an error was just raised, compare the listeners before suspecting the order of
+events. The same shape came back twice in the same story: `faulthandler` has ONE
+`dump_traceback_later` timer (a watchdog inside a watchdog cancels the outer one), and
+`QLoggingCategory.setFilterRules` holds ONE rule set (a nested block must not switch the outer
+block's rule off).
+
+## Case study: a grab that returned a perfect image, and a process that was dead a moment later (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: found by an independent reviewer, not by the suite (the render tier was green):
+`host.show(); host.grab()` returned a correct frame, and the process ended a moment later with
+exit code 3, `0xC0000005` or `0xC0000374` — in whatever ran next. 5 of 5. No Python exception
+anywhere, so no `pytest.raises` could ever have seen it.
+
+**Wrong theories** — all mine, and three of them were written into the code or the docs:
+
+1. *"Visible" is the condition for a frame.* `grab()` guarded on `isVisible()`. Between
+   `show()` and the first expose a window is visible and has no scene graph.
+2. *A never-shown host that took its one frame can be shown afterwards.* The error message for
+   the second hidden grab recommended exactly that. It is the second killing order.
+3. *The L0 run's "access violation in `grab()`" belongs to the sleeping-display family.*
+   Stated in the risk log without evidence.
+4. *(While building the positive control)* "the two orders no longer kill" — the control
+   survived 6 of 6.
+
+**Key evidence**: Qt's own predicates, printed after every step, ONE CALL ORDER PER CHILD
+PROCESS (a death is then an exit code instead of the end of the test run):
+
+```
+                         visible exposed scene-graph
+new                         F       F       F
+show()                      T       F       F      <- grab here: good image, dead process
+one processEvents()         T       T       T
+hide()                      F       T       T      <- still "exposed" until the loop ran
+hide() + events             F       F       T
+minimised                   T       F       T
+```
+
+For theory 4: the control returned from its function, its host went out of scope, and Python
+destroyed the `QQuickView` BEFORE the event loop ran again. With the host kept alive across the
+next second of event loop, the same script died 3 of 3 on the GPU and 3 of 3 on WARP.
+
+**Root cause**: `grabWindow()` on a window that has no scene graph renders one throwaway frame
+and tears the scene graph down again. For a window that is never shown, that is the one
+offscreen frame it has. For a window that is shown — or is shown afterwards — the window's own
+first expose then meets what the grab tore down. The condition is
+`isSceneGraphInitialized()`; `isVisible()` is neither necessary nor sufficient.
+
+**Fix**: `Quick3DHost` is a state machine over Qt's predicates (new / starting / live / hidden
+/ spent / closed); every call answers for the state or raises `HostStateError`; `wait_ready()`
+pumps to the first expose and reports. The tests run one call order per child process and take
+"the last line is `END`" as survival; two controls do the forbidden thing on the raw view and
+must die (`tests/integration/test_quick3d_lifecycle.py`). *This fix was itself incomplete —
+three predicates were too few, and the tests judged the host by its own word: the case study
+"a state machine that was right on Windows" below.*
+
+**Lesson**: **when the failure is a dead process, the evidence channel must be another
+process** — and a control must keep alive the thing whose death it demonstrates. And print the
+engine's own predicates before choosing one by its name.
+
+## Case study: a `hide()` that never returned — a Python Qt message handler, Qt's render thread and the GIL (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: found by the second independent review, not by the suite. The engine host had a
+"watch" for a shown view's errors: a recorder installed with `qInstallMessageHandler` for the
+host's lifetime. With it, `host.hide()` — and so `close()` — sometimes never came back; with a
+debug category switched on, 5 of 5. And the self-test's watchdog, armed for exactly this kind
+of hang, wrote its stack dump and **the process stayed alive**.
+
+**Wrong theories** — the first is in the round-1 code and docs, in my words:
+
+1. *"The recorder takes a lock and never raises, so it is safe to call from Qt's render
+   thread."* Thread-safe is not the question. The question is which lock the CALLER holds.
+2. *"`faulthandler.dump_traceback_later(exit=True)` needs no GIL, so the exit is certain."* The
+   dump needs no GIL. The exit is `_exit`, which on Windows is `ExitProcess`.
+3. *(while fixing)* "Then end the process from a native timer thread." `ExitProcess` from
+   there hangs the same way; `TerminateProcess` on itself works, with an exit code that is
+   not ours.
+4. *(in my own fix)* "A supervising process that waits on the process and on a release
+   event." It would have killed a process that had FINISHED its block (below).
+
+**Key evidence**: the watchdog's own dump of the control that reproduces it — two threads,
+and the one that is NOT in Python is the telling one:
+
+```
+Timeout (0:00:04)!
+Thread 0x00001dd0 (most recent call first):
+  <no Python frame>                         <- Qt's render thread: about to call the Python
+                                               handler, waiting for the GIL — no frame yet
+Thread 0x0000c45c (most recent call first):
+  File "…/ui/view3d/quick3d/host.py", line 550 in hide     <- the GUI thread: inside
+  File "…/quick3d_lifecycle_child.py", line 771 in deadlock   QWindow.hide(), holding the GIL,
+  …                                                           waiting for the render thread
+```
+
+and one line of Qt's own log, read from stderr (`QT_FORCE_STDERR_LOGGING=1`,
+`QT_LOGGING_RULES=qt.scenegraph.general.debug=true`): `threaded render loop` — on Direct3D 11
+(GPU and WARP) and on xcb + OpenGL. For theory 2: the process list, a minute after the dump.
+For theory 4: a child whose block is `pass`, sleeping six seconds after it — exit code 1.
+
+**Root cause**: Qt Quick renders a shown window on its own thread. Qt's message handler is
+process-wide; PyQt calls a Python handler under the GIL on whichever thread emits. The GUI
+thread holds the GIL while it is inside a Python-called Qt function; `hide()` waits there for
+the render thread; the render thread emits a message and waits for the GIL. Then: `_exit` =
+`ExitProcess` runs DLL detach code that waits for those threads. And the supervisor: a block
+that ends before the supervising process has started signals and DESTROYS the release event;
+the late supervisor found no event, waited on the process alone, and terminated it at the
+deadline.
+
+**Fix**: no message handler beside a shown window, ever — the watch is gone; a shown host
+reports what Qt delivers on the GUI thread (`Quick3DHost.health()`: the QML engine's
+`warnings`, the window's `sceneGraphError`, a frame count, the latter two connected queued).
+A recorder only around rendering on the calling thread, and it counts messages that arrive
+elsewhere. The watchdog got a second line of defence — another process that calls
+`TerminateProcess(handle, 1)` — for which a missing release event means "released", and which
+identifies its process by pid and creation time. Pinned by controls that must fail the old
+way: `test_a_python_message_handler_beside_a_shown_window_deadlocks`,
+`test_the_supervised_watchdog_ends_the_deadlock`,
+`test_the_supervisor_leaves_a_process_alone_whose_block_finished_first`.
+
+**Lesson**: **the GIL is a lock, and a callback from a foreign thread acquires it** — before
+handing Python to another thread's callback, ask what the thread that holds the GIL may be
+waiting for. And a watchdog is only as good as its exit: test it against the hang it is for,
+not against `time.sleep`. And every "wait for A or B" needs an answer for "B is already
+gone".
+
+## Case study: a state machine that was right on Windows, and a judge that asked the suspect (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: two findings of the same review. (1) The Linux CI job was red: a call order the
+lifecycle matrix PINNED AS SAFE — `show(); hide(); grab()` — segfaulted one event-loop pass
+after a correct grab. (2) In a splitter pane dragged shut the host said "live" and handed out
+a blank frame, a bogus pick and a projection of (0, 0) — and the matrix was green.
+
+**Wrong theories**:
+
+1. *"No scene graph and not visible means never shown."* Measured on Direct3D 11, where that
+   order survives. On xcb the window has a platform window by then, and that is what counts.
+2. *"Scene graph, visible and exposed means a frame can be had."* A collapsed pane is all
+   three and 0 px wide.
+3. *"The matrix checks every answer."* It checked every answer against the state THE HOST
+   reported. A host that reports the wrong state passes.
+
+**Key evidence**: Qt's facts printed per step — this time with the geometry, and with the
+platform-window event:
+
+```
+                              surface visible exposed scene-graph  window   root item
+show(); hide() (no event)        1       F       F       F        320x240   320x240   <- "new"? xcb says no
+pane collapsed                   1       T       T       T          0x500   447x500   <- visible AND exposed
+pane reopened (no event)         1       T       T       T        447x500     0x500   <- the scene lags one pass
+1 px wide                        1       T       T       T          1x500     1x500   <- draws no 3D at all
+```
+
+and the same matrix run in a container with the CI job's stack: the four killing orders die 5
+of 5 on xcb.
+
+**Root cause**: three predicates named after what they sound like, chosen on one platform; and
+a test that derived its expectation from the output of the code under test.
+
+**Fix**: the state is a pure function of nine facts (ten since the case study after next;
+`quick3d/lifecycle.py`): "new" = Qt never
+created a platform window (the `PlatformSurface` event; PyQt6 does not bind
+`QWindow.handle()`); "live" also needs an area of 2 × 2 px and a root item that has the
+window's size. The judge has a table of what a TRUTHFUL host must answer per step and checks
+the pixels; a control hands it the raw view's blank frames and requires it to reject them.
+
+**Lesson**: **a measurement belongs to the platform it was made on** — "harmless, also
+measured" needs the platform's name next to it, and the other platform's control. And **an
+oracle must not be computed from the answer it judges**: if the expected value comes out of
+the code under test, the test can only fail when the code disagrees with itself.
+
+## Case study: "ready" — and the next grab was an image of the old size: a resize that arrives inside the call (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: after `showFullScreen()` — of a standalone view, or of the main window that embeds
+it — `host.wait_ready()` returned True and the very next `host.grab()` raised `EngineError: …
+Qt rendered a 320 x 240 px image for a 5120 x 1440 window`. 20 of 20 in the review, on the GPU
+and on WARP. The suite was green on three platforms; the lifecycle matrix had no full-screen
+row, and `application.py` calls `showFullScreen()` on the window the 3D workspace is embedded in.
+
+**Wrong theories**:
+
+1. *"After every resize the QML root item lags the window by one event-loop pass — so a root
+   item of the window's size means the host has caught up."* The rule of the fix before, by then
+   written into nine documents. True for a splitter move; false here.
+2. *"Then wait for `frameSwapped` after the resize."* That signal is queued from the render
+   thread: one emitted BEFORE the resize can arrive after it. (And with the display asleep a
+   window presents one frame and then none.)
+3. *"`wait_ready()` taking a second after a resize is my wait loop."* It was ONE
+   `processEvents()` pass, inside Qt's own expose handling.
+
+**Key evidence**: an event filter on the view. Per call: what Qt delivered INSIDE the call,
+then what each later pass delivered — with the size of a raw `grabWindow()` beside it. (The
+`state=` column is the fixed host's; before the fix the first line read `live`.)
+
+```
+showFullScreen: sync events [Resize(5120x1440) Move State] window 5120x1440 root 5120x1440 state=starting raw grab 320x240
+     pass 1: [Expose(exposed)] window 5120x1440 root 5120x1440 state=live raw grab 5120x1440
+showNormal: sync events [Resize(320x240) Move Expose(exposed)] window 320x240 root 320x240 state=live raw grab 320x240
+showMaximized: sync events [-] window 5120x1369 root 320x240 state=starting raw grab 320x240
+     pass 1: [Resize(5120x1369) Move State Expose(exposed)] window 5120x1369 root 5120x1369 state=live raw grab 5120x1369
+window.showMaximized: sync events [-] window 447x500 root 447x500 state=live raw grab 447x500
+     pass 1: [Resize(2557x1369) Move Expose(exposed)] window 2557x1369 root 2557x1369 state=live raw grab 2557x1369
+```
+
+(The last pair is the embedded view while its main window is maximised: until the layout ran
+NOTHING has changed for it, and it is — truthfully — live at its old size.)
+
+**Root cause**: `showFullScreen()` delivers its resize synchronously — window and root item
+agree before the call returns — while `grabWindow()` on a shown window renders into the swap
+chain as it is, and Qt resizes the swap chain only when it handles the NEXT expose. The state
+machine had no fact for "the render target has the window's size", so the host read "live" in
+between. In every line above the grab is wrong exactly between a `Resize` event and the next
+`Expose` event of the exposed window.
+
+**Fix**: that fact, latched from the window's own events by the filter that already latched "a
+platform window was created": `Resize` clears it, the next `Expose` of the exposed window sets
+it, and "live" needs it. `wait_ready()` delivers what is pending once for ANY visible host
+before it answers. A grab whose image has another size after all raises `HostStateError` — a
+state, like every other "not now" — instead of `EngineError`. And the contract moved into ONE
+docstring (`quick3d/lifecycle.py`); the nine copies had drifted apart.
+
+**Lesson**: **"one event-loop pass" is not a unit.** Before writing a rule about "after a
+resize", print what each CALL delivers before it returns — per call, per platform. And when a
+hand-written matrix of orders has missed the failing order twice, **add an order nobody wrote**:
+a seeded random walk whose judge knows only what Qt said about the window (it found nothing
+more, which is the point of having it).
+
+## Case study: a healthy block was terminated four seconds in — and another block's log said why (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom** (the review's measurement, never seen in a test): two supervised watchdog blocks in
+one process. Block A, 1 s budget, an empty body. Then block B, 60 s budget, healthy. The process
+was terminated 4.1 s into B — and the line that said why, "block A was still alive …", stood in
+A's log.
+
+**Wrong theory**: *"A missing release event means the block is over — so a supervisor that
+comes up late can never act."* That was the fix for the trap before (a block that finishes
+before its supervisor is up). True, and not enough: A's supervisor did not find a MISSING
+event. It found B's.
+
+**Key evidence**: the sequence against the previous head — the process ends with exit code 1
+after 4.7 s, and this is block A's log:
+
+```
+    0.005s [watchdog] armed=True seconds=1.0 what=block A supervisor=process 78652, ends this one 4 s from now …
+          [supervisor] fired=True what=block A reason=block A was still alive 4 s after its watchdog was armed — … terminated from outside, exit code 1
+```
+
+and after the fix — two supervising processes, each released by its own block, both gone with
+exit code 0:
+
+```
+    0.009s [watchdog] armed=True seconds=1.0 what=block A supervisor=process 66160, ends this one 4 s from now …
+    0.159s [watchdog] released=True what=block A supervisor_exit=0
+    0.169s [watchdog] armed=True seconds=60.0 what=block B supervisor=process 80200, ends this one 63 s from now …
+   20.189s [watchdog] released=True what=block B supervisor_exit=0
+```
+
+and the pin for it failing (the process ends with exit code 1 instead of 0) as soon as the
+nonce is taken out of the event's name again.
+
+**Root cause**: the event was named after the PROCESS — pid and creation time — which the next
+block of the same process has too. "An event that exists is mine" was never true.
+
+**Fix**: a random nonce per block in the event's name, handed to the supervising process on its
+command line; one armed watchdog per process at a time (a second raises); and a supervisor that
+checks whom it works for before it opens anything — validated arguments, its target must be its
+own parent process, in the frozen build running the same image. And the gate's own blind spot:
+a supervisor that could not be started used to be logged as `supervisor=none` while the
+self-test passed; on Windows the self-test now FAILS without one.
+
+**Lesson**: **something that may kill names its target by what nobody else can have** — a random
+name it was handed — never by what the next user will have too. And **a safety net is a
+subsystem**: if nothing checks that it started, the day it cannot start looks like every other
+day until it is needed.
