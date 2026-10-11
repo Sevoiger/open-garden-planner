@@ -60,6 +60,7 @@ from open_garden_planner.core.plant_art import (
     resolve_sprite,
 )
 from open_garden_planner.core.scene3d import (
+    MAX_LENGTH_CM,
     PARAM_PLANT_CATEGORY,
     PARAM_RADIUS_CM,
     PARAM_SEED,
@@ -89,6 +90,7 @@ from open_garden_planner.core.scene3d.builders.plants import (
     ARCHETYPE_BUILDERS,
     BARK_SRGB,
     FOLIAGE_TIP_WEIGHT,
+    MIN_SIZE_CM,
     PART_FOLIAGE,
     PART_PLACEHOLDER,
     PART_WOOD,
@@ -239,6 +241,22 @@ def mesh_reach(parts: tuple[MeshPart, ...], radius: float) -> float:
     """The farthest vertex of a built plant from its axis, in canopy radii."""
     return max(float(np.hypot(p.mesh.positions[:, 0], p.mesh.positions[:, 1]).max())
                for p in parts) / radius
+
+
+def wood_reach(parts: tuple[MeshPart, ...], radius: float) -> float:
+    """The farthest WOOD vertex from the axis, in canopy radii; 0.0 without wood."""
+    return max((float(np.hypot(p.mesh.positions[:, 0], p.mesh.positions[:, 1]).max()) / radius
+                for p in parts if p.name == PART_WOOD), default=0.0)
+
+
+#: The invariant the plant's reach rests on (``REACH_MAX``): FOLIAGE IS THE
+#: OUTERMOST PART. The fit's last step holds the foliage; wood is not reined in
+#: (a moved vertex would leave a flat-shaded face with a normal that is not its
+#: winding normal) and does not need to be — a trunk is built within 1.45 × 0.22
+#: = 0.32 canopy radii of the axis, and the fit's xy scale (at most 1.11
+#: measured) would have to exceed 3.4 to carry it to the bound. Held here for
+#: every recipe at every proportion step; the third review measured ≤ 0.32.
+WOOD_REACH_MAX = 0.5
 
 
 def bbox(parts: tuple[MeshPart, ...]) -> tuple[np.ndarray, np.ndarray]:
@@ -402,10 +420,12 @@ MASS_REACHES = {
 
 def assert_the_box_is_the_data(parts: tuple[MeshPart, ...], height: float, radius: float,
                                report: FitReport) -> None:
-    """What holds BY CONSTRUCTION for every plant (``_fit``), to float32: the top
+    """What holds for every plant, to float32. By construction (``_fit``): the top
     is the height (gate ± 3 %), it stands on the ground, the widest span is the
-    canopy diameter (gate ± 10 %) and is centred on the plan position — and no
-    vertex is further than ``REACH_MAX`` canopy radii from the axis (gate: 1.10)."""
+    canopy diameter (gate ± 10 %) and is centred on the plan position, and no
+    FOLIAGE vertex is further than ``REACH_MAX`` canopy radii from the axis.
+    By the trunk builders' invariant (``WOOD_REACH_MAX``): wood stays far inside
+    that — so no vertex of the plant is beyond the bound (gate: 1.10)."""
     low, high = bbox(parts)
     assert high[2] == pytest.approx(height, rel=1e-5)
     assert low[2] == pytest.approx(0.0, abs=1e-4 * height)
@@ -416,6 +436,7 @@ def assert_the_box_is_the_data(parts: tuple[MeshPart, ...], height: float, radiu
     assert abs(high[widest] + low[widest]) <= slack
     if report.reined_share == 0.0:          # the fit's last step moved nothing: the other axis too
         assert abs(high[1 - widest] + low[1 - widest]) <= slack
+    assert wood_reach(parts, radius) <= WOOD_REACH_MAX     # foliage is the outermost part
     assert mesh_reach(parts, radius) <= REACH_MAX * (1.0 + 1e-6) < 1.10
     assert 1.0 - 1e-9 <= report.reach <= REACH_MAX * (1.0 + 1e-12)
 
@@ -533,6 +554,9 @@ def test_the_plants_the_review_found_outside_the_circle_end_inside_it() -> None:
         assert report.reined_share > 0.0
         assert report.reach == pytest.approx(REACH_MAX, rel=1e-12)
         assert mesh_reach(parts, radius) == pytest.approx(REACH_MAX, rel=1e-6)
+        for item in parts:                  # … and what it left is a sound mesh
+            item.validate()
+            assert np.isfinite(item.mesh.positions).all() and np.isfinite(item.mesh.normals).all()
     name, seed, height, radius = REVIEWED_MASS
     parts = build_silhouette(SPECIES[name], seed, height, radius)
     z95, _z99 = height_quantiles(part(parts, PART_FOLIAGE).mesh, (0.95, 0.99))
@@ -1523,6 +1547,66 @@ class TestShapeCache:
         assert (info.hits, info.misses, info.shapes, info.bytes) == (0, 0, 0, 0)
         assert self.ticks(16) == [16, 0, 0, 0]               # as from a fresh start
 
+    def built_by(self, plants_asked: tuple) -> int:
+        """Shapes BUILT by one tick that asks for exactly these plants."""
+        before = shape_cache_info().misses
+        for plant in plants_asked:
+            build_silhouette(*plant)
+        return shape_cache_info().misses - before
+
+    def test_clearing_also_clears_the_request_log(self, cap_of) -> None:
+        """What the workspace calls when a plan is closed. After it NOTHING counts
+        as "asked for before": a plan shown before the call is a new plan after it
+        and takes its place in ONE cold tick. Were the log kept, its shapes would
+        be "asked before and dropped" and come back in two (the test below)."""
+        cap_of(16)
+        closed, shown = self.SAME_SIZE[16:32], self.SAME_SIZE[:16]
+        assert self.built_by(closed) == 16
+        clear_shape_cache()
+        assert [self.built_by(shown), self.built_by(shown)] == [16, 0]
+        assert [self.built_by(closed), self.built_by(closed)] == [16, 0]
+        assert len(plants._SHAPES._asked) == 32               # only what was asked since
+
+    def test_coming_back_to_shapes_that_were_dropped_costs_two_cold_ticks(self, cap_of) -> None:
+        """The price of having no cliff, AT the cap only: a shape that was dropped
+        is built on the tick it is asked for again and NOT held (everything held
+        was asked for more recently), then built once more and held. A new plan
+        costs one cold tick; going back to a plan whose shapes were dropped, two."""
+        cap_of(16)
+        first, second = self.SAME_SIZE[:16], self.SAME_SIZE[16:32]
+        assert [self.built_by(first) for _ in range(3)] == [16, 0, 0]
+        assert [self.built_by(second) for _ in range(3)] == [16, 0, 0]      # new: one cold tick
+        assert [self.built_by(first) for _ in range(4)] == [16, 16, 0, 0]   # back: two
+
+    def test_two_plans_shown_in_turn_at_the_cap_keep_one_warm(self, cap_of) -> None:
+        """Alternating tick by tick between two plans that each fill the cap: the
+        one that came second stays, the other is rebuilt every time — half of all
+        builds, not all of them (plain least-recently-used) and not none."""
+        cap_of(16)
+        first, second = self.SAME_SIZE[:16], self.SAME_SIZE[16:32]
+        turns = [self.built_by(first if n % 2 == 0 else second) for n in range(10)]
+        assert turns == [16, 16, 16, 0, 16, 0, 16, 0, 16, 0]
+
+    def test_a_backward_scrub_at_the_cap_costs_twice_the_forward_one(self, cap_of) -> None:
+        """One plant crosses a proportion step per tick, the cache exactly full.
+        Forward every step is new: one build a tick. Backward every step was seen
+        and dropped: two builds each — one on its tick, one on the next (so the
+        last plant's second build is not in the count): 2n − 1 against n. The
+        third review measured 79 against 40 over 40 ticks."""
+        cap_of(16)
+        grown = dict.fromkeys(range(16), 0)
+
+        def scrub(plant: int, direction: int) -> int:
+            grown[plant] += direction
+            return self.built_by(tuple(
+                (recipe, seed, height * PROPORTION_STEP ** (2 * grown[n]), radius)
+                for n, (recipe, seed, height, radius) in enumerate(self.SAME_SIZE[:16])))
+
+        assert self.built_by(self.SAME_SIZE[:16]) == 16
+        forward = [scrub(n % 16, +1) for n in range(12)]
+        backward = [scrub((11 - n) % 16, -1) for n in range(12)]
+        assert (sum(forward), sum(backward)) == (12, 23)
+
     def test_a_builder_reads_only_what_the_cache_is_keyed_on(self) -> None:
         """The cache's key and the recipe a builder is handed are one thing (``_form``):
         a builder cannot read a recipe key the key does not hold — it would be handed
@@ -1546,11 +1630,55 @@ class TestShapeCache:
         for sprite in ALL_SPRITES:
             assert build_silhouette(recipe_of(sprite), 1, 100.0, 50.0)
 
-    @pytest.mark.parametrize(("height", "radius"), [(0.0, 50.0), (-1.0, 50.0), (100.0, 0.0),
-                                                    (float("nan"), 50.0), (100.0, float("inf"))])
-    def test_a_size_that_is_no_size_is_refused(self, height: float, radius: float) -> None:
-        with pytest.raises(ValueError, match="positive height and radius"):
-            build_silhouette(SPECIES["tomato"], 1, height, radius)
+    @pytest.mark.parametrize(("height", "radius"), [
+        (0.0, 50.0), (-1.0, 50.0), (100.0, 0.0), (float("nan"), 50.0), (100.0, float("inf")),
+        (100.0, float("nan")), (float("inf"), 50.0), (100.0, -50.0),
+        # the three the third review found: a mesh of NaNs with two RuntimeWarnings, an
+        # OverflowError out of the logarithm, a MeshError — each a ValueError now, as promised
+        (1e300, 1e300), (1e6, 1e-310), (5e-324, 1.0),
+        # just outside the range on each side
+        (2.0 * MAX_LENGTH_CM, 50.0), (50.0, 1.0000001 * MAX_LENGTH_CM),
+        (0.99 * MIN_SIZE_CM, 50.0), (50.0, 0.5 * MIN_SIZE_CM)])
+    def test_a_size_outside_the_range_is_refused(self, height: float, radius: float) -> None:
+        """``build_silhouette`` builds between ``MIN_SIZE_CM`` (a micrometre) and
+        ``MAX_LENGTH_CM`` (the longest length a record can hold) and refuses
+        anything else with the ``ValueError`` its docstring promises — before a
+        number that float32 cannot hold reaches the arithmetic, and with no
+        warning on the way (the test turns warnings into errors)."""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for call in (build_silhouette, fit_report, shape_bytes):
+                with pytest.raises(ValueError, match=r"between 0\.0001 and 1e\+06 cm"):
+                    call(SPECIES["tomato"], 1, height, radius)
+        assert (MIN_SIZE_CM, MAX_LENGTH_CM) == (1e-4, 1e6)
+
+    @pytest.mark.parametrize("archetype", sorted(ARCHETYPES))
+    def test_the_edges_of_the_range_build_an_exact_plant(self, archetype: str) -> None:
+        """Inside the range every archetype builds — the two sizes the review named
+        (1e6 × 0.01 cm, 0.0001 × 1e6 cm) and the four corners: a valid, finite
+        mesh, top = height, widest span = canopy diameter, nothing beyond the
+        bound. This is what the directly constructed meshes (``_Arrays.scaled``,
+        which does not go through ``Mesh.from_arrays``) rely on: inside the range
+        nothing leaves float32."""
+        import warnings
+
+        low, high = MIN_SIZE_CM, MAX_LENGTH_CM
+        recipe = {"a": archetype}
+        for height, radius in ((high, 0.01), (low, high), (high, low), (low, low), (high, high),
+                               (1.0, high), (high, 150.0)):
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")                # no overflow, no invalid value
+                parts = build_silhouette(recipe, 7, height, radius)
+                report = fit_report(recipe, 7, height, radius)
+            for item in parts:
+                item.validate()
+                for name in ("positions", "normals", "colors", "uvs"):
+                    assert np.isfinite(getattr(item.mesh, name)).all(), (height, radius, name)
+            assert_the_box_is_the_data(parts, height, radius, report)
+            assert triangles(parts) <= TRIANGLE_BUDGET
+        clear_shape_cache()
 
 
 # ── a growing plant stays the plant it was ───────────────────────────────────
@@ -1692,16 +1820,45 @@ class TestFitReport:
                                    rtol=1e-12)
         assert float(np.hypot(flat[:, 0], flat[:, 1]).max()) <= REACH_MAX * 50.0 * (1.0 + 1e-12)
 
-    def test_whatever_it_is_handed_no_vertex_ends_beyond_the_bound(self) -> None:
+    def test_the_last_step_leaves_wood_alone(self) -> None:
+        """Wood is not reined in. A trunk's faces are flat-shaded: moving one vertex
+        of a face would leave it with a stored normal that is not its winding
+        normal — a face lit from the wrong side (review round 3: reined, a hand-made
+        wood triangle beyond the bound came out with a flipped flat face). Here a
+        wood triangle reaches the very corner of the plant's box, 1.41 radii out:
+        after the fit it is where the scale put it, its normal is still its
+        winding normal, and the report says where it is."""
+        foliage = self._plant([[0, 0, 0], [40, 0, 0], [0, 40, 0], [-40, 0, 0], [0, -40, 0],
+                               [0, 0, 100], [20, 0, 40], [0, 10, 13]])
+        corner = np.array([[0.0, 0.0, 0.0], [60.0, 60.0, 0.0], [0.0, 0.0, 100.0]])
+        normal = np.cross(corner[1] - corner[0], corner[2] - corner[0])
+        normal /= np.linalg.norm(normal)
+        wood = plants._geo(corner.copy(), np.tile(normal, (3, 1)), np.array([[0, 1, 2]]),
+                           0.0, 1.0, 0.0, 0.0)
+        report = plants._fit(wood, foliage, 100.0, 50.0)
+        scale = 50.0 / 60.0                                          # the wood is the widest part
+        np.testing.assert_allclose(wood.pos, corner * [scale, scale, 1.0], rtol=1e-12, atol=1e-12)
+        assert report.xy_scale == pytest.approx(scale)
+        assert report.reined_share == 0.0                            # nothing was moved …
+        assert report.reach == pytest.approx(math.sqrt(2.0))         # … and the report sees the wood
+        assert float(np.hypot(foliage.pos[:, 0], foliage.pos[:, 1]).max()) <= REACH_MAX * 50.0
+        trunk = Mesh.from_arrays(wood.pos, wood.nrm, np.ones((3, 4)), np.zeros((3, 2)), wood.tri)
+        trunk.validate()                                             # flat face = winding normal
+        dots, flat = normal_vs_winding(trunk)
+        assert flat.all() and float(dots.min()) > 0.999999
+
+    def test_whatever_it_is_handed_no_foliage_ends_beyond_the_bound(self) -> None:
         """BY CONSTRUCTION, not by the builders' good behaviour: 500 hostile point
         clouds — far too wide, lopsided, with vertices in the very corners of their
         box, with and without wood standing off-centre — and after the fit no
-        vertex is further than ``REACH_MAX`` canopy radii from the axis, the top is
-        the height, the base is the ground and the widest half-span is the canopy
-        radius, exactly. The report's ``reach`` is where the plant ends."""
+        FOLIAGE vertex is further than ``REACH_MAX`` canopy radii from the axis,
+        the top is the height, the base is the ground and the widest half-span is
+        the canopy radius, exactly. Wood is left where the scale puts it (the
+        test above), and the report's ``reach`` is where the plant ends — wood
+        included, so hostile wood shows in it."""
         rng = np.random.Generator(np.random.PCG64(11))
         tri = np.array([[0, 1, 2], [3, 4, 5]])
-        reined_plants = 0
+        reined_plants = beyond_with_wood = 0
         for n in range(500):
             height, radius = float(10.0 ** rng.uniform(0.0, 3.5)), float(10.0 ** rng.uniform(0.0, 3.0))
             count = int(rng.integers(6, 60))
@@ -1717,12 +1874,18 @@ class TestFitReport:
                 stem = rng.uniform(-0.6, 0.6, (6, 2)) * wide
                 wood = plants._geo(np.column_stack([stem, rng.uniform(0.0, 1.0, 6) * height]),
                                    np.tile([1.0, 0.0, 0.0], (6, 1)), tri, 0.0, 1.0, 0.0, 0.0)
+            stem_before = None if wood is None else wood.pos.copy()
             report = plants._fit(wood, foliage, height, radius)
             pos = foliage.pos if wood is None else np.concatenate([foliage.pos, wood.pos])
             far = float(np.hypot(pos[:, 0], pos[:, 1]).max()) / radius
+            leaves_far = float(np.hypot(foliage.pos[:, 0], foliage.pos[:, 1]).max()) / radius
             where = f"cloud {n}: {report}"
-            assert far <= REACH_MAX * (1.0 + 1e-12), where
+            assert leaves_far <= REACH_MAX * (1.0 + 1e-12), where
             assert report.reach == pytest.approx(far, rel=1e-12), where
+            if wood is not None and stem_before is not None:         # scaled about the axis, no more
+                np.testing.assert_allclose(wood.pos[:, :2], stem_before[:, :2] * report.xy_scale,
+                                           rtol=1e-12, atol=1e-9 * radius)
+                beyond_with_wood += far > REACH_MAX * (1.0 + 1e-9)
             assert float(pos[:, 2].max()) == pytest.approx(height, rel=1e-12), where
             assert float(pos[:, 2].min()) == pytest.approx(0.0, abs=1e-9 * height), where
             assert float(np.abs(pos[:, :2]).max()) == pytest.approx(radius, rel=1e-12), where
@@ -1734,6 +1897,7 @@ class TestFitReport:
                 np.testing.assert_allclose(np.linalg.norm(part_.nrm, axis=1), 1.0, atol=1e-9)
             reined_plants += report.reined_share > 0.0
         assert reined_plants > 150                                   # the input WAS hostile
+        assert beyond_with_wood > 0          # … and hostile wood does end beyond: it is not the fit's
 
     def test_it_reports_a_plant_set_down_and_one_moved_to_its_centre(self) -> None:
         hovering = self._plant([[0, 0, 20], [50, 0, 20], [0, 50, 20], [-50, 0, 20], [0, -50, 20],

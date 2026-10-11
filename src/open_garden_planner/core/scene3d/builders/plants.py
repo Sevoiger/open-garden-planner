@@ -19,8 +19,9 @@ rule), and how big it is by the plan:
   turning them — a plant is never built too tall and squashed back. ``_fit``
   then normalises the last millimetre (the bounding box IS the data: top = the
   height, widest span = the canopy diameter, base at z = 0), ends by holding
-  every vertex within ``REACH_MAX`` canopy radii of the axis — so where a plant
-  ends is bounded by construction, whatever a builder hands over — and REPORTS
+  every foliage vertex within ``REACH_MAX`` canopy radii of the axis — so where
+  a plant's foliage ends is bounded by construction, whatever a builder hands
+  over (wood: by the trunk builders' radii) — and REPORTS
   what it had to repair (``FitReport``, ``fit_report``), so tests hold the
   builders to it. The 2D tables' tuning numbers (``leaf_scale``, ``n_out``) are
   read here too: retuning a sprite moves the 3D leaf count and size of that
@@ -76,6 +77,7 @@ from open_garden_planner.core.plant_art import (
     resolve_sprite,
 )
 from open_garden_planner.core.scene3d import (
+    MAX_LENGTH_CM,
     PARAM_PLANT_CATEGORY,
     PARAM_RADIUS_CM,
     PARAM_SEED,
@@ -94,14 +96,24 @@ Ints: TypeAlias = NDArray[np.int64]
 
 #: Triangles one plant may have — every archetype, every size (the story's gate).
 TRIANGLE_BUDGET: Final = 2000
-#: No vertex of a plant is further from its axis than this many canopy radii — by
-#: construction: putting whatever is further out onto that circle is the LAST
-#: thing ``_fit`` does (``_rein_in``), for any builder and any dice. The story's
-#: gate is 1.10 ("no part more than 10 % outside the canopy circle"); the bound
-#: sits a step inside it, so float32 and the scale to the plan's size cannot
-#: carry a vertex across the gate. It is rarely needed — the builders build
-#: inside the circle and the fit's scale moves a leaf tip a few percent at most:
-#: ``FitReport.reined_share`` says when it was.
+#: No FOLIAGE vertex of a plant is further from its axis than this many canopy
+#: radii — by construction: putting whatever foliage is further out onto that
+#: circle is the LAST thing ``_fit`` does (``_rein_in``), for any builder and
+#: any dice. The story's gate is 1.10 ("no part more than 10 % outside the
+#: canopy circle"); the bound sits a step inside it, so float32 and the scale to
+#: the plan's size cannot carry a vertex across the gate. It is rarely needed —
+#: the builders build inside the circle and the fit's scale moves a leaf tip a
+#: few percent at most: ``FitReport.reined_share`` says when it was.
+#:
+#: That this bounds the whole PLANT rests on one invariant, which is not the
+#: fit's but the trunk builders': **foliage is the outermost part.** Wood is a
+#: trunk on the plan position, built no wider than 1.45 × 0.22 = 0.32 canopy
+#: radii (``_canopy``; a conifer's 0.28, a palm's 0.24), and it is NOT reined in:
+#: moving a vertex of a flat-shaded trunk would leave its face with a normal
+#: that is no longer its winding normal. The fit's xy scale would have to
+#: exceed 3.4 to carry a trunk to the bound (the largest measured: 1.11); the
+#: tests hold wood inside ``0.5`` canopy radii for every recipe at every
+#: proportion step.
 REACH_MAX: Final = 1.09
 
 #: ``MeshPart.name`` values.
@@ -1249,9 +1261,12 @@ class FitReport:
     - ``centre_shift``: how far the foliage was moved to centre its bounding
       box on the plan position, in canopy radii;
     - ``reach``: where the plant ENDS — its farthest vertex from the axis after
-      the fit's last step, in canopy radii. Never more than ``REACH_MAX``: that
-      is what the last step is. ``reined_share``: the share of all vertices
-      that step had to move (0.0 for nearly every plant);
+      the fit's last step, foliage or wood, in canopy radii. For the foliage
+      never more than ``REACH_MAX``: that is what the last step is. For the
+      plant, wherever foliage is its outermost part (the trunk builders'
+      invariant — see ``REACH_MAX``); wood is measured here and not moved.
+      ``reined_share``: the share of all vertices that step had to move (0.0
+      for nearly every plant);
     - ``stretch``: z over xy of the scale from the proportion the shape was
       built at to the plan's (``PROPORTION_STEP``) — 1.0 for the fit itself.
     """
@@ -1310,12 +1325,20 @@ def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> FitR
     Each of those steps undoes a little of the one before — centring moves a
     vertex that was pulled onto the circle off it again, and the scale carries it
     further — so none of them says where a vertex ENDS. The last step does:
-    whatever is further than ``REACH_MAX`` canopy radii from the axis is put
-    onto that circle (``_rein_in``). Nothing follows it, so the bound holds by
-    construction, for any builder output; and because a vertex keeps its larger
-    coordinate, the widest span is still exactly the canopy diameter and is still
-    centred. (Along the OTHER axis the box can lose a hair if the vertex reined
-    in was that axis's extreme; the report says when anything was moved.)
+    whatever FOLIAGE is further than ``REACH_MAX`` canopy radii from the axis is
+    put onto that circle (``_rein_in``). Nothing follows it, so for foliage the
+    bound holds by construction, for any builder output; and because a vertex
+    keeps its larger coordinate, the widest span is still exactly the canopy
+    diameter and is still centred. (Along the OTHER axis the box can lose a hair
+    if the vertex reined in was that axis's extreme; the report says when
+    anything was moved.)
+
+    Wood is not reined in: its faces are flat-shaded, and a moved vertex would
+    leave a face whose stored normal is no longer its winding normal (foliage
+    normals are bent by design and held to no such rule). It does not need to
+    be — a trunk is built within a third of the canopy radius of the axis
+    (``REACH_MAX``'s comment) — and the report's ``reach`` measures it all the
+    same, so a trunk builder that broke that would be seen.
 
     Never lift a plant to make its lowest vertex zero: one leaf dipping 9 cm
     under a lavender's base lifted the whole cushion 9 cm into the air, and
@@ -1349,8 +1372,8 @@ def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> FitR
         nrm = part.nrm / scale[None, :]
         length = np.linalg.norm(nrm, axis=1, keepdims=True)
         part.nrm = np.where(length > 1e-12, nrm / np.maximum(length, 1e-12), _UP[None, :])
-    # ── the LAST step: nothing follows it, so this is where every vertex ends ──
-    reined = sum(_rein_in(part.pos, REACH_MAX * radius) for part in parts)
+    # ── the LAST step: nothing follows it, so this is where every foliage vertex ends ──
+    reined = _rein_in(foliage.pos, REACH_MAX * radius)
     reach = max(float(np.hypot(part.pos[:, 0], part.pos[:, 1]).max()) for part in parts) / radius
     return FitReport(
         built_top=built_top, z_scale=float(scale[2]), xy_scale=float(scale[0]),
@@ -1419,6 +1442,15 @@ PROPORTION_STEP: Final = 1.05
 #: about 3,500 average plants and 1,900 of the largest trees; the larger bench
 #: plan (320 plants) holds 24 MB. What happens AT the cap: ``_ShapeCache``.
 SHAPE_CACHE_BYTES: Final = 256 * 1024 * 1024
+#: The smallest height and canopy radius a plant is built at: a micrometre. The
+#: largest is the longest length a record can hold, ``core.scene3d.MAX_LENGTH_CM``
+#: (10 km). ``build_silhouette`` refuses a size outside that range with a
+#: ``ValueError`` — outside it the arithmetic leaves float32 (a height of 1e300
+#: gave a mesh of NaNs with only a RuntimeWarning; a radius of 1e-310 an
+#: ``OverflowError`` from the logarithm; a height of 5e-324 a ``MeshError``).
+#: Inside it every archetype builds an exact, valid plant, the four corners
+#: included (pinned).
+MIN_SIZE_CM: Final = 1e-4
 _UNIT_RADIUS: Final = 100.0
 #: The recipe keys an archetype builder may read; ``pal`` and ``a`` are read by
 #: ``_form`` itself. A builder that reads another key fails (``_ReadKeys``).
@@ -1488,6 +1520,23 @@ class _Arrays:
         return _Arrays(mesh.positions, mesh.normals, mesh.colors, mesh.uvs, mesh.indices)
 
     def scaled(self, scale: NDArray[np.float32], stretch: float) -> Mesh:
+        """This part at the plan's size: positions × ``scale``, normals re-bent when the
+        scale is not uniform; colours, uvs and indices are the remembered arrays themselves.
+
+        The mesh is constructed DIRECTLY, not through ``Mesh.from_arrays`` — that would
+        copy the three shared arrays for every plant on every tick. So what
+        ``from_arrays`` guarantees for its meshes is established here by other means,
+        and this is the one place that says which:
+
+        - *sealed* (read-only for good): the remembered arrays came out of
+          ``from_arrays`` (``of``); the two computed here go through ``_sealed``;
+        - *finite*: the remembered arrays passed ``from_arrays``' check, and the
+          factors are bounded — ``_shape_and_scale`` refuses a size outside
+          ``MIN_SIZE_CM`` … ``MAX_LENGTH_CM``, inside which a remembered coordinate
+          is at most about 1e12 and a scaled one at most 1.09e6, both far inside
+          float32;
+        - *dtype and shape*: float32 × float32, and ``_sealed`` keeps the shape.
+        """
         positions = _sealed(self.positions * scale[None, :])
         normals = self.normals
         if abs(stretch - 1.0) > 1e-9:                             # not a uniform scale
@@ -1533,6 +1582,10 @@ class ShapeCacheInfo(NamedTuple):
 _ShapeKey: TypeAlias = tuple[_Form, int, int]              # (form, seed, proportion step)
 #: How many keys the cache remembers the last request of (held or not): what lets
 #: it tell a shape of the plan in use from a shape nobody asks for any more.
+#: This request log is NOT part of ``SHAPE_CACHE_BYTES``: it is bounded by this
+#: count, and full it weighs 15–21 MB on top of the cap (measured: 14.6 MB with
+#: one recipe form shared by every key, 234 bytes a key; the third review read
+#: 20.8 MB). ``clear_shape_cache`` empties it together with the shapes.
 _ASKED_KEPT: Final = 1 << 16
 
 
@@ -1561,9 +1614,28 @@ class _ShapeCache:
     beyond the cap. Shapes of a plan no longer shown are the least recently
     asked and give way first. A shape larger than the cap is never held.
 
-    Thread-safe: the bookkeeping is under a lock; ``build`` runs outside it, so
-    two threads asking for one new shape at once may both build it (to the same
-    result).
+    What the second rule COSTS, at the cap only (below it nothing is ever
+    dropped) — a shape that was dropped comes back in TWO builds, not one: on
+    the tick it is asked for again everything held is still "in use", so it is
+    built and not held; on the next tick it is built again and takes its place.
+    Measured, and pinned by tests with these numbers:
+
+    - going back to a plan whose shapes were dropped (64 shapes at a cap of
+      64): 64, 64, 0 builds per tick — two cold ticks, where a new plan costs
+      one;
+    - a scrub BACKWARD at the cap costs twice the forward one: one plant
+      crossing a proportion step per tick, 40 ticks: 40 builds forward (each
+      step is new), 79 back (each was seen and dropped);
+    - two plans shown in turn, tick by tick, each filling the cap: the one that
+      came first is rebuilt every time, the other never — half of all builds.
+
+    Call ``clear_shape_cache()`` when a plan is closed and none of this arises
+    for the next one.
+
+    Threads: the bookkeeping is under a lock and ``build`` runs outside it, so
+    two threads asking for one new shape at once would both build it (to the
+    same result). That is by reading. The cache is used from the GUI thread
+    only and has NOT been tested under threads.
     """
 
     def __init__(self, max_bytes: int) -> None:
@@ -1647,9 +1719,11 @@ def _build_shape(form: _Form, seed: int, step: int) -> _BuiltShape:
 
 def _shape_and_scale(recipe: Mapping[str, Any], seed: int, height_cm: float, radius_cm: float
                      ) -> tuple[_BuiltShape, NDArray[np.float32], float]:
-    if not (math.isfinite(height_cm) and math.isfinite(radius_cm) and height_cm > 0.0
-            and radius_cm > 0.0):
-        raise ValueError(f"a plant needs a positive height and radius, got {height_cm!r} × {radius_cm!r}")
+    # one chained comparison each: a NaN fails it, as zero, a negative and an infinity do
+    if not (MIN_SIZE_CM <= height_cm <= MAX_LENGTH_CM and MIN_SIZE_CM <= radius_cm <= MAX_LENGTH_CM):
+        raise ValueError(
+            f"a plant needs a height and a canopy radius between {MIN_SIZE_CM:g} and "
+            f"{MAX_LENGTH_CM:g} cm, got {height_cm!r} × {radius_cm!r}")
     form, own, step = _form(recipe), int(seed), _proportion_step(height_cm, radius_cm)
     shape = _SHAPES.get((form, own, step), lambda: _build_shape(form, own, step))
     across = radius_cm / _UNIT_RADIUS
@@ -1665,13 +1739,15 @@ def build_silhouette(recipe: Mapping[str, Any], seed: int, height_cm: float,
     (recipe form, seed, proportion step) and remembered (``PROPORTION_STEP``,
     ``SHAPE_CACHE_BYTES``), then scaled to the exact size — remembering changes
     how long a call takes, never what it returns. The remembered arrays are
-    read-only and shared between the meshes scaled from them. Safe to call from
-    any thread (the cache guards itself; two threads asking for one new shape at
-    once may both build it, to the same result) — used from the GUI thread only
-    so far, and not tested under threads.
+    read-only and shared between the meshes scaled from them. Threads: the cache
+    keeps its bookkeeping under a lock, but this is called from the GUI thread
+    only and has NOT been tested under threads — treat it as GUI-thread code
+    until it has.
 
     ``ValueError`` for an archetype without a builder — never another
-    archetype's shape — and for a size that is not positive and finite.
+    archetype's shape — and for a height or canopy radius outside
+    ``MIN_SIZE_CM`` … ``MAX_LENGTH_CM`` (which a NaN, zero, a negative number
+    and an infinity all are).
     """
     shape, scale, stretch = _shape_and_scale(recipe, seed, height_cm, radius_cm)
     parts = [MeshPart(shape.foliage.scaled(scale, stretch), "foliage", casts_shadow=True,
@@ -1706,8 +1782,16 @@ def shape_cache_info() -> ShapeCacheInfo:
 
 
 def clear_shape_cache() -> None:
-    """Forget every remembered shape and reset the counters (a cold start: for a
-    measurement, and for a test that must see a shape BUILT twice)."""
+    """Forget EVERYTHING the shape cache holds: every remembered shape, the
+    request log (when each shape was last asked for — so nothing asked before
+    the call counts as "asked before" after it) and the counters. The cap stays
+    as it is.
+
+    Call it when a plan is closed: the memory is given back at once, and the
+    next plan starts as from a fresh process (without it the old plan's shapes
+    go only when the cap binds, and coming back to them costs two cold ticks —
+    ``_ShapeCache``). Also the cold start a measurement needs, and what a test
+    that must see a shape BUILT twice calls in between."""
     _SHAPES.clear()
 
 
@@ -1809,6 +1893,11 @@ def build_plant(record: Record) -> tuple[MeshPart, ...]:
       the canopy radius ``params["radius_cm"]``, seeded from ``params["seed"]``;
     - a plant without a height: ``placeholder_parts``;
     - anything else (not a plant kind, or no canopy circle): ``default_builder``.
+
+    A record cannot hold a length beyond ``MAX_LENGTH_CM``; a height or canopy
+    radius under ``MIN_SIZE_CM`` (a micrometre) raises ``ValueError`` as
+    ``build_silhouette`` does — ``SceneSync`` contains it: that one item has no
+    solid and is listed in ``failures``.
 
     Reads only the record's geometry part (``core.scene3d.build``).
     """
