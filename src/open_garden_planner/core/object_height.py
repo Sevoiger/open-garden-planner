@@ -122,6 +122,15 @@ _SOIL_PARENT_TYPE_NAMES = frozenset(
 #: height (``soil_surface_cm``).
 SOIL_DROP_CM = 2.0
 
+#: A parent taller than this has no soil to stand on. It is the 3D scene
+#: contract's ``core/scene3d/record.MAX_LENGTH_CM`` (10 km) — mirrored, because
+#: this module serves the 2D app and does not import the 3D package, and pinned
+#: equal by a test. A parent beyond it gets no scene record, hence no solid; a
+#: plant must not stand where that solid would have been (it would float over
+#: nothing, or be refused with its parent). The same answer an infinite height
+#: always got.
+MAX_PARENT_HEIGHT_CM = 1e6
+
 # height_source() return values (stable identifiers, not user-visible text).
 SOURCE_CUSTOM = "custom"
 SOURCE_CONTAINER = "container"
@@ -224,7 +233,9 @@ def effective_height_cm(
 
 def soil_surface_cm(object_type: Any, height_cm: float | None) -> float:
     """Height above ground of the soil in a soil parent of that type, ``height_cm``
-    tall. 0.0 without a usable height (an in-ground bed).
+    tall. 0.0 without a usable height: none at all (an in-ground bed), not
+    positive, not finite, or beyond ``MAX_PARENT_HEIGHT_CM`` (a parent the 3D
+    scene cannot hold is not there).
 
     Two kinds of soil parent, because the plan says two different things:
 
@@ -239,11 +250,13 @@ def soil_surface_cm(object_type: Any, height_cm: float | None) -> float:
 
     The 3D bed builders put their soil here and plants stand here
     (``standing_base_cm``), so for the bed builders a plant is on its soil by
-    construction. A bed whose outline is not one plain ring is built as a plain
+    construction. A bed whose outline is not one plain outline (several rings, a
+    hole, or an outline the scene contract had to resolve) is built as a plain
     block up to its rim instead (``scene3d.builders.common.plain_block``); its
     plants stand ``SOIL_DROP_CM`` inside that block.
     """
-    if height_cm is None or not math.isfinite(height_cm) or height_cm <= 0.0:
+    if (height_cm is None or not math.isfinite(height_cm) or height_cm <= 0.0
+            or height_cm > MAX_PARENT_HEIGHT_CM):
         return 0.0
     if _type_name(object_type) in _CONTAINER_TYPE_NAMES:
         return height_cm

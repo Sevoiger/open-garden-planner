@@ -241,6 +241,36 @@ class TestTheOneRule:
         garden.bed.metadata[METADATA_KEY] = float("inf")
         assert garden.base() == 0.0 and garden.caster_base() == 0.0
 
+    @pytest.mark.parametrize("height", [float("inf"), 1e6 + 1.0, 1e6 + 2.0, 1e6 + 3.0, 2e6])
+    def test_a_parent_the_scene_cannot_hold_is_not_there(self, canvas: CanvasView,
+                                                        height: float) -> None:
+        """Merge of 9944012: the contract holds no length beyond 10 km (``MAX_LENGTH_CM``),
+        so a bed taller than that gets no record and is reported. Its plant is NOT taken
+        down with it, and does not float where the bed's soil would be: it stands on the
+        ground, in the record and in the 2D caster alike — a parent without a solid is
+        not there (the rule of a hidden parent). Measured before this rule: a bed of
+        10 km + 1 cm had no record and its plant a base of 999,999 cm; a bed of 20 km
+        had no record and neither had its plant."""
+        from open_garden_planner.core.scene3d import MAX_LENGTH_CM
+        from open_garden_planner.ui.view3d.snapshot import SkippedItem, SkipReason
+
+        garden = Garden(canvas)
+        garden.bed.metadata[METADATA_KEY] = height
+        skipped: list[SkippedItem] = []
+        records = snapshot_records(garden.scene, skipped=skipped)
+        assert [(item.item_id, item.reason) for item in skipped] == [
+            (garden.bed_id, SkipReason.OUT_OF_RANGE)]            # the bed: reported, no record
+        assert list(records) == [garden.plant_id]                 # the plant: still there …
+        assert records[garden.plant_id].transform.base_cm == 0.0  # … on the ground
+        assert garden.caster_base() == 0.0                        # and it casts from the ground
+
+        garden.bed.metadata[METADATA_KEY] = MAX_LENGTH_CM         # the tallest the scene holds
+        skipped.clear()
+        records = snapshot_records(garden.scene, skipped=skipped)
+        assert skipped == [] and records[garden.bed_id].height_cm == MAX_LENGTH_CM
+        assert records[garden.plant_id].transform.base_cm == MAX_LENGTH_CM - SOIL_DROP_CM
+        assert garden.caster_base() == MAX_LENGTH_CM - SOIL_DROP_CM
+
     def test_the_base_follows_the_date_of_the_height_resolver(self, canvas: CanvasView) -> None:
         """``at_date`` reaches the parent's height exactly as it reaches the item's."""
         garden = Garden(canvas)

@@ -468,6 +468,23 @@ class TestSoilRule:
         assert soil_surface_cm("RAISED_BED", height) == 0.0
         assert soil_surface_cm("CONTAINER", height) == 0.0
 
+    def test_a_parent_taller_than_the_scene_can_hold_has_no_soil_to_stand_on(self) -> None:
+        """Merge of 9944012. The scene contract holds no length beyond ``MAX_LENGTH_CM``
+        (10 km): a bed taller than that gets no record, hence no solid. Nothing stands
+        on a parent that is not there — the rule an infinite height already followed.
+        Without it a bed of 10 km + 1 cm had no record while its plant floated at
+        9,999.99 m over nothing, and a taller one took its plant out of the scene too."""
+        from open_garden_planner.core import object_height
+        from open_garden_planner.core.scene3d import MAX_LENGTH_CM
+
+        assert object_height.MAX_PARENT_HEIGHT_CM == MAX_LENGTH_CM == 1e6  # a mirror, pinned
+        assert soil_surface_cm("RAISED_BED", MAX_LENGTH_CM) == MAX_LENGTH_CM - SOIL_DROP_CM
+        assert soil_surface_cm("CONTAINER", MAX_LENGTH_CM) == MAX_LENGTH_CM  # the tallest that is held
+        for kind in ("RAISED_BED", "GARDEN_BED", "CONTAINER", "CONTAINER_ROUND", "WALL_PLANTER"):
+            for height in (MAX_LENGTH_CM + 0.5, MAX_LENGTH_CM + 2.0, 2e6, 1e300, float("inf")):
+                assert soil_surface_cm(kind, height) == 0.0, (kind, height)
+                assert standing_base_cm(kind, {"object_height_cm": height}) == 0.0, (kind, height)
+
     def test_a_rim_lower_than_the_drop_is_soil_at_ground_level(self) -> None:
         assert soil_surface_cm("RAISED_BED", 1.5) == 0.0 and soil_surface_cm("RAISED_BED", 2.0) == 0.0
         assert soil_surface_cm("CONTAINER", 1.5) == 1.5  # no drop to fall below
