@@ -701,7 +701,8 @@ class TestTheEdgeCasePlan:
     its ridge, a closed, a nearly closed and an open fence, a turned raised bed with
     plants, a pot with a plant, a concave hedge — and, since the contract's second
     fix round (merge of 9944012), a house drawn crossing itself, a ladder of a fence
-    whose stroke has four holes, and a fence that stops 6 cm short of closing. The
+    whose stroke has four holes, and a fence that stops 6 cm short of closing; since
+    its third (merge of f3ed56f), a fence whose butt ends meet corner to corner. The
     production builders and the base rule over all of it."""
 
     def test_every_built_world_item_passes_the_gate(self, edge_plan) -> None:
@@ -717,9 +718,9 @@ class TestTheEdgeCasePlan:
             assert top == float(np.float32(record.height_cm)), record.name
             assert min(float(part.mesh.positions[:, 2].min()) for part in parts) == 0.0
             built_kinds.append(record.kind)
-        assert sorted(built_kinds) == ["CONTAINER_ROUND", *["FENCE"] * 5, "HEDGE_POLYGON",
+        assert sorted(built_kinds) == ["CONTAINER_ROUND", *["FENCE"] * 6, "HEDGE_POLYGON",
                                        "HOUSE", "HOUSE", "RAISED_BED"]
-        assert len(records) == 14  # 16 items; the two ridges have no record
+        assert len(records) == 15  # 17 items; the two ridges have no record
         sync = SceneSync(RecordingSink(), registry, validate=True)
         sync.apply(records)
         assert sync.failures == {}
