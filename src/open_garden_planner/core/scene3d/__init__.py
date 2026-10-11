@@ -165,7 +165,6 @@ __all__ = [
     "LENGTH_DECIMALS",
     "MATERIAL_FIELDS",
     "MATERIAL_KINDS",
-    "MAX_LENGTH_CM",
     "PARAM_CONTAINER_MATERIAL",
     "PARAM_OUTLINE_RESOLVED",
     "PARAM_PATH_STYLE",
@@ -257,3 +256,6 @@ __all__ = [
     "triangulate_region",
     "verify_builder",
 ]
+# Appended, not sorted into the list above: the engine package (L1.2) inserts a name at the
+# very line this one would take, and two insertions at one line do not merge.
+__all__ += ["MAX_LENGTH_CM"]
