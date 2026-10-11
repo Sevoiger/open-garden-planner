@@ -468,7 +468,7 @@ MUTANTS: tuple[Mutant, ...] = (
            (CONTRACT,)),
     Mutant("Mesh.from_arrays emits what is not finite in float32",
            SRC + "core/scene3d/mesh.py",
-           "    if not np.isfinite(array).all():\n", "    if False:\n",
+           "            if not np.isfinite(getattr(mesh, name)).all():\n", "            if False:\n",
            (MESH,)),
     Mutant("prism_mesh computes with a height that is not finite in float32",
            SRC + "core/scene3d/build.py",

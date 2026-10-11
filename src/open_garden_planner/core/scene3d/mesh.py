@@ -62,14 +62,8 @@ class MeshError(ValueError):
     """A mesh that must not reach the engine; the message names the defect."""
 
 
-def _f32(values: ArrayLike, width: int, name: str) -> NDArray[np.float32]:
-    with np.errstate(over="ignore"):  # a float64 beyond float32 becomes inf — refused below
-        array = np.array(values, dtype=np.float32).reshape(-1, width)  # always a private copy
-    if not np.isfinite(array).all():
-        raise MeshError(
-            f"non-finite values in {name} once they are float32 (a NaN, an infinity, or a "
-            "number beyond 3.4e38): a mesh never holds one"
-        )
+def _f32(values: ArrayLike, width: int) -> NDArray[np.float32]:
+    array = np.array(values, dtype=np.float32).reshape(-1, width)  # always a private copy
     array.setflags(write=False)
     return array
 
@@ -102,8 +96,16 @@ class Mesh:
         float64 and an infinite float32, and a sink that does not validate would
         hand it to the engine. Everything else about the content is judged by
         ``validate()``."""
-        return Mesh(_f32(positions, 3, "positions"), _f32(normals, 3, "normals"),
-                    _f32(colors, 4, "colors"), _f32(uvs, 2, "uvs"), _u32(indices))
+        with np.errstate(over="ignore"):  # a float64 beyond float32 becomes inf — refused below
+            mesh = Mesh(_f32(positions, 3), _f32(normals, 3), _f32(colors, 4), _f32(uvs, 2),
+                        _u32(indices))
+        for name, _dtype, _width in _SPEC:
+            if not np.isfinite(getattr(mesh, name)).all():
+                raise MeshError(
+                    f"non-finite values in {name} once they are float32 (a NaN, an infinity, or "
+                    "a number beyond 3.4e38): a mesh never holds one"
+                )
+        return mesh
 
     @staticmethod
     def empty() -> Mesh:
