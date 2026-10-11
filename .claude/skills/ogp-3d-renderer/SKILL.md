@@ -53,7 +53,11 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   wants to change — and cannot do otherwise: every array of a `Mesh.from_arrays` mesh sits on
   immutable memory (`setflags(write=True)` raises, on the array and on its base). The cache is
   capped in bytes (256 MB); beyond the cap a date scrub rebuilds only the plants that do not fit,
-  and `shape_cache_info()` says how many shapes were built.
+  and `shape_cache_info()` says how many shapes were built. Call `clear_shape_cache()` when a
+  plan is closed: it forgets the shapes AND the request log (which lives outside the cap, up to
+  about 20 MB) — at the cap a shape that was dropped comes back in two builds, so going back to
+  a dropped plan costs two cold ticks and a backward scrub twice the forward one. GUI thread
+  only; the cache is untested under threads.
 
 ## 2. PyQt6 6.11 binding facts
 

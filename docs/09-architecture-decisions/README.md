@@ -2874,12 +2874,16 @@ with the sprite on the plan about its shape or its green, and no test would noti
    held to the height; a volume on the ground has no flat sole. `_fit` then pulls back what still
    strays beyond the canopy circle, centres the foliage on it (a trunk's foot stays on the plan
    position), presses what dips below the ground onto it, scales so the top is `height_cm` and
-   the widest span the canopy diameter — exact to float32 — and, LAST, puts whatever is still
-   further than 1.09 canopy radii from the axis onto that circle (`REACH_MAX`, `_rein_in`: a
-   vertex keeps its larger coordinate, so the widest span stays exact). Each earlier step undoes
-   a little of the one before, so none of them says where a vertex ends; the last one does, for
-   any builder output — the story's gate (nothing more than 10 % outside the canopy circle) holds
-   by construction, not by a sample. It RETURNS what all of that took (`FitReport`;
+   the widest span the canopy diameter — exact to float32 — and, LAST, puts whatever FOLIAGE is
+   still further than 1.09 canopy radii from the axis onto that circle (`REACH_MAX`, `_rein_in`:
+   a vertex keeps its larger coordinate, so the widest span stays exact). Each earlier step
+   undoes a little of the one before, so none of them says where a vertex ends; the last one
+   does, for any builder output — for the foliage the story's gate (nothing more than 10 %
+   outside the canopy circle) holds by construction, not by a sample. Wood is not moved (a
+   flat-shaded face would keep a normal that is no longer its own); for the plant the gate rests
+   on an invariant of the trunk builders — foliage is the outermost part: a trunk is built within
+   0.32 canopy radii of the axis — which the tests hold for every recipe at every proportion
+   step. It RETURNS what all of that took (`FitReport`;
    `fit_report()` for a built plant), including where the plant ends and whether the last step
    moved anything (3 plants in 63,099). The bounding box is the gate the issue names;
    the report and the foliage's area-weighted height quantiles are what make it mean something,
@@ -2921,7 +2925,11 @@ with the sprite on the plan about its shape or its green, and no test would noti
    256 MB — about 3,500 average plants), not in a count, so it follows the plan; at the cap a new
    shape gets room only from shapes nobody asked for since it was last asked for, so a scrub over
    more plants than fit rebuilds the overflow and not everything (a least-recently-used cache of
-   1,024 shapes rebuilt all 1,025 growing plants on every tick). It holds arrays on immutable
+   1,024 shapes rebuilt all 1,025 growing plants on every tick). The price, at the cap only: a
+   shape that was dropped comes back in two builds — going back to a dropped plan costs two cold
+   ticks, a backward scrub at the cap twice the forward one — which `clear_shape_cache()` on
+   plan close avoids; the request log behind the rule (65,536 keys, 15–21 MB) is outside the
+   cap. GUI thread only; untested under threads. It holds arrays on immutable
    memory, and its key is the very object a builder is handed as its recipe — a builder cannot
    read a recipe key the key lacks. The builder stays a pure
    function of its record. A daily date scrub of 320 plants is then 15 ms where it was 342 ms
@@ -2938,7 +2946,8 @@ with the sprite on the plan about its shape or its green, and no test would noti
 - **Scaling the farthest vertex onto the canopy circle** instead of fitting the bounding box. The
   box then spans as little as 72 % of the canopy diameter (measured, feathery), outside the ± 10 %
   spread gate. Bounding-box fit plus regular outlines keeps both — and the fit's last step
-  makes the second one a fact: box exact, no vertex beyond 1.09 canopy radii, by construction.
+  makes the second one a fact: box exact, no foliage vertex beyond 1.09 canopy radii, by
+  construction (and no wood either, by the trunk builders' radii — decision 4).
   (For one round that bound was a measurement, "at most 9.2 % over 117,000 builds", stated as a
   limit; one id in 300,000 read 10.06 %.)
 - **Pulling a stray vertex straight toward the axis** as that last step. It shortens the
@@ -3035,8 +3044,10 @@ with the sprite on the plan about its shape or its green, and no test would noti
 - **`tests/unit/test_scene3d_plants.py`**: all 123 recipes × EVERY proportion step (171, from
   1 : 50 to 80 : 1; a different id in every cell — 21,033 plants) and × six real sizes × 5 ids
   through the pipeline's builder, and nine extreme sizes × three recipe forms per archetype.
-  By construction, asserted for every one: height, spread and base exact, no vertex beyond 1.09
-  canopy radii — and the same for 500 hostile point clouds handed to the fit itself. Measured,
+  Asserted for every one: height, spread and base exact, no foliage vertex beyond 1.09 canopy
+  radii (by construction — and the same for 500 hostile point clouds handed to the fit itself)
+  and no wood vertex beyond 0.5 (the trunk builders' invariant). A size outside a micrometre …
+  10 km is refused with `ValueError`; the corners of that range build an exact plant. Measured,
   as tripwires with stated headroom (`scripts/measure_plant_art_3d.py truth`: 63,099 plants):
   the builder's own top 1.0000 of the height before the fit; nothing pressed onto the ground;
   at most 2.18 % of the foliage vertices pulled back onto the canopy circle from at most 1.085
@@ -3063,8 +3074,10 @@ with the sprite on the plan about its shape or its green, and no test would noti
   holds.
 - **`scripts/measure_plant_art_3d.py`** prints every number above (`truth`, `reach`, `growth`,
   `clones`, `shapes`, `scrub`, `cache`); **`scripts/mutation_check_plant_art.py`** breaks one
-  rule at a time on a copy of the tree: 87 mutants (73 before the second review), every one
-  killed. (Its first run on the reworked builder, in the first fix round, killed
+  rule at a time on a copy of the tree: 94 mutants (73 before the second review, 87 before the
+  third), every one killed — a kill being pytest's exit code 1 with a named FAILED test, held
+  by `tests/unit/test_plant_art_mutation_script.py`. (Its first run on the reworked builder, in
+  the first fix round, killed
   72: the survivor — the fit no longer sets a hovering plant down — showed that no builder hovers
   any more, so that safety net was exercised by nothing; the fit-report test now asserts it. The
   run before the review, 45 mutants, had found the placeholder's round rim unpinned the same

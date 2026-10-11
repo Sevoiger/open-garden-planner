@@ -1428,6 +1428,24 @@ v0", "what the second review found").
   an agent or the keyboard. The substance stood — such a plant has its own sprite on the plan and
   a grey disc in 3D, and the docs had not said so — and the documents now say it with the right
   population. *Verify a finding against the code before acting on it, in both directions.*
+- **A measuring script loaded two plans — and rewrote the owner's recent-files list.**
+  `scripts/measure_plant_art_3d.py scrub` and three scratch probes of this story loaded fixture
+  plans with `ProjectManager().load(...)` in a plain Python process. A load ends with
+  `add_recent_file`; outside pytest the settings are the developer's real ones, and on Windows
+  they are the registry (`HKCU\Software\cofade\Open Garden Planner`) — an `APPDATA` prefix on
+  the command, which those runs did have from the second fix round on, does not touch it. The
+  owner's ten recent files became fixture paths of agents' worktrees. Nothing in the suite could
+  see it: `tests/conftest.py` rebinds the settings names for pytest only. Measured afterwards
+  under isolation (a per-process test key): a load of each of the three plans writes exactly ONE
+  settings key, `recent_files`, and no file in the profile; creating a canvas reads the settings
+  and writes nothing; importing the app writes nothing. Fix: the committed script isolates
+  itself at import (as conftest does) and refuses to load a plan unless its store is a test
+  key; `tests/integration/test_scene3d_plants.py::test_the_measuring_script_keeps_out_of_the_owner_s_stores`
+  runs it in a child process without conftest and checks where the write landed — with a driver
+  that loads nothing if the isolation is broken. *Isolation that lives in the test harness
+  protects the tests. Anything else that imports the app — a script, a probe, a benchmark —
+  needs its own, before its first app import; and "which store does this write to?" is a
+  question to ask of every `load`, not only of every `save`.*
 
 ### CI/release hardening: locked metadata also contains the application version
 

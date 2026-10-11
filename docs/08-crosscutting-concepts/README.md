@@ -777,9 +777,28 @@ independent review found missing behind a green suite.
   capacity + 1 the hit rate goes from 100 % to 0. Stand a test AT the cap, one past it and far
   past it, counting builds per tick.
 - **Break the rule and watch the test fail.** `scripts/mutation_check_plant_art.py` applies
-  87 single-rule breaks to a temporary copy of the tree and runs the tests that must
+  94 single-rule breaks to a temporary copy of the tree and runs the tests that must
   notice. Twice it found a rule no test pinned — the placeholder's round rim, and the fit's
-  set-down once no builder hovered any more.
+  set-down once no builder hovered any more. A kill is pytest's exit code 1 AND a named FAILED
+  test — never "any non-zero exit": a renamed test id (exit 4) or a collection error (exit 2) is
+  a run that did not test the mutant. `tests/unit/test_plant_art_mutation_script.py` pins that
+  rule and, on every suite run, that each mutant's pattern still matches its file exactly once
+  and each test it names still exists (as `test_scene3d_mutation_script.py` does for the scene
+  contract's script).
+- **A script that uses the app outside pytest uses the developer's real stores — isolate it, and
+  test that with a child process that cannot do harm.** `tests/conftest.py` redirects the
+  settings and the app-data directory for the SUITE; a script run by hand gets neither.
+  `scripts/measure_plant_art_3d.py scrub` loads plans, `ProjectManager.load` ends with
+  `add_recent_file`, and on Windows the settings are the registry, which no environment variable
+  redirects (§11.4.9). The script now isolates itself at import, before any app import (settings
+  names rebound to a per-process test key, profile variables to a temporary directory, both
+  undone at exit; a process that is isolated already is left alone). The test runs it in a child
+  process without conftest and asserts where the write LANDED — and its driver refuses to load a
+  plan unless the settings names are a test key, so a broken isolation fails the test instead of
+  writing the developer's recent files. What decides whether a script needs this is measured,
+  not guessed: under isolation, list the settings keys and the files in the profile after each
+  step (the six other commands of that script, the golden generator and the sprite generator
+  create no settings object and write nothing).
 
 ## 8.11 Security Scanning (SAST)
 
@@ -3126,12 +3145,24 @@ span is the canopy diameter and the top the height.
 
 Each of those steps undoes a little of the one before — centring moves a vertex that was pulled
 onto the circle off it again, and the scale carries it further — so none of them says where a
-vertex ENDS. **The last step does**: whatever is further than `REACH_MAX` (1.09) canopy radii
-from the axis is put ONTO that circle (`_rein_in`). Nothing follows it. A vertex is moved along
-the axis it is not farthest on — its larger coordinate stays — so an extreme of the bounding
-box along the widest axis remains one: the widest span is still exactly the canopy diameter and
-still centred. (Along the other axis the box can lose a hair when the vertex reined in was that
-axis's extreme; `FitReport.reined_share` says when anything was moved.)
+vertex ENDS. **The last step does**: whatever FOLIAGE is further than `REACH_MAX` (1.09) canopy
+radii from the axis is put ONTO that circle (`_rein_in`). Nothing follows it. A vertex is moved
+along the axis it is not farthest on — its larger coordinate stays — so an extreme of the
+bounding box along the widest axis remains one: the widest span is still exactly the canopy
+diameter and still centred. (Along the other axis the box can lose a hair when the vertex reined
+in was that axis's extreme; `FitReport.reined_share` says when anything was moved.)
+
+**What the plant's reach rests on: foliage is the outermost part.** The last step moves foliage
+only. Wood is flat-shaded, and a moved vertex would leave its face with a stored normal that is
+no longer its winding normal — a face lit from the wrong side (the third review reined a
+hand-made wood triangle beyond the bound and got one). It does not need moving: a trunk is built
+within 1.45 × 0.22 = 0.32 canopy radii of the plan position (`_canopy`; a conifer's 0.28, a
+palm's 0.24), and the fit's xy scale — 1.11 at most, measured — would have to exceed 3.4 to carry
+it to the bound. So "no part of a plant beyond 1.09 canopy radii" is two statements: for the
+foliage it holds by construction, for ANY builder output; for the plant it holds because the
+trunk builders keep wood inside the foliage — an invariant of theirs, asserted for every recipe
+at every proportion step (`WOOD_REACH_MAX` = 0.5 in the tests; 0.32 measured) and visible in
+`FitReport.reach`, which measures the wood too. A new archetype with wood has to keep it.
 
 **Two kinds of statement — never mix them.** A truth claim about a plant is either STRUCTURAL
 (the code makes it true for any input; tests check the mechanism, also on hand-made and random
@@ -3140,13 +3171,27 @@ of it, and a requirement may quote it only as "measured over …"). The first fi
 sample's maxima as limits twice: "at most 1.092 canopy radii" was 1.1006 for one id in 300,000,
 and "z95 at least 0.62" was 0.603 for a rhubarb half as tall as wide.
 
-| By construction, for every plant | how | tested by |
+| Holds for every plant | how | tested by |
 |---|---|---|
-| the top is the height, the base is the ground | the fit's scale and set-down | every build; 500 hostile point clouds handed to `_fit` |
-| the widest span is the canopy diameter, centred on the plan position | the fit's centring and scale; the last step keeps a vertex's larger coordinate | the same |
-| **no vertex further than 1.09 canopy radii from the axis** (the gate: 1.10) | the fit's LAST step | the same; the review's two plants (1.1006 and 1.098 before) |
-| at most 2,000 triangles | counts are clipped functions of recipe numbers | hostile recipe numbers |
-| the size is exact at every size | the remembered shape is scaled by (radius, radius, height) | 600 random sizes |
+| the top is the height, the base is the ground | by construction: the fit's scale and set-down | every build; 500 hostile point clouds handed to `_fit` |
+| the widest span is the canopy diameter, centred on the plan position | by construction: the fit's centring and scale; the last step keeps a vertex's larger coordinate | the same |
+| **no FOLIAGE vertex further than 1.09 canopy radii from the axis** (the gate: 1.10) | by construction: the fit's LAST step | the same; the review's two plants (1.1006 and 1.098 before), validated as meshes |
+| no WOOD vertex beyond it either | the trunk builders' invariant: wood is built within 0.32 canopy radii of the axis and is not moved | every recipe × every proportion step: ≤ 0.5; `test_the_last_step_leaves_wood_alone` |
+| at most 2,000 triangles | by construction: counts are clipped functions of recipe numbers | hostile recipe numbers |
+| the size is exact at every size the builder accepts | by construction: the remembered shape is scaled by (radius, radius, height) | 600 random sizes; the corners of the range |
+
+**The sizes a plant is built at.** `build_silhouette` builds a height and a canopy radius between
+`MIN_SIZE_CM` (a micrometre) and `MAX_LENGTH_CM` (10 km, the longest length a record can hold —
+§8.26.1) and refuses anything else with a `ValueError`: a NaN, zero, a negative, an infinity,
+1e300. Outside that range the arithmetic leaves float32 — before the check a height of 1e300
+returned a mesh of NaNs with nothing but two RuntimeWarnings, a radius of 1e-310 raised an
+`OverflowError` out of a logarithm, a height of 5e-324 a `MeshError`. Inside it all thirteen
+archetypes build an exact, valid, finite plant, the four corners included
+(`test_the_edges_of_the_range_build_an_exact_plant`). That is also what the scaled meshes rely
+on: `build_silhouette` constructs them directly instead of through `Mesh.from_arrays` (which
+would copy the shared colour, uv and index arrays for every plant on every tick), so sealing
+and finiteness are established by the remembered arrays having come out of `from_arrays` and by
+the bounded factors — stated in one place, `_Arrays.scaled`.
 
 **The sweep.** A shape depends on nothing but (recipe form, id, proportion step) — the cache's
 key — so sweeping the steps covers every kind of shape the builders can produce, where a list
@@ -3224,9 +3269,23 @@ mesh scaled from them); only positions are computed, and normals when the stretc
   least recently asked and give way on the new plan's first tick. Pinned at the boundary by
   `TestShapeCache::test_at_its_cap_the_cache_has_no_cliff` and, through the pipeline, by
   `test_beyond_the_cap_a_tick_rebuilds_the_overflow_not_everything`.
-- *Threads.* The cache keeps its bookkeeping under a lock and builds outside it; two threads
-  asking for one new shape at once may both build it, to the same result. It is used from the
-  GUI thread only so far and has not been tested under threads.
+- *What that rule costs — at the cap only; below it nothing is ever dropped.* A shape that was
+  dropped comes back in TWO builds: on the tick it is asked for again everything held is still
+  "in use", so it is built and not held, and on the next tick it is built once more and takes
+  its place. Measured by the third review and pinned with the same numbers: going back to a plan
+  whose shapes were dropped costs two cold ticks (64, 64, 0 builds — a new plan costs one); a
+  scrub BACKWARD at the cap costs twice the forward one (one plant crossing a step per tick, 40
+  ticks: 40 builds forward, 79 back); two plans shown in turn, each filling the cap, rebuild the
+  one that came first every time — half of all builds. `clear_shape_cache()` when a plan is
+  closed avoids all three for the next plan: it forgets the shapes AND the request log.
+- *The request log is outside the cap.* To tell a shape in use from one nobody asks for, the
+  cache remembers when each of the last 65,536 keys was asked for. That log is not counted in
+  the 256 MB; full, it weighs 15–21 MB on top (14.6 MB measured with one recipe form shared by
+  all keys; the third review read 20.8 MB). It is bounded by its count and emptied by
+  `clear_shape_cache()`.
+- *Threads.* GUI thread only. The cache keeps its bookkeeping under a lock and builds outside
+  it, so two threads asking for one new shape at once would both build it, to the same result —
+  by reading; it has NOT been tested under threads.
 - *Read-only for good.* The arrays of a mesh are shared with the remembered shape and with every
   later mesh scaled from it, so one consumer writing to them would damage every later build of
   that plant. A read-only flag on a view of a writeable array can be switched back on by whoever

@@ -71,8 +71,10 @@ flower 316). Judge them as v0:
   an unfinished asset — review whether it reads as a marker, never ask for a guessed tree.
 - What the builder GUARANTEES (by construction — the last steps of its fit; tested on hostile
   input to the fit itself): top = height and widest span = canopy diameter exactly, base on the
-  ground, and no vertex further than 1.09 canopy radii from the axis (`REACH_MAX`; the gate is
-  1.10). What is MEASURED (re-measure with `scripts/measure_plant_art_3d.py`, command `truth`;
+  ground, and no FOLIAGE vertex further than 1.09 canopy radii from the axis (`REACH_MAX`; the
+  gate is 1.10). That this bounds the whole plant rests on an invariant of the trunk builders —
+  foliage is the outermost part: wood is built within 0.32 canopy radii of the axis and is never
+  moved by the fit (a new archetype with wood must keep it; the tests hold wood inside 0.5). What is MEASURED (re-measure with `scripts/measure_plant_art_3d.py`, command `truth`;
   do not trust; a sample of 63,099 plants — every recipe × every proportion step × three ids):
   the plant is BUILT to those numbers, not scaled into them — the builder's own top is the
   height before the fit touches it (`fit_report`: 1.0000 in every plant), nothing is pressed
