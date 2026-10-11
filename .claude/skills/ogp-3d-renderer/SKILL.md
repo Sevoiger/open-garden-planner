@@ -561,7 +561,10 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   command above inside it. That is how xcb was measured before a push in review round 2 —
   the Windows numbers had said nothing about it. The matrix's children get their environment
   from `quick3d_render_support.isolated_env` / `render_env` only: never hand a child the
-  developer's `APPDATA` or profile.
+  developer's `APPDATA` or profile. And pytest-qt installs a Python Qt message handler for
+  every test: a test that shows a host IN the pytest process is marked
+  `@pytest.mark.no_qt_log` (harmless under `offscreen` as far as measured, a deadlock on a
+  real platform); real-platform hosts live in child processes.
 
   The driver alone, to look at frames (`<out>/*.png`, `result.json`, `render.log`):
   `venv/Scripts/python.exe tests/integration/quick3d_render_driver.py --out <out> --scenarios
@@ -584,8 +587,8 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   edit → finished readback median 7.1–7.5 ms (p95 18.0) / 23.2–26.5 ms; pick 0.01–0.2 ms;
   shadow IoU vs the analytic 2D shadow 0.976–0.978 at 35° and 480 × 360; engine import 17 ms
   on top of 17 ms for `core/scene3d`. The render tier after review round 2: 96 tests, about
-  four and a half minutes on either adapter; on xcb + llvmpipe in a container 88 passed and
-  8 skipped in 136 s.
+  four minutes on either adapter (237 s / 251 s, the machine busy); on xcb + llvmpipe in a
+  container 88 passed and 8 skipped in under two minutes.
 - **Not measured:** the round-2 tree on GitHub's own runners (xcb was measured in a container
   on the developer's machine); `frozen-selftest.yml` on any runner, and the supervising
   process inside a GitHub job; macOS; an integrated GPU; a display scale other than 100 %; a

@@ -722,15 +722,17 @@ Without `OGP_RENDER3D=1` the tier skips with a reason; on Linux it also needs `D
 helper (`quick3d_render_support.render_env`) gives the DRIVER the real platform and this
 checkout's code — the pytest process itself stays offscreen. CI runs the tier in the `render3d`
 job (§7.4), which is not a required check. Measured 2026-10-11 on the dev box, after review
-round 2: the tier's 96 tests take about four and a half minutes on an RTX 4070 and on WARP
-(where the two hardware-only budgets skip); the lifecycle matrix, one process per call order
-and several attempts per control, is about two minutes of it.
+round 2: the tier's 96 tests take about four minutes on an RTX 4070 (237 s; 95 passed and one
+control reported, not asserted, on Windows) and on WARP (251 s; the two hardware-only budgets
+skip there) — with another suite running on the machine; the lifecycle matrix, one process per
+call order and several attempts per control, is about two minutes of it.
 
 **Linux without a Linux machine.** The CI job's stack — Ubuntu 24.04, xvfb, xcb, OpenGL on
 Mesa llvmpipe, Python 3.11, the repository's lock — fits in a container, and Docker on the
 developer's machine runs the tier there in minutes. That is how the round-2 tree was measured
 on xcb before it was pushed, after the round-1 tree had met xcb for the first time in a red
-CI job. A container is not GitHub's runner; say which one a number came from.
+CI job: 88 passed and 8 skipped in under two minutes. A container is not GitHub's runner; say
+which one a number came from.
 
 **The tier below it.** Not everything about the engine needs pixels. Under the offscreen
 platform `Garden.qml` still loads and Models are still created, posed, tinted, destroyed and
@@ -739,8 +741,10 @@ arrives in the QML scene, the sun / ground / camera mapping, the state machine's
 Qt's predicates put where a real window system would put them), the closed-host contract, the
 sink's teardown in every order and the recovery after a failed engine call — in the DEFAULT
 run, on every machine and in the required CI job. This is also what keeps the `ui` coverage
-floor: the default tier covers 993 of the engine package's 1,060 statements with this file,
-and 674 of the same 1,060 without it (one measurement on one tree, 2026-10-11).
+floor: on Linux, where CI measures, the default tier covers 1,176 of the engine package's 1,325
+statements with this file and 789 of the same 1,325 without it (one measurement on one tree,
+after review round 2; 94 of the statements it cannot reach are the Windows-only supervising
+process of `runlog.py`).
 
 **Its canary contains no product code.** A child process first creates a bare `QQuickView` with
 inline `import QtQuick3D` QML. If THAT fails, the platform cannot create Qt Quick 3D objects and
@@ -788,7 +792,13 @@ and must report failures and not one skip (measured: 9 failed, 43 errors, 12 pas
   grab()` survives on one and kills on the other. Each control names its platforms; on any
   other it is `xfail` without `strict`, so the log of the first run there says `XFAIL` or
   `XPASS` — which is the measurement, to be promoted to an assertion.
-- **No Python Qt message handler beside a shown window — not in a test either.** The driver
+- **No Python Qt message handler beside a shown window — not in a test either.** pytest-qt
+  installs one for every test (its log capture, measured: `_QtMessageCapture`). Under the
+  default `offscreen` platform that has never hung — the software scene graph announces no
+  render thread — but a test that shows a host on a REAL platform inside the pytest process
+  would deadlock. So real-platform hosts live in child processes, and an in-process test that
+  shows a host is marked `@pytest.mark.no_qt_log` (`tests/ui/test_quick3d_host.py` is, as a
+  module). The driver
   installs none for its shown-host scenarios (it would deadlock: §8.26.2). Two witnesses
   report instead, and each has a positive control: an OFFSCREEN frame records its own
   messages, on the calling thread (a broken shader fails the render, and the report says no

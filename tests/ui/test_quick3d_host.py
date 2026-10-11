@@ -75,6 +75,14 @@ from tests.integration.quick3d_render_support import isolated_env
 # import, during collection, before any QML engine exists (Qt reads the variable once).
 os.environ.setdefault("QML_DISABLE_DISK_CACHE", "1")
 
+# pytest-qt installs a Python Qt message handler for every test (its log capture). That is
+# the arrangement the engine package forbids beside a shown window: on a real platform Qt
+# renders on a thread of its own, and the two deadlock (qt_messages.py). Under the offscreen
+# platform this file ran several hundred times with the capture on and never hung - its
+# software scene graph announces no render thread - but the tests here show hosts, so they do
+# not depend on that: no capture for this module.
+pytestmark = pytest.mark.no_qt_log
+
 REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "src"
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
@@ -1296,6 +1304,20 @@ class TestHealth:
         assert host.health().ok and host.slot_calls_off_the_gui_thread == 0
         host.close()
         assert host.health().frames_presented >= 1, "health() answers on a closed host"
+
+    def test_no_python_message_handler_is_installed_while_these_tests_show_hosts(self, host) -> None:
+        """Not pytest-qt's either (``pytestmark`` above): asked of Qt, which hands back the
+        handler it had when another one is installed."""
+        from PyQt6.QtCore import qInstallMessageHandler
+
+        before = qInstallMessageHandler(None)
+        qInstallMessageHandler(before)
+        assert before is None, f"a Python Qt message handler is installed: {before!r}"
+        host.show()
+        assert host.wait_ready(5.0)
+        during = qInstallMessageHandler(None)
+        qInstallMessageHandler(during)
+        assert during is None, "building and showing a host must not install one"
 
     def test_the_host_installs_no_qt_message_handler_and_offers_no_watch(self, host) -> None:
         """Structural: the removed API stays removed, in the host and in its module."""
