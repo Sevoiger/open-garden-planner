@@ -70,6 +70,7 @@ from open_garden_planner.core.scene3d import (
     BuilderRegistry,
     Material,
     Mesh,
+    MeshError,
     MeshPart,
     Params,
     Record,
@@ -1375,6 +1376,26 @@ class TestShapeCache:
         assert float(mesh.positions[0, 0]) == 0.0
         assert mesh.indices.shape == (1, 3) and mesh.indices.dtype == np.uint32
         assert Mesh.empty().positions.shape == (0, 3)
+
+    def test_from_arrays_keeps_both_of_its_promises(self) -> None:
+        """Two rounds edited the same function at the same time — the scene contract's
+        made it REFUSE a value that is not finite once it is float32, this story's put
+        its arrays on immutable memory. Both hold in the merged function, and the
+        finiteness check reads the coerced arrays without needing to write to them."""
+        normals, colours, uvs = np.tile([0.0, 0.0, 1.0], (3, 1)), np.ones((3, 4)), np.zeros((3, 2))
+        for bad in (float("nan"), float("inf"), -float("inf"), 1e300):
+            with pytest.raises(MeshError, match="non-finite values in positions"):
+                Mesh.from_arrays(np.full((3, 3), bad), normals, colours, uvs, [0, 1, 2])
+        with pytest.raises(MeshError, match="non-finite values in colors"):
+            Mesh.from_arrays(np.zeros((3, 3)), normals, np.full((3, 4), np.nan), uvs, [0, 1, 2])
+        largest = float(np.finfo(np.float32).max)             # the largest float32 IS finite
+        mesh = Mesh.from_arrays(np.full((3, 3), largest), normals, colours, uvs, [0, 1, 2])
+        assert float(mesh.positions.max()) == largest
+        with pytest.raises(ValueError, match="cannot set WRITEABLE"):
+            mesh.positions.setflags(write=True)
+        merged = Mesh.merge([mesh, mesh])                     # merge goes through from_arrays
+        with pytest.raises(ValueError, match="cannot set WRITEABLE"):
+            merged.colors.base.setflags(write=True)
 
     def test_an_entry_is_small_and_the_cap_is_in_bytes(self) -> None:
         """Measured 2026-10-11 over the 123 recipes at their mature size

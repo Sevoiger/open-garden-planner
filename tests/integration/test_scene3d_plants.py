@@ -30,6 +30,7 @@ from open_garden_planner.core.commands import MoveItemsCommand
 from open_garden_planner.core.object_height import METADATA_KEY, effective_height_cm
 from open_garden_planner.core.plant_art import SPECIES_SPRITES, SpriteRef
 from open_garden_planner.core.scene3d import (
+    MAX_LENGTH_CM,
     PARAM_SPECIES_NAME,
     PARAM_SPRITE_SPECIES,
     BuilderRegistry,
@@ -54,7 +55,7 @@ from open_garden_planner.ui.canvas.canvas_view import CanvasView
 from open_garden_planner.ui.canvas.footprints import plant_canopy_radius_cm
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.plant_species_assignment import apply_species_to_item
-from open_garden_planner.ui.view3d.snapshot import snapshot_records
+from open_garden_planner.ui.view3d.snapshot import SkippedItem, SkipReason, snapshot_records
 from open_garden_planner.ui.widgets.gallery_data import (
     GalleryItem,
     all_items,
@@ -267,6 +268,62 @@ def test_a_typed_height_turns_the_placeholder_into_a_tree_and_back(garden: Garde
     assert calls == [BEGIN, ("replace_geometry", item_id), COMMIT]
     assert [part.name for part in garden.sink.item(item_id).parts] == [PART_PLACEHOLDER]
     assert records[item_id].height_cm is None
+
+
+def test_the_placeholder_means_the_plan_gives_no_height_and_nothing_else(garden: Garden) -> None:
+    """What ``height_cm is None`` — and so the marker — says: NO source of the plan
+    gives this plant a height. It does not say "a height the pipeline could not use":
+
+    - a typed height that is infinite or beyond 10 km (``MAX_LENGTH_CM``; a
+      hand-edited plan) gives the plant NO record: it is left out and reported
+      (``out_of_range``), not shown as a marker. (Until the scene contract's
+      second fix round an infinite height silently became ``height_cm=None`` —
+      a marker saying "no height" about a plant that had one.)
+    - a typed height that is no positive number (0, negative, NaN, text, a bool)
+      is no typed height at all — ``core.object_height`` reads it so for the 2D
+      shadow too — and the next source decides: none for a drawn tree (the
+      marker), the species' size for a species plant.
+    """
+    garden.tick(JUNE_2026)
+    unknown, unknown_id = garden.plants["unknown"], garden.item_id("unknown")
+    apple, apple_id = garden.plants["apple"], garden.item_id("apple")
+    grown_apple = effective_height_cm(apple.object_type, apple.metadata, at_date=JUNE_2026)
+    assert grown_apple is not None and 180.0 < grown_apple < 800.0
+
+    for beyond in (float("inf"), 2.0e6, 1.0e300):
+        unknown.metadata[METADATA_KEY] = beyond
+        skipped: list[SkippedItem] = []
+        records = snapshot_records(garden.scene, JUNE_2026, skipped=skipped)
+        assert unknown_id not in records, beyond
+        assert [(s.item_id, s.kind, s.reason) for s in skipped] == [
+            (unknown_id, "TREE", SkipReason.OUT_OF_RANGE)], beyond
+        garden.sync.apply(records)
+        assert not garden.sync.failures
+        assert unknown_id not in garden.sink.item_ids()        # left out: no marker, no plant
+        assert len(garden.sink.item_ids()) == 14
+
+    unknown.metadata[METADATA_KEY] = MAX_LENGTH_CM              # the tallest a plan can hold: a plant
+    records = snapshot_records(garden.scene, JUNE_2026)
+    garden.sync.apply(records)
+    assert not garden.sync.failures
+    assert plant_archetype(records[unknown_id]) == "canopy"
+    held = garden.sink.item(unknown_id)
+    assert max(float(part.mesh.positions[:, 2].max()) for part in held.parts) == pytest.approx(
+        MAX_LENGTH_CM, rel=1e-6)
+
+    for nothing in (0.0, -5.0, float("nan"), "tall", True, None):
+        unknown.metadata[METADATA_KEY] = nothing
+        apple.metadata[METADATA_KEY] = nothing
+        skipped = []
+        records = snapshot_records(garden.scene, JUNE_2026, skipped=skipped)
+        assert not skipped, nothing
+        assert records[unknown_id].height_cm is None, nothing   # the plan gives it no height
+        assert plant_archetype(records[unknown_id]) == PLACEHOLDER
+        assert records[apple_id].height_cm == grown_apple       # its measured, dated size decides
+        assert plant_archetype(records[apple_id]) == "canopy"
+        garden.sync.apply(records)
+        assert [part.name for part in garden.sink.item(unknown_id).parts] == [PART_PLACEHOLDER]
+    del unknown.metadata[METADATA_KEY], apple.metadata[METADATA_KEY]
 
 
 def test_a_species_assigned_from_the_database_is_built_as_the_canvas_draws_it(
