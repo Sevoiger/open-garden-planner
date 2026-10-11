@@ -909,6 +909,27 @@ class TestRecordContent:
         assert record.height_cm == 1e6 and float(part.mesh.bounds()[1][2]) == 1e6
         assert np.isfinite(part.mesh.positions).all()
 
+    @pytest.mark.parametrize("height", [1e-300, 1e-46, 9e-4],
+                             ids=["1e-300", "zero in float32", "just under the floor"])
+    def test_a_height_too_small_to_be_one_is_reported_too(
+        self, canvas: CanvasView, height: float
+    ) -> None:
+        """Review round 3, P2-8 — the other end of the same rule. Such a height
+        built a solid 0.0 cm high that passed ``validate``."""
+        snapshot_module._reported.clear()
+        shed = _rectangle()
+        canvas.scene().addItem(shed)
+        shed.metadata[METADATA_KEY] = height
+        assert effective_height_cm(shed.object_type, shed.metadata) == height
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {}
+        assert [(s.reason, s.error_type) for s in skipped] == [(SkipReason.OUT_OF_RANGE, "RecordRangeError")]
+        assert "is below what a solid can have" in skipped[0].error_message
+        shed.metadata[METADATA_KEY] = 1e-3  # the floor itself: a record, and a solid
+        record = snapshot_records(canvas.scene())[str(shed.item_id)]
+        (part,) = default_builder(record)
+        assert float(part.mesh.bounds()[1][2]) == float(np.float32(1e-3))
+
     def test_a_height_of_nothing_is_no_height(self, canvas: CanvasView) -> None:
         """Zero, a negative number or a string is not an explicit height at all
         (``explicit_height_cm``): the kind's default stands, nothing is reported."""
@@ -1276,7 +1297,8 @@ class TestSelfCrossingPolygon:
         stable code, the rest of the plan untouched. Forced here — over 7,500 random
         self-crossing outlines none arose (``test_random_self_crossing_outlines``)."""
         snapshot_module._reported.clear()
-        monkeypatch.setattr(snapshot_module, "_resolved_regions", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(snapshot_module, "_resolved_regions",
+                            lambda *_args, **_kwargs: snapshot_module._NO_READING)
         snapshot_module._polygon_regions.cache_clear()
         try:
             bow = PolygonItem([QPointF(0.0, 0.0), QPointF(400.0, 300.0), QPointF(400.0, 0.0),
@@ -1290,7 +1312,7 @@ class TestSelfCrossingPolygon:
         assert list(snapshot) == [str(shed.item_id)]
         assert skipped == [SkippedItem(str(bow.item_id), "HOUSE", SkipReason.OUTLINE_UNBUILDABLE,
                                        "_UnbuildableOutline",
-                                       "the outline cannot be resolved into buildable regions")]
+                                       "the outline cannot be made into regions a builder can build")]
 
 
 def _far_away(distance: float) -> Any:
@@ -1349,7 +1371,7 @@ def test_random_self_crossing_outlines(grid: float, count: int) -> None:
         seen += 1
         regions, resolved = snapshot_module._polygon_regions(outline)
         assert resolved
-        if not regions:
+        if isinstance(regions, snapshot_module._Refused) or not regions:
             dropped += 1
             continue
         if not all(is_buildable_region(outer, holes) for outer, holes in regions):
@@ -1385,7 +1407,7 @@ def test_random_strokes(grid: float) -> None:
             path.append(path[0])
         width = rng.choice([4.0, 10.0, 25.0])
         regions = snapshot_module._polyline_regions(tuple(path), width)
-        if regions is None:
+        if isinstance(regions, snapshot_module._Refused):
             dropped += 1
             continue
         if not all(is_buildable_region(outer, holes) for outer, holes in regions):
@@ -1506,6 +1528,401 @@ class TestWhatPyclipperGetsWrong:
         assert diff(before, moved) == SceneDiff(transform=(item_id,))
         apply_rotation(bow, 41.0)
         assert diff(moved, snapshot_records(canvas.scene())) == SceneDiff(transform=(item_id,))
+
+
+# ── fix round 3 (P1): a stroke that touches itself ───────────────────────────
+
+
+def _meeting_fence(width: float = 10.0, half: float = 100.0, depth: float = 300.0,
+                   mirror: float = 1.0, at: tuple[float, float] = (1000.0, 1000.0)) -> Any:
+    """A fence drawn round three sides of a rectangle and back to a point one
+    stroke WIDTH above its start: its two butt ends meet corner to corner, in a
+    single point. (The re-review's fence is ``_meeting_fence()``.)"""
+    points = [(0.0, width), (-half * mirror, width), (-half * mirror, -depth), (half * mirror, -depth),
+              (half * mirror, 0.0), (0.0, 0.0)]
+    return _fence([(at[0] + x, at[1] + y) for x, y in points], width)
+
+
+@pytest.fixture
+def stroke_resolutions(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """How often the STROKE branch of ``_resolved_regions`` ran (no drawn outline),
+    with the number of rings it was handed each time."""
+    calls: list[int] = []
+    real = snapshot_module._resolved_regions
+
+    def spy(rings: Any, fill: int, outline: Any = None) -> Any:
+        if outline is None:
+            calls.append(len(rings))
+        return real(rings, fill, outline)
+
+    monkeypatch.setattr(snapshot_module, "_resolved_regions", spy)
+    snapshot_module._polyline_regions.cache_clear()
+    return calls
+
+
+class TestStrokesThatTouchThemselves:
+    """Review round 3, P1. The report of round 2 called the stroke branch of the
+    resolution a path no real stroke takes: 0 of 4,500 random strokes took it.
+    It is LIVE: two butt ends that meet corner to corner make pyclipper return
+    one ring that touches itself, and every such fence takes it — 15 of 15 the
+    reviewer drew. With the fallback replaced by "no regions", 694 tests and all
+    93 mutants still passed. Pinned here through real items."""
+
+    def test_the_fence_of_the_review(self, canvas: CanvasView, stroke_resolutions: list[int]) -> None:
+        from open_garden_planner.core.shadow_geometry import polyline_footprint
+
+        fence, shed = _meeting_fence(), _rectangle()
+        scene = canvas.scene()
+        scene.addItem(fence)
+        scene.addItem(shed)
+        snapshot, skipped = snapshot_with_report(scene)
+        assert skipped == [] and set(snapshot) == {str(fence.item_id), str(shed.item_id)}
+        record = snapshot[str(fence.item_id)]
+
+        # the premise: as it comes from the clipper the stroke is ONE ring that is no polygon
+        (drawn,) = [tuple(ring) for ring in polyline_footprint(list(record.path), 10.0)]
+        assert len(drawn) == 16 and not is_simple_ring(drawn)
+        assert signed_area(drawn) == pytest.approx(10082.842, abs=1e-3)
+        assert stroke_resolutions == [1]  # … so the fallback ran, once
+
+        # what it handed out: one ring, no hole, the two ends a hair apart
+        assert [len(ring) for ring in record.footprints] == [20] and record.holes == ()
+        assert all(is_buildable_region(outer, holes) for outer, holes in record.regions)
+        (ring,) = record.footprints
+        assert is_simple_ring(ring)
+        assert {(0.002, 149.998), (0.002, 140.002), (-0.002, 150.002), (-0.002, 159.998)} <= set(ring)
+        # … the drawn stroke, drawn in by 0.002 cm all round: 2,033 cm of outline
+        assert _boundary_distance(list(ring), list(drawn)) <= 3e-3
+        assert 10082.842 - 5.0 < record.plan_area_cm2 < 10082.842 - 3.0
+
+        # a stroke is not "resolved" in the record's sense: its rings never were the drawn
+        # vertices, and what builds a fence reads the centre line — which is untouched
+        assert "outline_resolved" not in record.params
+        assert len(record.path) == 6 and record.path_width_cm == 10.0
+
+        (part,) = verify_builder(default_builder, record, plan_margin_cm=0.0)
+        part.validate()
+        assert _cap_area(part.mesh) == pytest.approx(record.plan_area_cm2, rel=1e-6)
+        sync = SceneSync(RecordingSink(), validate=True)
+        sync.apply(snapshot)
+        assert sync.failures == {}
+
+        # an unchanged scene, a move, a turn
+        assert diff(snapshot, snapshot_records(scene)).is_empty
+        fence.moveBy(12.5, -7.25)
+        moved = snapshot_records(scene)
+        assert diff(snapshot, moved) == SceneDiff(transform=(str(fence.item_id),))
+        apply_rotation(fence, 33.0)
+        turned = snapshot_records(scene)
+        assert diff(moved, turned) == SceneDiff(transform=(str(fence.item_id),))
+        assert turned[str(fence.item_id)].footprints == record.footprints
+        assert stroke_resolutions == [1]  # the item-local stroke did not change: nothing ran again
+
+    @pytest.mark.parametrize("width", [4.0, 10.0, 25.0])
+    @pytest.mark.parametrize(("half", "depth"), [(100.0, 300.0), (60.0, 80.0), (250.0, 65.0)])
+    @pytest.mark.parametrize("mirror", [1.0, -1.0])
+    def test_the_whole_family(self, canvas: CanvasView, stroke_resolutions: list[int],
+                              width: float, half: float, depth: float, mirror: float) -> None:
+        from open_garden_planner.core.shadow_geometry import polyline_footprint
+
+        fence = _meeting_fence(width, half, depth, mirror)
+        canvas.scene().addItem(fence)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert skipped == [] and stroke_resolutions == [1]  # every one of them takes the fallback
+        record = snapshot[str(fence.item_id)]
+        assert len(record.footprints) == 1 and record.holes == ()
+        assert all(is_buildable_region(outer, holes) for outer, holes in record.regions)
+        drawn = polyline_footprint(list(record.path), width)
+        outline = sum(math.dist(ring[i - 1], ring[i]) for ring in drawn for i in range(len(ring)))
+        full = _signed_area_sum(drawn)
+        assert full - 0.006 * outline <= record.plan_area_cm2 <= full  # the band, and no more
+        (part,) = verify_builder(default_builder, record, plan_margin_cm=0.0)
+        part.validate()
+        assert diff(snapshot, snapshot_records(canvas.scene())).is_empty
+
+    def test_the_fence_turned_point_by_point(self, canvas: CanvasView,
+                                             stroke_resolutions: list[int]) -> None:
+        """Drawn at other angles the ends meet on the clipper's grid or miss it by
+        a thousandth — the reviewer counted 111 of 400 through the fallback.
+        Either way there is a record, and it is the stroke."""
+        from open_garden_planner.core.shadow_geometry import polyline_footprint
+
+        base = [(0.0, 10.0), (-100.0, 10.0), (-100.0, -300.0), (100.0, -300.0), (100.0, 0.0), (0.0, 0.0)]
+        scene = canvas.scene()
+        for degrees in range(0, 360, 9):
+            turn = math.radians(degrees)
+            fence = _fence([(1000.0 + x * math.cos(turn) - y * math.sin(turn),
+                             1000.0 + x * math.sin(turn) + y * math.cos(turn)) for x, y in base])
+            scene.addItem(fence)
+            snapshot, skipped = snapshot_with_report(scene)
+            record = snapshot[str(fence.item_id)]
+            assert skipped == [], degrees
+            assert all(is_buildable_region(outer, holes) for outer, holes in record.regions), degrees
+            full = _signed_area_sum(polyline_footprint(list(record.path), 10.0))
+            assert record.plan_area_cm2 == pytest.approx(full, abs=13.0), degrees
+            scene.removeItem(fence)
+        assert 4 <= len(stroke_resolutions) < 40  # some angles take the fallback, the right ones at least
+
+    def test_a_reading_of_a_stroke_with_the_wrong_area_is_not_taken(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The stroke branch has no drawn outline to hold a reading against; it
+        holds it against the AREA of the stroke's own rings, less at most the
+        band. Shown to decide, with a reading that is buildable and too large."""
+        import pyclipper
+
+        class Node:
+            def __init__(self, contour: list[tuple[int, int]]) -> None:
+                self.Contour, self.Childs = contour, []
+
+        snapshot_module._polyline_regions.cache_clear()
+        path = ((0.0, 155.0), (-100.0, 155.0), (-100.0, -155.0), (100.0, -155.0), (100.0, 145.0), (0.0, 145.0))
+        real = snapshot_module._clip_tree
+
+        def lying(subject: Any, fill: int, *, strictly_simple: bool = False, band: Any = None) -> Any:
+            if strictly_simple:
+                tree = Node([])
+                tree.Childs = [Node([(-105_000, -160_000), (105_000, -160_000), (105_000, 160_000),
+                                     (-105_000, 160_000)])]  # the stroke's bounding box, filled
+                return tree
+            return real(subject, fill, strictly_simple=strictly_simple, band=band)
+
+        monkeypatch.setattr(snapshot_module, "_clip_tree", lying)
+        lie = snapshot_module._tree_regions(lying([], pyclipper.PFT_NONZERO, strictly_simple=True))
+        assert snapshot_module._buildable(lie) and regions_area(lie) == 210.0 * 320.0
+        regions = snapshot_module._polyline_regions(path, 10.0)
+        snapshot_module._polyline_regions.cache_clear()
+        assert not isinstance(regions, snapshot_module._Refused) and regions != lie
+        assert regions_area(regions) == pytest.approx(10082.842, abs=5.0)
+
+
+# ── fix round 3 (P2-1): the size is judged first, at the snapshot too ─────────
+
+
+@pytest.fixture
+def small_work_bound(monkeypatch: pytest.MonkeyPatch) -> int:
+    """The work bound at 1 M units, so that a fence of sixty points is "too large"
+    — with every remembered verdict dropped before and after."""
+    from open_garden_planner.core.scene3d import polygon as polygon_module
+
+    caches = (polygon_module.cut_region, polygon_module._verdict, polygon_module.is_buildable_region,
+              snapshot_module._polyline_regions, snapshot_module._polygon_regions,
+              snapshot_module._circle_regions)
+    for cache in caches:
+        cache.cache_clear()
+    monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", 1_000_000)
+    snapshot_module._reported.clear()
+    yield 1_000_000
+    for cache in caches:
+        cache.cache_clear()
+
+
+def _never(what: str) -> Callable[..., Any]:
+    def called(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError(f"{what} — on an outline that is refused for its size")
+    return called
+
+
+class TestOutlinesTooLargeToCut:
+    """Review round 3, P2-1. In round 2 a stroke beyond the bound was offset,
+    sorted, tested for simplicity (quadratic), refused — and then resolved three
+    more times, each to be refused again: 2,700 traced points took 2.59 s to say
+    no, on every edit tick, where 2,600 took 1.86 s to build."""
+
+    @staticmethod
+    def _ring_of_points(count: int, radius: float = 400.0) -> list[tuple[float, float]]:
+        return [(1500.0 + radius * math.cos(2.0 * math.pi * k / count),
+                 1500.0 + radius * math.sin(2.0 * math.pi * k / count)) for k in range(count)]
+
+    def test_a_stroke_is_refused_before_it_is_sorted_or_resolved(
+        self, canvas: CanvasView, small_work_bound: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        points = self._ring_of_points(60)
+        fence, shed = _fence([*points, points[0]]), _rectangle()
+        scene = canvas.scene()
+        scene.addItem(fence)
+        scene.addItem(shed)
+        monkeypatch.setattr(snapshot_module, "group_rings", _never("the rings were sorted"))
+        monkeypatch.setattr(snapshot_module, "_resolved_regions", _never("the outline was resolved"))
+        monkeypatch.setattr(snapshot_module, "_clip_tree", _never("the clipper was asked"))
+        snapshot, skipped = snapshot_with_report(scene)
+        assert list(snapshot) == [str(shed.item_id)]  # the shed's 7,200 units fit
+        (report,) = skipped
+        assert (report.item_id, report.kind, report.reason, report.error_type) == (
+            str(fence.item_id), "FENCE", SkipReason.OUTLINE_UNBUILDABLE, "_UnbuildableOutline")
+        assert "too large" in report.error_message and "MAX_REGION_WORK" in report.error_message
+        assert snapshot_with_report(scene)[1] == skipped  # … and the same answer the next tick
+
+    def test_a_stroke_refused_while_it_is_cut_is_not_resolved_either(
+        self, canvas: CanvasView, small_work_bound: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A region whose SIZE passes and whose cut then outgrows the bound: the
+        refusal is still for size, and no other reading is tried."""
+        from open_garden_planner.core.scene3d import polygon as polygon_module
+        from open_garden_planner.core.scene3d.polygon import cut_work, region_work
+
+        points = self._ring_of_points(24)
+        fence = _fence([*points, points[0]])
+        canvas.scene().addItem(fence)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", 10**9)  # first: what it costs to cut
+        ((outer, holes),) = snapshot_records(canvas.scene())[str(fence.item_id)].regions
+        floor, spent = region_work(outer, holes), cut_work(outer, holes)
+        assert floor < spent
+        for cache in (polygon_module.cut_region, polygon_module._verdict,
+                      polygon_module.is_buildable_region, snapshot_module._polyline_regions):
+            cache.cache_clear()
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", (floor + spent) // 2)
+        monkeypatch.setattr(snapshot_module, "_resolved_regions", _never("the outline was resolved"))
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {} and [s.reason for s in skipped] == [SkipReason.OUTLINE_UNBUILDABLE]
+        assert "too large" in skipped[0].error_message
+
+    @pytest.mark.parametrize("crossed", [False, True], ids=["a simple outline", "one that crosses itself"])
+    def test_a_polygon_is_refused_before_it_is_tested_or_resolved(
+        self, canvas: CanvasView, small_work_bound: int, monkeypatch: pytest.MonkeyPatch, crossed: bool
+    ) -> None:
+        from open_garden_planner.core.scene3d import polygon as polygon_module
+
+        points = self._ring_of_points(120)
+        if crossed:
+            points[10], points[70] = points[70], points[10]
+        house = PolygonItem([QPointF(x, y) for x, y in points], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(house)
+        monkeypatch.setattr(polygon_module, "is_simple_ring", _never("the simplicity test ran"))
+        monkeypatch.setattr(snapshot_module, "_resolved_regions", _never("the outline was resolved"))
+        # with the lattice check priced at nothing, only the verdict "too large" can stop it
+        monkeypatch.setattr(snapshot_module, "_OUTLINE_CHECK_UNITS", 0)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {} and [s.reason for s in skipped] == [SkipReason.OUTLINE_UNBUILDABLE]
+        assert "too large" in skipped[0].error_message
+
+    def test_a_reading_refused_for_its_size_ends_the_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Three readings of an outline are tried. One refused for its SIZE is the
+        last: the others are the same outline with a band cut away — larger."""
+        import pyclipper
+
+        bands = []
+        real = snapshot_module._clip_tree
+
+        def watching(subject: Any, fill: int, *, strictly_simple: bool = False, band: Any = None) -> Any:
+            bands.append(band is not None)
+            return real(subject, fill, strictly_simple=strictly_simple, band=band)
+
+        monkeypatch.setattr(snapshot_module, "_clip_tree", watching)
+        monkeypatch.setattr(snapshot_module, "_judged", lambda _regions: snapshot_module._TOO_LARGE)
+        bow = ((0.0, 0.0), (400.0, 300.0), (400.0, 0.0), (0.0, 300.0))
+        answer = snapshot_module._resolved_regions([snapshot_module._to_grid(bow)],
+                                                   pyclipper.PFT_NONZERO, outline=bow)
+        assert answer is snapshot_module._TOO_LARGE
+        assert bands == [False, False]  # the plain union and the strict one; no band was ever cut
+        monkeypatch.setattr(snapshot_module, "_judged", lambda _regions: snapshot_module._NO_READING)
+        bands.clear()
+        assert snapshot_module._resolved_regions([snapshot_module._to_grid(bow)], pyclipper.PFT_NONZERO,
+                                                 outline=bow) is snapshot_module._NO_READING
+        assert bands == [False, False, True, True]  # not for size: every reading gets its turn
+
+    def test_an_outline_that_crosses_itself_is_resolved_only_while_the_check_is_affordable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Resolving costs more than cutting: every reading is compared with the
+        drawn outline on a lattice — lattice points x vertices, up to three times.
+        With the real bound: about a thousand vertices."""
+        from open_garden_planner.core.scene3d.polygon import MAX_REGION_WORK, exceeds_work_bound
+
+        limit = MAX_REGION_WORK // (3 * snapshot_module._OUTLINE_CHECK_UNITS * snapshot_module._LATTICE ** 2)
+        assert 900 < limit < 1300
+        assert not snapshot_module._resolving_is_too_much(limit)
+        assert snapshot_module._resolving_is_too_much(limit + 1)
+
+        def crossed(count: int) -> tuple[tuple[float, float], ...]:
+            ring = [(round(x - 1500.0, 7), round(y - 1500.0, 7)) for x, y in self._ring_of_points(count)]
+            ring[10], ring[count // 2] = ring[count // 2], ring[10]
+            return tuple(ring)
+
+        small, large = crossed(300), crossed(limit + 200)
+        assert not exceeds_work_bound(large)  # as a plain outline it would fit
+        regions, resolved = snapshot_module._polygon_regions(small)
+        assert resolved and not isinstance(regions, snapshot_module._Refused) and len(regions) >= 2
+        monkeypatch.setattr(snapshot_module, "_clip_tree", _never("the clipper was asked"))
+        assert snapshot_module._polygon_regions(large) == (snapshot_module._TOO_LARGE, False)
+
+
+# ── fix round 3 (P2-3): every shape is asked the predicate ───────────────────
+
+
+class TestEveryShapeIsAsked:
+    """The docs said "every region of every record satisfies
+    ``is_buildable_region``" while circles, ellipses and rectangles were taken on
+    trust as convex by construction. On the record grid they are not always
+    polygons at all."""
+
+    @pytest.fixture
+    def asked(self, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+        seen: list[Any] = []
+        real = snapshot_module.is_buildable_region
+
+        def spy(outer: Any, holes: Any = ()) -> bool:
+            seen.append((outer, tuple(holes)))
+            return real(outer, holes)
+
+        monkeypatch.setattr(snapshot_module, "is_buildable_region", spy)
+        for cache in (snapshot_module._circle_regions, snapshot_module._polygon_regions,
+                      snapshot_module._polyline_regions):
+            cache.cache_clear()
+        return seen
+
+    @pytest.mark.parametrize("shape", sorted(FACTORIES))
+    def test_all_five_shapes(self, canvas: CanvasView, asked: list[Any], shape: str) -> None:
+        item = FACTORIES[shape]()
+        canvas.scene().addItem(item)
+        record = snapshot_records(canvas.scene())[str(item.item_id)]
+        assert record.regions and all(region in asked for region in record.regions), shape
+        assert all(is_buildable_region(outer, holes) for outer, holes in record.regions)
+
+    @pytest.mark.parametrize(
+        ("label", "make", "kind"),
+        [("a circle of radius 2e-7 cm",
+          lambda: CircleItem(100.0, 100.0, 2e-7, object_type=ObjectType.TRAMPOLINE), "TRAMPOLINE"),
+         ("an ellipse 300 cm by 2e-7 cm",
+          lambda: EllipseItem(100.0, 100.0, 300.0, 2e-7, object_type=ObjectType.POND_POOL), "POND_POOL")],
+    )
+    def test_a_shape_that_is_no_polygon_on_the_record_grid_is_reported(
+        self, canvas: CanvasView, label: str, make: Callable[[], Any], kind: str
+    ) -> None:
+        """Found by the re-review: such an item got a record whose ring is not
+        simple, and ``prism_mesh`` raised on it. Honest, and against the promise."""
+        snapshot_module._reported.clear()
+        item = make()
+        canvas.scene().addItem(item)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {}, label
+        assert [(s.item_id, s.kind, s.reason) for s in skipped] == [
+            (str(item.item_id), kind, SkipReason.OUTLINE_UNBUILDABLE)], label
+
+    def test_an_ellipse_in_a_group_scaled_to_nothing(self, canvas: CanvasView) -> None:
+        item = _ellipse()
+        scene = canvas.scene()
+        scene.addItem(item)
+        group = QGraphicsItemGroup()
+        scene.addItem(group)
+        group.addToGroup(item)
+        group.setTransform(QTransform.fromScale(1e-9, 1e-9))
+        snapshot, skipped = snapshot_with_report(scene)
+        assert snapshot == {} and [s.reason for s in skipped] == [SkipReason.OUTLINE_UNBUILDABLE]
+
+    @pytest.mark.parametrize("size", [1e-3, 3e-6, 4e-7])
+    def test_what_is_small_and_still_a_polygon_is_built(self, canvas: CanvasView, size: float) -> None:
+        for item in (CircleItem(100.0, 100.0, max(size, 5e-7), object_type=ObjectType.TRAMPOLINE),
+                     EllipseItem(100.0, 300.0, 300.0, size, object_type=ObjectType.POND_POOL),
+                     RectangleItem(100.0, 500.0, 300.0, size, object_type=ObjectType.TOOL_SHED)):
+            canvas.scene().addItem(item)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert skipped == [] and len(snapshot) == 3
+        for record in snapshot.values():
+            assert all(is_buildable_region(outer, holes) for outer, holes in record.regions)
+            prism_mesh(record.footprints, 100.0, record.holes).validate()
 
 
 # ── P2-3: one bad item must not blank the view ────────────────────────────────

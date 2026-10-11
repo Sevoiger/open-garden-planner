@@ -134,7 +134,8 @@ def prism_mesh(
     disagree — less the cap triangles that are nothing at the mesh's float32
     precision (``_FLOAT32_SLIVER``); a larger ring gets the same cap cut into
     other triangles. A flat ring (fewer than three corners, or all
-    of them on one line) and a non-positive height give no geometry. A ring that
+    of them on one line) and a height that is not positive — or is zero once
+    it is float32 (1e-46 cm) — give no geometry. A ring that
     is not a simple polygon (a bow-tie) raises ``ValueError``: no cap of it would
     be the plan's shape, and an honest "no solid" beats a wrong one. So does any
     region ``polygon.cut_region`` cannot cut and prove — the same function
@@ -154,6 +155,8 @@ def prism_mesh(
         return Mesh.empty()
     if not height_cm <= _FLOAT32_MAX:  # an infinity, a NaN, 1e300
         raise MeshError(f"a height of {height_cm!r} cm is not finite in float32")
+    if float(np.float32(height_cm)) == 0.0:  # 1e-46, 1e-300: zero in the mesh — as good as none
+        return Mesh.empty()
     positions: list[float] = []
     normals: list[float] = []
     for index, raw in enumerate(footprints):
@@ -338,12 +341,16 @@ def _distance_to_rings(points: NDArray[np.float64], rings: Iterable[Ring]) -> ND
     return best
 
 
-def _hole_cover(triangles: Triangles2D, hole: Ring) -> float:
+def _hole_cover(triangles: Triangles2D, hole: Ring, regions: Sequence[Region] = ()) -> float:
     """The share of a hole that upward-facing triangles cover, from a 24 x 24
     lattice of points INSIDE the hole — so a slab of two huge triangles over a
     small hole is seen as surely as a cap of many small ones. A hole narrower
     than ``HOLE_MIN_WIDTH_CM`` — no lattice point lies half that far from its
-    edge — reads 0.0: a sliver is not judged."""
+    edge — reads 0.0: a sliver is not judged.
+
+    Only the OPEN part of the hole is judged: a point that one of ``regions``
+    covers is ground the plan builds on — an island standing in the hole is a
+    region of its own, and the solid on it is not "building over the hole"."""
     xs = [x for x, _y in hole]
     ys = [y for _x, y in hole]
     steps = (np.arange(24) + 0.5) / 24.0
@@ -352,6 +359,13 @@ def _hole_cover(triangles: Triangles2D, hole: Ring) -> float:
     lattice = lattice[_inside(lattice, hole)]
     if len(lattice) and 2.0 * float(_distance_to_rings(lattice, (hole,)).max()) < HOLE_MIN_WIDTH_CM:
         return 0.0
+    for outer, inner in regions:  # leave out what an island covers
+        if not len(lattice):
+            break
+        on_it = _inside(lattice, outer)
+        for other in inner:
+            on_it &= ~_inside(lattice, other)
+        lattice = lattice[~on_it]
     a, b, c = triangles
     if not len(lattice) or not len(a):
         return 0.0
@@ -385,14 +399,16 @@ def plan_overreach(
     - ``hole_cover`` — the largest share, 0 … 1, of any hole that
       upward-facing triangles cover, measured on a lattice of points inside the
       hole (0.0 without holes; a hole narrower than ``HOLE_MIN_WIDTH_CM`` is
-      not judged and counts as 0.0).
+      not judged and counts as 0.0). Regions can NEST — an island inside a
+      hole is a region of its own — and what an island covers is not counted
+      as the hole.
     """
     triangles, areas = _top_triangles(parts)
     a, b, c = triangles
     if not len(areas) or not regions:
         return 0.0, 0.0
     hole_cover = max(
-        (_hole_cover(triangles, hole) for _outer, holes in regions for hole in holes),
+        (_hole_cover(triangles, hole, regions) for _outer, holes in regions for hole in holes),
         default=0.0,
     )
     centre = (a + b + c) / 3.0

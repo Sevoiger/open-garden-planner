@@ -112,10 +112,23 @@ FALLBACK_RGBA: Final[Rgba] = (158, 158, 148, 255)
 #: mesh's float32 turns into infinity — and no builder should have to know. At
 #: the bound a float32 coordinate still resolves 0.06 cm.
 MAX_LENGTH_CM: Final = 1e6
+#: The smallest height a record may hold, in cm: ten micrometres. The same
+#: hand-edited plan can hold ``1e-300`` — positive, finite, and ZERO in float32:
+#: a solid without a height, with walls of no area, that validates. Below this a
+#: height is no more a height than one above ``MAX_LENGTH_CM`` is.
+MIN_HEIGHT_CM: Final = 1e-3
+#: Keys of float params that are NOT lengths in cm. Every other float in
+#: ``Params`` — also inside a tuple — is taken for one and held to
+#: ``MAX_LENGTH_CM``: the two the snapshot writes are (``radius_cm``, ``ridge``),
+#: and a builder turns what it reads into geometry. A later float param that is
+#: a ratio, an angle or a count of days names its key HERE; it is then checked
+#: for being finite and for nothing else. Empty today.
+DIMENSIONLESS_PARAMS: Final[frozenset[str]] = frozenset()
 
 
 class RecordRangeError(ValueError):
-    """A length of a record lies beyond ``MAX_LENGTH_CM`` (or is infinite)."""
+    """A length of a record lies beyond ``MAX_LENGTH_CM`` (or is infinite), or
+    its height below ``MIN_HEIGHT_CM``."""
 
 
 def _beyond(reach: float) -> str:
@@ -230,7 +243,12 @@ def _check_param_value(key: str, value: object) -> None:
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError(f"param {key!r} holds a non-finite float")
-        _check_length(f"param {key!r}: a value", value)
+        if key not in DIMENSIONLESS_PARAMS and not -MAX_LENGTH_CM <= value <= MAX_LENGTH_CM:
+            raise RecordRangeError(
+                f"param {key!r}: a value of {value!r} cm is beyond what a plan can hold "
+                f"(±{MAX_LENGTH_CM:g} cm) — a float param is taken for a length in cm unless its "
+                "key is listed in record.DIMENSIONLESS_PARAMS"
+            )
         return
     if isinstance(value, tuple):
         for element in value:
@@ -249,6 +267,13 @@ class Params(Mapping[str, ParamValue]):
     ``bool``, ``None`` or tuples of those — so a ``Params`` can be hashed,
     compared and sent across threads. Sorted by key, so two mappings with the
     same content are equal and hash alike whatever order they were built in.
+
+    A FLOAT is taken for a length in centimetres and must lie within
+    ``±MAX_LENGTH_CM`` (``RecordRangeError`` otherwise) — also inside a tuple,
+    as a ridge's coordinates are. That is right for every float param there is
+    (``radius_cm``, ``ridge``). A float that is not a length is exempted by
+    naming its key in ``DIMENSIONLESS_PARAMS``; an ``int``, a ``str`` and a
+    ``bool`` are never bounded.
     """
 
     __slots__ = ("_hash", "_items")
@@ -386,6 +411,11 @@ class Record:
                     f"height_cm is a positive finite number or None, got {self.height_cm!r}"
                 )
             _check_length("a height", self.height_cm)  # an infinite one too
+            if self.height_cm < MIN_HEIGHT_CM:
+                raise RecordRangeError(
+                    f"a height of {self.height_cm!r} cm is below what a solid can have "
+                    f"({MIN_HEIGHT_CM:g} cm)"
+                )
         if self.path_width_cm is not None:
             if not math.isfinite(self.path_width_cm):
                 raise ValueError(f"path_width_cm is finite or None, got {self.path_width_cm!r}")

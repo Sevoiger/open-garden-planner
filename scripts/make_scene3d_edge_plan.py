@@ -1,4 +1,4 @@
-"""Generate the committed 3D edge-case plan (Phase 17 L1.1, fix rounds 1 and 2, #385).
+"""Generate the committed 3D edge-case plan (Phase 17 L1.1, fix rounds 1 to 3, #385).
 
 ``tests/fixtures/plans/scene3d_edge_cases.ogp`` holds the shapes the two bench
 plans do not contain and the first scene contract therefore got wrong without a
@@ -27,6 +27,14 @@ and, since fix round 2:
 * a HOUSE whose outline crosses itself and encloses a pocket: resolved into
   three parts that stand a hair apart, with ``outline_resolved`` set and no
   ``ridge`` — although the plan holds a ridge item for it.
+
+and, since fix round 3:
+
+* a fence drawn round three sides and back to a point one stroke width above
+  its start: its two butt ends meet corner to corner, in ONE point. The clipper
+  hands such a stroke out as a single ring that touches itself — no polygon —
+  and the record holds it drawn in by 0.002 cm, the two ends a hair apart. (The
+  re-review's fence: every fence of this kind takes that path, and no test did.)
 
 ``tests/integration/test_scene3d_edge_plan.py`` runs the pipeline's gates over
 it (snapshot stability, mesh validity and plan area, transform ∘ local footprint
@@ -99,6 +107,14 @@ MORE_FENCES: dict[str, list[tuple[float, float]]] = {
 #: The second outline of the re-review (item-local numbers there), moved to its place.
 CROSSED_HOUSE = [(3300, 1200), (3300, 1300), (3550, 1550), (3250, 1350), (3350, 1300),
                  (3200, 1200), (3400, 1450)]
+#: Fix round 3. Appended after the crossed house and ITS ridge item, for the same reason.
+#: It ends at (2500, 1600), one stroke width under where it began: the stroke of the
+#: first run ends at x = 2500 between y = 1605 and 1615, that of the last one between
+#: 1595 and 1605 — they share the point (2500, 1605) and nothing else.
+LAST_FENCES: dict[str, list[tuple[float, float]]] = {
+    "Fence that meets itself": [(2500, 1610), (2400, 1610), (2400, 1300), (2600, 1300),
+                                (2600, 1600), (2500, 1600)],
+}
 
 
 def _turned(point: tuple[float, float], centre: tuple[float, float], degrees: float) -> tuple[float, float]:
@@ -147,6 +163,11 @@ def build_edge_cases() -> bench.PlanBuilder:
         pen.setWidthF(FENCE_WIDTH_CM)
         fence.setPen(pen)
     b.house(CROSSED_HOUSE, "Crossed house")  # with a ridge item, as the polygon tool makes one
+    for name, centre_line in LAST_FENCES.items():
+        fence = b.polyline(centre_line, T.FENCE, PathFenceStyle.NONE, name)
+        pen = fence.pen()
+        pen.setWidthF(FENCE_WIDTH_CM)
+        fence.setPen(pen)
     return b
 
 

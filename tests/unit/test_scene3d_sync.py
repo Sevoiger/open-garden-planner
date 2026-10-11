@@ -526,10 +526,56 @@ class TestBuilderFailure:
         assert sink_of(sync).item("h").parts == ()
         assert len(sink_of(sync).item("a").parts) == len(sink_of(sync).item("b").parts) == 1
         failure = sync.failures["h"]
-        assert (failure.item_id, failure.kind) == ("h", "HOUSE")
-        assert isinstance(failure.error, RuntimeError) and "cannot build HOUSE" in str(failure.error)
+        assert failure == BuildFailure("h", "HOUSE", "RuntimeError", "cannot build HOUSE")
         assert "cannot build HOUSE" in caplog.text and "'h'" in caplog.text
+        (logged,) = [r for r in caplog.records if "'h'" in r.getMessage()]
+        assert isinstance(logged.exc_info[1], RuntimeError)  # the exception itself: to the log, only
         assert not sink_of(sync).in_transaction and not sync.poisoned
+
+    def test_a_failure_is_plain_data_and_keeps_nothing_alive(self, builder) -> None:
+        """Review round 3, P2-11 — the lesson of ``SkippedItem``, here. The failure
+        used to hold the exception; its traceback holds the frame of ``apply``,
+        and that frame the records, every mesh built in that call and the sink."""
+        import gc
+        import weakref
+
+        class Marked(RuntimeError):
+            """An exception a weak reference can watch."""
+
+        def failing(rec: Record) -> tuple[MeshPart, ...]:
+            raise raised[0]
+
+        raised = [Marked("cannot build this")]
+        gone = weakref.ref(raised[0])
+        registry = BuilderRegistry()
+        registry.register("HOUSE", failing)
+        logging.getLogger("open_garden_planner.core.scene3d.sync").disabled = True  # pytest keeps log records
+        try:
+            sync = SceneSync(RecordingSink(), registry)
+            sync.apply(scene(record("h", kind="HOUSE")))
+        finally:
+            logging.getLogger("open_garden_planner.core.scene3d.sync").disabled = False
+        failure = sync.failures["h"]
+        assert dataclasses.fields(failure)[2].name == "error_type"
+        assert all(isinstance(getattr(failure, f.name), str) for f in dataclasses.fields(failure))
+        assert (failure.error_type, failure.error_message) == ("Marked", "cannot build this")
+        raised.clear()
+        gc.collect()
+        assert gone() is None  # the failure is still held; the exception is not
+
+    def test_the_old_error_attribute_still_reads(self, builder) -> None:
+        """``failure.error`` was the exception. Code written then — an engine's
+        diagnostics formats ``type(failure.error).__name__`` and ``str(failure.error)``
+        — keeps working on a stand-in: the same class NAME, the same text, no
+        traceback. It is not the original class any more."""
+        builder.fail_for = {"HOUSE"}
+        sync = SceneSync(RecordingSink(), BuilderRegistry(default=builder))
+        sync.apply(scene(record("h", kind="HOUSE")))
+        error = sync.failures["h"].error
+        assert f"{type(error).__name__}: {error}" == "RuntimeError: cannot build HOUSE"
+        assert isinstance(error, Exception) and error.__traceback__ is None
+        assert not isinstance(error, RuntimeError)  # test error_type, not isinstance
+        assert type(sync.failures["h"].error) is type(error)  # one class per name, not one per call
 
     def test_a_failing_builder_is_not_rerun_until_the_geometry_changes(self, sync, builder) -> None:
         builder.fail_for = {"HOUSE"}
@@ -576,7 +622,8 @@ class TestBuilderFailure:
         registry.register("HOUSE", lambda _rec: "not parts")  # type: ignore[arg-type,return-value]
         sync = SceneSync(RecordingSink(), registry)
         sync.apply(scene(record("h", kind="HOUSE")))
-        assert "tuple of MeshPart" in str(sync.failures["h"].error)
+        assert sync.failures["h"].error_type == "BuilderContractError"
+        assert "tuple of MeshPart" in sync.failures["h"].error_message
         assert sink_of(sync).item("h").parts == ()
 
     def test_validate_turns_an_invalid_mesh_into_a_failure(self) -> None:
@@ -589,7 +636,7 @@ class TestBuilderFailure:
         registry.register("HOUSE", lit_from_below)
         strict = SceneSync(RecordingSink(), registry, validate=True)
         strict.apply(scene(record("h", kind="HOUSE")))
-        assert "flat face" in str(strict.failures["h"].error)
+        assert "flat face" in strict.failures["h"].error_message
         assert sink_of(strict).item("h").parts == ()
         lax = SceneSync(RecordingSink(), registry)  # production default: no per-build validation
         lax.apply(scene(record("h", kind="HOUSE")))
@@ -624,8 +671,8 @@ class TestBuilderFailure:
         sync = SceneSync(RecordingSink())
         sync.apply(scene(record("a"), record("h", kind="HOUSE", footprints=(lopsided,))))
         failure = sync.failures["h"]
-        assert isinstance(failure, BuildFailure) and isinstance(failure.error, ValueError)
-        assert "not a simple polygon" in str(failure.error)
+        assert isinstance(failure, BuildFailure) and failure.error_type == "ValueError"
+        assert "not a simple polygon" in failure.error_message
         assert sink_of(sync).item("h").parts == ()
         assert len(sink_of(sync).item("a").parts) == 1
         for item in sink_of(sync).state().items.values():

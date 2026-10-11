@@ -38,13 +38,14 @@ from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
 import pyclipper
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsScene
 
+import open_garden_planner.core.scene3d.polygon as _polygon
 from open_garden_planner.core.container_model import container_material
 from open_garden_planner.core.object_height import effective_height_cm
 from open_garden_planner.core.object_types import PathFenceStyle, is_container_type
@@ -68,13 +69,17 @@ from open_garden_planner.core.scene3d import (
     Scene3DRecord,
     ccw,
     group_rings,
-    is_simple_ring,
     local_frame,
     quantize_cm,
     records_from_raw,
     ring_area,
 )
-from open_garden_planner.core.scene3d.polygon import is_buildable_region, regions_area
+from open_garden_planner.core.scene3d.polygon import (
+    exceeds_work_bound,
+    is_buildable_region,
+    is_region_too_large,
+    regions_area,
+)
 from open_garden_planner.core.scene3d.record import (
     MAX_LENGTH_CM,
     PARAM_OUTLINE_RESOLVED,
@@ -251,6 +256,21 @@ def _report(skipped: SkippedItem, into: list[SkippedItem] | None,
         _log.warning(line, *words)
 
 
+@dataclass(frozen=True, slots=True)
+class _Refused:
+    """Why an outline has no regions a builder can build — the words of the report."""
+
+    why: str
+
+
+#: Refused for its SIZE: cutting it would cost more than ``core.scene3d``'s work
+#: bound. Nothing else is tried on such an outline — no other reading of it is smaller.
+_TOO_LARGE: Final = _Refused(
+    "the outline is too large for the 3D view: cutting it is beyond the work bound "
+    "(core.scene3d.polygon.MAX_REGION_WORK)")
+_NO_READING: Final = _Refused("the outline cannot be made into regions a builder can build")
+
+
 @lru_cache(maxsize=4096)
 def _circle_ring(radius_cm: float) -> Ring:
     """A circle's item-local footprint: ``circle_footprint`` about the origin.
@@ -311,8 +331,16 @@ def _tree_regions(tree: Any) -> tuple[Region, ...]:
     return tuple(regions)
 
 
+def _judged(regions: tuple[Region, ...]) -> _Refused | None:
+    """None when every region can be built; otherwise why not — at the first that cannot."""
+    for outer, holes in regions:
+        if not is_buildable_region(outer, holes):
+            return _TOO_LARGE if is_region_too_large(outer, holes) else _NO_READING
+    return None
+
+
 def _buildable(regions: tuple[Region, ...]) -> bool:
-    return all(is_buildable_region(outer, holes) for outer, holes in regions)
+    return _judged(regions) is None
 
 
 def _inside_ring(px: Any, py: Any, ring: Ring) -> Any:
@@ -379,8 +407,8 @@ def _clip_tree(subject: list[list[tuple[int, int]]], fill: int, *, strictly_simp
 
 
 def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int,
-                      outline: Ring | None = None) -> tuple[Region, ...] | None:
-    """Rings on the clipper grid → regions a builder can build, or None.
+                      outline: Ring | None = None) -> tuple[Region, ...] | _Refused:
+    """Rings on the clipper grid → regions a builder can build, or why not.
 
     Three readings of the rings' union under ``fill``, the first that holds:
 
@@ -400,7 +428,9 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int,
     (``_matches_outline``); for a stroke (no outline) the regions' area must be
     the rings' own, less at most the band.
 
-    None when no reading holds; ``()`` when nothing with an area is there.
+    ``()`` when nothing with an area is there; ``_NO_READING`` when no reading
+    holds; ``_TOO_LARGE`` as soon as one reading is refused for its size — the
+    others would only be refused again.
     """
     plain = _clip_tree(rings, fill)
     paths = pyclipper.PolyTreeToPaths(plain) if plain is not None else []
@@ -411,43 +441,71 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int,
     rim = (sum(math.dist(path[i - 1], path[i]) for path in paths for i in range(len(path)))
            * (2.0 * _SEPARATION + 2.0) / scale2)  # both sides of the band, and the grid's own unit
 
-    def holds(regions: tuple[Region, ...], *, drawn_in: bool) -> bool:
-        if not regions or not _buildable(regions):
+    def holds(regions: tuple[Region, ...], *, drawn_in: bool) -> bool | _Refused:
+        if not regions:
             return False
+        refused = _judged(regions)
+        if refused is not None:
+            return refused if refused is _TOO_LARGE else False
         if outline is not None:
             return _matches_outline(outline, regions)
         got = regions_area(regions)
-        return (area - rim if drawn_in else area - 1e-6) <= got <= area + 1e-6
+        return bool((area - rim if drawn_in else area - 1e-6) <= got <= area + 1e-6)
 
     strict = _clip_tree(rings, fill, strictly_simple=True)
     regions = _tree_regions(strict) if strict is not None else ()
-    if holds(regions, drawn_in=False):
-        return regions
+    verdict = holds(regions, drawn_in=False)
     for band in (paths, rings):
-        regions = _tree_regions(_clip_tree(band if band is paths else rings, fill, band=band))
-        if holds(regions, drawn_in=True):
+        if verdict is True:
             return regions
-    return None
+        if verdict is _TOO_LARGE:
+            return _TOO_LARGE
+        regions = _tree_regions(_clip_tree(band if band is paths else rings, fill, band=band))
+        verdict = holds(regions, drawn_in=True)
+    if verdict is True:
+        return regions
+    return _TOO_LARGE if verdict is _TOO_LARGE else _NO_READING
 
 
 @lru_cache(maxsize=2048)
-def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...] | None:
-    """A polyline's item-local stroke as buildable regions, or None when it
-    cannot be made into any.
+def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...] | _Refused:
+    """A polyline's item-local stroke as buildable regions, or why it has none.
 
     The centre line inflated by half its width (``polyline_footprint`` —
     pyclipper, a 1/1000 cm grid), its rings taken as they come and sorted into
     outer rings and the holes they enclose: a closed fence is one outer and one
-    hole. Only when that is not buildable — two parts of the stroke meet in a
-    point — the rings go through ``_resolved_regions``.
+    hole.
+
+    Its SIZE is judged first, on the rings as they come back and before they are
+    sorted or tested: the largest outer ring with every hole, as one region. A
+    stroke refused for size — then, or while a region of it is cut — is not
+    looked at again: refusing must cost less than building.
+
+    A stroke that is not buildable for another reason goes through
+    ``_resolved_regions``. That is no rare path: two butt ends that meet corner
+    to corner — a fence drawn back to a point half its width beside its start —
+    make pyclipper return ONE ring that touches itself, and every such fence
+    takes it (the reading that holds is the stroke drawn in by ``_SEPARATION``:
+    its outline 0.002 cm inside the drawn one, its two ends a hair apart). The
+    regions are checked like any other; there is no flag for it in the record —
+    a stroke's rings never were the drawn vertices, and what builds a fence or a
+    wall reads ``path`` and ``path_width_cm``.
     """
     rings = [_quantized(ring) for ring in polyline_footprint(list(path), width_cm)]
+    outers = [ring for ring in rings if len(ring) >= 3 and ring_area(ring) > 0.0]
+    holes = [ring for ring in rings if len(ring) >= 3 and ring_area(ring) < 0.0]
+    if outers and exceeds_work_bound(max(outers, key=len), holes):
+        return _TOO_LARGE
     try:
         regions = group_rings(rings)
     except ValueError:
         regions = None
-    if regions is not None and _buildable(regions):
-        return regions
+    if regions is not None:
+        refused = _judged(regions)
+        if refused is None:
+            return regions
+        if refused is _TOO_LARGE:
+            return _TOO_LARGE
     # the stroke's rings are oriented (outers counter-clockwise, holes clockwise):
     # their non-zero union is the stroke
     return _resolved_regions([_to_grid(ring) for ring in rings if len(ring) >= 3],
@@ -467,9 +525,30 @@ def _without_repeats(ring: Ring) -> Ring:
     return tuple(kept) if len(kept) != len(ring) else ring
 
 
+#: What comparing ONE reading of a resolved outline with the drawn one costs, in
+#: ``core.scene3d``'s work units, per lattice point and vertex of the outline
+#: (``_matches_outline``); up to three readings are compared. An outline that
+#: crosses itself and has more vertices than this allows — about 1,000 — is not
+#: resolved: it is refused for its size like any other.
+_OUTLINE_CHECK_UNITS: Final = 20
+
+
+def _resolving_is_too_much(vertices: int) -> bool:
+    return 3 * _OUTLINE_CHECK_UNITS * _LATTICE * _LATTICE * vertices > _polygon.MAX_REGION_WORK
+
+
+@lru_cache(maxsize=4096)
+def _circle_regions(radius_cm: float) -> tuple[Region, ...] | _Refused:
+    """A circle's footprint ring as its one region — asked the predicate like
+    every other shape (a radius of 2e-7 cm leaves a ring on the record grid that
+    is no polygon at all)."""
+    ring = _circle_ring(radius_cm)
+    return ((ring, ()),) if is_buildable_region(ring) else _NO_READING
+
+
 @lru_cache(maxsize=2048)
-def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | None, bool]:
-    """A drawn polygon as ``(regions, resolved)``; regions None = not buildable.
+def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | _Refused, bool]:
+    """A drawn polygon as ``(regions, resolved)`` — or, for regions, why it has none.
 
     A simple polygon is itself, turned counter-clockwise, vertex for vertex
     (``resolved`` False) — also when a vertex was merely placed twice in a row.
@@ -484,8 +563,13 @@ def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | None, bool]:
     ring = _without_repeats(ring)
     if len(ring) < 3:
         return (), False
-    if is_simple_ring(ring) and is_buildable_region(ccw(ring)):
-        return ((ccw(ring), ()),), False
+    outer = ccw(ring)
+    # ``is_buildable_region`` judges the ring's SIZE before anything that costs —
+    # the simplicity test included — so nothing has to be asked about it first
+    if is_buildable_region(outer):  # a simple polygon that was cut, and the cut proven
+        return ((outer, ()),), False
+    if is_region_too_large(outer) or _resolving_is_too_much(len(ring)):
+        return _TOO_LARGE, False  # refused for its size: never resolved
     return _resolved_regions([_to_grid(ring)], pyclipper.PFT_NONZERO, outline=ring), True
 
 
@@ -557,7 +641,10 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
         if radius <= 0.0:
             return (), (), None, None, False
         radius = quantize_cm(radius)
-        return ((_circle_ring(radius), ()),), (), None, radius, False
+        disc = _circle_regions(radius)
+        if isinstance(disc, _Refused):
+            raise _UnbuildableOutline(f"a circle of radius {radius!r} cm: {disc.why}")
+        return disc, (), None, radius, False
     ring = frame.local_ring(outline.points)
     if not _finite_ring(ring):
         raise ValueError("geometry that is not finite")
@@ -574,19 +661,22 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
         if len(ring) < 2:
             return (), ring, width, None, False
         stroke = _polyline_regions(ring, width)
-        if stroke is None:
-            raise _UnbuildableOutline("the stroke cannot be made into buildable regions")
+        if isinstance(stroke, _Refused):
+            raise _UnbuildableOutline(stroke.why)
         return stroke, ring, width, None, False
     if outline.shape == OUTLINE_POLYGON:
         regions, resolved = _polygon_regions(ring)
-        if regions is None:
-            raise _UnbuildableOutline("the outline cannot be resolved into buildable regions")
+        if isinstance(regions, _Refused):
+            raise _UnbuildableOutline(regions.why)
         return regions, (), None, None, resolved
     # an ellipse or a rectangle: convex by construction; a mirrored scene transform
     # (baked into the ring) turns it clockwise, and without an area it covers nothing
     if len(ring) < 3 or ring_area(ring) == 0.0:
         return (), (), None, None, False
-    return ((ccw(ring), ()),), (), None, None, False
+    outer = ccw(ring)
+    if not is_buildable_region(outer):  # … and asked like every other shape: a sliver of
+        raise _UnbuildableOutline(_NO_READING.why)  # 2e-7 cm is no polygon on the record grid
+    return ((outer, ()),), (), None, None, False
 
 
 def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
@@ -639,7 +729,7 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
         stroke = item.pen().color()  # the line's visible colour: a preset-less polyline
     height = effective_height_cm(object_type, metadata, at_date=at_date)
     if height is not None and height <= 0.0:
-        height = None  # no height. One that is no usable number is the Record's to refuse.
+        height = None  # no height. One that is no usable number — 1e300, 1e-300 — is the Record's to refuse.
     pattern = getattr(item, "fill_pattern", None)
     parent = getattr(item, "parent_bed_id", None)
     holes = tuple(region_holes for _outer, region_holes in regions)

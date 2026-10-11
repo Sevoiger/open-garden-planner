@@ -1,4 +1,4 @@
-"""The pipeline's gates over the committed edge-case plan (L1.1 fix rounds 1 and 2, #385).
+"""The pipeline's gates over the committed edge-case plan (L1.1 fix rounds 1 to 3, #385).
 
 ``tests/fixtures/plans/scene3d_edge_cases.ogp`` (``scripts/make_scene3d_edge_plan.py``)
 is the third committed plan. The two bench plans hold no stroke that closes on
@@ -18,6 +18,10 @@ close, and a HOUSE whose outline crosses itself around a pocket — and the same
 gates run over them. For the crossed house G4 reads differently, because its
 record is deliberately NOT the drawn ring: every vertex of its rings lies on the
 drawn outline, and the ground they cover is what the outline fills.
+
+Fix round 3 added a fence whose two butt ends meet corner to corner — the stroke
+the clipper hands out as ONE ring that touches itself, and the one live path of
+the snapshot that no test had run.
 """
 
 from __future__ import annotations
@@ -163,9 +167,9 @@ def test_same_plan_forgives_the_last_bit_and_nothing_else(qtbot) -> None:  # noq
 def test_what_the_plan_contains(plan) -> None:
     """The cases, by name — so a regenerated plan cannot quietly lose one."""
     _scene, snapshot, items = plan
-    assert len(items) == 16 and len(snapshot) == 14  # every item but the two roof ridges
+    assert len(items) == 17 and len(snapshot) == 15  # every item but the two roof ridges
     kinds = sorted(record.kind for record in snapshot.values())
-    assert kinds == ["CONTAINER_ROUND", "FENCE", "FENCE", "FENCE", "FENCE", "FENCE",
+    assert kinds == ["CONTAINER_ROUND", "FENCE", "FENCE", "FENCE", "FENCE", "FENCE", "FENCE",
                      "HEDGE_POLYGON", "HOUSE", "HOUSE", "PERENNIAL", "PERENNIAL", "PERENNIAL",
                      "POND_POOL", "RAISED_BED"]
     assert sum(1 for i in items.values() if i.object_type is ObjectType.ROOF_RIDGE) == 2
@@ -212,6 +216,15 @@ def test_what_the_plan_contains(plan) -> None:
     assert nearly.path[0] == pytest.approx((nearly.path[-1][0], nearly.path[-1][1] + 2.0))
     assert ladder.path_width_cm == gap.path_width_cm == 10.0
 
+    # fix round 3: the two butt ends meet corner to corner — one point, 10 cm above the start
+    meets = _by_name(snapshot, "Fence that meets itself")
+    assert meets.path[0] == pytest.approx((meets.path[-1][0], meets.path[-1][1] + 10.0))
+    assert [len(ring) for ring in meets.footprints] == [20] and meets.holes == ()
+    assert "outline_resolved" not in meets.params and meets.path_width_cm == 10.0
+    # 1,010 cm of fence, 10 cm wide, less the mitres — and less the hair it is drawn in by
+    assert 10082.842 - 5.0 < meets.plan_area_cm2 < 10082.842 - 3.0
+    assert {(0.002, 149.998), (-0.002, 150.002)} <= set(meets.footprints[0])  # the ends, apart
+
     bed = _by_name(snapshot, "Turned raised bed")
     assert bed.transform.rotation_deg == 30.0
     children = [r for r in snapshot.values() if r.parent_id == bed.item_id]
@@ -248,13 +261,13 @@ def test_g7_every_mesh_validates_reaches_its_height_and_covers_its_footprint(pla
             assert _cap_area(part.mesh) == pytest.approx(record.plan_area_cm2, rel=1e-6), record.name
             _assert_walls_face_away_from_the_solid(part.mesh, record)
             solids += 1
-    assert solids >= 11  # two houses, five fences, bed, pot, hedge, plants with a height
+    assert solids >= 12  # two houses, six fences, bed, pot, hedge, plants with a height
 
 
 def test_g4_transform_and_local_rings_reproduce_the_2d_footprints(plan) -> None:
     _scene, snapshot, items = plan
     worst_exact = worst_strip = 0.0
-    resolved = 0
+    resolved = touched = 0
     for item_id, record in snapshot.items():
         expected = item_footprints(items[item_id], JUNE)
         posed = _rings_of(record)
@@ -272,6 +285,12 @@ def test_g4_transform_and_local_rings_reproduce_the_2d_footprints(plan) -> None:
             continue
         assert len(posed) == len(expected), record.name  # every ring: outers AND holes
         if record.shape == "polyline":
+            if record.name == "Fence that meets itself":
+                # the 2D ring touches itself where the ends meet; the record's is that ring
+                # drawn in by 0.002 cm — the same boundary to within the hair and the grid
+                (ring,), (drawn,) = expected, posed
+                assert not is_simple_ring(tuple(ring)) and is_simple_ring(tuple(drawn))
+                touched += 1
             worst_strip = max(worst_strip, _strip_deviation(posed, expected))
             centre_line = [(p.x(), p.y()) for p in
                            (items[item_id].mapToScene(q) for q in items[item_id].points)]
@@ -286,6 +305,7 @@ def test_g4_transform_and_local_rings_reproduce_the_2d_footprints(plan) -> None:
     assert worst_exact <= 1e-6, worst_exact
     assert worst_strip <= 3e-3, worst_strip
     assert resolved == 1  # the crossed house, and nothing else
+    assert touched == 1  # the fence that meets itself
 
 
 def test_the_pipeline_adds_every_record_once_then_says_nothing(plan) -> None:
@@ -311,7 +331,8 @@ def test_turning_the_house_in_the_loaded_plan_is_one_transform_entry(plan) -> No
     assert after[str(house.item_id)].transform.rotation_deg == 205.0
 
 
-@pytest.mark.parametrize("name", ["Crossed house", "Ladder fence", "Fence with a gap"])
+@pytest.mark.parametrize("name", ["Crossed house", "Ladder fence", "Fence with a gap",
+                                  "Fence that meets itself"])
 def test_moving_or_turning_a_round_2_item_is_one_transform_entry(plan, name: str) -> None:
     """A resolved outline and a stroke with four holes are still item-local
     geometry: a move or a turn of the loaded item changes its pose and nothing else."""

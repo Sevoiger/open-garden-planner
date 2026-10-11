@@ -99,13 +99,18 @@ class Mesh:
         with np.errstate(over="ignore"):  # a float64 beyond float32 becomes inf — refused below
             mesh = Mesh(_f32(positions, 3), _f32(normals, 3), _f32(colors, 4), _f32(uvs, 2),
                         _u32(indices))
+        return mesh.require_finite()
+
+    def require_finite(self) -> Mesh:
+        """``self``, or ``MeshError`` when a position, normal, colour or uv is not
+        finite — what ``from_arrays`` and ``merge`` hold every mesh they hand out to."""
         for name, _dtype, _width in _SPEC:
-            if not np.isfinite(getattr(mesh, name)).all():
+            if not np.isfinite(getattr(self, name)).all():
                 raise MeshError(
                     f"non-finite values in {name} once they are float32 (a NaN, an infinity, or "
                     "a number beyond 3.4e38): a mesh never holds one"
                 )
-        return mesh
+        return self
 
     @staticmethod
     def empty() -> Mesh:
@@ -113,12 +118,15 @@ class Mesh:
 
     @staticmethod
     def merge(meshes: Sequence[Mesh]) -> Mesh:
-        """Concatenate meshes into one (static batching); empty ones are skipped."""
+        """Concatenate meshes into one (static batching); empty ones are skipped.
+        What comes out is finite, whatever went in — also when ONE part goes in
+        and comes out as it is (a mesh made by hand can hold what
+        ``from_arrays`` refuses)."""
         parts = [m for m in meshes if m.vertex_count]
         if not parts:
             return _EMPTY
         if len(parts) == 1:
-            return parts[0]
+            return parts[0].require_finite()
         offsets = np.cumsum([0] + [m.vertex_count for m in parts[:-1]])
         return Mesh.from_arrays(
             np.concatenate([m.positions for m in parts]),
