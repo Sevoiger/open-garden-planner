@@ -68,6 +68,13 @@ from open_garden_planner.ui.view3d.quick3d.shots import PerspectiveShot, TopDown
 from tests.integration import quick3d_lifecycle_child as lifecycle
 from tests.integration.quick3d_render_support import isolated_env
 
+# Qt's QML engine writes a compiled copy of every scene file it loads into the per-user
+# cache (<cache>/qmlcache/*.qmlc) - from C++, so nothing in Python redirects it - and this
+# file loads a fresh copy of Garden.qml for every control: hundreds of files in the
+# developer's profile after a few runs. No QML disk cache for this test process. Set at
+# import, during collection, before any QML engine exists (Qt reads the variable once).
+os.environ.setdefault("QML_DISABLE_DISK_CACHE", "1")
+
 REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "src"
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))

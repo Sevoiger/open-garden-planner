@@ -188,6 +188,27 @@ class TestEdges:
         assert np.array_equal(mesh.normals, before[1])
         assert np.array_equal(mesh.indices, before[2])
 
+    def test_a_mesh_whose_arrays_are_views_on_immutable_bytes_is_only_read(self) -> None:
+        """A builder may hand out arrays that are VIEWS on a ``bytes`` object (a cached
+        plant archetype): not writeable, not owning their data. ``engine_buffers`` must
+        neither write into them nor ask for ownership — the bytes it produces are the
+        ones a mesh with ordinary arrays gives."""
+        from dataclasses import replace
+
+        mesh = prism_mesh([L_SHAPE], 240.0)
+        frozen = {name: bytes(np.ascontiguousarray(getattr(mesh, name)).tobytes())
+                  for name in ("positions", "normals", "colors", "uvs", "indices")}
+        widths = {"positions": 3, "normals": 3, "colors": 4, "uvs": 2, "indices": 3}
+        views = {name: np.frombuffer(raw, dtype="<u4" if name == "indices" else "<f4").reshape(
+            -1, widths[name]) for name, raw in frozen.items()}
+        for view in views.values():
+            assert not view.flags.writeable and not view.flags.owndata
+        on_bytes = replace(mesh, **views)
+        assert engine_buffers(on_bytes) == engine_buffers(mesh)
+        for name, raw in frozen.items():
+            assert getattr(on_bytes, name).tobytes() == raw, f"{name} was written to"
+            assert not getattr(on_bytes, name).flags.writeable
+
     def test_two_calls_give_identical_bytes(self) -> None:
         mesh = prism_mesh([L_SHAPE], 240.0)
         assert engine_buffers(mesh) == engine_buffers(mesh)

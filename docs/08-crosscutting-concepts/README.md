@@ -807,7 +807,13 @@ and must report failures and not one skip (measured: 9 failed, 43 errors, 12 pas
   real main window also takes a settings store of its own, as `tests/conftest.py` does for
   the test process. Tests pin the environment handed to the child, and that no test of the
   package builds one by hand. The lesson behind it: a test once ran the app's log-directory
-  helper under a throwaway identity and left a directory in the real roaming profile.
+  helper under a throwaway identity and left a directory in the real roaming profile. The
+  test PROCESS itself is isolated by `tests/conftest.py` ("Test isolation", above) — but a
+  child does not import conftest, and what conftest replaces in Python (`QStandardPaths`)
+  does not reach Qt's own C++: the QML engine writes a compiled copy of every scene file it
+  loads into the per-user cache. The in-process host tier loads a fresh copy of `Garden.qml`
+  per control (788 such files had piled up in the developer's cache folder), so it switches
+  the QML disk cache off for the test process (`QML_DISABLE_DISK_CACHE`, set at import).
 - **A recovery is proven against a reference, not against itself.** After a failed engine call,
   `sync.reset()` and `sync.apply(...)`: the sink's state is compared with
   `sync.expected_state()`, the engine's Models with that reference part for part, the frame
