@@ -294,6 +294,55 @@ class TestRecord:
         assert not a.same_geometry(b)
         assert diff(scene(a), scene(b)).geometry == ("a",)
 
+    @pytest.mark.parametrize(
+        ("field", "one", "other"),
+        [("footprints", (((-1.0, 3.0), (5.0, 3.0), (5.0, 9.0)),), (((-2.0, 3.0), (5.0, 3.0), (5.0, 9.0)),)),
+         ("holes", ((((-1.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (10.0, -10.0)),),),
+          ((((-2.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (10.0, -10.0)),),)),
+         ("path", ((-1.0, 0.0), (10.0, 0.0)), ((-2.0, 0.0), (10.0, 0.0))),
+         ("path_width_cm", 1.0, float(2**61)),
+         ("height_cm", 1.0, float(2**61)),
+         ("params", Params({"seed": "a", "radius_cm": -1.0}), Params({"seed": "a", "radius_cm": -2.0}))],
+        ids=["footprints", "holes", "path", "path_width_cm", "height_cm", "params"],
+    )
+    def test_every_geometry_value_is_compared_not_only_hashed(self, field, one, other) -> None:
+        """The same collision in each field that holds numbers. Two floats collide
+        when they are equal modulo 2**61 - 1 — ``-1.0`` and ``-2.0`` by CPython's
+        special case for the hash -1, ``1.0`` and ``2.0**61`` by the modulus — and
+        a field that was hashed but not compared would lose exactly those edits.
+        (``kind`` and ``shape`` are strings: no collision can be written down.)"""
+        a, b = record(**{field: one}), record(**{field: other})
+        assert one != other
+        assert a.geometry_sig == b.geometry_sig, "the pair no longer collides: pick another"
+        assert not a.same_geometry(b)
+        assert diff(scene(a), scene(b)) == SceneDiff(geometry=("a",))
+
+    def test_a_transform_and_a_material_are_compared_too(self) -> None:
+        """One rule for all three signatures: the signature first, the values second.
+        An item moved from 1 cm west of the origin to 2 cm west of it has the same
+        ``transform_sig`` — a hash-only comparison would leave it where it was. A
+        material's 8-bit channels cannot be made to collide by hand, so a material
+        whose hash says nothing stands in for the collision."""
+        here, there = record(transform=Transform(-1.0, 5.0)), record(transform=Transform(-2.0, 5.0))
+        assert here.transform_sig == there.transform_sig  # the collision, measured
+        assert not here.same_transform(there)
+        assert diff(scene(here), scene(there)) == SceneDiff(transform=("a",))
+        tall, taller = (record(transform=Transform(0.0, 0.0, 0.0, base)) for base in (-1.0, -2.0))
+        assert tall.transform_sig == taller.transform_sig and not tall.same_transform(taller)
+
+        class Collides(Material):
+            """A material whose hash says nothing — what a collision looks like."""
+
+            __slots__ = ()
+
+            def __hash__(self) -> int:
+                return 1
+
+        red, blue = Collides("X", (255, 0, 0, 255)), Collides("X", (0, 0, 255, 255))
+        a, b = record(material=red), record(material=blue)
+        assert a.material_sig == b.material_sig and not a.same_material(b)
+        assert diff(scene(a), scene(b)) == SceneDiff(material=("a",))
+
 
 def _other(field: str) -> object:
     return {
