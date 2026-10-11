@@ -1012,6 +1012,13 @@ None of these was reported by a user: each was found by measuring a claim before
   `tests/unit/test_scene3d_contract.py::TestRecord::test_a_signature_is_only_an_accelerator`,
   which asserts the collision itself and then the detected edit. *A hash can prove two things
   different, never the same; when "same" means "skip the work", confirm it.*
+  - **And then the confirmation itself had a hole.** `same_geometry` compares eight fields; the
+    collision test pinned one of them. When `holes` became the eighth, the mutation check
+    (`scripts/mutation_check_scene3d.py`) deleted its comparison and every test still passed.
+    The collision is now asserted in each value-bearing field, and for the transform and the
+    material (`test_every_geometry_value_is_compared_not_only_hashed`,
+    `test_a_transform_and_a_material_are_compared_too`). Floats collide when they are equal
+    modulo 2**61 − 1: besides −1.0 / −2.0, `hash(1.0) == hash(2.0**61)`.
 - **Float dust is an edit unless you say otherwise: a HOUSE was rebuilt on 689 of 1,000 moves.**
   "Move → transform only" held for every shape in the first matrix and was false for the one item
   that owns another: a HOUSE's ridge is a separate item whose points the app re-writes by
@@ -1043,6 +1050,66 @@ None of these was reported by a user: each was found by measuring a claim before
   (`plant_canopy_radius_cm`), not the circle, exactly as in the 2D shadow. (2) A resize that keeps
   a corner fixed is reported as geometry **and** transform: correct — the record's frame hangs on
   the item's centre, and that centre moved. Both are pinned as behaviour, not worked around.
+
+**What the independent review then found behind a green suite** (same story, one day later).
+Seven gates were green and the contract was wrong in two places other stories were already
+building on.
+
+- **A closed fence became a slab, and every gate passed.** `polyline_footprint` returns a closed
+  stroke as TWO rings — an outer one and a hole, told apart only by their winding. The record
+  carried both as `footprints` and the default builder extruded both. Measured on a 10 m × 8 m
+  fence, 10 cm wide: rings of +818,062 and −782,100 cm², a solid over 81.8 m² of ground where the
+  fence stands on 3.60 m², and an inner wall facing into the solid. "Every ring matches the 2D
+  ring" was true, "the mesh validates" was true, "the top is the fence's height" was true. *No
+  gate measured an extensive quantity.* Fix: `Record.holes`, orientation enforced by the record,
+  a default builder that cuts holes out and checks its own cap area, a plan-view check in
+  `verify_builder`, and a third committed plan made of the shapes the bench plans lack
+  (ADR-054 decision 3 and 9; `tests/integration/test_scene3d_snapshot.py::TestClosedStrokes`,
+  `test_scene3d_edge_plan.py`). A 2 cm gap does not help: a stroke wider than the gap closes on
+  itself anyway (35,952 cm², one hole).
+  - **The same defect is live in the 2D shadow, and is NOT fixed here.** `item_footprints` hands
+    both rings to `compute_scene_shadows` as solids, so the hole ring casts the shadow of a slab.
+    Reproduction with `core/shadow_geometry` alone (no Qt): `polyline_footprint([(0, 0), (1000, 0),
+    (1000, 800), (0, 800), (0, 0)], 10.0)` → two rings; `compute_scene_shadows([(ring, 120.0) for
+    ring in rings], 60.0, 180.0)` → **88.8 m²** shaded. The stroke region cut into triangles and
+    shaded the same way gives **17.5 m²**; the same fence with its west side removed (no hole,
+    one ring) gives 16.7 m² both ways. The hours-of-sun heatmap reads the same footprints. It is
+    left alone because `item_footprints` is pinned byte for byte by the golden fixture and the 2D
+    shadow is shipped behaviour — the fix (shade `outer − holes`, as `group_rings` now makes
+    easy) is a change of its own with its own before/after.
+  - **A plan-view check has its own blind spot.** The first version sampled each *triangle* at
+    four points and summed the weights of the ones inside a hole. It read 205 % for a slab over
+    the fence's hole (measured — a share above one), and it cannot see a small hole under large
+    triangles at all: the two cap triangles of a 10 m slab have eight sample points, and none of
+    them lies in an 80 cm hole at (80…160, 210…290) — 0 % covered. The check now samples the
+    *hole* (a 24 × 24 lattice of its own interior points) against the triangles
+    (`test_a_hole_under_two_huge_triangles_is_seen`, `test_half_a_hole_covered_is_half`).
+    *Sample the thing you are asking about.*
+- **Recovery was not expressible in the protocol, and the test hid it.** `SceneSync.reset()`
+  forgot its records and touched no sink. After a sink call failed in mid-transaction the sink's
+  transaction was still open, so the next `begin()` raised and the sync was poisoned again:
+  there was no sequence of protocol calls that recovered. The test passed because it first called
+  `RecordingSink.reset()` — a convenience of the test double that no engine has. Fix: a tenth
+  protocol method, `clear()` (hold nothing; legal at any time, also inside a transaction), which
+  `reset()` now calls; `reset()` also forgets the sun and ground it deduplicated against, or the
+  first sun after a recovery would have been swallowed as "unchanged". *A fake that is more
+  capable than the real thing certifies behaviour the real thing does not have: test recovery
+  with nothing but the interface.*
+- **One malformed plant blanked the whole plan.** `plant_species = {"scientific_name": None}` on
+  one item raised `AttributeError` out of `snapshot_records`, so no record reached the engine.
+  The snapshot now contains any exception to its item, lists the item in `Snapshot.skipped` and
+  logs it once per item and cause — once, because the pipeline snapshots on every edit. *A loop
+  over user data needs its `try` inside the loop — and a place where what it swallowed can be
+  read.*
+- **"Rotate → transform only" was false for the one item a house owns.** A `ROOF_RIDGE` item had
+  a record; the app re-derives its points when the house turns (ADR-046), so that record changed
+  *geometry* on 400 of 400 rotations. The test that should have seen it took its baseline after
+  the rotation. Ridge items now get no record (the ridge is its house's param), and the test
+  takes its baseline first.
+- **A styled polyline does not keep a stroke width across save and load** (observed while
+  generating the edge-case plan; not changed). `core/project.py` restores `stroke_width` only
+  when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the
+  preset's width whatever was saved. The edge-case plan therefore uses fences without a preset.
 
 ### CI/release hardening: locked metadata also contains the application version
 

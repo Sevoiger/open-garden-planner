@@ -4,11 +4,11 @@
 work, so it has a budget of its own: median ≤ 15 ms on
 ``tests/fixtures/plans/bench_small.ogp`` (98 records) and ≤ 60 ms on
 ``bench_large.ogp`` (424 records). Measured on the dev box (Windows 11,
-2026-10-11, 30 runs each, idle machine): 2.1 ms / 8.6 ms median and 3.0 /
-10.6 ms max on Python 3.12.9, 2.0 / 9.1 ms median on 3.11.9 — a seventh of the
-budget. What dominates is not the 3D code: ~40 % is the shared height and
-canopy resolvers (``effective_height_cm``, ``plant_canopy_radius_cm`` →
-``core/growth_model``), which the 2D shadow overlay pays as well.
+2026-10-11, 30 runs each, idle machine): 2.2 ms / 9.6 ms median and 4.1 /
+10.8 ms max on Python 3.12.9, 2.3 / 9.6 ms median on 3.11.9 — about a sixth of
+the budget. A third of it is not 3D code at all but the shared height and canopy
+resolvers (``effective_height_cm`` 18 %, ``plant_canopy_radius_cm`` 16 % under
+cProfile → ``core/growth_model``), which the 2D shadow overlay pays as well.
 
 Conventions of ``tests/perf/test_nfr_budgets.py``: the ``perf`` marker, a median
 (another pytest run may share the machine), and the same x3 allowance on CI
@@ -17,7 +17,9 @@ runners.
 One addition, because this code is pure Python: **a timing taken under a line
 tracer measures the tracer.** Under ``pytest --cov=open_garden_planner
 --cov-branch`` — how CI's coverage job runs the suite — the same snapshot took
-17 ms / 78 ms median here (8-9x), above the budget of the untraced product. So
+17 ms / 78 ms median here (8-9x; measured on the story's first version, when
+the untraced medians were 2.1 / 8.6 ms), above the budget of the untraced
+product. So
 when a tracer is active the assertion is only a tripwire against a blow-up, at
 ten times the budget; the gate itself is asserted by every untraced run (a
 developer's ``pytest``, CI's test job).

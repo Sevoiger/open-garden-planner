@@ -560,18 +560,22 @@ failing merge tests belong on a temporary validation base, never master.
 
 ### 8.10.3 Patterns from the 3D scene pipeline (Phase 17 L1.1)
 
-Five patterns `tests/integration/test_footprints_golden.py`, `test_scene3d_snapshot.py`,
-`test_scene3d_pipeline.py` and `tests/perf/test_scene3d_snapshot_budget.py` established; reuse
-them where they fit.
+Patterns `tests/integration/test_footprints_golden.py`, `test_scene3d_snapshot.py`,
+`test_scene3d_pipeline.py`, `test_scene3d_edge_plan.py`, `tests/unit/test_scene3d_sync.py` and
+`tests/perf/test_scene3d_snapshot_budget.py` established; reuse them where they fit. The last
+four were paid for by an independent review that found two interface defects behind a green
+suite (ADR-054, "What the first version got wrong").
 
 - **A timing budget is asserted on untraced code.** A budget for pure-Python code cannot be
   asserted under a line tracer: under `pytest --cov=open_garden_planner --cov-branch` — how CI's
-  coverage job runs the suite — `snapshot_records` took 78 ms where it takes 8.6 ms untraced
+  coverage job runs the suite — `snapshot_records` took 78 ms where it took 8.6 ms untraced
   (9×), over its 60 ms budget. (A plain `coverage run` of a probe script had measured 39 ms, so
   measure the way CI runs it.) The budget test detects a tracer (`sys.gettrace()`, or coverage's
   `sys.monitoring` tool on 3.12+) and then asserts only a blow-up tripwire at ten times the
-  budget; every untraced run asserts the real one, and a test pins the factor so the untraced
-  budget cannot be relaxed by accident. The canvas repaint budgets
+  budget; every untraced run asserts the real one. What a test can pin here is the *logic* — that
+  a tracer is detected, and that nothing but a tracer or a CI runner widens the budget — not the
+  numbers: a test that asserts `BUDGET == 60` restates a constant and guards nothing. The canvas
+  repaint budgets
   (`tests/perf/test_nfr_budgets.py`) have no such rule: run locally under the same tracer they
   read 17–41 ms against their local 16.7 ms and fail (three runs, 2026-10-11); in CI their budget
   is 50 ms.
@@ -598,6 +602,30 @@ them where they fit.
   handle of a circle but not of an ellipse, rectangle, polygon or polyline (cause not
   identified), and a hover test that does not check would have passed vacuously there. Assert an
   effect of the hover (the handle's highlight brush) before asserting that it changed nothing else.
+- **Ask the question the defect would answer wrongly.** A closed fence became a slab over the
+  whole garden while "every ring matches the 2D ring", "the mesh validates" and "the top is the
+  right height" were all true. Each gate compared a property the wrong solid shared with the
+  right one. When a gate guards a *solid*, also measure an extensive quantity — the ground it
+  covers (`Record.plan_area_cm2` against the cap area, `verify_builder`'s plan view) — and compare
+  it with a number derived another way (a fence's length × its width). And put the awkward shapes
+  into a committed plan (`scene3d_edge_cases.ogp`): a gate that runs "over the bench plans" tests
+  only what the bench plans contain.
+- **A recovery test may use only the interface under test.** The first recovery test called a
+  method of the recording double (`RecordingSink.reset()`) before `SceneSync.reset()`, and so
+  proved nothing about an engine that has no such method — the real `reset()` left the sink's
+  transaction open. Write the fake that fails (`FlakySink`), recover through the protocol alone,
+  and compare with a from-scratch run (`assert_recovered`). Then write the fake that *ignores* the
+  recovery call and show what catches it (`sink.state() != sync.expected_state()`), so the limit
+  of the check is on record.
+- **A test's name is a claim.** Three tests promised more than they pinned: one "moving or
+  turning" test turned the item *before* taking its baseline, one named for `reset()` never called
+  it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
+  fails if the named behaviour breaks?"
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 53
+  single-rule mutations to the pipeline, each against the tests that must notice; its first run
+  found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
+  (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
+  with every rule.
 
 ## 8.11 Security Scanning (SAST)
 
@@ -2474,10 +2502,10 @@ facts are the `ogp-3d-renderer` skill; the look is `ogp-lush-cinematic`.
 
 ```
 live canvas items ──snapshot_records()──▶ {item_id: Record}        ui/view3d/snapshot.py (GUI thread)
-                                               │ diff() against the last snapshot       core/scene3d/diff.py
+                                               │ diff() against the last snapshot       core/scene3d/scene_diff.py
                                                ▼
                           SceneSync.apply ──▶ builders, for added + geometry only       build.py, sync.py
-                                               │ MeshPart (item-local frame)             mesh.py
+                                               │ MeshPart (item-local frame)             mesh.py, polygon.py
                                                ▼
                                            EngineSink                                    sink.py
                                Qt Quick 3D (L1.2) · RecordingSink (tests)
@@ -2487,6 +2515,13 @@ Nothing under `core/scene3d/` imports Qt: an AST scan in `tests/unit/test_scene3
 covers every module of the package, sub-packages included, and follows each `core` module the
 package reaches (today `shadow_geometry` and `solar`), so a later story cannot add a sibling that
 drags Qt in. The engine is imported by one package only, `ui/view3d/quick3d/` (L1.2).
+
+What that scan does **not** say: that importing the package leaves Qt unloaded. It checks the
+source (the AST), not the interpreter — `import open_garden_planner.core.scene3d` runs
+`core/__init__.py`, which imports PyQt6 for other `core` modules (commands, the project manager).
+"Qt-free" here means *no module of the pipeline uses Qt*, which is what keeps it testable without
+a GPU and portable to another engine; a process that must not load Qt at all would first have to
+untangle `core/__init__.py`.
 
 **Three frames, each conversion defined once** (`core/scene3d/frame.py`):
 
@@ -2512,7 +2547,8 @@ drags Qt in. The engine is imported by one package only, `ui/view3d/quick3d/` (L
 |---|---|---|
 | `kind` | ObjectType name; picks the builder | geometry |
 | `shape` | `circle` / `ellipse` / `rectangle` / `polygon` / `polyline` | geometry |
-| `footprints` | ground polygon(s), item-local cm; several rings only for a polyline's stroke | geometry |
+| `footprints` | the OUTER ring(s) of the ground the item covers, item-local cm: simple polygons, counter-clockwise. More than one only for a stroke or a self-crossing polygon that falls into several pieces | geometry |
+| `holes` | `holes[i]` = the clockwise rings cut out of `footprints[i]`; `()` when there are none | geometry |
 | `path`, `path_width_cm` | a polyline's centre line and stroke width (fences and walls are built from these) | geometry |
 | `height_cm` | `effective_height_cm(..., at_date)`; `None` = decoration, casts no shadow | geometry |
 | `params` | sorted immutable mapping — see below | geometry |
@@ -2526,6 +2562,28 @@ ends in the HOUSE's local frame, from the live ridge item), `species_key` (ADR-0
 `species_name`, `plant_category`, `path_style` (a polyline's `PathFenceStyle`, when set),
 `container_material`. Selection and hover are not in the record at all. `base_cm` is 0.0 until
 L1.6 stands plants on their bed.
+
+**Outer rings and holes — read `regions`, not `footprints` alone.** The ground an item covers is
+its outer rings *minus* their holes: `record.regions` yields `(outer, holes)` pairs and
+`record.plan_area_cm2` the area. Only strokes have holes today — a fence that closes on itself, or
+nearly (a gap narrower than the stroke), is one outer ring with one hole; a figure of eight has
+several. `Record` enforces both orientations, so a ring cannot be put on the wrong side by
+accident. Whoever turns `footprints` into something with area — a builder, the ground bake, a
+picker — iterates `regions`; extruding the outer ring alone turns a 3.6 m² fence into a slab over
+the 80 m² it encloses (that was the first version's defect, and `verify_builder` now refuses it).
+A polygon that crosses itself (a bow-tie) arrives already resolved into simple rings, by the
+non-zero rule the 2D shadow fills it with.
+
+**What the snapshot leaves out.** By design, silently: invisible items, items without an object
+type, items that cover no ground (text, groups, a one-point polyline), and `ROOF_RIDGE` items —
+a ridge is its HOUSE's `ridge` param, and the Qt 3D view's decal for the ridge line is not carried
+over. Because something is wrong, and **reported**: an item whose record cannot be built
+(malformed metadata, non-finite geometry — any exception is contained to that item) and a second
+item carrying an id already taken (the lower one wins). `snapshot_records` returns a `Snapshot`:
+a `dict[str, Record]` in every respect, plus `snapshot.skipped`, a tuple of
+`SkippedItem(item_id, kind, reason, error)`. Each is logged once per item and cause, not once
+per edit. The wiring (L1.3) is expected to show `skipped` — and `SceneSync.failures` — where a
+user can find them.
 
 Where the local frame hangs: the circle's centre; `rect().center()` of an ellipse or rectangle;
 the centre of the vertex bounding box of a polygon or polyline (`ui/canvas/footprints.item_outline`).
@@ -2559,19 +2617,41 @@ across items (the seed is the item id).
 
 The three lists are independent: an item appears under each aspect that changed and no other.
 
-**The sink protocol** (`core/scene3d/sink.py`): `begin`, `commit`, `add(item_id, parts, transform,
-material)`, `remove`, `update_transform`, `update_material`, `replace_geometry(item_id, parts)`,
-`set_sun(SunState)`, `set_ground(GroundSpec)`. Every call sits inside `begin`/`commit`; `add` takes
-an id the sink does not hold, every other item call one it does; `parts` may be empty (an item
-without a solid still has a pose and a material). A part with `tinted=True` is multiplied with
-`material.tint_linear()` by the sink.
+**The sink protocol** (`core/scene3d/sink.py`) — ten methods: `begin`, `commit`, `add(item_id,
+parts, transform, material)`, `remove`, `update_transform`, `update_material`,
+`replace_geometry(item_id, parts)`, `set_sun(SunState)`, `set_ground(GroundSpec)` and `clear()`.
+Every call but `clear` sits inside `begin`/`commit`; `add` takes an id the sink does not hold,
+every other item call one it does; `parts` may be empty (an item without a solid still has a pose
+and a material). A part with `tinted=True` is multiplied with `material.tint_linear()` by the
+sink. **`clear()`**: after it the engine holds nothing — no items, no sun, no ground — and no
+transaction is open. It is legal at any time: inside a transaction (it aborts it), outside one, on
+an empty sink. An engine sink must implement it so that it also works after one of its own calls
+failed half way.
 
-**`SceneSync`** (`core/scene3d/sync.py`) owns the last applied snapshot and a sink. `apply(records)`
-diffs, runs builders for `added` + `geometry` only — all of them *before* the sink is touched —
-and sends one transaction, or nothing. `set_sun` / `set_ground` send a value once per change.
-`reset()` forgets everything after the engine scene was torn down. A builder that raises is
-contained (no parts for that item, listed in `failures`, logged); a sink that raises poisons the
-sync until `reset()`.
+**`SceneSync`** (`core/scene3d/sync.py`) owns the last applied snapshot and a sink.
+`apply(records, sun=None, ground=None)` diffs, runs builders for `added` + `geometry` only — all
+of them *before* the sink is touched — and sends one transaction, or nothing. A sun or ground
+handed to the same `apply` travels in that transaction, so a clock tick that moves the sun and
+grows the plants is one commit; `set_sun` / `set_ground` send one alone, once per change. A
+builder that raises is contained (no parts for that item, listed in `failures`, logged). A builder
+registered or replaced after an item was built is noticed: the next `apply` rebuilds that item.
+
+*Failure and recovery.* A sink that raises leaves the engine in an unknown state with its
+transaction open; the sync is then *poisoned* and every call raises `SyncStateError`.
+`reset()` is the way back: it calls `sink.clear()` and forgets the records, the failures, the
+poison flag and the sun and ground it remembered, so the next `apply` re-adds every item and
+re-sends sun and ground. If `clear()` raises, the sync stays poisoned.
+
+| Situation | What to call |
+|---|---|
+| a new plan, or another plan opened | nothing special — `apply(snapshot)`: it removes what is gone and adds what is new |
+| a sink call raised (`SyncStateError` afterwards) | `reset()`, then `apply(snapshot, sun=…, ground=…)` |
+| the engine's scene was destroyed around the same sink (view rebuilt, device lost) | `reset()`, then `apply(…)` |
+| a new sink object | a new `SceneSync` |
+
+`sync.expected_state()` returns what a protocol-abiding sink holds right now (one from-scratch
+apply into an empty `RecordingSink`). Tests compare it with the sink's own state — it is the only
+way to catch a sink that silently *ignores* a call, `clear()` above all.
 
 **How to write a builder.** A builder is `Callable[[Record], tuple[MeshPart, ...]]` — a pure
 function of the record's *geometry part*.
@@ -2585,9 +2665,12 @@ function of the record's *geometry part*.
    (`color.srgb_to_linear`). Where a part takes the item's own colour, leave it neutral and set
    `tinted=True` — then a recolour never calls the builder. An item without a resolved height is
    decoration: `casts_shadow=False`.
-3. Register it: `registry.register("HOUSE", build_house)` on the `BuilderRegistry` instance the
-   wiring hands to your package. Kinds without a builder get `default_builder` (a prism up to the
-   height, nothing without one).
+3. Cover the ground the record covers: iterate `record.regions` (or pass
+   `record.footprints, height, record.holes` to `prism_mesh`). A hole is not built over.
+4. Register it: `registry.register("HOUSE", build_house)` on the `BuilderRegistry` instance the
+   wiring hands to your package. Kinds without a builder get `default_builder` (a prism of the
+   outer rings minus their holes up to the height; nothing without one; a `ValueError` — which
+   `SceneSync` contains — for a ring that crosses itself).
 
 **How to test a builder** — no GPU, no Qt:
 
@@ -2598,7 +2681,9 @@ from open_garden_planner.core.scene3d import (
 
 parts = verify_builder(build_house, record)          # the contract, one call
 # tuple of MeshPart · deterministic · ignores transform, material, id, name, parent ·
-# every mesh validates · mesh top == record.height_cm (±1 %; pass height_tolerance=0.03 for plants)
+# every mesh validates · mesh top == record.height_cm (±1 %; height_tolerance=0.03 for plants,
+# height_tolerance_cm=0.5 for an absolute gate) · seen from above: no hole of the footprint built
+# over, nothing more than plan_margin_cm (50; 0.0 = strictly inside, None = off) outside it
 
 registry = BuilderRegistry()
 registry.register("HOUSE", build_house)
@@ -2613,11 +2698,14 @@ assert sink.ops() == [("begin", None), ("update_transform", house_id), ("commit"
 assert sync.build_count == len(records)               # … built nothing
 ```
 
-Run `verify_builder` over every record of both bench plans your builder handles
-(`tests/integration/test_scene3d_snapshot.py::TestDefaultBuilderOnRealItems` is the template), and
-assert the invariant that makes diffs safe after each step of an edit sequence: the sink's
-`state()` equals the state of a fresh `SceneSync` given the same snapshot
-(`tests/integration/test_scene3d_pipeline.py::Pipeline`).
+Run `verify_builder` over every record your builder handles in all THREE committed plans —
+`bench_small.ogp`, `bench_large.ogp` and `scene3d_edge_cases.ogp`, which holds the shapes the bench
+plans lack: a closed fence, a nearly closed one, an open U, a turned house with its ridge, an
+ellipse, a turned raised bed with plants, a pot, a concave polygon
+(`tests/integration/test_scene3d_edge_plan.py` is the template). Assert the invariant that makes
+diffs safe after each step of an edit sequence: the sink's `state()` equals
+`sync.expected_state()` (`tests/integration/test_scene3d_pipeline.py::Pipeline`). And add a mutant
+for each rule your builder must keep to `scripts/mutation_check_scene3d.py`.
 
 **Porting from the spike** (`spike_q3d/meshes.py`): `MeshData` → `Mesh`, `uv` → `uvs`, flat
 `indices` → `(m, 3)` (`Mesh.from_arrays` takes either), `MeshData.concat` → `Mesh.merge`,

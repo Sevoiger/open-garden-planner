@@ -2336,7 +2336,10 @@ All three P1 tests (round 1's two, round 2's typing test) fail when their fix is
 **Status**: Accepted (2026-10-11, #385 story L1.1, epic #383). This is the scene-pipeline ADR the
 epic reserved as "ADR-049" (that number went to frost dates; ADR-053 announced it for L1.1). It
 builds on ADR-048 (Qt Quick 3D, GO) and ADR-053 (one sim clock). Nothing is rendered by this
-story: it is the Qt-free foundation L1.2–L1.7 build on.
+story: it is the Qt-free foundation L1.2–L1.7 build on. **Amended the same day by the independent
+review of the story** (two interface defects and a list of smaller ones — decisions 1, 3, 8, 9, 10
+and 12 and the section "What the first version got wrong" below); the text here is the contract as
+it stands after that round.
 
 ### Context
 
@@ -2363,18 +2366,27 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
 
    ```
    live canvas items ──snapshot_records()──▶ {item_id: Record}        ui/view3d/snapshot.py (GUI thread)
-                                                  │ diff() against the last snapshot       diff.py
+                                                  │ diff() against the last snapshot       scene_diff.py
                                                   ▼
                              SceneSync.apply ──▶ builders, for added + geometry only       build.py, sync.py
-                                                  │ MeshPart (item-local frame)             mesh.py
+                                                  │ MeshPart (item-local frame)             mesh.py, polygon.py
                                                   ▼
                                               EngineSink                                    sink.py
                                   Qt Quick 3D (L1.2) · RecordingSink (tests, NO-GO path)
    ```
 
-   The former `core/scene3d.py` moved verbatim to `core/scene3d/legacy.py`; the package
-   re-exports every name, so the Qt 3D window, the dormant spike and their tests did not change.
-   It retires with them in L1.10.
+   "Qt-free" is a statement about this package's SOURCE: no module of it, and none of the `core`
+   siblings it imports, imports Qt. It is not a statement about the interpreter: importing
+   `open_garden_planner.core.scene3d` runs `core/__init__.py`, which loads PyQt6 for other
+   modules of `core`. A process that must stay Qt-free needs that package `__init__` untangled
+   first; the scan guarantees only that nothing here *uses* Qt.
+
+   The former `core/scene3d.py` became `core/scene3d/legacy.py` — the Qt 3D view's record, its
+   scene-space extruder and its frame helper — and the package re-exports every name, so the Qt 3D
+   window, the dormant spike and their tests did not change. **L1.10 deletes exactly that file**
+   (and its re-exports). The two functions of the old module that the new pipeline uses as well
+   moved out of it: the ear clipper `triangulate_polygon` to `polygon.py`, `sun_direction_scene`
+   to `frame.py`; `legacy.py` imports them back.
 2. **Item-local geometry plus a rigid transform.** A record's `footprints` / `path` are
    centimetres relative to the item's own anchor — the circle's centre, `rect().center()` of an
    ellipse or rectangle (the geometric centre, never the decoration-expanded `boundingRect()`:
@@ -2387,7 +2399,10 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
      `m11 = cos a, m12 = sin a, m21 = −sin a, m22 = cos a`, so `θ = atan2(m12, m11)`; on the Y-up
      canvas Qt's `setRotation(+90)` takes local +x (east) to scene +y (north). Measured, not
      assumed: the matrix reproduces `mapToScene` bit for bit, and `transform ∘ local footprint`
-     reproduces `item_footprints` to **1.5e-7 cm** over 96 cases (gate: 1e-6).
+     reproduces `item_footprints` to **1.5e-7 cm** over 96 cases (gate: 1e-6) — for every shape
+     compared vertex by vertex, and for a polyline's centre line. **One thing is outside that
+     number: a polyline's stroke polygon**, which agrees only to pyclipper's 1/1000 cm grid
+     (measured 1.6e-3 cm; see the rejected alternative "the 2D stroke polygon of a polyline").
    - **A circle's rotation is 0 by construction.** The 2D footprint polygonises a circle around its
      mapped centre and does not turn with the item; a record that turned would either disagree with
      the 2D shadow or make a rotation a geometry change.
@@ -2396,13 +2411,26 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
      coordinates and the rotation is 0. `scene = T + local` still holds; the price is that rotating
      such an item rebuilds it. The app never produces such a transform on a garden item today.
 3. **A record is everything a builder needs**, as plain immutable data (`record.py`): `kind`
-   (ObjectType name), `shape`, `footprints`, a polyline's centre line `path` and `path_width_cm`,
-   `height_cm` — the 2D shadow's own `effective_height_cm(..., at_date)`, `None` meaning decoration
-   that casts no shadow, exactly as in 2D — and `params`, a sorted immutable mapping: the seed
-   (item id), a circle's radius, a HOUSE's ridge ends in the HOUSE's frame read from the live ridge
-   item (ADR-046), the canonical species key and common name, the plant category, a path/fence
-   style, a container's material. `material` holds the item's own sRGB fill, stroke and pattern.
-   Not captured: what only the spike's hacks needed.
+   (ObjectType name), `shape`, `footprints` and `holes`, a polyline's centre line `path` and
+   `path_width_cm`, `height_cm` — the 2D shadow's own `effective_height_cm(..., at_date)`, `None`
+   meaning decoration that casts no shadow, exactly as in 2D — and `params`, a sorted immutable
+   mapping: the seed (item id), a circle's radius, a HOUSE's ridge ends in the HOUSE's frame read
+   from the live ridge item (ADR-046), the canonical species key and common name, the plant
+   category, a path/fence style, a container's material. `material` holds the item's own sRGB
+   fill, stroke and pattern. Not captured: what only the spike's hacks needed.
+   - **`footprints` are OUTER rings; `holes` are what is cut out of them.** An outer ring is a
+     simple polygon, counter-clockwise (positive signed area); `holes[i]` are the clockwise rings
+     inside `footprints[i]`; both orientations are enforced by `Record` itself. The ground an item
+     covers is the outers minus the holes (`Record.regions`, `Record.plan_area_cm2`). A polyline's
+     stroke is sorted into both — a fence that closes on itself, or nearly (a gap narrower than
+     the stroke), is one outer ring and one hole. `holes` is part of `geometry_sig`.
+   - **A polygon that crosses itself is resolved in the snapshot** into simple rings by the
+     non-zero rule — the rule the 2D shadow's union fills it with — so a builder never receives a
+     ring it cannot triangulate. (Its vertices then sit on pyclipper's grid.)
+   - **A ROOF_RIDGE item has no record.** The ridge reaches the pipeline as its HOUSE's `ridge`
+     param. As a record of its own it changed *geometry* whenever the house turned (the app
+     re-derives the ridge item's points: measured on 400 of 400 rotations), which would have made
+     "rotate → transform only" false for the one item a house owns.
 4. **Three signatures — and a signature is only an accelerator.** `geometry_sig` covers what
    changes a mesh, `transform_sig` the transform, `material_sig` the material. `item_id`, the
    display `name` and `parent_id` are in none; selection and hover are not in the record at all.
@@ -2428,40 +2456,84 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
    material kind, whether it casts a shadow, and whether it is **tinted**: the builder leaves the
    vertex colours neutral and the sink multiplies them with the item's material, so a recolour is
    an `update_material` and never a rebuild.
-8. **The engine boundary is nine methods** (`sink.py`): `begin`, `commit`, `add`, `remove`,
-   `update_transform`, `update_material`, `replace_geometry`, `set_sun`, `set_ground`.
-   `RecordingSink` implements it with a list and a dict, answers "what would the engine hold now?",
-   and enforces the protocol — every call inside `begin`/`commit`, no `add` of a held id, no update
-   of an unknown one. `set_sun` takes plain solar data from `core/solar` (light = −sun vector,
-   ADR-037); `set_ground` a deliberately minimal plan rectangle that L1.5 extends.
+8. **The engine boundary is ten methods** (`sink.py`): `begin`, `commit`, `add`, `remove`,
+   `update_transform`, `update_material`, `replace_geometry`, `set_sun`, `set_ground` — and
+   `clear`. `RecordingSink` implements it with a list and a dict, answers "what would the engine
+   hold now?", and enforces the protocol — every call but `clear` inside `begin`/`commit`, no
+   `add` of a held id, no update of an unknown one. `set_sun` takes plain solar data from
+   `core/solar` (light = −sun vector, ADR-037); `set_ground` a deliberately minimal plan rectangle
+   that L1.5 extends.
+   - **`clear()` is the verb recovery needs.** After it the engine holds nothing — no items, no
+     sun, no ground — and no transaction is open. It is legal at any time: inside a transaction
+     (it aborts it), outside one, on an empty sink. Without it "tear the scene down" could not be
+     said through the protocol, and a sink that failed in mid-transaction could not be brought
+     back by anything `SceneSync` is allowed to call.
 9. **A builder is a pure function of one record's geometry part** (`build.py`):
    `Builder = Callable[[Record], tuple[MeshPart, ...]]`, looked up by `kind` in a
    `BuilderRegistry` *instance*. It may not read the transform, the material, the id, the name or
    the parent — the pipeline calls it only when `geometry_sig` changed, so anything else it read
    would go stale. `verify_builder` enforces that in tests. The default builder is the honest v0: a
-   prism of the footprint whose top is exactly the resolved height, and nothing for an item
-   without one.
+   prism of the footprint — outer rings minus their holes, with walls around each hole that face
+   into the hole — whose top is exactly the resolved height, and nothing for an item without one.
+   - **The default builder never emits a wrong solid.** `prism_mesh` refuses a ring that is not a
+     simple polygon (`ValueError`: `SceneSync` then shows the item without a solid and reports it)
+     and checks its own cap before returning it: every triangle faces up and their areas sum to
+     the region's.
+   - **`verify_builder` looks at the solid from above.** Beside determinism, purity, mesh validity
+     and the height, it refuses a builder that covers more than half of a HOLE of the footprint
+     (a hole sampled on a lattice of its own points) or puts more than 1 % of the footprint's area
+     as top surface further than `plan_margin_cm` (default 50 cm, for eaves) outside it. The
+     height tolerance is a fraction of the height by default (1 % built, 3 % plants) or, with
+     `height_tolerance_cm`, absolute centimetres (L1.6's gate is ±0.5 cm).
+   - **A registry may change after the first apply.** `SceneSync` remembers which builder built
+     each item; the next `apply` rebuilds the items whose builder is no longer that one. Freezing
+     the registry was the alternative; it would have made the order in which builder packages
+     register a correctness condition.
 10. **`SceneSync` keeps the sink in step** (`sync.py`). All builders run **before** the sink is
     touched; then one `begin`/`commit` — or no call at all. Invariant: after any sequence of
-    applies the sink holds exactly what one apply of the latest snapshot puts into an empty sink.
+    applies the sink holds exactly what one apply of the latest snapshot puts into an empty sink
+    (`SceneSync.expected_state()` is that reference).
+    - *One transaction per tick.* `apply(records, sun=…, ground=…)` sends the records, the ground
+      and the sun in the same `begin`/`commit`: a sim-clock tick that moves the sun and grows the
+      plants never shows a frame with the new sun over the old plants. `set_sun` / `set_ground`
+      remain for a change of the sun or ground alone.
     - *A builder that raises is contained*: the item gets no parts, the failure is logged and
       listed in `failures`, the rest of the scene is applied, and the builder is not run again
-      until that item's geometry changes.
-    - *A sink that raises poisons the sync*: the engine's state is unknown, so every later call
-      raises until the owner tears the scene down and calls `reset()`.
+      until that item's geometry (or its builder) changes.
+    - *A sink that raises poisons the sync*: the engine's state is unknown — and its transaction
+      is still open — so every later call raises `SyncStateError` until `reset()`.
+    - *`reset()` is the recovery, and it goes through the protocol*: it calls `sink.clear()` and
+      forgets the records, the failures, the poison flag and the sun and ground it deduplicates
+      against, so the next `apply` re-adds every item and re-sends sun and ground. If `clear()`
+      itself raises, the sync stays poisoned. What the sync cannot see is a sink that *ignores*
+      `clear()` — it returns nothing; a test catches that by comparing the sink's own account of
+      itself with `expected_state()`.
+    - *When `reset()` is needed*: after a sink failure, and when the engine's scene was destroyed
+      behind the sync's back (the 3D view was torn down and rebuilt around the same sink, the
+      graphics device was lost). **Not for a new or newly opened plan**: a plain `apply` of the new
+      snapshot removes what is gone and adds what is new, in one transaction. A new sink gets a
+      new `SceneSync`.
 11. **One footprint extraction.** `ui/canvas/footprints.py` is the public home of
     `item_footprints` and `plant_canopy_radius_cm`, and of `item_outline` — the same vertex
     enumeration in item coordinates, from which both the scene-space footprints (2D shadows,
     heatmap, Qt 3D) and the item-local records are made. Closes TD-036.
-12. **The truth principle: a beautiful wrong frame is a P0.** The contract is the gate table of
+12. **The snapshot never lets one item blank the view** (`ui/view3d/snapshot.py`).
+    `snapshot_records` returns a `Snapshot` — a `dict`, as before, with one attribute: `skipped`.
+    An item whose record cannot be built (malformed metadata, geometry that is not finite: any
+    exception is contained to that item) is left out, listed in `skipped` with its exception, and
+    logged once per item and cause — not once per edit. A second item carrying an id already
+    taken is skipped the same way, with a warning; the lower one wins. Items left out by design
+    (invisible, without an object type, covering no ground, a roof ridge) are not in `skipped`.
+13. **The truth principle: a beautiful wrong frame is a P0.** The contract is the gate table of
     `ogp-lush-cinematic` §1, and from this story on each gate that does not need pixels is a test
     a builder cannot pass by looking good:
 
     | Gate | Where it is enforced now |
     |---|---|
-    | Height: mesh top = resolved height | `verify_builder` (±1 % built, ±3 % plants); default prism exact |
+    | Height: mesh top = resolved height | `verify_builder` (±1 % built, ±3 % plants, or absolute cm); default prism exact |
     | Faces: the sun lights the face that faces it | `Mesh.validate` winding rule |
-    | Footprint / spread: the 2D footprint | golden fixture + `transform ∘ local == item_footprints` |
+    | Footprint / spread: the 2D footprint | golden fixture + `transform ∘ local == item_footprints`, over every ring |
+    | Ground covered: the solid stands where the plan has something | `verify_builder` plan view (holes, overreach); default prism's cap area = footprint area |
     | North / nothing mirrored | `frame.SCENE_TO_ENGINE` has determinant +1; one mapping |
     | Sun: only `core/solar` | `SunState` carries angles, nothing art-directed |
     | Date: the plan's sim date | `snapshot_records(scene, at_date)` feeds the 2D resolvers |
@@ -2487,6 +2559,14 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
   derived from it would change on every move. The record inflates the centre line in the local
   frame instead; the two polygons differ by that grid (measured 1.6e-3 cm), while the centre line
   itself — what fences and walls are built from — agrees to 1e-7.
+- **Telling outer rings and holes apart by orientation alone, inside `footprints`.** It is what
+  pyclipper returns, and it is how the defect below happened: nothing in the type said that the
+  second ring of a closed fence is not a solid. A separate field makes the wrong reading a
+  deliberate act; `footprints` kept its name and type so that code written against the first
+  contract still reads the outer rings.
+- **Letting the snapshot raise.** One plant with `plant_species = {"scientific_name": None}` took
+  the 3D view of the whole plan with it. And **swallowing it silently**: the user would see a
+  plan with a hole in it and no one would know why — hence `skipped` plus one log line.
 - **Aborting the whole apply when a builder fails.** One broken archetype would freeze the 3D
   view for the whole plan. Containment keeps the plan visible; running builders before the sink
   keeps the transaction whole either way.
@@ -2500,10 +2580,17 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
 
 ### Consequences
 
-- New: `core/scene3d/{record,diff,frame,mesh,sink,build,sync,color}.py`,
+- New: `core/scene3d/{record,scene_diff,frame,mesh,polygon,sink,build,sync,color}.py`,
   `ui/canvas/footprints.py`, `snapshot_records` in `ui/view3d/snapshot.py`. Moved:
-  `core/scene3d.py` → `core/scene3d/legacy.py`. `sun_shadow_controller` keeps two underscore
-  aliases for the two frozen test suites that import them, until L1.10.
+  `core/scene3d.py` → `core/scene3d/legacy.py` (minus the two shared functions, decision 1).
+  `sun_shadow_controller` keeps two underscore aliases for the two frozen test suites that import
+  them, until L1.10. The module that holds `diff` is `scene_diff`, so that
+  `open_garden_planner.core.scene3d.diff` is one thing — the function.
+- **The 2D shadow has the defect the 3D pipeline had, and this story does not touch it.**
+  `item_footprints` hands a closed fence's two rings to `compute_scene_shadows` as two solids, so
+  a 10 m × 8 m fence 1.2 m high shades 88.8 m² at a 60° sun where its stroke shades 17.5 m². The
+  golden footprint fixture pins `item_footprints` byte for byte, so the fix is a follow-up of its
+  own (§11.4.8 has the reproduction).
 - No `.ogp` change, no `FILE_VERSION` bump, no user-visible string, no new dependency, no app
   wiring (L1.3) and nothing rendered.
 - `SceneDiff` has a sixth field, `reordered`, beyond the five the issue names.
@@ -2516,11 +2603,15 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
   it becomes a param.
 - ADR-048 (entries 5 and 6) expected L1.1 to measure the full edit-to-frame path (≤ 50 ms p95).
   That needs an engine and moves to L1.2/L1.3. What L1.1 measures is its own share: a snapshot
-  takes 2.1 ms (99 records) / 8.6 ms (425 records) median against budgets of 15 / 60 ms, a diff
-  0.07 / 0.32 ms; ~40 % of the snapshot is the shared height and canopy resolvers.
-- **Open for later stories**: L1.2 implements `EngineSink` and proves `engine_pose` against the
-  engine (one geometry per Model lifetime); L1.3 owns the debounced tick and `reset()` on project
-  load; L1.4 extends `SunState` with the look; L1.5 extends `GroundSpec` and consumes `reordered`;
+  takes 2.2 ms (98 records) / 9.6 ms (424 records) median against budgets of
+  15 / 60 ms, a diff 0.08 / 0.37 ms; a third of the snapshot is the shared height and
+  canopy resolvers.
+- **Open for later stories**: L1.2 implements `EngineSink` — all ten methods, `clear()` included —
+  and proves `engine_pose` against the engine (one geometry per Model lifetime); L1.3 owns the
+  debounced tick, sends sun and records in one `apply`, shows `Snapshot.skipped` and
+  `SceneSync.failures` somewhere a user can find them, and calls `reset()` only after a sink
+  failure or a rebuilt engine scene — not on project load; L1.4 extends `SunState` with the look;
+  L1.5 extends `GroundSpec`, consumes `reordered` and paints `Record.regions`, not `footprints`;
   L1.6 fills `transform.base_cm` from `parent_id` and registers built-world builders; L1.7
   registers plant builders and adds a resolved "in season" param (it needs the plan's location,
   which a record does not carry).
@@ -2528,22 +2619,55 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
 ### Validation
 
 - **`tests/unit/test_scene3d_contract.py`, `test_scene3d_frame.py`, `test_scene3d_mesh.py`,
-  `test_scene3d_sync.py`** (Qt-free): the field groups of `Record` (every field in exactly one),
-  the hash collision, all eight diff combinations, determinant +1 and winding, the legacy scalar
-  mapping, one failing mesh per defect class, the sink protocol, builder containment, sink
-  poisoning, and incremental == full rebuild over random edit sequences.
+  `test_scene3d_polygon.py`, `test_scene3d_sync.py`** (Qt-free): the field groups of `Record`
+  (every field in exactly one), ring orientation, the hash collision in every value-bearing
+  field, all eight diff combinations, determinant +1 and winding, the legacy scalar mapping, one
+  failing mesh per defect class, triangulation with holes, the plan-view check, the sink
+  protocol, builder containment, sink poisoning, **recovery through the protocol only** (a sink
+  that fails on `add` / `update_transform` / `set_sun` / `commit`, then `reset()` and one apply,
+  compared with a from-scratch apply), a sink that ignores `clear()`, a registry that changes
+  late, and incremental == full rebuild over random edit sequences.
 - **`tests/integration/test_footprints_golden.py`**: 120 footprint cases with exact float reprs,
   generated before the move, byte-identical after it.
 - **`tests/integration/test_scene3d_snapshot.py`**: the diff matrix over every footprint shape
   through the app's own commands; `transform ∘ local == item_footprints` for every shape ×
   rotation × position × pivot; the non-rigid rule; 1,000 moves of a ridged HOUSE; every bench-plan
-  record through `verify_builder`; 100 identical snapshots on both bench plans.
+  record through `verify_builder`; 100 identical snapshots on both bench plans; a closed fence, a
+  nearly closed one and an open U (cap area = stroke area; walls face away from the solid; the
+  first default builder, reconstructed, is refused); a bow-tie house; one malformed item per
+  record field group; two items with one id; a house turned with its ridge.
+- **`tests/integration/test_scene3d_edge_plan.py`** over the third committed plan,
+  `tests/fixtures/plans/scene3d_edge_cases.ogp` (`scripts/make_scene3d_edge_plan.py`): the same
+  gates — 100 identical snapshots, every mesh valid with its cap area equal to the footprint's,
+  `transform ∘ local == item_footprints` over every ring — on the shapes the bench plans lack.
 - **`tests/integration/test_scene3d_pipeline.py`** (§8.10): draw with the real tools, then move,
   rotate, recolour, resize, select, delete, undo, redo — the exact sink calls and incremental ==
   full rebuild after every step; the same on a real `GardenPlannerApp` with the sim clock; and
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- A mutation check (21 single-rule breaks — mirrored frame, flipped rotation, no grid, no value
-  compare, colour baked into the mesh, a prism 1 % too tall, builders inside the transaction …)
-  was run once while writing the tests: every mutant failed at least one test.
+- **`scripts/mutation_check_scene3d.py`** — 53 single-rule breaks (mirrored frame, flipped
+  rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
+  ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record …), each
+  run against the tests that must notice. Not part of the suite (it rewrites source files); run by
+  hand after changing the pipeline or its tests. Every mutant is killed.
+
+### What the first version got wrong (independent review, same day)
+
+Recorded because each of these passed every gate the story had set itself:
+
+- **A closed fence became a slab.** `footprints` carried the hole ring of a closed stroke, and
+  the default builder extruded it: 3.6 m² of fence turned into a solid over 81.8 m² of garden with
+  an inside-out inner wall. G4 compared ring by ring (both rings were "right"), G7 validated the
+  mesh (it was a valid mesh) and `verify_builder` checked the height (it was the right height).
+  No gate asked **how much ground the solid covers** — and neither bench plan contains a stroke
+  that closes on itself. The fix is decision 3 and the plan-view check of decision 9; the lesson
+  is the fourth row of the gate table and the third committed plan.
+- **Recovery could not be said through the protocol.** `reset()` forgot the sync's records but
+  touched no sink, so after a mid-transaction failure the next `begin()` raised "a transaction is
+  already open". The tests passed because they called the recording double's own `reset()` first —
+  a method no real engine has. The fix is `clear()`; the lesson is that a recovery test may only
+  use what the protocol offers.
+- **One malformed plant blanked the plan**, a roof ridge had a record that broke "rotate →
+  transform only", a late builder registration left stale geometry, and a clock tick took two
+  transactions. Decisions 3, 9, 10 and 12.

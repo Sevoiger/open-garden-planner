@@ -286,7 +286,10 @@ class Record:
       item-local polygons in cm, counter-clockwise seen from above (signed area
       > 0; a clockwise or area-less ring is refused). One ring for most items;
       several for a polyline whose stroke falls apart and for a self-crossing
-      polygon, which the snapshot resolves into simple rings.
+      polygon, which the snapshot resolves into simple rings. The orientation is
+      enforced here; that a ring is SIMPLE is the producer's duty (testing it is
+      quadratic) — the snapshot guarantees it, and ``build.prism_mesh`` refuses
+      a ring that is not.
     - ``holes``: what is cut out of them. ``holes[i]`` are the hole rings of
       ``footprints[i]`` — simple, CLOCKWISE (signed area < 0), inside that outer.
       ``()`` when no ring has a hole (the usual case); otherwise one entry per
