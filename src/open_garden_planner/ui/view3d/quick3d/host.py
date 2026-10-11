@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
+from PyQt6 import sip
 from PyQt6.QtCore import (
     Q_ARG,
     Q_RETURN_ARG,
@@ -249,6 +250,13 @@ class Quick3DHost:
     def is_visible(self) -> bool:
         return bool(self._view.isVisible())
 
+    @property
+    def is_closed(self) -> bool:
+        """True after ``close()`` — and when Qt destroyed the view itself, which happens
+        when the widget that parents ``container()`` is destroyed. The host must not be
+        used again."""
+        return self._closed or sip.isdeleted(self._view)
+
     def wait_exposed(self, timeout_s: float = 10.0) -> bool:
         """Pump events until the shown window is exposed (the platform has mapped it).
 
@@ -265,10 +273,18 @@ class Quick3DHost:
         return exposed
 
     def close(self) -> None:
-        """Destroy every Model, then the view (and its container). The host is dead after."""
+        """Destroy every Model, then the view (and its container). The host is dead after.
+
+        Safe when Qt got there first (the container's parent widget was destroyed, and
+        the window with it): then only the Python side is released.
+        """
         if self._closed:
             return
         self._closed = True
+        if sip.isdeleted(self._view):
+            self._parts.clear()  # the Models died with the scene; let go of their geometries
+            self._container = None
+            return
         for part in list(self._parts):
             self.destroy_part(part)
         self._view.hide()

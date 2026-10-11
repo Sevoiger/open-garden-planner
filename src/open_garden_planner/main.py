@@ -158,28 +158,37 @@ def _run_selftest() -> int:
         print(f"  FAIL Agent API server selftest -> {exc!r}")
 
     # --- Qt Quick 3D engine (Phase 17 L1.2, ADR-048) ----------------------
-    #
-    # The new 3D engine is loaded lazily too, so the same reasoning applies as
-    # for Qt3D above -- and importing its bindings is not enough: its scene is
-    # QML and shader FILES in the bundle, and a shader that does not compile
-    # is only a Qt warning. So this block renders: it loads Garden.qml from the
-    # bundle, draws one 160x120 frame WITHOUT showing a window (a lit box, its
-    # shadow, one swatch per material kind) and checks the pixels. It needs no
-    # GPU: the release runner renders it with Direct3D 11 on WARP. A hang is
-    # bounded by a watchdog (stack dump into the log, exit code 1).
-    #
-    # The engine imports stay inside ui/view3d/quick3d/ (the import rule); the
-    # log path is printed because a detached windowed exe has no stdout and
-    # the exit code alone cannot say WHICH check failed.
-    #
-    # The log goes into the app's ONE per-user log directory, beside app.log
-    # and crash.log -- never under a predictable name in the temp directory,
-    # which on Linux other users can write to (CWE-377). That directory hangs
-    # on the application's identity (QStandardPaths.AppDataLocation), which
-    # main() gives Qt only after it created its QApplication. The self-test
-    # runs before that, so it names the application itself, with the same pair
-    # -- unless an application already exists, whose identity is not ours to
-    # change.
+    if not _selftest_quick3d():
+        ok = False
+
+    print("SELFTEST:", "PASS" if ok else "FAIL")
+    return 0 if ok else 1
+
+
+def _selftest_quick3d() -> bool:
+    """The Qt Quick 3D part of the self-test (Phase 17 L1.2, ADR-048); True for a pass.
+
+    The new 3D engine is loaded lazily, so the reasoning of the Qt3D block
+    applies -- and importing its bindings is not enough: its scene is QML and
+    shader FILES in the bundle, and a shader that does not compile is only a
+    Qt warning. So this RENDERS: it loads Garden.qml from the bundle, draws one
+    160x120 frame WITHOUT showing a window (a lit box, its shadow, one swatch
+    per material kind) and checks the pixels. It needs no GPU: the release
+    runner renders it with Direct3D 11 on WARP. A hang is bounded by a
+    watchdog (stack dump into the log, exit code 1).
+
+    The engine imports stay inside ui/view3d/quick3d/ (the import rule). The
+    log path is printed because the exit code alone cannot say WHICH check
+    failed, and a detached windowed exe has no stdout.
+
+    The log goes into the app's ONE per-user log directory, beside app.log and
+    crash.log -- never under a predictable name in the temp directory, which
+    on Linux other users can write to (CWE-377). That directory hangs on the
+    application's identity (QStandardPaths.AppDataLocation), which main() gives
+    Qt only after it created its QApplication. The self-test runs before that,
+    so it names the application itself, with the same pair -- unless an
+    application already exists, whose identity is not ours to change.
+    """
     try:
         from PyQt6.QtCore import QCoreApplication
 
@@ -193,14 +202,10 @@ def _run_selftest() -> int:
         for line in quick3d.lines:
             print(line)
         print(f"  3D self-test log: {quick3d.log_path}")
-        if not quick3d.ok:
-            ok = False
+        return quick3d.ok
     except Exception as exc:  # noqa: BLE001 - report every failure, never abort
-        ok = False
         print(f"  FAIL Qt Quick 3D selftest -> {exc!r}")
-
-    print("SELFTEST:", "PASS" if ok else "FAIL")
-    return 0 if ok else 1
+        return False
 
 
 def _write_crash_log(message: str) -> None:

@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from open_garden_planner.main import _install_excepthook, _run_selftest
+from open_garden_planner.main import _install_excepthook, _run_selftest, _selftest_quick3d
 
 
 class TestExceptHook:
@@ -36,48 +36,49 @@ class TestExceptHook:
         assert calls, "excepthook should have shown a recoverable dialog"
 
 
+def _stub_3d(monkeypatch, *, ok: bool = True, raises: bool = False) -> None:
+    """Replace the engine package's self-test: it RENDERS, which this
+    ``QT_QPA_PLATFORM=offscreen`` process cannot do (software scene graph — no 3D)."""
+    from pathlib import Path
+
+    from open_garden_planner.ui.view3d.quick3d import selftest
+
+    def run_selftest() -> selftest.SelftestResult:
+        if raises:
+            raise RuntimeError("the engine package blew up")
+        line = "  OK   Qt Quick 3D frame (stand-in)" if ok else "  FAIL Qt Quick 3D frame: stand-in"
+        return selftest.SelftestResult(ok, (line,), Path("stand-in.log"))
+
+    monkeypatch.setattr(selftest, "run_selftest", run_selftest)
+
+
+@pytest.fixture()
+def keep_the_qt_identity():
+    """The self-test names the application when none exists yet (so its log lands in
+    the app's log directory). Those names are process-global Qt statics: put them
+    back, or every later test resolves ``QStandardPaths`` under them."""
+    from PyQt6.QtCore import QCoreApplication
+
+    saved = (QCoreApplication.organizationName(), QCoreApplication.applicationName())
+    yield
+    QCoreApplication.setOrganizationName(saved[0])
+    QCoreApplication.setApplicationName(saved[1])
+
+
 @pytest.mark.skipif(
     sys.platform != "win32",
     reason="importing the Qt3D bindings needs the bundled Qt runtime "
     "(the Windows dev/CI-release environment)",
 )
+@pytest.mark.usefixtures("keep_the_qt_identity")
 class TestSelfTest:
-    """The Qt3D and Agent API blocks run for real here. The Qt Quick 3D block
-    (L1.2) RENDERS, which this ``QT_QPA_PLATFORM=offscreen`` process cannot do
-    (software scene graph — no 3D), so it is replaced by a stand-in: what these
-    tests pin is that its verdict decides the exit code. The real block runs in
-    a subprocess with a real window system:
-    ``tests/integration/test_quick3d_selftest.py`` (render tier), and in the
-    frozen exe before every release."""
-
-    @pytest.fixture(autouse=True)
-    def _keep_the_qt_identity(self):
-        """``_run_selftest`` names the application when none exists yet (so its log
-        lands in the app's log directory). Those names are process-global Qt statics:
-        put them back, or every later test resolves ``QStandardPaths`` under them."""
-        from PyQt6.QtCore import QCoreApplication
-
-        saved = (QCoreApplication.organizationName(), QCoreApplication.applicationName())
-        yield
-        QCoreApplication.setOrganizationName(saved[0])
-        QCoreApplication.setApplicationName(saved[1])
-
-    @staticmethod
-    def _stub_3d(monkeypatch, *, ok: bool = True, raises: bool = False) -> None:
-        from pathlib import Path
-
-        from open_garden_planner.ui.view3d.quick3d import selftest
-
-        def run_selftest() -> selftest.SelftestResult:
-            if raises:
-                raise RuntimeError("the engine package blew up")
-            line = "  OK   Qt Quick 3D frame (stand-in)" if ok else "  FAIL Qt Quick 3D frame: stand-in"
-            return selftest.SelftestResult(ok, (line,), Path("stand-in.log"))
-
-        monkeypatch.setattr(selftest, "run_selftest", run_selftest)
+    """The Qt3D and Agent API blocks run for real here; the Qt Quick 3D block (L1.2)
+    is a stand-in. The real 3D block runs in a subprocess with a real window system
+    (``tests/integration/test_quick3d_selftest.py``, render tier) and in the frozen
+    exe before every release."""
 
     def test_passes_on_a_consistent_qt_stack(self, monkeypatch) -> None:
-        self._stub_3d(monkeypatch)
+        _stub_3d(monkeypatch)
         assert _run_selftest() == 0
 
     def test_returns_nonzero_on_version_mismatch(self, monkeypatch) -> None:
@@ -85,7 +86,7 @@ class TestSelfTest:
         Qt3D wheel micro must fail (exit 1), even when the imports succeed."""
         import importlib.metadata as md
 
-        self._stub_3d(monkeypatch)
+        _stub_3d(monkeypatch)
         real = md.version
         monkeypatch.setattr(
             md,
@@ -94,20 +95,50 @@ class TestSelfTest:
         )
         assert _run_selftest() == 1
 
-    def test_a_failed_3d_frame_fails_the_selftest(self, monkeypatch, capsys) -> None:
-        """Everything else healthy, the 3D engine not: exit 1, and the reason is said."""
-        self._stub_3d(monkeypatch, ok=False)
+    def test_a_failed_3d_frame_fails_the_whole_selftest(self, monkeypatch, capsys) -> None:
+        """Everything else healthy, the 3D engine not: exit 1."""
+        _stub_3d(monkeypatch, ok=False)
         assert _run_selftest() == 1
+        assert "SELFTEST: FAIL" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("keep_the_qt_identity")
+class TestSelfTestQuick3d:
+    """``main._selftest_quick3d`` — the wiring of the 3D block, on every platform."""
+
+    def test_a_pass_prints_the_lines_and_the_log_path(self, monkeypatch, capsys) -> None:
+        _stub_3d(monkeypatch)
+        assert _selftest_quick3d() is True
         out = capsys.readouterr().out
-        assert "FAIL Qt Quick 3D frame: stand-in" in out and "SELFTEST: FAIL" in out
+        assert "  OK   Qt Quick 3D frame (stand-in)" in out
         assert "3D self-test log: stand-in.log" in out
 
+    def test_a_failed_frame_is_a_failure_and_says_why(self, monkeypatch, capsys) -> None:
+        _stub_3d(monkeypatch, ok=False)
+        assert _selftest_quick3d() is False
+        out = capsys.readouterr().out
+        assert "FAIL Qt Quick 3D frame: stand-in" in out and "3D self-test log: stand-in.log" in out
+
     def test_a_crashing_3d_selftest_fails_instead_of_escaping(self, monkeypatch, capsys) -> None:
-        self._stub_3d(monkeypatch, raises=True)
-        assert _run_selftest() == 1
+        _stub_3d(monkeypatch, raises=True)
+        assert _selftest_quick3d() is False
         assert "FAIL Qt Quick 3D selftest" in capsys.readouterr().out
 
-    def test_the_3d_block_does_not_import_the_engine_in_main(self) -> None:
+    def test_an_existing_application_keeps_its_identity(self, qapp, monkeypatch) -> None:  # noqa: ARG002
+        """The log directory hangs on Qt's application identity, so the self-test names
+        the application — but only when it is the one that will create it. An
+        application that already exists (this test process's) keeps its own names.
+        The other branch needs a process WITHOUT an application: it is pinned end to
+        end, in a child, by ``test_quick3d_selftest.py::
+        test_the_selftest_writes_its_log_beside_the_apps_logs_not_into_temp``."""
+        from PyQt6.QtCore import QCoreApplication
+
+        before = (QCoreApplication.organizationName(), QCoreApplication.applicationName())
+        _stub_3d(monkeypatch)
+        assert _selftest_quick3d() is True
+        assert (QCoreApplication.organizationName(), QCoreApplication.applicationName()) == before
+
+    def test_main_names_no_engine_module(self) -> None:
         """The import rule: ``main.py`` names no Qt Quick module — the engine imports of
         the self-test live in ``ui/view3d/quick3d/selftest.py``."""
         import ast
