@@ -21,9 +21,15 @@ Both come from ``item_outline``, so there is one place that decides what an
 item's footprint is.
 
 And one place that decides how high an item STANDS (Phase 17 L1.6, ADR-037
-addendum): ``item_base_cm`` — the soil of its parent bed or container. The 2D
-shadow casters (overlay and heatmap) and the 3D records both ask it, so a
+addendum): ``item_base_cm`` — the soil of its parent bed or container, when the
+item is linked to that parent AND its centre is inside the parent's shape. The
+2D shadow casters (overlay and heatmap) and the 3D records both ask it, so a
 plant's shadow and its 3D solid start at the same height.
+
+And one point-in-bed test (``bed_membership_point`` / ``shape_contains`` /
+``centre_is_inside``): auto-parenting, the re-link after a drag, the agent's
+``link_is_geometric`` and the lift all ask it, so they cannot disagree on a
+boundary case.
 """
 
 from __future__ import annotations
@@ -151,19 +157,57 @@ class ItemLookup:
         return self._by_id.get(str(item_id))
 
 
+def bed_membership_point(item: Any) -> QPointF:
+    """The scene point that decides which bed an item is in.
+
+    The centre of the item's ``boundingRect()`` — the construct every membership
+    decision of the app uses (auto-parenting on creation, the re-link after a
+    drag, the agent's ``link_is_geometric``). Deliberately NOT the geometric
+    ``rect().center()`` the serializer and the footprints use: the two differ by
+    the antagonist badge's asymmetric overflow, and what matters here is that
+    every membership decision asks the same point.
+    """
+    point: QPointF = item.mapToScene(item.boundingRect().center())
+    return point
+
+
+def shape_contains(parent: Any, scene_point: QPointF) -> bool:
+    """Does the parent's own shape contain that scene point? (Qt's ``contains``.)"""
+    return bool(parent.contains(parent.mapFromScene(scene_point)))
+
+
+def centre_is_inside(item: Any, parent: Any) -> bool:
+    """Is the item geometrically in that parent — the app's ONE point-in-bed test."""
+    return shape_contains(parent, bed_membership_point(item))
+
+
 def item_base_cm(item: Any, lookup: ItemLookup, at_date: date | None = None) -> float:
     """How high above the garden floor the item stands, in cm.
 
-    A plant whose ``parent_bed_id`` (a ``GardenItem`` PROPERTY, never a metadata
-    key) names a soil container with a height stands on that container's soil —
-    ``core.object_height.standing_base_cm``: the parent's effective height minus
-    the soil drop. Everything else stands on the ground: no parent, an in-ground
-    bed, a trellis, a dangling link. A parent that is not VISIBLE is not there
-    either — it casts no shadow and has no 3D solid, so its plants do not float
-    above nothing (the visibility rule of ``collect_shadow_casters``).
+    An item is lifted onto a parent's soil only when BOTH hold:
+
+    1. its ``parent_bed_id`` (a ``GardenItem`` PROPERTY, never a metadata key)
+       names a VISIBLE soil container with a resolved height —
+       ``core.object_height.standing_base_cm``: the parent's effective height
+       minus the soil drop; and
+    2. the item's centre lies inside that parent's shape (``centre_is_inside``).
+
+    The link alone never decides where a solid stands: the app keeps it as
+    bookkeeping, not as geometry — it is evaluated when a plant is created or
+    dropped and by nothing else, so shrinking a bed away from its plant leaves
+    the link in place (``set_parent_bed`` even sets one on purpose without
+    containment). A linked plant that is not in its bed stands on the ground,
+    exactly as every plant did before bases existed.
+
+    Everything else stands on the ground too: no parent, an in-ground bed, a
+    trellis, a dangling link. A parent that is not visible is not there either —
+    it casts no shadow and has no 3D solid, so its plants do not float above
+    nothing (the visibility rule of ``collect_shadow_casters``).
 
     ONE rule, asked by the 2D shadow casters and by ``snapshot_records``.
     Parents do not nest (only plants are parented), so there is nothing to sum.
+    The geometric test runs last and only for an item that would be lifted, so
+    a plan without raised soil never pays for it.
     """
     parent_id = getattr(item, "parent_bed_id", None)
     if parent_id is None:
@@ -171,9 +215,12 @@ def item_base_cm(item: Any, lookup: ItemLookup, at_date: date | None = None) -> 
     parent = lookup.get(parent_id)
     if parent is None or not parent.isVisible():
         return 0.0
-    return standing_base_cm(
+    base = standing_base_cm(
         getattr(parent, "object_type", None), getattr(parent, "metadata", None), at_date
     )
+    if base <= 0.0 or not centre_is_inside(item, parent):
+        return 0.0
+    return base
 
 
 def _bounding_center(points: tuple[Point, ...]) -> Point:

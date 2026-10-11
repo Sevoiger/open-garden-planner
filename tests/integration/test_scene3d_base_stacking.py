@@ -15,6 +15,7 @@ Everything here goes through a real scene, real items and the app's own commands
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 import math
 from datetime import UTC, date, datetime
@@ -26,7 +27,12 @@ from PyQt6.QtCore import QPointF
 
 import open_garden_planner
 from open_garden_planner.core import ProjectManager
-from open_garden_planner.core.commands import CreateItemCommand, MoveItemsCommand
+from open_garden_planner.core.commands import (
+    CreateItemCommand,
+    MoveItemsCommand,
+    ResizeItemCommand,
+    SetParentBedCommand,
+)
 from open_garden_planner.core.object_height import METADATA_KEY, SOIL_DROP_CM
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.scene3d import (
@@ -48,6 +54,11 @@ from open_garden_planner.core.solar import solar_position
 from open_garden_planner.ui.canvas import footprints, sun_heatmap, sun_shadow_controller
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
+from open_garden_planner.ui.canvas.geometry_apply import (
+    apply_rect_like_geometry,
+    apply_rotation,
+    build_rect_resize,
+)
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
@@ -258,6 +269,196 @@ class TestTheOneRule:
         casters = collect_shadow_casters(scene, at_date=JUNE)
         assert sum(1 for c in casters if c.base_cm > 0.0) == raised
         assert {c.base_cm for c in casters} <= {0.0, 28.0, 38.0}
+
+
+def _add(garden: Garden, item: Any, name: str) -> Any:
+    garden.commands.execute(CreateItemCommand(garden.scene, item, name))
+    return item
+
+
+def _perennial(garden: Garden, x: float, y: float, height: float) -> CircleItem:
+    plant = CircleItem(x, y, 15.0, object_type=ObjectType.PERENNIAL,
+                       layer_id=garden.scene.active_layer.id)
+    plant.metadata[METADATA_KEY] = height
+    return plant
+
+
+def _bases(garden: Garden, plant: Any) -> tuple[float, float]:
+    """(3D record base, 2D caster base) of one plant, found by its unique height."""
+    record = garden.records()[str(plant.item_id)]
+    (caster,) = [c for c in collect_shadow_casters(garden.scene)
+                 if c.height_cm == plant.metadata[METADATA_KEY]]
+    return record.transform.base_cm, caster.base_cm
+
+
+class TestTheLinkAloneNeverLifts:
+    """Review round 1, P1-1. ``parent_bed_id`` is bookkeeping, not geometry: the app
+    evaluates it when a plant is created or dropped and nowhere else, and
+    ``set_parent_bed`` sets it on purpose without containment. A solid is lifted
+    only when the link holds AND its centre is inside the parent's shape.
+
+    (a) is the case that was new wrong output; (b)–(d) are the limits that remain
+    — pinned so that reconciling bed membership (a follow-up issue) changes them
+    knowingly."""
+
+    def test_a_shrinking_the_bed_away_from_its_plant_puts_the_plant_on_the_ground(
+        self, canvas: CanvasView
+    ) -> None:
+        """Expected base 0. WHY: the resize does not touch the link, so the plant
+        keeps ``parent_bed_id`` — but it now stands on the lawn, 40 cm from a bed
+        it is no longer in. Lifting it would start its shadow ``38 / tan α`` away
+        from it (141.8 cm at 15°) with lit ground in between."""
+        garden = Garden(canvas)  # bed x 400 … 700, plant centre at x = 500
+        before = garden.records()
+        assert _bases(garden, garden.plant) == (38.0, 38.0)
+
+        old, new = build_rect_resize(garden.bed, 60.0, 200.0)  # the panel's and the agent's path
+        garden.commands.execute(ResizeItemCommand(garden.bed, old, new, apply_rect_like_geometry))
+        assert garden.bed.mapRectToScene(garden.bed.rect()).right() == 460.0
+        assert garden.plant.parent_bed_id == garden.bed.item_id  # the link survives: bookkeeping
+        assert not footprints.centre_is_inside(garden.plant, garden.bed)
+        assert _bases(garden, garden.plant) == (0.0, 0.0)
+        after = garden.records()
+        # the bed: a new outline around a new centre; the plant: only its base (38 -> 0)
+        assert diff(before, after) == SceneDiff(transform=(garden.bed_id, garden.plant_id),
+                                                geometry=(garden.bed_id,))
+        assert after[garden.plant_id].transform == dataclasses.replace(
+            before[garden.plant_id].transform, base_cm=0.0)
+
+        # the shadow starts AT the plant again: no lit gap between a plant and its own shadow
+        (plant,) = [c for c in collect_shadow_casters(garden.scene) if c.height_cm == 60.0]
+        direction = shadow_direction_scene(180.0)
+        shadow = compute_scene_shadows([plant], 15.0, 180.0)
+        near = min(x * direction[0] + y * direction[1] for polygon in shadow for x, y in polygon)
+        footprint_far = max(x * direction[0] + y * direction[1] for x, y in plant.footprint)
+        assert near < footprint_far  # round 0: near - footprint_far == 111.8 cm of lit ground
+
+        garden.commands.undo()  # the bed is 3 m wide again: the plant is back on its soil
+        assert _bases(garden, garden.plant) == (38.0, 38.0)
+        assert garden.records() == before
+
+    def test_b_a_bed_drawn_around_a_plant_does_not_lift_it(self, canvas: CanvasView) -> None:
+        """Expected base 0 — a KNOWN LIMIT, not the wanted end state. WHY: membership
+        is decided when a PLANT is created or dropped; creating a bed links nothing,
+        so the plant has no parent, and without the link there is no base. The
+        same-looking plan drawn bed-first gives 38. Fixing it means reconciling
+        membership when a bed is created or resized (follow-up issue), not guessing
+        a parent from geometry here."""
+        scene = canvas.scene()
+        layer = scene.active_layer.id
+        plant = CircleItem(500.0, 400.0, 15.0, object_type=ObjectType.PERENNIAL, layer_id=layer)
+        plant.metadata[METADATA_KEY] = 60.0
+        canvas.command_manager.execute(CreateItemCommand(scene, plant, "plant"))
+        bed = RectangleItem(400.0, 300.0, 300.0, 200.0, object_type=ObjectType.RAISED_BED,
+                            layer_id=layer)
+        canvas.command_manager.execute(CreateItemCommand(scene, bed, "bed"))
+        assert footprints.centre_is_inside(plant, bed)  # geometrically it IS in the bed
+        assert plant.parent_bed_id is None               # … but nothing linked it
+        assert snapshot_records(scene)[str(plant.item_id)].transform.base_cm == 0.0
+        assert [c.base_cm for c in collect_shadow_casters(scene) if c.height_cm == 60.0] == [0.0]
+
+    def test_c_a_climber_on_a_trellis_inside_a_raised_bed_stays_on_the_ground(
+        self, canvas: CanvasView
+    ) -> None:
+        """Expected: climber 0, its neighbour in the same bed 38 — a KNOWN LIMIT. WHY:
+        a plant is linked to the SMALLEST parent that contains it
+        (``find_smallest_bed_containing``), which is the trellis; a trellis holds no
+        soil and has no base of its own (parents do not nest), so the rule has
+        nothing to lift the climber onto."""
+        garden = Garden(canvas)  # bed 400 … 700 x 300 … 500 with a plant at (500, 400)
+        trellis = _add(garden, RectangleItem(560.0, 440.0, 120.0, 40.0, object_type=ObjectType.TRELLIS,
+                                             layer_id=garden.scene.active_layer.id), "trellis")
+        climber = _add(garden, _perennial(garden, 620.0, 460.0, 61.0), "climber")
+        assert climber.parent_bed_id == trellis.item_id
+        assert footprints.centre_is_inside(climber, garden.bed)  # it stands in the bed's box
+        assert _bases(garden, climber) == (0.0, 0.0)
+        assert _bases(garden, garden.plant) == (38.0, 38.0)      # 120 cm away, same bed
+        assert garden.records()[str(trellis.item_id)].transform.base_cm == 0.0
+
+    def test_d_a_pot_on_a_raised_bed_stands_on_the_ground_with_its_plant_at_the_pot_s_soil(
+        self, canvas: CanvasView
+    ) -> None:
+        """Expected: plant 28 (the pot's soil), pot 0 — a KNOWN LIMIT. WHY: only plants
+        carry a parent link; a container has none, so it stands on the ground whatever
+        it is drawn on, and its plant stands on the pot's own soil (30 − 2), not at
+        38 + 28 = 66."""
+        garden = Garden(canvas)
+        pot = _add(garden, CircleItem(620.0, 440.0, 30.0, object_type=ObjectType.CONTAINER_ROUND,
+                                      layer_id=garden.scene.active_layer.id), "pot")
+        potted = _add(garden, _perennial(garden, 620.0, 440.0, 61.0), "potted plant")
+        assert potted.parent_bed_id == pot.item_id  # the smallest parent again
+        records = garden.records()
+        assert records[str(pot.item_id)].height_cm == 30.0
+        assert records[str(pot.item_id)].transform.base_cm == 0.0
+        assert records[str(pot.item_id)].parent_id is None
+        assert _bases(garden, potted) == (28.0, 28.0)
+
+    def test_an_explicit_link_without_containment_does_not_lift(self, canvas: CanvasView) -> None:
+        """The agent's ``set_parent_bed`` and the panel's Link action may link a plant
+        that is not in the bed (``link_is_geometric: false``). Expected base 0: the
+        same function answers ``link_is_geometric`` and the lift."""
+        garden = Garden(canvas)
+        loner = _add(garden, _perennial(garden, 1500.0, 1200.0, 61.0), "loner")
+        assert loner.parent_bed_id is None
+        garden.commands.execute(SetParentBedCommand(garden.scene, loner, None, garden.bed.item_id))
+        assert loner.parent_bed_id == garden.bed.item_id
+        assert not footprints.centre_is_inside(loner, garden.bed)
+        assert _bases(garden, loner) == (0.0, 0.0)
+
+    def test_a_plant_dragged_inside_its_bed_keeps_its_base(self, canvas: CanvasView) -> None:
+        garden = Garden(canvas)
+        garden.commands.execute(MoveItemsCommand([garden.plant], QPointF(150.0, 60.0)))
+        assert footprints.centre_is_inside(garden.plant, garden.bed)
+        assert _bases(garden, garden.plant) == (38.0, 38.0)
+
+    def test_a_turned_bed_is_tested_in_its_own_frame(self, canvas: CanvasView) -> None:
+        """Containment is Qt's (``mapFromScene`` + ``contains``), so a rotated bed
+        is tested as it is drawn, not by its scene bounding box."""
+        garden = Garden(canvas)
+        apply_rotation(garden.bed, 45.0)  # about the bed's centre (550, 400)
+        inside = _add(garden, _perennial(garden, 550.0, 400.0, 61.0), "centre")
+        corner = _add(garden, _perennial(garden, 690.0, 310.0, 62.0), "old corner")
+        assert _bases(garden, inside) == (38.0, 38.0)
+        # (690, 310) was inside the unrotated bed and is inside its scene bounding box,
+        # but not inside the turned rectangle: never linked, never lifted
+        assert garden.bed.sceneBoundingRect().contains(QPointF(690.0, 310.0))
+        assert corner.parent_bed_id is None
+        assert _bases(garden, corner) == (0.0, 0.0)
+
+    def test_one_point_in_bed_test_in_the_app(self) -> None:
+        """The construct ``parent.contains(parent.mapFromScene(point))`` and the
+        membership point ``mapToScene(boundingRect().center())`` each exist once."""
+        src = Path(open_garden_planner.__file__).parent
+        contains_sites: set[str] = set()
+        users: dict[str, set[str]] = {}
+        for path in src.rglob("*.py"):
+            relative = path.relative_to(src).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "id", getattr(node.func, "attr", ""))
+                if name in ("bed_membership_point", "shape_contains", "centre_is_inside"):
+                    users.setdefault(name, set()).add(relative)
+                first = node.args[0] if node.args else None
+                if (name == "contains" and isinstance(first, ast.Call)
+                        and getattr(first.func, "attr", "") == "mapFromScene"):
+                    contains_sites.add(relative)
+        assert contains_sites == {"ui/canvas/footprints.py"}
+        assert users["shape_contains"] == {
+            "ui/canvas/footprints.py",      # inside centre_is_inside
+            "ui/canvas/canvas_scene.py",    # find_smallest_bed_containing
+        }
+        assert users["bed_membership_point"] == {
+            "ui/canvas/footprints.py",      # inside centre_is_inside
+            "core/commands.py",             # auto-parenting on creation
+            "ui/canvas/canvas_view.py",     # the re-link after a drag
+            "app/application.py",           # the agent's re-link after move_object
+        }
+        assert users["centre_is_inside"] == {
+            "ui/canvas/footprints.py",      # item_base_cm: the lift
+            "app/application.py",           # set_parent_bed's link_is_geometric
+        }
 
 
 class TestOneCasterWalk:
