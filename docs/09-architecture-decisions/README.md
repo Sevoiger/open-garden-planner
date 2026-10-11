@@ -2262,8 +2262,9 @@ a first fix had not seen:
 **Review round 3 (2026-10-11).** The scoped re-review confirmed the three round-2 P1 fixes on
 three platforms — CI was green on all eleven jobs, the Linux render job with exactly the 88
 passed and 8 skipped the container had predicted — and found two narrow new P1 and ten P2
-defects. None was refuted; both P1s were reproduced here before they were fixed. What a green
-suite on three platforms had not seen:
+defects. None was refuted. The first P1 was reproduced here before it was fixed; the second
+was fixed from the code and then reproduced against the previous head (the process ends with
+exit code 1, 4.7 s in). What a green suite on three platforms had not seen:
 
 1. *`wait_ready()` said True and the next `grab()` raised, after every `showFullScreen()`* —
    and `application.py` calls `showFullScreen()` on the window the workspace embeds into.

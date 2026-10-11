@@ -2007,8 +2007,16 @@ comes up late can never act."* That was the fix for the trap before (a block tha
 before its supervisor is up). True, and not enough: A's supervisor did not find a MISSING
 event. It found B's.
 
-**Key evidence**: the same sequence after the fix — two supervising processes, each released
-by its own block, both gone with exit code 0:
+**Key evidence**: the sequence against the previous head — the process ends with exit code 1
+after 4.7 s, and this is block A's log:
+
+```
+    0.005s [watchdog] armed=True seconds=1.0 what=block A supervisor=process 78652, ends this one 4 s from now …
+          [supervisor] fired=True what=block A reason=block A was still alive 4 s after its watchdog was armed — … terminated from outside, exit code 1
+```
+
+and after the fix — two supervising processes, each released by its own block, both gone with
+exit code 0:
 
 ```
     0.009s [watchdog] armed=True seconds=1.0 what=block A supervisor=process 66160, ends this one 4 s from now …
