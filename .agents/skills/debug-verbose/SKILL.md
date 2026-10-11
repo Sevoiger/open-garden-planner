@@ -1739,3 +1739,90 @@ The next print failed because the code page could not encode a check mark.
 **Fix**: `scripts/sync_wiki.py` configures its CLI stdout and stderr as UTF-8 before printing. Temporary diagnostic prints were removed.
 
 **Lesson**: specify both file and CLI stream encoding for Unicode tooling. Pinned by `tests/integration/test_wiki_publication.py`, whose real subprocess comparisons exercise Unicode diffs without a UTF-8 environment override.
+
+## Case study: a broken shader failed the render, and the run's own summary counted 0 Qt errors (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: the positive control "a broken shader fails the render" did what it should: the
+render raised `RenderError` and the driver exited with its error code. The same run's summary
+(`result.json`, `qt_messages.counts.error`) said 0. The frame's own report listed the shader
+errors; the run's report had never heard of them.
+
+**Theories entertained**: none worth the name, and no instrumentation was added — say so
+rather than dress it up. The cause was found by reading the two places that install a Qt
+message handler. The entry is here because the SYMPTOM is the kind this skill exists for (a
+count that contradicts an exception raised a line earlier), and because the tempting first
+theory — "the summary is written before the error arrives" — would have sent the search into
+the order of events, where nothing was wrong.
+
+**Key evidence**: the two recorders themselves. `render_records` creates a `QtMessages`
+recorder for ONE frame and installs it with `qInstallMessageHandler`; the render driver had
+installed one for the WHOLE run with the same call. The inner one held the errors, the outer
+one held none.
+
+**Root cause**: `qInstallMessageHandler` keeps a single handler per process. Installing the
+inner recorder REPLACED the outer one for the duration of the frame — and a shader's compile
+messages arrive during exactly that frame.
+
+**Fix**: `qt_messages.install()` forwards every message to the handler it replaced and returns
+it; `uninstall(previous)` puts that one back. Recorders nest. Inside the running app the same
+chaining keeps the app's own handler hearing everything during an offscreen render. Pinned by
+`tests/unit/test_quick3d_pure.py::test_nested_recorders_both_hear_an_error` and
+`::test_a_recorder_listens_in_and_then_steps_aside`.
+
+**Lesson**: **a "one per process" API turns a second listener into a replacement** — when a
+count is 0 where an error was just raised, compare the listeners before suspecting the order of
+events. The same shape came back twice in the same story: `faulthandler` has ONE
+`dump_traceback_later` timer (a watchdog inside a watchdog cancels the outer one), and
+`QLoggingCategory.setFilterRules` holds ONE rule set (a nested block must not switch the outer
+block's rule off).
+
+## Case study: a grab that returned a perfect image, and a process that was dead a moment later (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: found by an independent reviewer, not by the suite (the render tier was green):
+`host.show(); host.grab()` returned a correct frame, and the process ended a moment later with
+exit code 3, `0xC0000005` or `0xC0000374` — in whatever ran next. 5 of 5. No Python exception
+anywhere, so no `pytest.raises` could ever have seen it.
+
+**Wrong theories** — all mine, and three of them were written into the code or the docs:
+
+1. *"Visible" is the condition for a frame.* `grab()` guarded on `isVisible()`. Between
+   `show()` and the first expose a window is visible and has no scene graph.
+2. *A never-shown host that took its one frame can be shown afterwards.* The error message for
+   the second hidden grab recommended exactly that. It is the second killing order.
+3. *The L0 run's "access violation in `grab()`" belongs to the sleeping-display family.*
+   Stated in the risk log without evidence.
+4. *(While building the positive control)* "the two orders no longer kill" — the control
+   survived 6 of 6.
+
+**Key evidence**: Qt's own predicates, printed after every step, ONE CALL ORDER PER CHILD
+PROCESS (a death is then an exit code instead of the end of the test run):
+
+```
+                         visible exposed scene-graph
+new                         F       F       F
+show()                      T       F       F      <- grab here: good image, dead process
+one processEvents()         T       T       T
+hide()                      F       T       T      <- still "exposed" until the loop ran
+hide() + events             F       F       T
+minimised                   T       F       T
+```
+
+For theory 4: the control returned from its function, its host went out of scope, and Python
+destroyed the `QQuickView` BEFORE the event loop ran again. With the host kept alive across the
+next second of event loop, the same script died 3 of 3 on the GPU and 3 of 3 on WARP.
+
+**Root cause**: `grabWindow()` on a window that has no scene graph renders one throwaway frame
+and tears the scene graph down again. For a window that is never shown, that is the one
+offscreen frame it has. For a window that is shown — or is shown afterwards — the window's own
+first expose then meets what the grab tore down. The condition is
+`isSceneGraphInitialized()`; `isVisible()` is neither necessary nor sufficient.
+
+**Fix**: `Quick3DHost` is a state machine over Qt's predicates (new / starting / live / hidden
+/ spent / closed); every call answers for the state or raises `HostStateError`; `wait_ready()`
+pumps to the first expose and reports. The tests run one call order per child process and take
+"the last line is `END`" as survival; two controls do the forbidden thing on the raw view and
+must die (`tests/integration/test_quick3d_lifecycle.py`).
+
+**Lesson**: **when the failure is a dead process, the evidence channel must be another
+process** — and a control must keep alive the thing whose death it demonstrates. And print the
+engine's own predicates before choosing one by its name.

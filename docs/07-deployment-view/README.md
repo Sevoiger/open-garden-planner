@@ -231,15 +231,38 @@ flowchart LR
 Local frozen-exe build, startup smoke and subsystem self-test remain mandatory before merge.
 The release job repeats its subsystem self-test after the installer build. See ADR-050.
 
+**The frozen gate on pull requests (`frozen-selftest.yml`, Phase 17 L1.2).** `release.yml` runs
+`--selftest` in the frozen exe only on a push to `master`, so a change that breaks the BUNDLE —
+a module PyInstaller no longer finds, a QML or shader file the spec does not ship, a Qt wheel
+mismatch — was first seen by CI after the merge that caused it. A separate workflow closes
+that gap:
+
+| | |
+|---|---|
+| Triggers | `workflow_dispatch`, and pull requests to `master` that touch `installer/**`, `src/open_garden_planner/main.py`, `__main__.py`, `src/open_garden_planner/ui/view3d/**`, `pyproject.toml`, `uv.lock`, `pylock.toml`, the workflow itself, `release.yml` or `.github/actions/setup-locked-env/**` |
+| Runner, environment | `windows-latest`, the shared locked setup, `permissions: contents: read`, no action `ci.yml` does not use |
+| Build | the release recipe, not a copy: `python installer/build_installer.py --skip-nsis` (the same script, spec and PyInstaller flags; no installer, no `_version.py`) |
+| Checks | the 8-second smoke (exit code 124, and only 124, passes), then `--selftest` with the SAME step script as `release.yml` (a test pins the two texts as identical) |
+| Limits | job 45 minutes, smoke step 5, self-test step 10 |
+| Protection | NOT a required check: a required check that a path filter skips never reports, and would block every pull request it does not run on |
+
+The local gate of `ogp-change-control` §2.8 stays mandatory. **The workflow was written without
+access to GitHub's runners and is unproven until its first run** — the smoke test in
+particular, which no workflow ran before.
+
 **The 3D render tier (`render3d`, Phase 17 L1.2).** The `test` job cannot render 3D: under the
 offscreen platform Qt Quick uses the software scene graph. The `render3d` job runs
-`tests/integration/test_quick3d_render.py`, `test_quick3d_engine.py` and
-`test_quick3d_selftest.py` with a driver process on a real Qt platform (§8.10.4). Both runners
-are GPU-less, so the job proves correctness on software rasterisers — small frames, no sky light
-probe, timing budgets skipped — and it is deliberately not a required check. Measured locally
-(2026-10-11): the tier passes on an RTX 4070 and on WARP. **The job itself was written without
-access to GitHub's runners and is unproven until its first run** — the Linux package list in
-particular.
+`tests/integration/test_quick3d_render.py`, `test_quick3d_engine.py`,
+`test_quick3d_selftest.py` and `test_quick3d_lifecycle.py` with a driver process on a real Qt
+platform (§8.10.4). Both runners are GPU-less, so the job proves correctness on software
+rasterisers — small frames, no sky light probe, timing budgets skipped — and it is deliberately
+not a required check. Measured locally (2026-10-11): the tier passes on an RTX 4070 and on
+WARP. **First run on GitHub's runners (commit af9300d, the first three files):** windows-latest
+green; ubuntu-latest 47 passed, 4 skipped, 1 failed. The job, its package list, xvfb and
+llvmpipe work; the failure was a list of expected graphics-API names typed on Windows
+(`OpenGLRhi` where PyQt says `OpenGL`), fixed by taking the name from Qt's enum. The four
+skips on Linux are by design — two hardware-only timing budgets and two Windows-only self-test
+checks. The lifecycle matrix, added afterwards, has not run on Linux yet.
 
 **What `--selftest` covers** (the frozen exe, locally before merge and in `release.yml`):
 
@@ -254,12 +277,21 @@ dev box with `Start-Process -Wait -PassThru` (the whole `--selftest`, three runs
 exe 3.0–4.1 s on the RTX 4070 and 3.0–3.1 s on WARP (also with every shader cache disabled);
 from source 2.2–4.3 s and 2.1–5.7 s. With other test suites running on the machine the same
 frozen exe took 6.1–7.2 s on either adapter — the 3D frame itself 1.0–1.8 s on a quiet
-machine, 4.0–6.5 s on a busy one. A watchdog inside the exe ends a hung render after 180 s with a stack dump and exit
-code 1. The 3D block writes a log — the exe has no stdout — into the app's per-user log
-directory beside `app.log` (never the temp directory, §8.11), or where `OGP_SELFTEST_LOG`
-says; `release.yml` sets that variable and prints the log, and the exit code alone still
-decides. Under `QT_QPA_PLATFORM=offscreen` the 3D block FAILS (nothing renders there): run
-`--selftest` with a real platform.
+machine, 4.0–6.5 s on a busy one.
+
+**It cannot hang a job.** Inside the exe ONE watchdog bounds the whole self-test — all three
+blocks, not only the render: after 300 s it writes the reason in words and every thread's stack
+into the log and ends the process with exit code 1; without a log file and without a stderr it
+still ends the process. Around it, the workflow steps that run the self-test have a limit of
+10 minutes and their jobs one of 45 (a release run takes 9–13 minutes).
+
+**The exit code alone decides, and the verdict comes first.** The self-test writes a log — the
+exe has no stdout — into the app's per-user log directory beside `app.log` (never the temp
+directory, §8.11), or where `OGP_SELFTEST_LOG` says. The workflows set that variable, print the
+verdict, THEN print the log inside `try`/`catch`: a log that cannot be read neither turns a
+passing build red nor hides a failing one behind another error. Under
+`QT_QPA_PLATFORM=offscreen` the 3D block FAILS, naming the software backend (nothing renders
+there): run `--selftest` with a real platform.
 
 **Bundle size (L1.2).** The Qt Quick 3D runtime already shipped; the engine package adds its
 five QML and shader files and eleven Python modules: 650,815,562 bytes against 650,736,554 for

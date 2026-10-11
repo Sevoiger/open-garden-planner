@@ -1937,8 +1937,10 @@ never shown can render at all, and what the self-test costs on WARP.
 2. **`Quick3DSink` is pure bookkeeping against a narrow boundary.** It implements `EngineSink`
    and drives `EngineScene` (create / destroy / pose / tint a part, sun, ground, request a
    frame). `Quick3DHost` implements `EngineScene` with real Models; a list-backed double
-   implements it in the default test tier. The sink never swallows an engine error, and its one
-   teardown is `clear()`.
+   implements it in the default test tier. The sink never swallows an engine error. The host
+   OWNS every Model; the sink's one teardown, `clear()` (`EngineSink`'s tenth method, which
+   `SceneSync.reset()` calls), asks the host once and empties its books whatever the host
+   answers — legal at any time, also when the engine is gone.
 3. **One Model per mesh part, one geometry and one material instance per Model.** Created through
    a QML function (`createPart`), never a `Repeater3D` over a list; destroyed hidden-first,
    because `destroy()` is deferred. `BufferGeometry` uploads once, at construction, and has no
@@ -1946,21 +1948,40 @@ never shown can render at all, and what the self-test costs on WARP.
 4. **One tint rule for every material kind: `albedo = vertex colour × tint`, in linear light**, the
    tint being a property of the Model. This is what makes `update_material` a property write.
 5. **The host is a `QQuickView`; `container()` is how it is embedded** (criterion 3's policy
-   outcome, now measured for the container itself). It refuses, with `HostStateError`, every
-   call it cannot answer truthfully: a second grab of a never-shown window, a grab while hidden,
-   a pick without a rendered frame.
-6. **`grab()` is the synchronisation point.** Nothing in the package or its tests waits for a
-   frame to be presented.
+   outcome, now measured for the container itself). **It is an explicit state machine keyed on
+   Qt's own predicates** — `isSceneGraphInitialized()`, `isVisible()`, `isExposed()`,
+   `sip.isdeleted()` — with six states (new, starting, live, hidden, spent, closed); every
+   public call answers truthfully for the state or raises `HostStateError` (the table is
+   §8.26.2). *Corrected in review round 1:* the first version guarded `grab()` on `isVisible()`
+   and listed three refusals; the engine's condition is "the scene graph is initialised", and
+   the difference killed the process in two call orders (below).
+6. **`grab()` on a LIVE host is the synchronisation point.** Nothing in the package or its
+   tests waits for a frame to be presented. *Corrected in review round 1:* a host that was just
+   shown is not live until its first expose was delivered, and a grab before that is fatal;
+   `wait_ready()` pumps the event loop until then, bounded, and its answer is checked wherever
+   it is asked.
 7. **Offscreen = one never-shown host per frame**, through the real `SceneSync` → sink → host
-   path, with every Qt message recorded and an error-class message raising `RenderError`.
+   path, with every Qt message recorded and an error-class message raising `RenderError`. It is
+   for processes that own themselves — it blocks for 0.4–1.3 s and builds a graphics device per
+   call — writes nothing unless a log is passed, puts the message handler and Qt's logging rules
+   back, refuses a backend that renders no 3D, and names every item whose builder failed.
 8. **One look, `NEUTRAL_DAY`** — the spike's noon rig, a plain sky colour, no image-based light
    probe, a flat fill derived from the noon sky (its mean in linear light × the spike's probe
    exposure). `set_look(Look)` takes plain data; L1.4 builds the looks.
-9. **`--selftest` renders and judges** one hidden 160 × 120 frame containing every material kind,
-   with a watchdog; its log goes into the app's per-user log directory.
+9. **`--selftest` renders and judges** one hidden 160 × 120 frame containing every material kind.
+   ONE watchdog bounds the whole command — the Qt3D and Agent API blocks too, 300 s — and writes
+   its reason into the log before it ends the process; the log goes into the app's per-user
+   log directory.
 10. **A render tier in two processes**: a driver with a real Qt platform renders; the tests, in
-    the ordinary offscreen process, judge with a CPU projection of their own. CI runs it in a
-    `render3d` job that is not a required check.
+    the ordinary offscreen process, judge with a CPU projection of their own. The host's
+    lifecycle is a matrix of call orders, one process each. CI runs the tier in a `render3d`
+    job that is not a required check; a second workflow, `frozen-selftest.yml`, builds the
+    bundle with the release recipe and runs the frozen gate on pull requests that can break it.
+11. **Errors in a live view have a seam.** `watch_messages()` records Qt's messages for a shown
+    host — into the app's log, safely from Qt's render thread — and `engine_errors()` tells the
+    owner on the GUI thread. Nothing raises: there is nobody to raise to.
+12. **At rest the wind moves nothing.** With the scene's clock at 0 a vertex is drawn exactly
+    where its mesh puts it; the truth principle (ADR-054) does not stop at the shader.
 
 **Ported from the spike unchanged** (each measured there, ADR-048 evidence log): the vertex
 layout (stride 48, linear colour); the frame mapping; the sun as
@@ -1992,11 +2013,15 @@ rig's numbers.
 **Alternatives considered — rejected.**
 
 - *Engine imports in the sink.* Then no line of the sync-to-engine logic runs without a GPU.
-- *Leaving the host to the render tier alone.* Measured: the default tier then covered 511 of the
-  package's 871 statements, which on CI's numbers for the base commit (`ui`: 18,880 of 26,500)
-  puts `ui` at 70.85 % against its floor of 71 %. The host is therefore also exercised under the
-  offscreen platform, where `Garden.qml` loads and Models are created, posed and read back
-  without a pixel (`tests/ui/test_quick3d_host.py`): 855 of 879 statements.
+- *Leaving the host to the render tier alone.* Measured on one tree with one denominator
+  (2026-10-11, after review round 1): the default tier covers 674 of the package's 1,060
+  statements without the host tests and 993 with them. Added to CI's numbers for the base
+  commit (`ui`: 18,880 of 26,500) that is an estimated 70.95 % against the floor of 71 % in the
+  first case and 72.11 % in the second — CI's coverage job is the judge, and it passed. The
+  host is therefore also exercised under the offscreen platform, where `Garden.qml` loads and
+  Models are created, posed and read back without a pixel (`tests/ui/test_quick3d_host.py`).
+  (The first version of this entry quoted 511 of 871 and 855 of 879 — two measurements on two
+  trees.)
 - *Recolour by rewriting vertex colours.* Simple, but an upload per recolour and a second code
   path for something the material can do.
 - *A persistent hidden render target (`QQuickRenderControl`).* Not attempted: one hidden host
@@ -2005,15 +2030,25 @@ rig's numbers.
 - *Waiting for presented frames.* Measured to stall with the display asleep.
 - *The self-test in a child process with the parent as its watchdog.* More moving parts in a
   frozen exe for the same guarantee `faulthandler` gives in-process.
+- *A "was shown" flag in the host.* The first version had one. The parent of an embedded
+  container shows and hides it without calling the host, so the flag is wrong exactly where
+  L1.3 will use the host; Qt's predicates are asked instead.
+- *Letting `grab()` wait for the first expose itself.* It would run the event loop inside a
+  call that reads like a getter. `grab()` refuses, and `wait_ready()` is the one place that
+  pumps.
+- *Allowing a grab while hidden.* Measured to return a correct frame on Direct3D 11 (2 of 2).
+  Refused all the same: unmeasured on OpenGL, and no caller needs it.
+- *A composite action for the self-test step.* One script in two workflows is duplication; a
+  test pins the two texts as identical instead, which leaves the existing guards on
+  `release.yml` (the command line itself must be in that file) as they are.
 - *The self-test log in the temp directory.* The first version; a predictable name in a shared
   directory (CWE-377). Replaced in review (§8.11).
 - *`render3d` as a required check.* A software rasteriser on a shared runner proves correctness,
   not speed, and the job could not be run before it was written.
 
 **Consequences.** New: the package (eleven modules, `Garden.qml`, four shaders),
-`core/scene3d/interleave.py`, `Quick3DSink.clear()` (the teardown the L1.1 review adds to
-`EngineSink` as its tenth method — implemented here ahead of the protocol change), a CI job, a
-third block in `--selftest`. No `.ogp` change, no `FILE_VERSION` bump, no new dependency, no
+`core/scene3d/interleave.py`, `Quick3DSink.clear()` and `attach()`, a CI job, the
+`frozen-selftest.yml` workflow, a third block in `--selftest` and a watchdog around all three. No `.ogp` change, no `FILE_VERSION` bump, no new dependency, no
 user-visible string. Bundle +0.08 MB. The spike stays untouched and importable; it and the
 spec's spike entries retire in L1.10. Seams left for later stories: `Quick3DHost.container()` and
 `set_shot` (L1.3), `set_look(Look)` and `windTime` (L1.4), the plan rectangle in `Garden.qml`
@@ -2042,10 +2077,42 @@ spec's spike entries retire in L1.10. Seams left for later stories: `Quick3DHost
 | Bundle | 650,815,562 vs 650,736,554 bytes for the base commit: +79,008 bytes (+0.08 MB); smoke exit 124 |
 | The whole render tier | 51 tests, about 50 s on the GPU; the driver's eight scenarios 22 s on WARP; zero Qt warnings and errors in both |
 
-**Not measured** — stated so nobody assumes it: anything on Linux (xcb, OpenGL, llvmpipe) and on
-GitHub's runners — the `render3d` job is unproven until its first run; an integrated GPU; a
-display at a scale other than 100 % (the code and the tests carry the device pixel ratio, the
-machine did not have one); the memory curve of criterion 10, which stays with L1.3.
+**Review round 1 (2026-10-11).** An independent review of the first version found no P0, four
+P1 and fourteen P2 defects, and CI ran the branch for the first time. None was refuted; each
+was reproduced or read in the code before it was fixed. What a green suite had not seen:
+
+1. *Two call orders killed the process* — `show()` then `grab()` before the first expose, and
+   one hidden grab followed by `show()`, which the error message recommended. The guard asked
+   `isVisible()`. → decisions 5 and 6, the state machine.
+2. *The default-tier host tests could not fail on a broken scene file*: their canary ran the
+   product. → a canary of bare Qt, and a positive control.
+3. *`Quick3DSink.clear()` raised in every order once the host was closed or destroyed*, and
+   left its books dirty. → one owner of Model lifetime, decision 2.
+4. *The release's self-test step had no time limit, and the in-exe watchdog covered the render
+   only.* → decision 9, limits on step and job, the verdict before the log, and the frozen
+   gate on pull requests (decision 10).
+
+| Question (review round 1) | Measured |
+|---|---|
+| What do Qt's predicates say? (visible, exposed, scene graph initialised) | new F F F · after `show()` T F F · after one `processEvents()` T T T · right after `hide()` F T T, then F F T · shown again T F T · minimised T F T. Under the offscreen platform the scene graph reports initialised from birth and nothing 3D is drawn |
+| Which grabs kill? | `show()`, then `grabWindow()` before the first expose: the image is right (2,500 of 2,500 probe pixels) and the process is dead within the next event-loop passes — exit 3, `0xC0000005` or `0xC0000374`; 3 of 3 here, 5 of 5 GPU / 3 of 3 WARP / 4 of 4 embedded in the review. One hidden grab, then `show()`: 3 of 3. Embedded, never shown, grabbed, then shown by the parent: 2 of 2 GPU, 1 of 1 WARP |
+| Which do not? | the same two orders when the window is destroyed before the event loop runs again (6 of 6 survived — why one host per offscreen frame never met it); show + hide before any event, then the one offscreen grab; a grab while hidden WITH a scene graph (correct frame, 2 of 2); embedding a view that is live, starting or hidden (2 of 2 GPU, 1 of 1 WARP each) |
+| The lifecycle matrix | 15 call orders, one process each: every one survives and answers as the state table says; the two controls — the killing orders on the raw view — die, 3 of 3 each on the RTX 4070 and on WARP |
+| Wind at rest | boxes whose every vertex has the full wind weight, wind 40 × the look's: IoU 1.000, offset 0.00 px against the CPU footprint. With the shaders as ported: 10.2 px (foliage) and 18.9 px (grass) off — 20 cm and 38 cm — and no message |
+| A broken shader in a SHOWN view | no exception; the leaf is not drawn; four Qt messages classified as errors, logged at ERROR from Qt's render thread; `engine_errors()` returns them on the GUI thread |
+| A broken `Garden.qml` under the default-tier host tests | before: 32 skipped, 0 failed. After: 9 failed, 41 errors, 12 passed, 0 skipped |
+| A hang outside the render | a `--selftest` whose second block sleeps: exit 1 when the watchdog's time is up, `[watchdog] fired=True … did not finish within …` in the log before the stack dump, which names the sleeping frame |
+| Recovery after a failed engine call | the engine refuses the second Model of a transaction that adds two items and moves one: the half-applied frame shows one new box and no move; after `sync.reset()` the engine holds nothing; after `sync.apply` the sink equals `sync.expected_state()`, the Models match it part for part and the frame matches the CPU prediction (IoU ≥ 0.95). The same on a list-backed engine for each of the sink's engine calls |
+| The graphics API's name | PyQt6 6.11 names the enum members `OpenGL` but `Direct3D11Rhi`; the first Linux run reported `OpenGL` against a typed list that said `OpenGLRhi`. The name now comes from the enum member |
+| First CI run of `render3d` (commit af9300d) | windows-latest: green. ubuntu-latest: 47 passed, 4 skipped, 1 failed — the API name. The four skips are by design: two hardware-only budgets (llvmpipe is a software rasteriser) and two Windows-only self-test checks (WARP; the whole `--selftest`, whose Qt3D block needs the bundled Qt runtime) |
+
+**Not measured** — stated so nobody assumes it: on Linux (xcb, OpenGL, llvmpipe) everything added
+in review round 1 — the lifecycle matrix above all; the first three render files ran there
+once, on GitHub's runner. The `frozen-selftest.yml` workflow: written without access to the
+runners and unproven until its first run, in particular the 8-second smoke, which no workflow
+ran before. An integrated GPU; a display at a scale other than 100 % (the code and the tests
+carry the device pixel ratio, the machine did not have one); the memory curve of criterion 10,
+which stays with L1.3.
 
 ## ADR-049: Frost-Date Semantics - One Parser, 29 February Substituted as 1 March
 

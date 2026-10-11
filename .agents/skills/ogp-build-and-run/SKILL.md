@@ -165,17 +165,25 @@ Since Phase 17 L1.2 it also **renders**: the Qt Quick 3D engine package
 *files* in the bundle. `--selftest` loads them from the bundle, draws one
 hidden 160 × 120 frame with every material kind and checks the pixels
 (`ui/view3d/quick3d/selftest.py`). It needs no GPU — Direct3D 11 on WARP will
-do, which is what the release runner has — and a watchdog ends a hung render
-after 180 s with exit code 1. Two things to know when it fails:
+do, which is what the release runner has. **It cannot hang:** ONE watchdog
+bounds the whole self-test — all three blocks, not only the render — and after
+300 s writes the reason and every thread's stack into the log and exits with
+code 1 (`main._run_selftest_bounded`). Three things to know when it fails:
 
-- The exit code cannot say which check failed; the 3D block writes a log to
+- The exit code cannot say which check failed; the self-test writes a log to
   `%APPDATA%\cofade\Open Garden Planner\OpenGardenPlanner-selftest-3d.log`
   (beside `app.log`), or to the path in `OGP_SELFTEST_LOG`. It names the
-  graphics adapter that rendered.
+  graphics adapter that rendered, every 3D check, and ends with
+  `[selftest_exit] code=…`. A log whose 3D part passed and whose exit code is
+  1 points at the first two blocks.
+- `[watchdog] fired=True … did not finish within 300 s`, then `Timeout` and
+  stack traces: a hang. The frame at the top of the main thread's stack is
+  where.
 - Under `QT_QPA_PLATFORM=offscreen` nothing renders 3D, so the 3D block
-  FAILS there by design. Run `--selftest` with the real platform. To check the
-  GPU-less path locally, set `QSG_RHI_PREFER_SOFTWARE_RENDERER=1` (the log
-  then says `Microsoft Basic Render Driver`).
+  FAILS there by design (`RenderError: Qt Quick runs on the Software backend`).
+  Run `--selftest` with the real platform. To check the GPU-less path locally,
+  set `QSG_RHI_PREFER_SOFTWARE_RENDERER=1` (the log then says
+  `Microsoft Basic Render Driver`).
 
 Measured 2026-10-11 (three runs each, the whole `--selftest`): frozen exe
 3.0–4.1 s on an RTX 4070 and 3.0–3.1 s on WARP on a quiet machine; 6.1–7.2 s on either
@@ -212,7 +220,12 @@ child exiting 3 propagates 3).
    state the claim without the no-inherited-handle condition).
 
 `release.yml` runs `--selftest` against the built exe, but only *after* merge.
-Running it locally is what makes it a merge gate rather than a post-mortem.
+`frozen-selftest.yml` (Phase 17 L1.2) builds the bundle with the release recipe
+— `python installer/build_installer.py --skip-nsis` — and runs the smoke and
+the self-test on pull requests that touch the installer, the entry points,
+`ui/view3d/`, the dependency files or the gate workflows; it is path-filtered
+and not a required check. Running the gate locally is still what makes it a
+merge gate rather than a post-mortem.
 
 ### Known build traps (all encoded in `installer/ogp.spec`; verified 2026-07-04)
 

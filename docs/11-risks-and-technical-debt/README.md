@@ -1130,24 +1130,56 @@ building on.
   when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the
   preset's width whatever was saved. The edge-case plan therefore uses fences without a preset.
 
-### 11.4.9 Six things the engine taught while the production package was built (Phase 17 L1.2, #385)
+### 11.4.9 What the engine taught while the production package was built (Phase 17 L1.2, #385)
 
-Each was found by measuring before building on it (ADR-048 addendum L1.2). Machine: Windows 11,
-RTX 4070 and WARP, PyQt6 6.11.0, 2026-10-11.
+The first six were found by measuring before building on them; the rest by an independent
+review of the first version and by CI's first run of the branch — each of those is a thing a
+green suite did not see (ADR-048 addendum L1.2, "Review round 1"). Machine: Windows 11, RTX 4070
+and WARP, PyQt6 6.11.0, 2026-10-11.
 
-- **A Qt Quick window that was never shown renders exactly ONE frame.** *Symptom:* the second
-  `grabWindow()` of a hidden `QQuickView` returned the bare clear colour — every Model gone,
-  even the built-in `#Rectangle` ground (mean absolute difference 161 of 255 against the first
-  grab on a 320 × 240 frame; Direct3D 11 on the GPU and on WARP alike). The first hidden grab is
-  right: pixel-identical to a grab of the same scene in a shown window. *Root cause (inferred from
-  the behaviour, not read in Qt's source):* for a window with no live scene graph Qt builds a
-  throwaway render device for the grab and tears the scene graph down afterwards, and Qt Quick
-  3D's scene does not come back. `View3D.pick()` on such a window finds nothing for the same
-  reason. *Fix:* `offscreen.render_records` builds one host per frame; `Quick3DHost.grab()` raises
-  `HostStateError` on a second hidden grab, on a grab while hidden after having been shown, and
-  `pick()` raises without a rendered frame — a wrong frame or "no hit" must never stand in for
-  "could not look". Pinned by
-  `tests/integration/test_quick3d_render.py::test_the_host_refuses_what_it_cannot_answer_truthfully`.
+- **Grabbing a Qt Quick window that has no scene graph is safe exactly once — and only if the
+  window is never shown.** `grabWindow()` on a window without a live scene graph renders one
+  frame offscreen and tears everything down again. What that means depends on the window:
+  - *Never shown.* The frame is right — pixel-identical to a grab of the same scene in a shown
+    window — and it is the only one: the second such grab returned the bare clear colour, every
+    Model gone, even the built-in `#Rectangle` ground (mean absolute difference 161 of 255 on a
+    320 × 240 frame; Direct3D 11 on the GPU and on WARP alike). `View3D.pick()` finds nothing
+    on such a window.
+  - *Shown, first expose pending* — `show()`, then `grabWindow()` with no pass of the event loop
+    in between. **The grab returns a correct image, and the process dies in the next passes of
+    the event loop**: exit code 3 (abort), `0xC0000005` (access violation) or `0xC0000374` (heap
+    corruption). 3 of 3 here; 5 of 5 on the GPU, 3 of 3 on WARP and 4 of 4 embedded in a
+    splitter in the review that found it.
+  - *Shown afterwards* — one hidden grab, then `show()`: the same death (3 of 3). So does an
+    embedded, never-shown view that is grabbed and then shown by its parent (2 of 2, 1 of 1 on
+    WARP).
+  - *Not* when the window is destroyed before the event loop runs again (6 of 6 survived). That
+    is why offscreen rendering with one host per frame never met the crash, and why a control
+    whose host goes out of scope cannot demonstrate it.
+
+  *Root cause (inferred from the behaviour, not read in Qt's source):* the throwaway render
+  device of such a grab and the window's own first expose each set up, and tear down, the same
+  scene graph. *What the first version got wrong:* `Quick3DHost.grab()` asked `isVisible()`.
+  The engine's condition is `isSceneGraphInitialized()`, and between `show()` and the first
+  expose the two disagree: visible, no scene graph. The error message of the hidden case even
+  recommended `show()`. And a Python flag "was shown" could not have been right either: the
+  parent of an embedded container shows and hides it without telling the host. *Fix:* the host
+  is a state machine over Qt's own predicates (§8.26.2) — `STARTING` refuses to grab, `SPENT`
+  refuses `show()` and `container()`, an embedded host has no offscreen frame, `wait_ready()`
+  pumps to the first expose and reports. Pinned by one call order per child process in
+  `tests/integration/test_quick3d_lifecycle.py`, with two controls that must die; the rule
+  itself runs in the default tier too (`tests/ui/test_quick3d_host.py::TestStateMachine`).
+- **Qt's window predicates do not mean what their names suggest, and two backends disagree.**
+  Measured as (visible, exposed, scene graph initialised) on Direct3D 11: a new `QQuickView`
+  F F F; after `show()` T F F; after ONE `processEvents()` T T T; right after `hide()` F **T** T
+  — still "exposed" until the event loop ran — then F F T; shown again T F T; minimised
+  **T** F T. So "a frame can be had" needs all three, and "visible" alone is neither necessary
+  nor sufficient. Under the software scene graph (`QT_QPA_PLATFORM=offscreen`)
+  `isSceneGraphInitialized()` is True from the window's birth and nothing 3D is ever drawn:
+  the default test tier can check the state machine's logic, never Qt's behaviour.
+  `Quick3DHost.renders_3d()` is False there, and `grab` / `pick` raise instead of returning a
+  frame without the garden — so does `render_records`, which makes the self-test's failure
+  under that platform name the backend instead of saying "the box is not there".
 - **With the display asleep, a visible window presents its first frame and then none.**
   *Symptom:* a shown, exposed, active `QQuickView` fired `frameSwapped` once; forty
   `view.update()` calls later the count was still 1 (threaded and basic render loop). A wait for
@@ -1159,7 +1191,10 @@ RTX 4070 and WARP, PyQt6 6.11.0, 2026-10-11.
   `grabWindow()` is unaffected: it renders and reads back synchronously in 1–9 ms. *Fix:* nothing
   in the package or its tests waits for a frame to be *presented*; `grab()` is the
   synchronisation point. (The L0 owner run's protocol note — a `wait_frames` timeout followed by
-  an access violation in `grab()` — was this family.) The monitor warning is listed, exactly, as
+  an access violation in `grab()` — has two halves. The timeout is this entry. The access
+  violation was attributed to it as well in the first version of this text, without evidence;
+  a grab of a window whose scene graph was not up — the entry above — fits an access violation
+  better. Neither attribution was checked against the L0 run.) The monitor warning is listed, exactly, as
   an `environment` message in `qt_messages._ENVIRONMENT`, so "a clean run records zero Qt
   warnings" stays assertable on that machine; an allow-list wider than what was measured would be
   a hole, and `tests/unit/test_quick3d_pure.py::TestClassify` pins that it is not.
@@ -1192,6 +1227,44 @@ RTX 4070 and WARP, PyQt6 6.11.0, 2026-10-11.
   release. *Fix:* the log goes into the app's one per-user log directory
   (`core.logging_config.resolve_log_dir`), and `main._run_selftest` names the application first,
   because that directory hangs on Qt's application identity. Rule and tests: §8.11.
+- **A guard that runs the thing it guards skips the defect it stands in front of.** The
+  default-tier host tests began with a canary in a child process, so that a platform unable to
+  create Qt Quick 3D objects would skip the file instead of crashing the run. The canary built
+  a `Quick3DHost` — product code. A `Garden.qml` that did not load therefore failed the CANARY:
+  32 skipped, 0 failed, a broken engine package, green. *Fix:* the canary is bare Qt with inline
+  QML and may only say "this platform cannot"; the positive control runs the file against a
+  broken scene and demands failures and no skip (now 9 failed, 41 errors, 0 skipped). The same
+  family, found in the same round: a positive control whose host went out of scope before the
+  event loop ran could not die; a timing budget that counted an UNKNOWN graphics adapter as a
+  software rasteriser would have skipped itself green; Qt debug lines were run through the
+  error patterns, so the wording of a debug message could have failed a release.
+- **PyQt's enum member names are not a naming scheme.** `QSGRendererInterface.GraphicsApi` in
+  PyQt6 6.11 has the members `OpenGL`, `Direct3D11Rhi`, `VulkanRhi`, `MetalRhi`, `NullRhi`,
+  `Direct3D12` (plus `Unknown`, `Software`, `OpenVG`). A list of expected strings typed on
+  Windows — `Direct3D11Rhi`, `OpenGLRhi`, … — failed the first Linux run, which reported
+  `OpenGL`. *Fix:* the name comes from a table keyed by the enum MEMBER
+  (`host.GRAPHICS_API_NAMES`: `Direct3D11`, `OpenGL`, …), and a test pins that every member
+  has a name.
+- **Three one-per-process facts behind a self-test that cannot hang.** `faulthandler` has ONE
+  `dump_traceback_later` timer: a watchdog inside a watchdog replaces the outer one and cancels
+  it on the way out — so when the whole `--selftest` is bounded, its 3D block arms none.
+  `faulthandler` writes to a file DESCRIPTOR: a captured or replaced `sys.stderr` raises
+  `io.UnsupportedOperation` (found by the test, under pytest's capture), and a windowed exe has
+  no stderr at all — the watchdog then dumps into the null device and still ends the process.
+  And under GitHub's `pwsh` (`$ErrorActionPreference = 'stop'`) `Write-Error` ends the step at
+  once: a verdict printed with it is the last thing the step prints, so a log printed after it
+  never appears — the gate steps print `::error::` with `Write-Host`, then the log inside
+  `try`/`catch`, and exit at the end.
+- **A shader may not move a vertex at rest.** The wind shaders ported from the spike displaced
+  a vertex by `sin(phase) × strength × weight` at time 0 — up to the full amplitude, with the
+  clock standing still. Heights, spreads, picks and shadows are all measured on the mesh. By the
+  shaders' arithmetic a leaf tip could sit up to 0.9 cm and a grass tip up to 2.5 cm away with
+  the look's wind — invisible to every test — and measured in a wind 40 times stronger, boxes
+  with full wind weight sat 20 cm and 38 cm off, with no message of any kind. *Fix:*
+  both shaders multiply the sway by `smoothstep(0, 2, time)` — exactly 0 at rest. Pinned in
+  pixels with vertices of full wind weight
+  (`test_at_rest_a_vertex_with_full_wind_weight_is_where_its_mesh_puts_it`) and by a control
+  with the factor removed.
 
 Two measurements that are not traps but will be asked for: `Model.eulerRotation.y =
 +rotation_deg` IS the counter-clockwise turn seen from above (mask IoU 0.9994 against the CPU
