@@ -257,6 +257,10 @@ def test_every_recipe_fits_the_plan_s_numbers(sprite: SpriteRef) -> None:
             low, high = bbox(parts)
             assert high[2] == pytest.approx(height, rel=1e-5)             # gate: ± 3 %
             assert low[2] == pytest.approx(0.0, abs=1e-4 * height)        # stands on the ground
+            # ... on more than the tip of one hanging leaf (a lavender once floated 9 cm
+            # above the ground with a single vertex touching it, and min z was 0)
+            grounded = sum(int((p.mesh.positions[:, 2] <= 0.005 * height).sum()) for p in parts)
+            assert grounded >= 6, f"only {grounded} vertices touch the ground: it floats"
             span = max(high[0] - low[0], high[1] - low[1])
             assert span == pytest.approx(2.0 * radius, rel=1e-5)          # gate: ± 10 %
             # centred on the plan position, and nothing leaves the canopy circle by more
@@ -306,7 +310,8 @@ def test_the_plant_stays_on_its_canopy_circle(archetype: str) -> None:
     from the axis, for 40 ids × three proportions × a coarse and a fine recipe.
 
     Measured over 1,000 ids × three proportions × three recipes per archetype
-    (scratch, 2026-10-11): at most 1.081 (hedge), 1.078 (palm), 1.077 (feathery).
+    (scratch, 2026-10-11): at most 1.081 (hedge), 1.078 (palm), 1.077 (feathery),
+    1.071 (canopy); every other archetype under 1.06.
     With outlines of any reach at any angle it was 1.39 (feathery), 1.37
     (allium), 1.23 (flower) — and scaling the farthest vertex onto the circle
     instead left a bounding box of 72 % of the canopy diameter."""
@@ -459,9 +464,11 @@ def test_the_seed_is_the_record_s_seed_param() -> None:
 #: Side-silhouette IoU of two ids of one recipe and size must stay below this.
 #: Measured 2026-10-11 over 123 recipes × 10 id pairs (1,230 pairs), the most
 #: alike pair per archetype: flower 0.65, feathery 0.74, allium 0.78, palm 0.84,
-#: ground 0.86, head 0.90, grass 0.92, rosette 0.93, conifer 0.93, climber 0.94,
-#: hedge 0.95, canopy 0.95, mound 0.96 (sage). Before the hedge was given a
-#: batter and an uneven top, two hedge drums scored 0.999 — the instrument bites.
+#: head 0.90, climber 0.92, grass 0.92, rosette 0.93, conifer 0.93, ground 0.94,
+#: canopy 0.94, hedge 0.95, mound 0.965 (two petunias — a flat cushion fills its
+#: box whatever its lobes do; the mean over 520 mound pairs is 0.92). Before the
+#: hedge was given a batter and an uneven top, two hedge drums scored 0.999: the
+#: instrument bites.
 CLONE_IOU_MAX = 0.97
 
 
@@ -520,7 +527,7 @@ class TestPlaceholder:
         assert float(np.abs(colours - colours[0]).max()) == 0.0          # uniform
         tone = srgb_to_linear(FLOWERS["white"][0]) * PLACEHOLDER_SHADE   # the 2D white, in shade
         np.testing.assert_allclose(colours[0], tone, atol=1e-6)
-        assert PLACEHOLDER_SHADE == 0.7
+        assert PLACEHOLDER_SHADE == 0.5   # x 0.7 rendered at luma 232 at noon (spike engine)
         srgb = linear_to_srgb(colours[0].astype(np.float64))
         assert float(srgb.min() * 255) >= 40 and float(srgb.max() * 255) <= 240   # albedo range
         palest = min(saturation(mean_srgb(part(build_plant(
@@ -676,6 +683,24 @@ class TestConventions:
         away = foliage.positions - heart
         away /= np.maximum(np.linalg.norm(away, axis=1, keepdims=True), 1e-9)
         assert float(((away * foliage.normals).sum(axis=1) > 0.2).mean()) > 0.9
+
+    def test_shell_leaves_are_set_on_the_lobes(self) -> None:
+        """A leaf of the shell starts on the outer surface of the lobes — not inside
+        one (the first look through an engine showed bald crown tops: the leaves
+        were there, buried) and not in the air between two (nothing floats)."""
+        dice = plants._Dice(7)
+        centers = np.array([[60.0, 0.0, 100.0], [-50.0, 30.0, 110.0], [0.0, -10.0, 150.0]])
+        radii = np.array([[70.0, 70.0, 60.0], [65.0, 65.0, 55.0], [60.0, 60.0, 50.0]])
+        origin = np.array([0.0, 0.0, 110.0])
+        reach = plants._shell_points(dice, 400, -0.5) * np.array([120.0, 120.0, 90.0])
+        points = plants._on_lobes(dice, origin, reach, centers, radii)
+        # per lobe: 1 on its surface, < 1 inside it, > 1 outside it
+        level = np.sqrt((((points[:, None, :] - centers[None]) / radii[None]) ** 2).sum(axis=2))
+        outermost = level.min(axis=1)
+        assert outermost.min() >= 0.90 and outermost.max() <= 1.12, (
+            outermost.min(), outermost.max())
+        missed = plants._lobe_surface(origin + [0.0, 0.0, 1000.0], reach, centers, radii)
+        assert float(missed.max()) == 0.0      # a ray that meets no lobe says so
 
     def test_a_builder_reads_only_the_geometry_part(self) -> None:
         record = record_for(SpriteRef("species", "tomato"), 120.0, 40.0)
