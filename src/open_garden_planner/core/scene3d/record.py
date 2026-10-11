@@ -383,11 +383,18 @@ class Record:
     - ``params``: the rest (``PARAM_*`` keys).
 
     ``transform`` and ``material`` have a signature each. ``item_id``, ``name``
-    (the display name) and ``parent_id`` (the id of the bed a plant stands in —
-    the item's ``parent_bed_id``, carried as it is) have none. ``parent_id`` is
-    not resolved into anything in L1.1: ``transform.base_cm`` stays 0.0 until
-    L1.6 lifts a plant onto its bed, as a post-processing step over the snapshot.
-    A builder never reads it.
+    (the display name) and ``parent_id`` (the id of the bed a plant is LINKED to —
+    the item's ``parent_bed_id``, carried as it is) have none. A builder never
+    reads it.
+
+    For a consumer: ``parent_id`` is a link, not a location. It may name NO record
+    of the snapshot (a hidden parent, one beyond the contract's range, one whose
+    outline cannot be built) — never index ``records[record.parent_id]`` unchecked
+    — and a parented record may stand at ``transform.base_cm == 0.0``: its parent
+    holds no soil or has no height, the item's centre is outside the parent's
+    shape, or the parent got no record. Where an item stands is ``base_cm`` and
+    nothing else (L1.6: ``ui/canvas/footprints.item_base_cm`` gives it, and
+    ``snapshot_records`` grounds a record whose parent has none).
     """
 
     item_id: str

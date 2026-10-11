@@ -163,8 +163,13 @@ def test_scripted_edit_session_sends_minimal_calls(canvas: CanvasView, mouse_eve
     assert calls == [BEGIN, ("add", tree_id), COMMIT] and built == [tree_id]
 
     # ── a perennial INSIDE the bed and a fence, through the command path ─────
+    # The plant stands where the bed still is after every edit below (the bed's centre once
+    # it has moved; the turn and the resize are about that centre). L1.6: a plant stands on
+    # its bed's soil only while it is inside the bed, so a bed moved, turned or resized AWAY
+    # from a linked plant also re-poses that plant (38 -> 0) — which is right, is tested in
+    # `test_scene3d_base_stacking.py`, and is not what this session is about.
     layer = scene.active_layer.id
-    perennial = CircleItem(500.0, 400.0, 15.0, object_type=ObjectType.PERENNIAL, layer_id=layer)
+    perennial = CircleItem(680.0, 360.0, 15.0, object_type=ObjectType.PERENNIAL, layer_id=layer)
     fence = PolylineItem([QPointF(100.0, 100.0), QPointF(900.0, 100.0)],
                          object_type=ObjectType.FENCE, layer_id=layer)
     commands.execute(CreateItemCommand(scene, perennial, "plant"))

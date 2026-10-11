@@ -968,12 +968,13 @@ class GardenPlannerApp(QMainWindow):
         unchanged membership returns ``(False, None)``."""
         from open_garden_planner.core.commands import SetParentBedCommand
         from open_garden_planner.core.plant_renderer import is_plant_type
+        from open_garden_planner.ui.canvas.footprints import bed_membership_point
         from open_garden_planner.ui.canvas.items import GardenItemMixin
 
         if not isinstance(item, GardenItemMixin) or not is_plant_type(item.object_type):
             return False, None
 
-        plant_center = item.mapToScene(item.boundingRect().center())
+        plant_center = bed_membership_point(item)
         current_parent_id = item.parent_bed_id
         new_bed = self.canvas_scene.find_smallest_bed_containing(plant_center)
         new_parent_id = (
@@ -2827,6 +2828,7 @@ class GardenPlannerApp(QMainWindow):
 
         from open_garden_planner.agent_api import edits
         from open_garden_planner.core.commands import SetParentBedCommand
+        from open_garden_planner.ui.canvas.footprints import centre_is_inside
 
         plant = self._agent_resolve_plant(item_id, "set_parent_bed")
         old_parent_id = plant.parent_bed_id
@@ -2846,8 +2848,14 @@ class GardenPlannerApp(QMainWindow):
             # reported x/y matches the read tools, whereas this one exists to
             # match the GUI's containment decision. The two differ by the
             # antagonist badge's asymmetric overflow (~0.07 * radius).
-            plant_center = plant.mapToScene(plant.boundingRect().center())
-            link_is_geometric = bool(bed.contains(bed.mapFromScene(plant_center)))
+            #
+            # Whether the sun study and the 3D scene LIFT the plant onto the
+            # bed's soil (L1.6, footprints.item_base_cm) is the same predicate
+            # asked with the plant's stable geometric centre — where a solid
+            # stands must not follow a badge. So within that overflow of a
+            # bed's edge a link reported as not geometric here can still be
+            # lifted there, and the other way round.
+            link_is_geometric = centre_is_inside(plant, bed)
 
         if new_parent_id == old_parent_id:
             where = "already unlinked" if bed_id is None else f"already linked to {bed_id}"

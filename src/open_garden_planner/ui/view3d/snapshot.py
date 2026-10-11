@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
 from functools import lru_cache
@@ -110,6 +110,8 @@ from open_garden_planner.ui.canvas.footprints import (
     OUTLINE_CIRCLE,
     OUTLINE_POLYGON,
     OUTLINE_POLYLINE,
+    ItemLookup,
+    item_base_cm,
     item_footprints,
     item_outline,
 )
@@ -216,20 +218,6 @@ class SkippedItem:
     reason: SkipReason
     error_type: str = ""  # the exception's class name; "" when none was raised
     error_message: str = ""
-
-
-class _Lookup:
-    """Items by id, built on first use (only a HOUSE with a ridge asks today)."""
-
-    def __init__(self, items: list[Any]) -> None:
-        self._items = items
-        self._by_id: dict[str, Any] | None = None
-
-    def get(self, item_id: object) -> Any:
-        if self._by_id is None:
-            self._by_id = {str(other.item_id): other for other in self._items
-                           if hasattr(other, "item_id")}
-        return self._by_id.get(str(item_id))
 
 
 #: What has been logged already — one line per item and KIND of failure (the
@@ -853,7 +841,7 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
 
 
 def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
-               lookup: _Lookup) -> Record | None:
+               lookup: ItemLookup) -> Record | None:
     """One item → its record; None when it covers no ground (not an error).
     Anything it raises is contained by ``snapshot_records``. ``lookup`` finds
     another item by id (a HOUSE's ridge)."""
@@ -911,13 +899,14 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
         height = None  # no height. One that is no usable number — 1e300, 1e-300 — is the Record's to refuse.
     pattern = getattr(item, "fill_pattern", None)
     parent = getattr(item, "parent_bed_id", None)
+    base = item_base_cm(item, lookup, at_date) if parent is not None else 0.0
     holes = tuple(region_holes for _outer, region_holes in regions)
     return Record(
         item_id=item_id,
         kind=kind,
         shape=shape,
         footprints=tuple(outer for outer, _holes in regions),
-        transform=frame.transform(),
+        transform=frame.transform(quantize_cm(base)),
         material=_material(kind, _rgba(getattr(item, "fill_color", None)), _rgba(stroke),
                            pattern.name if pattern is not None else None),
         height_cm=height,
@@ -981,12 +970,18 @@ def snapshot_records(
       triangulation has cut it.
     - ``height_cm``: ``effective_height_cm(..., at_date)`` — the 2D shadow's
       resolver; None means decoration that casts no shadow.
-    - ``transform.base_cm`` is 0.0 here; L1.6 stands a plant on its parent bed
-      (``parent_id``) with it.
+    - ``transform.base_cm`` (L1.6): where the item STANDS — the soil of the bed
+      or container it is linked to AND stands inside (``footprints.item_base_cm``,
+      the rule the 2D shadow casters use: 2 cm under a bed's rim, at a
+      container's height), 0.0 on the ground. It is part of the transform, so a
+      bed that changes height re-poses its plants and rebuilds none of them.
+      An item whose parent got NO record here — left out for any of the reasons
+      above — stands on the ground: nothing stands on a solid the scene does
+      not hold (``_ground_items_without_a_parent_record``).
     - ``at_date`` (US-E8) grows dated plants: canopy radius and height.
     """
     items: list[Any] = scene.items()  # top-first; garden items are duck-typed below
-    lookup = _Lookup(items)
+    lookup = ItemLookup(items)
     records: dict[str, Record] = {}
     for item in reversed(items):
         if not item.isVisible():
@@ -1020,4 +1015,25 @@ def snapshot_records(
             _report(SkippedItem(item_id, kind, SkipReason.DUPLICATE_ID), skipped)
             continue
         records[item_id] = record
+    _ground_items_without_a_parent_record(records)
     return records
+
+
+def _ground_items_without_a_parent_record(records: dict[str, Record]) -> None:
+    """An item lifted onto a parent that got no record stands on the ground instead.
+
+    ``item_base_cm`` answers where an item stands from the ITEMS: the link, the
+    parent's height, the item's centre inside the parent's shape. Whether that
+    parent is in the 3D scene at all is known only here, and only once every
+    record is built (the walk is bottom to top; a parent may lie above its
+    plant). A parent is left out when it is beyond the contract's range (a bed
+    30 km wide), when its outline cannot be built, when its record failed — and
+    then there is no solid for a plant to stand on: 38 cm up over nothing.
+
+    Only ``base_cm`` changes; ``parent_id`` still says whose the item is. The 2D
+    shadow casters are not this function's business: there the parent is a
+    caster like any other, and its plants stand on it.
+    """
+    for item_id, record in records.items():  # values are replaced, no key is added
+        if record.transform.base_cm != 0.0 and record.parent_id not in records:
+            records[item_id] = replace(record, transform=replace(record.transform, base_cm=0.0))

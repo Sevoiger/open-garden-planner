@@ -836,6 +836,139 @@ independent review found missing behind a green suite.
   step (the six other commands of that script, the golden generator and the sprite generator
   create no settings object and write nothing).
 
+### 8.10.5 Patterns from the built world and base stacking (Phase 17 L1.6)
+
+Established by `tests/integration/test_shadow_caster_golden.py`,
+`tests/unit/test_shadow_caster_base.py`, `tests/unit/test_scene3d_builders.py` and
+`tests/integration/test_scene3d_built_world.py`.
+
+- **A golden before a behaviour change, plus an independent oracle of who changes.** §8.10.3's
+  golden pins a refactor (nothing may change). When behaviour changes for ONE class of input, the
+  golden pins everything else: generate it from the unchanged code, and store two things per
+  scene — the result as it was, and the result of only the inputs the change will NOT touch. The
+  test then proves (a) with the change switched off the old result returns, (b) the untouched
+  inputs still give the second result, (c) the touched inputs are exactly the expected ones. Which
+  inputs are "untouched" is decided in the test by a re-derivation that does not call the new code
+  (`_walk` in the golden test): it found that only 22 of bench_small's 45 parented plants stand
+  on raised soil — the first draft of the assertion said 45.
+- **A geometric claim gets an oracle that shares no code with it.** The swept shadow of a raised
+  caster is checked point by point against a ray test (is `q − t·d` inside the footprint for some
+  `t` in the height interval?) that knows nothing of polygons, sweeps or the integer grid — next
+  to the algebraic identity (the raised shadow is the ground shadow translated). The identity
+  alone would pass a wrong formula that is self-consistent.
+- **A builder matrix turns the local geometry, not only the item.** A builder never sees an
+  item's rotation (it is the transform's), so "parametrise over rotation" has to mean the
+  footprint and the path *inside the local frame*. Doing that found a shed whose ridge lay askew
+  to its walls (the bounding box of a turned polygon) and a ridge tile that overshot the eaves
+  where the ridge met them at an angle.
+- **Assert containment, not only extremes.** "The top is the height" and "the triangle budget
+  holds" passed for both defects above. What failed was "every vertex lies inside the footprint
+  grown by the overhang" (`outside_distance`) — a statement about the whole solid.
+- **Probe points off the axes of symmetry.** A plan-view "is this point covered" test at the
+  centre of a symmetric outline sits exactly on an ear-clipping diagonal and reads "not covered"
+  under a lid that covers everything. Use points like (37, 11).
+- **Plan-view area as the hole detector.** For anything built along a line, the area of the
+  union of its triangles seen from above must be about `length × width`; a slab over the
+  enclosed area is two orders of magnitude off. Height, validity and budget all pass on the slab.
+
+Added by the senior review's first round (the same story):
+
+- **A golden that is exact on one platform needs a partner that is exact on all of them.** The
+  shadow golden compares bit for bit only where it was generated (win32); the CI test jobs run
+  on Linux, where the same file is a "to the grid" gate. The partner is the RELEASED module kept
+  as a test oracle (`tests/unit/shadow_geometry_v1_29_10.py`, the same git blob as the tag's
+  file — the test checks the blob id): old and new functions run side by side on the machine
+  under test and must agree exactly, so "unchanged" is proven wherever the suite runs. Say in
+  the test's docstring what each platform enforces; and run the tolerant branch everywhere (it
+  is implied by the exact one), or it is dead code on the only machine you can watch.
+- **Show that a tolerant comparison can fail.** `test_the_portable_comparison_can_fail` feeds
+  the Linux gate a coordinate three grid steps off, a lost vertex, a lost polygon, another path
+  element, a changed area and a changed heatmap sample, and one single grid step, which must
+  pass. A tolerance nobody has seen refuse anything is a guess.
+- **A time budget with a CI factor needs a partner without a clock.** 40 ms ×3 on a runner lets
+  a per-vertex Python loop pass. `python_calls` (a `sys.setprofile` hook — it leaves coverage's
+  trace hook alone) counts the calls a builder makes: the same number for 5 m and 50 m of fence,
+  and a wrapper that touches every vertex is caught by 24,000. Not a dict compared with its own
+  literal: that test could not fail.
+- **A test named after a behaviour drives the behaviour.** "A bed height change recomputes the
+  overlay" used to set `parent_bed_id` and call `recompute_now()`. It now executes a height
+  command and a re-parent command, waits out the debounce, reads the overlay's painted tip, and
+  ends with a negative control (the wiring disconnected: nothing happens).
+- **Pin a known limit with its reason.** Three states in which a plant is in a raised bed and
+  not on it are tests that state the expected base AND why — so the fix of the underlying gap
+  changes them knowingly instead of "fixing a failing test".
+- **Measure a disagreement between two models, commit the measurement.** "The 3D body is wider
+  than the 2D footprint" was written from the builders' dimensions. Projecting the meshes onto
+  the ground (`scripts/measure_built_world_shadows.py`) showed the opposite for three of five
+  fence styles. A table in an ADR needs a script a reader can re-run and a test that fails when
+  the table goes stale.
+- **A mutation check for each fix — committed, or it is a number nobody can check.** Each rule
+  of the review rounds is switched off in the source (the link alone lifts; a 3-tuple is a
+  caster; no bevel; an unknown style is a picket fence; a container's soil 2 cm low; a block on
+  the first ring only; the lift asks the bounding rect's centre; the parent's shape is its
+  bounding box …) and the tests that should notice are run:
+  `scripts/mutation_check_built_world.py`, next to the scene contract's
+  `mutation_check_scene3d.py`. A mutant counts as KILLED only when pytest exits with code 1 and
+  names a failed test — a collection error or a crash is reported as BROKEN, not as a kill. The
+  first round quoted its count from a script that lived in a scratch folder. (28 mutants when
+  it was committed, 30 since the merge of the contract's second round, 32 since the third
+  review round, 33 since the plant builder joined the registry; all killed; `--list` prints the current set.) And a mutation script rots between its runs: a mutant whose text
+  has left its file mutates nothing. `tests/unit/test_scene3d_builders_mutation_script.py`
+  checks on every suite run that each mutant still matches exactly once and that every test
+  file and `-k` word it names exists — it found a stale mutant the day it was written (the
+  line under `footprint_of`'s guard had moved).
+- **A guard that counts a construct must see every spelling of it.** "The containment test
+  exists once" matched `x.contains(y.mapFromScene(p))` written as one expression; the same test
+  in two statements passed. The guard now follows a mapped point through local names (and a
+  parametrised test feeds it both spellings and three near misses), and states the limit that
+  remains: attributes, containers, parameters.
+- **Pin which input each decision takes when a refactor claims "identical behaviour".** Five
+  inline expressions became two shared functions; swapping the point they used passed all 114
+  related tests, because no test had a case where the two candidate points differ. One probe
+  where they do (a plant under its warning badge at a bed's edge) and one assertion per
+  decision turned the claim from read into tested.
+- **No universal sentence next to a gate without a measured number.** The truth-gate row said
+  that a 3D shadow ends where the 2D one ends, for every kind; the committed script, asked for
+  the reach, printed −270 cm for a house. The reach is now a column of the script, and a test
+  scans the docs and skills for the claim.
+- **A wait on a count can still race an echo: wait for the echo.** `qtbot.wait(400)` after a
+  150 ms debounce is a guess about the machine — but its first replacement,
+  `waitUntil(count reached)` then `waitUntil(debounce idle)`, was a race of its own and turned
+  CI red (`assert 6 == 1 + 4`, one job of two on the same commit). A recompute sets the
+  overlay's path; the scene answers with `changed` one event-loop round LATER; `changed` is wired
+  to the debounce. Straight after the recompute the timer is idle and the echo is still on its
+  way — "idle" is not "nothing pending" — and an echo delivered late carried an unannounced
+  edit into a negative control. What holds: wait for the count, **then for the echo you know is
+  coming** (a `scene.changed` delivered since that recompute), then for the debounce the echo
+  starts, then assert the exact count (`OverlayWatch.settled` in
+  `tests/integration/test_scene3d_base_stacking.py`). And make the race a regression that fails
+  EVERYWHERE: run the racing step synchronously, so the event loop cannot hide it —
+  `TestTheOverlaysOwnEcho` recomputes by a direct call, then runs the control. With the old
+  helper it fails three times out of three on any machine.
+- **An assertion on a running timer is a duration in disguise.** The regression above first
+  asserted `debounce.isActive()` right after the echo arrived — true only while 150 ms have not
+  passed, so a slow machine fails it for no reason. What the test means is what the timer DOES
+  (one more recompute, which saw the edit), and the lines after it already said that.
+- **"Up to N" needs the worst direction.** "The badge moves the point by up to 1.8 cm" was
+  read off one axis; the point moves 1.8 cm in x AND in y, 2.55 cm in all, and against a bed
+  edge at 45° the margin is the diagonal. State the per-axis figure and the worst case, and pin
+  the worst case (a bed turned by 45°: a plant 2.2 cm inside the edge is outside for the link).
+- **A source-reading guard needs a census, not only a pattern.** "An `ItemLookup` is constructed
+  only in the two walks" matched `ItemLookup(...)` and so never saw an alias import, `make =
+  ItemLookup` or `functools.partial(ItemLookup, items)`; and "the local is not stored" matched
+  `x = lookup` / `return lookup` and so missed a list, `.append(lookup)`, `setattr`, a tuple, a
+  closure. Turn both around: count EVERY appearance of the identifier and allow the few roles
+  that are fine; allow the ONE use of the local that is fine (an argument of a named taker) and
+  report every other. Then list what a reading still cannot see (`type(lookup)(…)`).
+- **A committed script is outside the suite's isolation: measure what it reaches.** The test
+  suite rebinds the settings names; a script run by hand has the owner's. For a script that
+  must not need isolation, run it AS DOCUMENTED in a child process with `QSettings` replaced by
+  a recorder that refuses (so even a failing run cannot touch the real store), an audit hook on
+  `open` / `os.mkdir`, and an empty redirected profile
+  (`test_run_as_documented_the_script_reaches_no_settings_no_plan_and_no_app_data`). Watch what
+  is constructed and opened, not what is imported: importing the `core` package loads the
+  settings module and PyQt6 either way.
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
@@ -2166,6 +2299,47 @@ shadow south. The binding pixel test in
 asserts the tip lands at the formula-predicted pixel; if a change mirrors
 shadows, that test fails before any human has to eyeball a canvas.
 
+**A caster has a base (Phase 17 L1.6, ADR-037 addendum).** A shadow caster
+is a solid `footprint × [base, base + h]` —
+`core/shadow_geometry.ShadowCaster(footprint, height_cm, base_cm)`. With the
+sun at elevation α its ground shadow is the footprint projected from the
+base, swept on to its projection from the top:
+
+    S(F, b, h) = { p + t·d : p ∈ F,  t ∈ [b / tan α, (b + h) / tan α] }
+
+that is, the ground shadow `S(F, 0, h)` moved `b / tan α` along `d_scene`.
+The tip — and the near edge — lie `b / tan α` further from the sun; the
+ground between the footprint and the near edge is shaded by what the caster
+stands on, which is a caster of its own. `base_cm` is 0 for everything on
+the garden floor and the **soil surface** for a plant that is linked to
+(`parent_bed_id`) AND stands inside a soil container with a height —
+`core/object_height.standing_base_cm`: 2 cm under the rim of a bed (an
+assumption: a bed has no fill in the plan), AT the height of a container
+(its height is its fill height). The link alone never lifts: it is
+bookkeeping the app does not keep geometric, so a plant whose centre is not
+inside its parent's shape stands on the ground (§8.26.6 "Base stacking").
+Worked example: a 60 cm perennial on the soil of a 40 cm raised bed (base
+38), α = 35° → the tip lies `(38 + 60) / tan 35° = 140.0 cm` beyond the
+plant, 54.3 cm further than from the ground (85.7 cm) — and no longer inside
+the bed's own 57.1 cm shadow. **One walk makes the casters**
+(`collect_shadow_casters`): the overlay and the heatmap both call it, and the
+3D records take `transform.base_cm` from the same
+`ui/canvas/footprints.item_base_cm` (§8.26.6) — a drift guard counts the
+callers and the consumers of `compute_scene_shadows`. A caster is a
+`ShadowCaster` or an exact `(footprint, height)` pair; any other shape is a
+`TypeError` (`caster_fields`), so nothing but a `ShadowCaster` can carry a
+base. A caster on the ground takes the unchanged integer path: the released
+v1.29.10 functions, kept as a test oracle, give identical results on any
+platform (`tests/unit/test_shadow_caster_base.py::TestTheGroundPathIsTheReleasedCode`),
+and `tests/integration/test_shadow_caster_golden.py` pins the absolute
+numbers — bit for bit on win32, where the fixture was generated; structure,
+±2e-3 cm and areas on Linux (ADR-037 addendum, decision 3). Known and
+unchanged in 2D: `polyline_footprint` of a CLOSED polyline returns an outer
+ring and a hole, the shadow functions take each ring for a footprint, and so
+the shadow of a fence drawn as a closed loop covers the enclosed area — a
+separate defect with its own follow-up, not touched by base stacking (the 3D
+records were fixed: there the hole is a hole, §8.26.1).
+
 **Recompute discipline** for canvas-scale overlays (shadow overlay,
 heatmap): precompute on change — `scene.changed` debounced (150 ms) +
 `stack_changed` for repaint-less metadata edits — cache the result, and
@@ -2863,8 +3037,8 @@ ends in the HOUSE's local frame, from the live ridge item), `species_key` (ADR-0
 `species_name` (labels), `sprite_species` (a plant item's own species string, raw — what its
 2D sprite is resolved from, and so its 3D recipe: §8.22.4), `plant_category`, `path_style` (a
 polyline's `PathFenceStyle`, when set),
-`container_material`. Selection and hover are not in the record at all. `base_cm` is 0.0 until
-L1.6 stands plants on their bed.
+`container_material`. Selection and hover are not in the record at all. `transform.base_cm` is
+where the item stands: the soil of the bed or container it is linked to and stands inside, 0.0 on the ground (§8.26.6).
 
 **Outer rings and holes — read `regions`, not `footprints` alone.** The ground an item covers is
 its outer rings *minus* their holes: `record.regions` yields `(outer, holes)` pairs and
@@ -3052,7 +3226,8 @@ across items (the seed is the item id).
 | recolour (fill; a polyline's stroke) | `material` |
 | height, centred resize, vertex edit inside the bounding box, a plant growing with the date, a ridge edit (on its HOUSE) | `geometry` |
 | one-sided resize, vertex edit that grows the bounding box | `geometry` + `transform` |
-| select, deselect, hover, rename, re-parent, a rotation of a circle about its centre | empty |
+| a bed's height (on each plant in it), re-parenting a plant onto or off raised soil, a bed resized so that a linked plant is no longer inside it (§8.26.6) | `transform` — the base |
+| select, deselect, hover, rename, re-parenting between parents without raised soil, a rotation of a circle about its centre | empty |
 | create / delete, hide / show | `added` / `removed` |
 | arrange (bring to front …) | `reordered` only — never geometry, no engine call |
 
@@ -3168,6 +3343,277 @@ for each rule your builder must keep to `scripts/mutation_check_scene3d.py`.
 `translated(mesh, …)` → `mesh.translated(…)` *within the local frame*, `normal_vs_winding`,
 `srgb_to_linear` and `item_seed` keep their names. Drift-guard tests keep the ported helpers equal
 to the spike's until L1.10 deletes it.
+
+### 8.26.6 Built-world builders and base stacking (L1.6)
+
+The production builders live in `core/scene3d/builders/` (ADR-054 addendum "builders v0"); where an
+item stands is one rule shared with the 2D shadows (ADR-037 addendum "base stacking").
+`builders.production_registry()` is what the wiring hands to `SceneSync`: the twelve built-world
+kinds of this section (`builders.register`) and the three plant kinds (`plants.register`,
+§8.26.7) — 15 registered kinds, none in both families, every other kind on the default prism
+(`tests/unit/test_scene3d_builders.py::TestRegistration`;
+`tests/integration/test_scene3d_built_world.py::test_a_raised_bed_with_two_real_plants_through_the_production_registry`
+takes a raised bed and two real plants through both).
+
+**Which kind gets which builder.**
+
+| Kind | Module | Parts (`name`: material kind) | Colour |
+|---|---|---|---|
+| `HOUSE` | `buildings`, `roofs` | `walls`: vc · `roof`: roof | walls tinted (the item's fill), roof = clay tile; no usable ridge → one tinted `walls` block |
+| `GARAGE_SHED`, `TOOL_SHED` | `buildings`, `roofs` | `walls`: vc · `roof`: roof | walls tinted, roof = shingle |
+| `FENCE` | `lines` → `fences` / `walls` | `fence`: vc — or `hedge`: foliage (hedge style), `wall`: vc (stone style) | tinted (the item's stroke) |
+| `WALL` | `lines` → `walls` / `fences` | `wall`: vc — or the fence of its style | tinted |
+| `RAISED_BED` | `beds` | `bed`: vc | baked: oak planks, soil |
+| `CONTAINER`, `WALL_PLANTER`, `CONTAINER_ROUND`, a `GARDEN_BED` with a height | `beds` | `walls`: vc · `soil`: vc | walls tinted, soil baked |
+| `HEDGE_SECTION`, `HEDGE_POLYGON` | `hedges` | `hedge`: foliage (the dark core and the leaf shell in one mesh) | baked: the hedge texture's greens |
+| `TREE`, `SHRUB`, `PERENNIAL` | `plants` (L1.7, §8.26.7 — registered by `plants.register`, not by this section's `register`) | `wood`: vc · `foliage`: foliage — or `placeholder`: vc for a plant without a height (no shadow) | baked: the recipe's palette, the 2D bark colour |
+| everything else | `build.default_builder` | one tinted prism, or nothing without a height | tinted |
+
+**What a line becomes is decided in one place**, `builders/lines.py`, from its kind and its style
+(`params["path_style"]`, a `PathFenceStyle` name, absent for the plain line); `fences.py` and
+`walls.py` are geometry only.
+
+| Kind | Style | Built as |
+|---|---|---|
+| `FENCE` | none | the default fence: posts, two rails, pickets (`WOODEN_FENCE`) |
+| `WALL` | none | the wall (`STONE_WALL`) |
+| either | one of the five fence styles | that style, whatever the kind |
+| either | anything else — a path style, a name no builder knows | a **plain panel**: the stroke as wide as drawn, up to the height |
+
+The last row is the honest fallback: a style without a solid of its own is never given some other
+style's look (it used to become a picket fence). It gets the body the plan itself describes — the
+solid the 2D shadow model casts. The five names are a mirror (`fences.FENCE_STYLES`;
+`core/object_types.py` imports Qt) pinned against `PATH_FENCE_STYLES`' "fence" category, so a new
+fence style fails a test until a builder is chosen for it. At run time the fallback writes ONE
+warning per style name to the application's log (`lines._report_plain`), on the first build of a
+line in that style — never one per build, and for the first 64 names of a session only: then one
+line says that no more follow (starting the memory over would log every name again on every
+rebuild pass). A style change sets the stroke's colour
+and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `update_material`.
+
+**The rules a builder obeys** (on top of §8.26.1's contract):
+
+1. **The top is the height, by construction.** Build FOR the height: the highest vertex is
+   `record.height_cm` to the float32. Give primitives a bottom and a top (`boxes(…, z0, z1)`),
+   never a size to add. Wrap the shape function in `common.BuiltBuilder`: it applies the safety
+   net (`fit_parts`), and `fit_scale(record)` must be 1.0 — a fit that does something is a bug.
+2. **No height, no shadow.** `BuiltBuilder` builds an item without a height at its kind's nominal
+   height — what the 2D resolver answers for the kind alone, `effective_height_cm(kind, None)`;
+   the builders hold no table of kinds — with `casts_shadow=False`; no nominal height → no parts.
+   This path is nearly dead in production and is kept as the contract for hand-made records:
+   every registered kind but `GARDEN_BED` has a default height, so the snapshot always gives its
+   record one. And `GARDEN_BED` is registered for a state the GUI can barely produce — a garden
+   bed that carries a height (only through its metadata: the panel offers no Height field for a
+   garden bed without one) — so that its plants, which then stand 2 cm under its rim, have soil
+   to stand on.
+3. **Stand on z = 0.** The lowest vertex is the item's own ground. `transform.base_cm` lifts it;
+   a builder never adds it.
+4. **Polylines from the centre line.** Use `record.path` and `record.path_width_cm`, per
+   segment. Never take `record.footprints` of a polyline for its shape: they are the outline of
+   its STROKE — for a closed line one outer ring, with the ground it encloses as a hole in
+   `record.holes` — and the outer ring alone lids the garden. Nothing may be built over that
+   hole: `verify_builder` refuses a solid that covers more than half of it. That default is for
+   loops the size of a garden. A wall or hedge reaches 19–20 cm either side of its line, so a
+   small closed loop of one covers over half of what it encloses and is refused although it is
+   right: verify such a loop with an explicit `hole_cover_limit` and say why (the test for a
+   1 m loop uses 0.65). At the other end the gate has a size floor (`build.HOLE_MIN_WIDTH_CM`,
+   10 cm): a hole narrower than that is not judged, so a 12 cm loop of wall — one solid block —
+   passes. Measured for square loops at 1 cm steps of the side (6 – 200 cm), the default
+   refuses: a WALL 15 – 120 cm, a stone-wall fence 16 – 118 cm, a hedge fence 19 – 111 cm and
+   again at 114 cm (the gate samples the hole on a coarse grid; its verdict is not monotonic at
+   the edge of a range). The test pins three sides only: 12 cm passes, stroke + 12 cm and 1 m
+   are refused.
+   **One plain outline, or the plain block**: a builder that needs ONE simple outline — a gable
+   roof, a bed's frame, a pot, a hedge — checks that it has one (`common.has_one_plain_ring`;
+   `footprint_of` raises otherwise). "One plain outline" is: one outer ring, no hole, and NOT
+   `params["outline_resolved"]` — the contract's flag for a polygon drawn crossing or touching
+   itself. Any other polygon-footprint record is built as `common.plain_block`: ALL regions,
+   holes cut out, up to the height (`BuiltBuilder.uses_the_plain_block` decides before any shape
+   function runs). The same function is every builder's fallback block (a house without a
+   usable ridge), so no fallback takes `footprints[0]` for the whole. **The ring count is not a
+   detector of a self-crossing drawing — the flag is.** A resolved outline can be one plain
+   ring (a pentagram, measured), and it is still the block: a resolved ring can come within
+   0.002 cm of itself, so nothing is offset from it, and a HOUSE's ridge was drawn for another
+   outline — the snapshot hands none on, and the house builder hangs no roof even if one is
+   handed in. (Until the flag existed, such a house kept a gable roof.)
+5. **Stay on the footprint.** A frame's outer face is the footprint; a round container's rim is
+   the footprint's own 24-gon (`lathe` puts its ring vertices on `circle_footprint`'s). Stated
+   exceptions: a roof oversails by its overhang; a hedge leaf's tip may pass the outline by a few
+   centimetres; a linear item has a nominal thickness (the plan has none). **Corners**: `sweep`
+   and `offset_ring` mitre a corner up to `BEVEL_BEYOND` = 2 offsets (a turn of 120°) and bevel a
+   sharper one on the side where the edges run apart — no eave spike on an acute-triangle house,
+   no spike of coping on a hairpin wall. Where the edges run together (an inset, the inside of
+   a bend) the true intersection stays, up to `MITER_LIMIT` = 4 offsets from the joint. **The
+   bound and its condition:** nothing lies further than 2 offsets from the line or ring it was
+   built on when every leg of a line is at least 4 offsets long (76 cm for a wall). A leg
+   shorter than the inside mitre runs back along it puts that corner beyond the leg's other
+   end; there the bound is 4 offsets (a wall zigzag with 25 cm legs: 2.6–2.7), and the solid
+   overlaps itself.
+6. **Flat faces from their winding.** Build flat geometry with `primitives.flat_mesh` (normals
+   are computed, never written) and pass `outward=` where you know which way a face looks — the
+   winding then follows it.
+7. **Colour.** A part that shows the item's own colour is `tinted=True` with `palette.TINT`
+   (pure white) vertices. Every other colour is a `palette` entry — mirrored from a 2D table and
+   pinned to it. A colour in no 2D table is a finding, not a new entry.
+8. **Seed** from `params["seed"]` through `build.item_seed`, nothing else — and name the bit
+   generator: `np.random.Generator(np.random.PCG64(seed))`, never `np.random.default_rng(seed)`
+   (numpy may change what the default is, and every seeded hedge would reshuffle).
+9. **Budget.** State triangles per metre or per corner in the module's `triangle_budget`
+   (`builders.triangle_budget(record)` dispatches) and assert it as a ceiling — never pin an
+   exact count unless the count is the contract. And make no Python-level call per vertex:
+   `tests/perf/test_scene3d_built_world_budget.py` counts calls, so a loop over vertices fails on
+   any machine, whatever the clock says.
+10. **Name sets.** Import a set of names from its Qt-free home (`container_model.MATERIALS`); ask
+    a function rather than copy its table (`nominal_height_cm`); where the home imports Qt, mirror
+    it and pin the mirror against the source in a test (`FENCE_STYLES`). An unknown name gets the
+    honest fallback, never another name's look.
+
+**Primitives** (`builders/primitives.py`, numpy, no Python loop over vertices): `flat_mesh`,
+`boxes`, `bevelled_boxes`, `prism`, `polygon_cap`, `sweep` (a `(lateral, z)` profile along a plan
+polyline, mitred or bevelled, open or closed, per-edge colours), `plank`, `lathe`, `tubes`, and
+the plan helpers `ccw_ring`, `offset_ring` (may return more points than it was given: a bevelled
+corner is two), `polygon_triangles`, `split_triangles_by_line`.
+
+**How to add a builder.**
+
+1. Write `_shape(record, height_cm) -> tuple[MeshPart, ...]` in a module of `builders/` and wrap
+   it: `build_x = BuiltBuilder(_shape, "x")`.
+2. Register the kind in the module's `register(registry)`, add the module to
+   `builders/__init__.register`, and add the kind to `BUILT_WORLD_KINDS`.
+3. Add records to `tests/unit/scene3d_builder_cases.py` — sizes, the local geometry turned by
+   several angles, with and without a height. `tests/unit/test_scene3d_builders.py` then runs gate
+   G1 over them: `verify_builder`, exact top, base 0, fit scale 1, budget, winding, footprint,
+   colours.
+4. Add what only this archetype has (a ridge, a soil level, a seed) as its own test class.
+
+**Base stacking** (truth gate "Base"). `ui/canvas/footprints.item_base_cm(item, lookup, at_date)`
+is the one answer to "how high does this item stand". An item is lifted onto a parent's soil only
+when BOTH hold:
+
+1. its `parent_bed_id` names a visible `is_bed_type` parent with a resolved height —
+   `object_height.standing_base_cm` → `soil_surface_cm(type, height)`: `SOIL_DROP_CM` (2 cm)
+   under the rim of a bed, AT the height of a container (whose height is its soil fill height).
+   No base is derived from a height that is not finite or beyond `MAX_PARENT_HEIGHT_CM` (10 km,
+   the scene contract's bound on every length): such a base would be out of a record's range
+   itself. That is all the height module says;
+2. its **stable geometric centre** lies inside that parent's shape —
+   `footprints.standing_point(item)` (the outline's anchor in scene coordinates: a plant
+   circle's centre, the origin of its record) tested with `footprints.shape_contains`, the
+   app's one point-in-bed predicate.
+
+Otherwise 0, as before L1.6. The second condition is there because the link is bookkeeping: it is
+evaluated when a plant is created (one by one, in bulk, or pasted — `_auto_parent_plant`), when a
+selected plant is dropped after a drag, and when the agent moves a plant (`move_object` and
+`set_object_position`, one re-link); nothing that changes a BED evaluates it, so a bed resized
+away from its plant keeps the link. Nor does any other way of moving or copying a plant: the
+arrow keys, a typed coordinate, align / distribute, an array, a mirror copy (the table below).
+**Where a linked plant stands follows its centre all the same** — the second condition is asked
+on every walk, whatever moved the plant (38 → 0 → 38 with the link untouched).
+
+**A parent the 3D scene does not hold lifts nothing — settled in the snapshot.** Whether a
+parent HAS a record is known in one place, `snapshot_records`, once every record is built: a
+parent is left out when one of its lengths is beyond the contract's range (a bed 30 km wide, a
+bed 10 km + 1 cm high), when its outline cannot be built, when its record failed. Every record
+whose `parent_id` names no record is then put on the ground (`base_cm` 0; `parent_id` stays).
+`item_base_cm` itself knows nothing of records, and the 2D casters are not touched: in 2D such a
+bed still casts, and its plant casts from its soil — except for the bed TALLER than 10 km, whose
+plant casts from the ground there too (the height bound above). Both axes are pinned
+(`TestTheOneRule::test_a_parent_the_scene_cannot_hold_is_not_there`,
+`::test_a_parent_without_a_record_lifts_nothing`).
+
+**One predicate, two points.** Every link decision and the lift ask `shape_contains`. The link
+decisions ask it with `bed_membership_point` — the centre of `boundingRect()`, kept exactly as
+shipped; the lift asks it with `standing_point`. They are the same point until the antagonist
+badge shows: the badge grows the bounding rect towards +x / +y and moves its centre by up to
+1.8 cm along each axis (2.55 cm in all — the margin against an edge at 45°). So a plant's base does not change when a warning badge appears (it did after round 1:
+38 ↔ 0 for a plant 1 cm inside its bed's edge), and within that margin of an edge a link decision
+and the lift can differ — pinned decision by decision in
+`tests/integration/test_scene3d_base_stacking.py::TestWhichPointEachDecisionAsks`. A new caller
+that asks "where does it stand" takes `standing_point`; one that asks "which bed is it linked
+to" takes `bed_membership_point`; neither writes its own containment test (a guard counts them).
+
+`item_base_cm` is asked by `snapshot_records` (→ `transform.base_cm`) and by
+`collect_shadow_casters` (→ `ShadowCaster.base_cm`, §8.20), and `beds.py` puts the soil at the
+same `soil_surface_cm` — one function for the soil mesh, the 3D base and the 2D caster's base. A
+bed that changes height reaches each of its plants as one `update_transform`; no plant mesh is
+rebuilt. A bed that is resized reaches a plant it no longer contains the same way (38 → 0).
+**Cost**: 2.8 µs per lifted plant; the parent's shape is built once per walk
+(`ItemLookup.shape_of` — Qt's `contains` rebuilds it per call). bench_large, 240 lifted plants:
+the caster walk 3.9 ms before L1.6, 5.0 ms now; `snapshot_records` 8.6 → 10.0 ms.
+**An `ItemLookup` lives for ONE walk.** It holds each parent's shape as it was when the walk
+asked; kept across an edit it answers from the old shape (measured: a bed shrunk away from its
+plant, a kept lookup still says 38). Do not keep "the scene's lookup" on a controller or a view:
+a test reads the source and holds three things
+(`TestTheParentShapeIsBuiltOncePerWalk::test_a_lookup_lives_for_one_walk_and_is_never_kept`):
+the identifier `ItemLookup` appears in `src/` only as an import (under its own name), as the
+class, as a parameter's annotation and as a call inside the two walks — so `make = ItemLookup`,
+an alias import and `functools.partial(ItemLookup, …)` fail it; a walk binds its lookup to a
+local name and uses that name ONLY as an argument of `item_base_cm` / `_record_of` — so a list,
+a dict, `.append(lookup)`, `setattr`, `return lookup, 1` and a closure fail it; and the two
+functions that take a lookup use their parameter the same way. What a reading cannot see is
+stated in the helpers: a dynamic spelling (`type(lookup)(…)`, `getattr(module, "Item" +
+"Lookup")`, `copy.copy(lookup)`), and what a callee that only shares the NAME of a taker does.
+
+**A known smell.** `ui/canvas/footprints.py` is collecting jobs: footprints, the base rule and
+the app's point-in-bed test — and `core/commands.py` imports the last one from `ui/` (lazily,
+inside the function, as it already imported `GardenItemMixin`). The predicate belongs somewhere
+both layers may import without that arrow; it is not restructured in L1.6.
+
+**Known limits of base stacking** — a plant can be IN a raised bed and not ON it, because the
+app does not reconcile links when a bed is created or changed (ADR-037 addendum; a follow-up
+issue, which also takes the link decisions' dependence on the antagonist badge). Each is pinned
+in `tests/integration/test_scene3d_base_stacking.py::TestTheLinkAloneNeverLifts`:
+
+| State | What the plan holds | Result |
+|---|---|---|
+| a raised bed drawn around an existing plant | no link | the plant stays at ground level: in 2D it casts from the ground, in 3D it is drawn inside the box |
+| a climber on a trellis that stands in a raised bed | linked to the trellis (the smallest parent) | the climber at 0, its neighbour in the bed at 38 |
+| a pot standing on a raised bed | the pot has no parent (only plants do) | the pot on the ground, its plant at the pot's soil (30), not at 68 |
+| a bed whose outline is not one plain outline (several rings, a hole, or a self-crossing drawing: `outline_resolved`) | built as the plain block, top at the rim | its plants stand 2 cm INSIDE the block: "on its soil by construction" holds for the bed builders only |
+| a plant mirror-copied into its source's raised bed, without the bed | the copy has no link (the mirror tool evaluates nothing) | the copy on the ground, its source beside it at 38 |
+| an array copy (linear, grid, circular, along a path) of a linked plant | the source's link, copied as it is; the copy is not in the bed's child list | inside the bed: on the soil (38) — outside it: on the ground, with a stale link |
+| a bed moved by a coordinate typed into the Properties panel, or by align / distribute | the plants stay where they were, still linked (a mouse drag, the arrow keys and an agent move take them along) | the plants on the ground until the bed is back under them |
+
+The last three are pinned in `::TestCopiesAndMovesThatDoNotEvaluateTheLink`.
+
+**3D shadows against the 2D model.** The truth gate "Shadows" (`ogp-lush-cinematic` §1,
+IoU ≥ 0.85) is defined on a solid box caster. The built world is not a set of boxes, and the
+committed `scripts/measure_built_world_shadows.py` says what that costs — 3D area ÷ 2D area, IoU
+of the mesh's ground shadow against the 2D model's, and the REACH (how much further, +, or less
+far, −, the 3D shadow extends along the shadow direction: where its tip is), each at a sun of
+15° / 35° / 60°:
+
+| Kind | 3D ÷ 2D area | IoU | Reach 3D − 2D (cm) | Why |
+|---|---|---|---|---|
+| raised bed, box, plain panel | 0.99–1.00 | 0.99–1.00 | −0.6 … 0.0 | none: the same prism (its top edge bevelled) |
+| hedge (polygon, section) | 0.94–0.98 | 0.93–0.97 | +2.7 … +4.4 | leaf shell drawn in; leaf tips |
+| round tub / terracotta pot | 0.89–0.91 / 0.81–0.83 | the same | −0.6 … −0.3 | taper |
+| house, sun square to the ridge | 0.92 / 0.81 / 0.92 | 0.85 / 0.74 / 0.82 | −270.0 / −270.0 / −108.2 | gable: the ridge is mid-house, the 2D prism's top edge at the far wall |
+| shed, sun square to the ridge | 0.92 / 0.93 / 1.03 | 0.85 / 0.83 / 0.88 | −150.0 / −81.4 / −21.0 | the same, on a 3 m deep shed |
+| house, sun along the ridge | 0.90 / 0.99 / 1.06 | 0.82 / 0.86 / 0.88 | +30.0 / +30.0 / +30.0 | the roof's overhang past the gable wall |
+| wall | 1.04 / 1.10 / 1.24 | 0.96 / 0.91 / 0.81 | +15.0 / +15.0 / +15.8 | nominal section: WIDER in 3D |
+| stone-wall fence, hedge fence | 1.04–1.06 / 1.13–1.15 / 1.31–1.37 | 0.94–0.96 / 0.87–0.89 / 0.73–0.76 | +14.5 … +15.3, +19.5 … +19.6 | nominal section |
+| picket fence | 0.67 / 0.68 / 0.70 | 0.65 / 0.66 / 0.68 | +2.0 / +2.0 / +2.4 | porosity: LESS in 3D |
+| metal fence | 0.19 / 0.21 / 0.24 | 0.19 / 0.20 / 0.24 | +0.8 / +0.8 / +0.8 | porosity |
+| chain-link fence | 0.13 / 0.14 / 0.19 | 0.12 / 0.13 / 0.19 | +1.5 / +1.5 / +1.5 | porosity |
+
+So: a solid line item casts a wider shadow in 3D than the 2D model, more at a high sun; a porous
+fence casts a fraction of it — the hours-of-sun map shows shade behind a chain-link fence where
+the 3D fence lets over four fifths of the sun through. **Where the tip is** agrees within 2.5 cm
+for the prisms, the pots and the post fences, and does not for a gabled building with the sun
+square to its ridge: the 2D model extrudes the footprint to the ridge height, so its tip is cast
+from the far wall while the gable's is cast from the middle of the house — half the depth short
+at a low sun (2.7 m on the bench house). That is the two models' difference, not a roof to fix.
+
+**What the numbers are for.** They are analytic references for the builders: one item, the sun
+square to a straight 10 m line (a building: square to or along its ridge), the mesh projected
+onto the ground without a shadow map. A builder's number below the listed one is a finding. An
+ENGINE render is judged on solid casters (the box gate); thin members — a 0.8 cm wire, a 1.6 cm
+bar, about one shadow-map texel — will read lower there through no fault of the builder and are
+exempt from a per-pixel IoU. The analysis stays the 2D model's; a 3D reviewer measuring shadow
+IoU on these kinds reads this table, not the box gate. The full table is in ADR-054's builders
+addendum; `tests/unit/test_scene3d_shadow_agreement.py` holds the builders to it within 0.05
+(a reach within 1 cm) and every copy of the table to the script's.
 
 ### 8.26.7 Plant v0 — archetype silhouettes from the shared recipes (L1.7)
 

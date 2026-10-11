@@ -64,7 +64,7 @@ from open_garden_planner.core.shade_aggregation import (
     compute_heatmap,
     daylight_samples,
 )
-from open_garden_planner.core.shadow_geometry import Polygon
+from open_garden_planner.core.shadow_geometry import Polygon, ShadowCaster
 
 from .sun_shadow_controller import collect_shadow_casters
 
@@ -169,7 +169,7 @@ class HeatmapWorker(QThread):
 
     def __init__(
         self,
-        casters: list[tuple[Polygon, float]],
+        casters: list[ShadowCaster],
         lat_deg: float,
         lon_deg: float,
         day: date,

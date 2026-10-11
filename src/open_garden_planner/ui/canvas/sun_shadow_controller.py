@@ -50,13 +50,13 @@ from PyQt6.QtWidgets import (
 from open_garden_planner.core.object_height import effective_height_cm
 from open_garden_planner.core.shadow_geometry import (
     MIN_SUN_ELEVATION_DEG,
-    Polygon,
+    ShadowCaster,
     compute_scene_shadows,
 )
 from open_garden_planner.core.sim_clock import SimChange, SimClock
 from open_garden_planner.core.solar import solar_position
 
-from .footprints import item_footprints, plant_canopy_radius_cm
+from .footprints import ItemLookup, item_base_cm, item_footprints, plant_canopy_radius_cm
 
 # Simulation states (stable identifiers — user-visible hints live in the app).
 STATE_DISABLED = "disabled"
@@ -215,15 +215,22 @@ _plant_canopy_radius_cm = plant_canopy_radius_cm
 def collect_shadow_casters(
     scene: QGraphicsScene,
     at_date: date | None = None,
-) -> list[tuple[Polygon, float]]:
-    """Snapshot every visible item with an effective height as (footprint, h).
+) -> list[ShadowCaster]:
+    """Snapshot every visible item with an effective height as a ``ShadowCaster``
+    — ``(footprint, height_cm, base_cm)``.
 
-    Plain-data output — the same snapshot shape the US-E4 worker thread
-    consumes (never live QGraphicsItems). ``at_date`` (US-E8) projects
-    dated plants to their grown height AND canopy spread at that date.
+    THE caster walk: the shadow overlay and the hours-of-sun heatmap both call
+    it, so they can never disagree. Plain-data output — the snapshot shape the
+    US-E4 worker thread consumes (never live QGraphicsItems). ``at_date``
+    (US-E8) projects dated plants to their grown height AND canopy spread at
+    that date. ``base_cm`` (Phase 17 L1.6, ADR-037 addendum) is where the item
+    stands: 0 on the ground, the soil surface for a plant in a raised bed or
+    container (``footprints.item_base_cm`` — the rule the 3D records use too).
     """
-    casters: list[tuple[Polygon, float]] = []
-    for item in scene.items():
+    casters: list[ShadowCaster] = []
+    items = scene.items()
+    lookup = ItemLookup(items)
+    for item in items:
         if not item.isVisible():
             continue
         object_type = getattr(item, "object_type", None)
@@ -234,9 +241,10 @@ def collect_shadow_casters(
         )
         if height is None:
             continue
+        base = item_base_cm(item, lookup, at_date)
         for footprint in item_footprints(item, at_date):
             if len(footprint) >= 3:
-                casters.append((footprint, height))
+                casters.append(ShadowCaster(footprint, height, base))
     return casters
 
 
@@ -360,7 +368,9 @@ class SunShadowController(QObject):
             round(position.elevation_deg, 4),
             round(position.azimuth_deg, 4),
             canvas_key,
-            tuple((tuple(fp), h) for fp, h in casters),
+            # the base too: a bed that keeps its footprint but changes what its
+            # plants stand on must not be skipped as "nothing changed"
+            tuple((tuple(c.footprint), c.height_cm, c.base_cm) for c in casters),
         )
         overlay = self._alive_overlay()
         if key == self._last_key and overlay is not None and overlay.isVisible():
