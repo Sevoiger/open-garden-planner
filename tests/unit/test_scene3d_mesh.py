@@ -19,9 +19,7 @@ import pytest
 
 from open_garden_planner.core.scene3d import (
     BENT_NORMAL_KINDS,
-    HOLE_COVER_LIMIT,
     MATERIAL_KINDS,
-    PLAN_MARGIN_CM,
     BuilderContractError,
     BuilderRegistry,
     Material,
@@ -40,6 +38,7 @@ from open_garden_planner.core.scene3d import (
     srgb_to_linear,
     verify_builder,
 )
+from open_garden_planner.core.scene3d.build import HOLE_COVER_LIMIT, PLAN_MARGIN_CM
 
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
 L_SHAPE = ((0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (50.0, 50.0), (50.0, 100.0), (0.0, 100.0))

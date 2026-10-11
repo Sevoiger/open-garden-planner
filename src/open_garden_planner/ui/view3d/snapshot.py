@@ -21,7 +21,7 @@ import math
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyclipper
 from PyQt6.QtGui import QColor
@@ -66,11 +66,13 @@ from open_garden_planner.ui.canvas.footprints import (
     OUTLINE_CIRCLE,
     OUTLINE_POLYGON,
     OUTLINE_POLYLINE,
-    ItemOutline,
     item_footprints,
     item_outline,
 )
 from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
+
+if TYPE_CHECKING:
+    from open_garden_planner.ui.canvas.footprints import ItemOutline
 
 _log = logging.getLogger(__name__)
 

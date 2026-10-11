@@ -11,28 +11,31 @@ The pipeline::
                                                EngineSink   (Qt Quick 3D: L1.2 · RecordingSink: tests)
 
 Modules: ``record`` (the contract: ``Record``, ``Transform``, ``Material``,
-``Params``, three signatures), ``scene_diff`` (``diff`` and ``SceneDiff``),
-``frame`` (scene ↔ engine, local ↔ scene, the sun vector), ``polygon``
-(orientation, holes, triangulation), ``mesh``, ``sink``, ``build`` (builder seam
-+ default prism builder), ``sync``, ``color``. No module here imports Qt (pinned
-by an AST scan); numpy and the standard library only. That is a statement about
-this package's source: importing it still runs ``core/__init__.py``, which loads
-the command system and with it PyQt6.
+``Params``, three signatures), ``scene_diff`` (the diff), ``frame`` (scene ↔ engine, local ↔
+scene), ``mesh``, ``sink``, ``build`` (builder seam + default prism builder),
+``sync``, ``color``. Nothing here imports Qt (pinned by an AST scan); numpy and
+the standard library only.
 
-``legacy`` holds what is left of the pre-L1.1 contract (the former
-``core/scene3d.py``): the ``Scene3DRecord`` collector types, ``extrude_footprint``
-and the scalar ``to_engine_frame``. It feeds the shipped Qt 3D window and the
-dormant spike and goes with them in L1.10. Every name the old module had is
-still exported here, so no importer changed.
+``legacy`` is the pre-L1.1 contract (the former ``core/scene3d.py``, moved
+here when the package was made, less the two functions contract v2 shares with
+it): the ``Scene3DRecord`` collector types, ``extrude_footprint`` and the scalar
+``to_engine_frame``. It feeds the shipped Qt 3D window and the dormant spike,
+and L1.10 deletes it with them. Every name the old module had is still exported
+here, so no importer changed.
+
+Since the review of L1.1: ``polygon`` (plane polygons — orientation, outer rings
+and holes, triangulation; it also holds ``triangulate_polygon``, which outlives
+``legacy``), and ``frame`` holds ``sun_direction_scene``. The module of ``diff``
+is ``scene_diff``, so that ``core.scene3d.diff`` is one thing: the function.
+
+"Imports no Qt" is a statement about this package's SOURCE. Importing it still
+runs ``core/__init__.py``, which loads the command system and with it PyQt6.
 """
 
 from __future__ import annotations
 
 from .build import (
     BUILT_HEIGHT_TOLERANCE,
-    HOLE_COVER_LIMIT,
-    PLAN_AREA_TOLERANCE,
-    PLAN_MARGIN_CM,
     Builder,
     BuilderContractError,
     BuilderRegistry,
@@ -154,7 +157,6 @@ __all__ = [
     "FLAT_NORMAL_MIN_DOT",
     "FLAT_THICKNESS_CM",
     "GEOMETRY_FIELDS",
-    "HOLE_COVER_LIMIT",
     "LENGTH_DECIMALS",
     "MATERIAL_FIELDS",
     "MATERIAL_KINDS",
@@ -166,8 +168,6 @@ __all__ = [
     "PARAM_SEED",
     "PARAM_SPECIES_KEY",
     "PARAM_SPECIES_NAME",
-    "PLAN_AREA_TOLERANCE",
-    "PLAN_MARGIN_CM",
     "SCENE_TO_ENGINE",
     "SHAPES",
     "SHAPE_CIRCLE",
