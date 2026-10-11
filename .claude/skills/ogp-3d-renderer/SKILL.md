@@ -46,11 +46,14 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   species string, raw — its `plant_category` and its kind: the 2D renderer's three inputs.
   `species_name` / `species_key` describe the species DATA and are for labels and lookups; a
   builder that resolved a look from them built a squash where the plan drew a pumpkin.
-- **The plant builder remembers shapes** (`PROPORTION_STEP`, `SHAPE_CACHE_SIZE` in
+- **The plant builder remembers shapes** (`PROPORTION_STEP`, `SHAPE_CACHE_BYTES` in
   `builders/plants.py`): the mesh arrays it hands a sink are read-only and their colours, uvs and
   indices are SHARED between the meshes of one plant at different sizes (the same array objects;
   pinned by `tests/unit/test_scene3d_plants.py::TestShapeCache`). An adapter must copy what it
-  wants to change.
+  wants to change — and cannot do otherwise: every array of a `Mesh.from_arrays` mesh sits on
+  immutable memory (`setflags(write=True)` raises, on the array and on its base). The cache is
+  capped in bytes (256 MB); beyond the cap a date scrub rebuilds only the plants that do not fit,
+  and `shape_cache_info()` says how many shapes were built.
 
 ## 2. PyQt6 6.11 binding facts
 

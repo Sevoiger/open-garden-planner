@@ -1181,11 +1181,10 @@ looking at a render, not by a number.
   spans 72 % of the diameter. Neither fit can repair an irregular outline. Fix: the elements that
   draw an outline are regular by construction (`_RIM_REACH`, `_RIM_JITTER` in
   `core/scene3d/builders/plants.py`), stray shell leaves are pulled back onto the circle before
-  the fit, and the box stays exact: at most 1.092 radii over 1,000 ids × three proportions ×
-  three recipe forms per archetype (a bound by measurement, not by construction: the fit's xy
-  scale carries leaf tips that stood on the circle a little past it). Pinned by
-  `tests/unit/test_scene3d_plants.py::test_the_plant_stays_on_its_canopy_circle`. *A truth gate
-  measures one projection of the truth; measure the neighbouring one before trusting it.*
+  the fit, and the box stays exact. That left the reach a measurement — 1.092 radii at most over
+  117,000 builds, because the fit's xy scale carries leaf tips that stood on the circle a little
+  past it; what became of that number is under "what the second review found", below. *A truth
+  gate measures one projection of the truth; measure the neighbouring one before trusting it.*
 - **An instrument that under-samples reports a difference that is not there: two identical hedge
   drums "differed" by 26 %.** The no-clones gate compares side silhouettes of two ids on a
   32 × 32 occupancy grid. The first instrument sampled every triangle at 15 points; a hedge's
@@ -1193,7 +1192,9 @@ looking at a render, not by a number.
   drums — the same shape, by design — scored an IoU of 0.74. The gate was green *because* the
   instrument was broken. Sampled on a lattice finer than half a cell, the same two drums scored
   0.999: clones. Fix, in this order: the instrument (`side_silhouette`), then the hedge (a batter,
-  a bulging side, an uneven top — 0.95 at most now). *Give every metric a case whose answer you
+  a bulging side, an uneven top; and after the review a shoulder cut higher or lower and
+  squarer or rounder — over 30 ids a recipe two sections are 0.975 alike at most now, 0.981 in
+  the second review's sample). *Give every metric a case whose answer you
   know: two builds of one id must score 1.0, and something you believe to be a clone should score
   close to it. A gate that has never failed has not yet been shown to work.*
 - **"Byte-identical" needs to say against which bytes: on Windows the working tree is not the
@@ -1209,9 +1210,10 @@ looking at a render, not by a number.
   sprite generator that had simply gained `from open_garden_planner.core.plant_art.recipes import
   …` would, run from a worktree, have read the *other* checkout's tables as soon as that checkout
   has the package — and a before/after comparison in the worktree would then compare one
-  unchanged table with itself and pass. The generator puts its own checkout's `src` first on
-  `sys.path` (as `scripts/make_bench_plans.py` does); the scratch dump printed the recipes
-  module's path to prove which file was read.
+  unchanged table with itself and pass. The generator first put its own checkout's `src` first
+  on `sys.path` (as `scripts/make_bench_plans.py` does); it now executes its checkout's
+  `recipes.py` by file path, which no install can redirect and which needs no app import at all.
+  The scratch dump printed the recipes module's path to prove which file was read.
 - **A reference built from your own inputs agrees with you.** The first plan for the foliage-hue
   gate compared the mesh's mean hue with the mean hue of the palette's entries — the very colours
   the builder mixes from, so any mixing would have passed within a degree or two of whatever the
@@ -1240,9 +1242,11 @@ addendum "plant art v0", "what the first version got wrong"). All eight gates we
   inside by turning, never by squashing; bow, ripple and fold of a folded leaf are held to the
   height), `_fit` returns a `FitReport` of what it still repaired, and the tests assert the
   report, the area-weighted height quantiles of the foliage, and two off-proportion sizes per
-  recipe. Measured after: the builder's own top is 1.0000 of the height over 4,392 builds. Pinned
-  by `tests/unit/test_scene3d_plants.py::test_every_recipe_fits_the_plan_s_numbers`,
-  `::test_extreme_sizes_and_proportions` and `::TestFitReport`. *If the last line of the code
+  recipe (every proportion step since the second review). Measured after: the builder's own top
+  is 1.0000 of the height in every one of 63,099 plants. Pinned by
+  `tests/unit/test_scene3d_plants.py::test_every_recipe_at_every_proportion_step`,
+  `::test_every_recipe_fits_the_plan_s_numbers`, `::test_extreme_sizes_and_proportions` and
+  `::TestFitReport`. *If the last line of the code
   under test makes the assertion true, the assertion is about that line. Measure before the
   repair, make the repair report itself, and leave the diagonal of the test matrix.*
 - **A sole that nobody sees still fights with the ground.** The same measurement found up to
@@ -1293,11 +1297,55 @@ addendum "plant art v0", "what the first version got wrong"). All eight gates we
   same first build read 330 ms quiet and 1,200 ms with every core busy — and its CPU time rose
   with its wall time (828 ms against 916 ms), so the process was not waiting, it was slower.
   Neither a bound in milliseconds nor one in CPU time survives that. What does: the counts that
-  cause the time (shapes built per tick: exact), a ratio measured in one process (warm against
+  cause the time (shapes built per tick: exact for a first build and a cold tick, bounded at
+  10 % of the plants that changed for a warm one), a ratio measured in one process (warm against
   cold), and the time in units of a small reference workload timed alongside — the warm tick of
   `bench_large` read 0.134–0.138 units at a unit of 114–126 ms and 0.135 at a unit of 76 ms. The
   fix for the cost itself is the shape cache: a plant that only grew is scaled, not rebuilt
   (15 ms against 342 ms per tick on the busy box).
+
+**What the second review found behind the fix round's own claims** (ADR-054 addendum "plant art
+v0", "what the second review found").
+
+- **A sample's maximum was written into a requirement as a limit — the first round's lesson,
+  repeated one level down.** FR-3D-PLANT-02 said "no part more than 10 % outside the canopy
+  circle" because 117,000 builds had read 1.092 at most; a pumpkin at a proportion its growth
+  passes through read 1.1006 (one id in the review's 300,000). It said at least 5 % of the
+  foliage's surface lies above "62–87 % of the height"; a rhubarb 46 cm tall and 2 m wide read
+  60.3 %. Cause of the first: `_fit` pulled strays onto the circle, THEN centred, THEN scaled —
+  each step undoing part of the one before, nothing saying where a vertex ends. And the sample
+  stood on 43 of 171 proportion steps (since the shape cache, a recipe's seedling, mid and
+  mature size are one shape). Fix: the fit's LAST step puts whatever is beyond 1.09 canopy radii
+  onto that circle (`REACH_MAX`, `_rein_in`) and reports it — tested on 500 hostile point clouds,
+  not on well-behaved builders; the mass is stated as measured; the tests sweep every proportion
+  step. *A claim is structural or it is a measurement with its sample. A maximum is neither.*
+- **A least-recently-used cache has a cliff exactly where its user stands.** 1,024 shapes, and a
+  scrub that asks for every growing plant once per tick in the same order: with 1,024 growing
+  plants a warm tick rebuilt none, with 1,025 it rebuilt all 1,025 on every tick (1.9 s against
+  0.1 s; 6 s at 2,000) — the shape dropped is always the one needed next. No test stood at the
+  cap. Fix: the cap is in bytes and the count follows the plan; a shape that was dropped comes
+  back only in place of shapes nobody asked for since, so beyond the cap a tick rebuilds the
+  overflow (1,025 plants: 1 per tick). Pinned at the cap, one past it and far past it:
+  `tests/unit/test_scene3d_plants.py::TestShapeCache::test_at_its_cap_the_cache_has_no_cliff`.
+  *Test a cache at capacity + 1 with its consumer's access pattern.*
+- **Behind a cache, "build it twice and compare" compares a build with a look-up.** The
+  determinism tests passed with UNSEEDED dice: the second build was a cache hit. Three archetypes
+  were never built cold in any test. Fix: `build_cold` clears the cache; the determinism test
+  asserts the second build was a build (0 hits, 1 miss; two different colour arrays) and covers
+  every archetype. *When a cache is added, re-read every test that calls the cached function
+  twice.*
+- **A read-only flag is a request.** `Mesh.from_arrays` returned read-only VIEWS of writeable
+  arrays; `mesh.colors.setflags(write=True)` succeeded. Before the cache that could damage one
+  mesh; with shared arrays, every later build of that plant. Fix: the memory under a mesh's
+  arrays is an immutable `bytes` object — the flag cannot be set on the array or on its base.
+  Pinned by `TestShapeCache::test_remembered_arrays_cannot_be_written` and
+  `::test_a_mesh_from_arrays_cannot_be_made_writeable`.
+- **Dice that are rolled per thing built depend on how many things are built.** A conifer has
+  three to six whorls by its proportions and rolled each whorl's dice as it built it; gaining a
+  whorl moved every later number up the stream — the one plant that was re-rolled when it grew
+  (the review suspected all of them; measured, a plant one proportion step on is 0.99–1.00 itself
+  for every archetype, against 0.71–0.92 for another id). Fix: all six whorls' dice are rolled
+  always. `::test_a_conifer_that_gains_a_whorl_keeps_the_ones_it_had`.
 - **A review finding is a claim too: "twelve gallery species have no height" — the twelve are not
   in the gallery.** Checked against the gallery's own item list: all 86 gallery species have a
   bundled record and a height; the twelve named (squash, turnip, arugula, chard, okra, tarragon,

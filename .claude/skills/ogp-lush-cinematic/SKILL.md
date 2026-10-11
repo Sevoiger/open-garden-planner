@@ -69,15 +69,21 @@ flower 316). Judge them as v0:
   smooth, neutral grey dome over its canopy circle
   (the 2D white × 0.5 linear, sRGB 170 / 167 / 158), at most 25 cm high, casting no shadow. It is a truth statement ("the plan does not know"), not
   an unfinished asset — review whether it reads as a marker, never ask for a guessed tree.
-- Numbers the builder claims and tests pin (re-measure with
-  `scripts/measure_plant_art_3d.py`, do not trust): top = height and widest span = canopy
-  diameter exactly — and the plant is BUILT to them, not scaled into them: the builder's own top
-  is the height before the fit touches it (`fit_report`: measured 1.0000), nothing is pressed
-  onto the ground, at most 1.2 % of the foliage vertices are pulled back onto the canopy circle,
-  and the foliage's mass reaches the top (95 % / 99 % area quantiles per archetype, e.g. a mound
-  0.76 / 0.90 of its height). No foliage triangle lies flat on the ground; at least six vertices
-  touch it. No vertex further than 1.10 canopy radii from the axis (measured ≤ 1.092 over 1,000
-  ids: a tripwire, not a proof). Foliage hue within 10° of the rendered sprite (measured ≤ 5.0°).
+- What the builder GUARANTEES (by construction — the last steps of its fit; tested on hostile
+  input to the fit itself): top = height and widest span = canopy diameter exactly, base on the
+  ground, and no vertex further than 1.09 canopy radii from the axis (`REACH_MAX`; the gate is
+  1.10). What is MEASURED (re-measure with `scripts/measure_plant_art_3d.py`, command `truth`;
+  do not trust; a sample of 63,099 plants — every recipe × every proportion step × three ids):
+  the plant is BUILT to those numbers, not scaled into them — the builder's own top is the
+  height before the fit touches it (`fit_report`: 1.0000 in every plant), nothing is pressed
+  onto the ground, at most 2.2 % of the foliage vertices are pulled back onto the canopy circle —
+  and the foliage's mass reaches the top (95 % / 99 % area quantiles per archetype; the smallest
+  measured: a mound 0.719 / 0.884 of its height, a rosette 0.605 / 0.719, a hedge 0.877 / 0.938). No
+  foliage triangle lies flat on the ground; at least six vertices touch it. Never quote a
+  measured number as a guarantee: "at most 1.092 radii" stood in a requirement until one id in
+  300,000 read 1.1006. Foliage hue within 10° of the rendered sprite (measured ≤ 5.0°) — of the
+  UNTINTED sprite: the canvas lays the item's fill colour over a plant's sprite at 60 / 255, 3D
+  does not (an open owner question: should a recoloured plant be tinted in 3D?).
   Two ids: over 30 ids a recipe the most alike pair is 97.5 % alike (two hedge sections), 99 %
   of all pairs are below 95.2 %; a clipped hedge and a flat ground cover repeat by nature.
 - A bounding box that is exact after a fit says nothing about the plant. When judging a plant's
@@ -86,8 +92,10 @@ flower 316). Judge them as v0:
   two thirds.
 - A date scrub scales remembered shapes (a daily tick of 320 plants: 15 ms on a busy box, 342 ms
   without the cache); the form of a plant changes only when its proportion crosses a 5 % step, by
-  at most 2.5 % of stretch in one axis. A small "pop" of a growing plant's leaf arrangement on a
-  slow scrub is that step.
+  at most 2.5 % of stretch in one axis. At a step a plant stays itself — measured, its side
+  silhouette in the unit box is 0.99–1.00 the one before (another id: 0.71–0.92); the visible
+  steps on a slow scrub are single leaves turning to stay inside the canopy circle (0.94) and a
+  conifer gaining a whorl (0.87: the stack is re-divided). Judge those two on a board.
 - Not yet seen through the production engine. The author looked through a numpy rasteriser and
   the dormant spike's renderer only (scratch) — enough to find a floating cushion and bald crown
   tops, not enough to judge the look. The Beauty Board decides.
@@ -217,7 +225,7 @@ Severity: **P0** = truth gate failed, mirrored/black/broken frame, unreadable sc
 | A blooming magnolia's leaves ×1.46 larger than uncapped (bench_large) | 140 flower centres as 32-triangle spheres: 4,480 of the 25,000 | octahedron centres, 8 triangles (`spheres(dot=True)`, every flower): ×1.25 alone, ×1.19 with the segment rule; the 2.5 cm dot reads the same at the walk distance |
 | ~25 px scallops of ~11 luma under the ridge cap (morning, low) | the low preset's High (1024-texel) shadow map | VeryHigh at low: columns darkened ≥ 7 rows under the cap 25 → 2 (high: 0), p95 reach 10 → 6 rows (high 5); low IoU 0.963 / 0.968 / 0.937 → 0.953 / 0.959 / 0.922; low fps 4.90 → 4.97 (creator) and 4.70 (3D reviewer), llvmpipe, one run each: within noise; the owner's integrated GPU decides |
 | The 6° golden anchor never rendered; golden_hour (15.2°) and december_noon (14.0°) sampled almost one point of the rig | the shot list | `sunset`: 21 June 18:38 UTC, 5.89° / 301.5° from `core/solar`, golden_hour's camera — long picket shadows streak the meadow, ground shadows are faint (a horizontal surface gets sin 5.9° ≈ 0.10 of the sun) |
-| A plant fitted to its bounding box left its 2D canopy circle by up to 39 % (feathery; allium 37 %, flower 23 %, every leaf shell ~20 %) — invisible to the spread gate, which reads the box | outlines of any reach at any angle: a sparse plant fits its box and pokes out at the diagonals; scaling the farthest vertex onto the circle instead leaves a box of 72 % of the diameter | regular outlines (`_RIM_REACH` 0.97, `_RIM_JITTER` 0.10 in `builders/plants.py`), shell leaves turned to stay inside the circle, box still exact: ≤ 1.092 radii over 1,000 ids per archetype. Measure the distance from the axis, not only the box |
+| A plant fitted to its bounding box left its 2D canopy circle by up to 39 % (feathery; allium 37 %, flower 23 %, every leaf shell ~20 %) — invisible to the spread gate, which reads the box | outlines of any reach at any angle: a sparse plant fits its box and pokes out at the diagonals; scaling the farthest vertex onto the circle instead leaves a box of 72 % of the diameter | regular outlines (`_RIM_REACH` 0.97, `_RIM_JITTER` 0.10 in `builders/plants.py`), shell leaves turned to stay inside the circle, box still exact — and the fit's LAST step puts any vertex beyond 1.09 canopy radii onto that circle (`REACH_MAX`), so the bound holds by construction (a measured "≤ 1.092 over 117,000 builds" had been stated as a limit; one id in 300,000 read 1.1006). Measure the distance from the axis, not only the box; and never state a sample's maximum as a bound |
 | A squash 60 × 360 cm was built 1.4–1.6 times too tall and squashed back: exact bounding box, its body in the lower two thirds (at 15 × 800 cm nine archetypes were 3.5–11.6 times too tall) — every gate green | shell leaves faced along the ray from the plant's heart, not along the lobe's surface normal (on a flat cushion they stood on edge); leaf length grew with the plant's width; and the fit's z-scale made the height gate true for anything | build TO the data: highest point placed at the height, leaves set by the surface normal and kept inside by turning (lie down without headroom, quarter turns at the canopy's edge), bow / ripple / fold held to the height; the fit returns a `FitReport`; tests assert it, the foliage's area quantiles and off-proportion sizes. A gate the code forces cannot fail — measure before the repair |
 | Up to 6.7 % of a mound's foliage triangles lay flat at z = 0, coplanar with the ground (z-fighting at the plant's edge) | lobes that reach below the ground were pressed onto it; their undersides became discs in the ground plane | `_lobes` leaves out the triangles within 1 % of the height above the ground; leaves keep a floor of 1.5 %; gate: no ground-flat foliage triangle |
 | A lavender cushion floated 9 cm (13 % of its height) above the ground; 59 of 123 plant recipes floated once counted — and `min z == 0` held | one shell leaf dipped below the base and the fit lifted the whole plant to put that leaf's tip at zero | `_fit` presses what dips below the ground onto it and only ever sets a plant down; gate: at least six vertices on the ground. Never make a constraint hold by translating the result |

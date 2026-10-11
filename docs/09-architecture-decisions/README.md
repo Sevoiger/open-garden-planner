@@ -2739,8 +2739,14 @@ with the sprite on the plan about its shape or its green, and no test would noti
    held to the height; a volume on the ground has no flat sole. `_fit` then pulls back what still
    strays beyond the canopy circle, centres the foliage on it (a trunk's foot stays on the plan
    position), presses what dips below the ground onto it, scales so the top is `height_cm` and
-   the widest span the canopy diameter — exact to float32 — and RETURNS what that took
-   (`FitReport`; `fit_report()` for a built plant). The bounding box is the gate the issue names;
+   the widest span the canopy diameter — exact to float32 — and, LAST, puts whatever is still
+   further than 1.09 canopy radii from the axis onto that circle (`REACH_MAX`, `_rein_in`: a
+   vertex keeps its larger coordinate, so the widest span stays exact). Each earlier step undoes
+   a little of the one before, so none of them says where a vertex ends; the last one does, for
+   any builder output — the story's gate (nothing more than 10 % outside the canopy circle) holds
+   by construction, not by a sample. It RETURNS what all of that took (`FitReport`;
+   `fit_report()` for a built plant), including where the plant ends and whether the last step
+   moved anything (3 plants in 63,099). The bounding box is the gate the issue names;
    the report and the foliage's area-weighted height quantiles are what make it mean something,
    because the box is exact for anything the fit is given. For the plan view to be honest as
    well, the elements that draw a plant's outline are regular (`_RIM_REACH`, `_RIM_JITTER`): with
@@ -2768,14 +2774,21 @@ with the sprite on the plan about its shape or its green, and no test would noti
    no second one. `core/plant_art` does not re-export it — that would make the package import
    numpy. Builders draw uniform numbers only (`Generator.random`), from a generator named by its
    bit generator — `Generator(PCG64(seed))`, not `default_rng(seed)`, whose bit generator numpy
-   may change: every plant of every plan would change its shape.
+   may change: every plant of every plan would change its shape. A plant's dice depend on its id
+   alone, never on its proportions: a count that follows the proportion (a conifer's three to
+   six whorls) rolls the dice of all it could have, so a plant that grows a step changes
+   proportion, not form.
 9. **A shape is built once and scaled.** `build_silhouette` builds a shape per (recipe form,
    seed, proportion step) and remembers it; the plan's exact height and radius are a scale of the
    remembered shape. The proportion (height over canopy radius) is rounded to a whole power of
    1.05 for the BUILD only, so the size is never misstated (the scale is exact) and the form is
-   stretched by at most 2.5 % in one axis. The cache is bounded (1,024 shapes, about 80 MB of
-   average plants), holds read-only arrays, and its key is the very object a builder is handed
-   as its recipe — a builder cannot read a recipe key the key lacks. The builder stays a pure
+   stretched by at most 2.5 % in one axis. The cache is bounded in BYTES (`SHAPE_CACHE_BYTES`,
+   256 MB — about 3,500 average plants), not in a count, so it follows the plan; at the cap a new
+   shape gets room only from shapes nobody asked for since it was last asked for, so a scrub over
+   more plants than fit rebuilds the overflow and not everything (a least-recently-used cache of
+   1,024 shapes rebuilt all 1,025 growing plants on every tick). It holds arrays on immutable
+   memory, and its key is the very object a builder is handed as its recipe — a builder cannot
+   read a recipe key the key lacks. The builder stays a pure
    function of its record. A daily date scrub of 320 plants is then 15 ms where it was 342 ms
    (busy machine); a first build is as slow as before and is L1.3's to schedule.
 
@@ -2789,9 +2802,16 @@ with the sprite on the plan about its shape or its green, and no test would noti
   plan. Fixing the 2D rule changes sprites users see and is its own issue.
 - **Scaling the farthest vertex onto the canopy circle** instead of fitting the bounding box. The
   box then spans as little as 72 % of the canopy diameter (measured, feathery), outside the ± 10 %
-  spread gate. Bounding-box fit plus regular outlines keeps both: box exact, at most 9.2 % beyond
-  the circle (a mound) over 1,000 ids × three proportions × three recipe forms per archetype —
-  bounded by measurement, not by construction.
+  spread gate. Bounding-box fit plus regular outlines keeps both — and the fit's last step
+  makes the second one a fact: box exact, no vertex beyond 1.09 canopy radii, by construction.
+  (For one round that bound was a measurement, "at most 9.2 % over 117,000 builds", stated as a
+  limit; one id in 300,000 read 10.06 %.)
+- **Pulling a stray vertex straight toward the axis** as that last step. It shortens the
+  bounding box when the vertex is the box's extreme — the spread would be exact only when
+  nothing was moved. Keeping the larger coordinate keeps the widest span whatever is moved.
+- **Stating where the foliage's mass is as a requirement.** It is a property of thirteen forms at
+  171 proportions; enforcing a floor per archetype would mean designing the forms to the floor.
+  It is stated as what it is — measured, with its sample — and held by a tripwire.
 - **Resolving the 3D recipe from the species data** (`species_name`, as the first version did,
   or `species_key`). The data's name is not the string the plan draws from: a gallery "pumpkin"
   carries the bundled record "Winter Squash" and was built as a squash; a species assigned from
@@ -2804,7 +2824,11 @@ with the sprite on the plan about its shape or its green, and no test would noti
   plant is the same shape scaled; decision 9.
 - **A build budget in milliseconds on a shared machine.** The same build is 3.5 times slower
   with every core busy, in CPU time as much as in wall time. The budgets are stated in units of
-  a reference workload timed alongside, and the counts that cause the time are asserted exactly.
+  a reference workload timed alongside, and the counts that cause the time are asserted —
+  exactly for a first build and a cold tick, as a bound (10 % of the plants that changed;
+  measured 1.1–1.6 %) for a warm one.
+- **A least-recently-used cache of N shapes.** It has a cliff at N + 1 growing plants (decision
+  9), and N is a guess about plans. A cap in bytes with an admission rule has neither.
 - **Checking the foliage hue against the palette's entries.** The palette is what the builder
   mixes from — the check would test the mixing against itself. The reference is the sprite as
   QSvgRenderer draws it: the shipped SVG minus the same sprite with a black palette is exactly
@@ -2837,6 +2861,10 @@ with the sprite on the plan about its shape or its green, and no test would noti
   recorded as a known gap between the views in the first version (3D built the new species); it
   is now one behaviour, and a 2D question: should the sprite follow an assigned species?
   Follow-up issue material, with the partial-match quirks below — not a 3D matter.
+- **One 2D input is NOT followed: the item's fill colour.** The canvas lays it over a plant's
+  sprite at 60 / 255 opacity; 3D foliage is the recipe's palette alone, so a recoloured plant
+  differs in hue between the views and a recolour changes nothing in 3D. The hue gate's
+  reference is the untinted sprite. An owner question for the look pass (§8.26.7).
 - **The resolver's quirks are visible in 3D.** Lemon Balm (90 × 60 cm) is built as a `canopy` —
   a trunk and a crown 90 cm tall — because that is the sprite the plan shows; "Melon" takes the
   eggplant's recipe, "Bean (Bush)" a climber's, a string of blanks the rose's. Twelve of the 118
@@ -2869,20 +2897,25 @@ with the sprite on the plan about its shape or its green, and no test would noti
   the next sprite in line; plant kinds, category names and recipe keys cannot drift; the spike's
   palette copy equals the shared table. `tests/unit/test_plant_sprite_conformance.py`
   (unchanged) regenerates all 123 SVGs.
-- **`tests/unit/test_scene3d_plants.py`**: all 123 recipes × six sizes (a seedling, a mid size
-  and the mature size along the recipe's own proportion; the bundled species' small size;
-  30 × 240 cm; 300 × 60 cm) × 5 ids — 3,690 builds — and nine extreme sizes × three recipe forms
-  per archetype: height, spread and base exact, AND built to them (the builder's own top 1.0000
-  of the height before the fit; nothing pressed onto the ground; at most 1.23 % of the foliage
-  vertices pulled back onto the canopy circle from at most 1.068 radii; foliage area quantiles
-  per archetype; no ground-flat triangle; at least six vertices on the ground). Triangles at
-  most canopy 1,904, mound 1,556, climber 1,352, grass 1,120, ground 1,092, hedge 900, feathery
-  792, conifer 664, rosette 560, allium 470, head 400, palm 356, flower 316. The foliage hue
+- **`tests/unit/test_scene3d_plants.py`**: all 123 recipes × EVERY proportion step (171, from
+  1 : 50 to 80 : 1; a different id in every cell — 21,033 plants) and × six real sizes × 5 ids
+  through the pipeline's builder, and nine extreme sizes × three recipe forms per archetype.
+  By construction, asserted for every one: height, spread and base exact, no vertex beyond 1.09
+  canopy radii — and the same for 500 hostile point clouds handed to the fit itself. Measured,
+  as tripwires with stated headroom (`scripts/measure_plant_art_3d.py truth`: 63,099 plants):
+  the builder's own top 1.0000 of the height before the fit; nothing pressed onto the ground;
+  at most 2.18 % of the foliage vertices pulled back onto the canopy circle from at most 1.085
+  radii; foliage area quantiles per archetype; no ground-flat triangle; at least six vertices
+  on the ground. Triangles at most canopy 1,904, mound 1,608, climber 1,352, grass 1,120, ground
+  1,092, hedge 900, feathery 792, conifer 664, rosette 560, allium 470, head 400, palm 356,
+  flower 316. The foliage hue
   within 10° of the rendered sprite for all 123 (worst 5.0°), and the tip weights re-derived
-  from the sprites. Same record → same mesh, cold or warm. Two ids: twelve ids a recipe, no pair
+  from the sprites. Same record → same mesh, built twice from nothing, every archetype. Two ids: twelve ids a recipe, no pair
   above 0.985 (measured over 30 ids: maximum 0.975, 99 % of 53,505 pairs below 0.952). The fit's
   report against hand-made plants. The shape cache: exact scale, exact size at 600 random
-  sizes, read-only shared arrays, a key that is the builder's only view of a recipe. The
+  sizes, shared arrays that cannot be made writeable, a key that is the builder's only view of
+  a recipe, and its behaviour AT its cap (0 rebuilt), one plant past it (1 per tick) and far
+  past it (the overflow). A plant one proportion step on is still itself. The
   placeholder; wind weights; `verify_builder` throughout.
 - **`tests/integration/test_scene3d_plants.py`** (§8.10): fifteen plants planted through the real
   drop and tool paths, two dates, exact sink calls; ALL 100 gallery plants and all 222 species
@@ -2893,13 +2926,30 @@ with the sprite on the plan about its shape or its green, and no test would noti
   nothing else; a first build, and a daily scrub tick warm and cold, in milliseconds and in
   units of a reference workload (the numbers: §8.26.7); a warm tick holds what a cold build
   holds.
-- **`scripts/measure_plant_art_3d.py`** prints every number above (`truth`, `reach`, `clones`,
-  `shapes`, `scrub`); **`scripts/mutation_check_plant_art.py`** breaks one rule at a time on a
-  copy of the tree: 73 mutants, every one killed. (Its first run on the reworked builder killed
+- **`scripts/measure_plant_art_3d.py`** prints every number above (`truth`, `reach`, `growth`,
+  `clones`, `shapes`, `scrub`, `cache`); **`scripts/mutation_check_plant_art.py`** breaks one
+  rule at a time on a copy of the tree: 87 mutants (73 before the second review),
+  @@MUTATION_RESULT@@. (Its first run on the reworked builder killed
   72: the survivor — the fit no longer sets a hovering plant down — showed that no builder hovers
   any more, so that safety net was exercised by nothing; the fit-report test now asserts it. The
   run before the review, 45 mutants, had found the placeholder's round rim unpinned the same
   way.)
+
+### What the second review found (same story, the fix round's own claims)
+
+- **A sample's maximum, dressed as a guarantee — again, one level down.** The requirement said
+  "no part more than 10 % outside the canopy circle" on the strength of a maximum over 117,000
+  builds (1.092); one id in 300,000, at a proportion the sample did not hold, read 1.1006. It
+  said the foliage's mass reaches "62–87 % of the height"; a rhubarb half as tall as wide read
+  60.3 %. The reach is structural now (decision 4), the mass is stated as a measurement, and the
+  tests sweep every proportion step instead of six sizes (§8.26.7, §8.10.4).
+- **The shape cache had a cliff** at 1,025 growing plants (decision 9), **made the determinism
+  tests vacuous** (a warm second build is a look-up: they passed with unseeded dice), and
+  **handed out arrays whose read-only flag could be switched back on** — damage that every later
+  build of that plant would then carry.
+- **"A growing plant re-rolls its form at every step" was NOT so** — measured, a plant one step
+  on is 0.99 … 1.00 itself against 0.71 … 0.92 for another id — except the conifer at the steps
+  where it gains a whorl (decision 8).
 
 ### What the first version of the plant art got wrong (independent review, same day)
 
