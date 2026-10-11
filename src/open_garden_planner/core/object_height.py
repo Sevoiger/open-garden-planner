@@ -238,7 +238,10 @@ def soil_surface_cm(object_type: Any, height_cm: float | None) -> float:
       below the ground.
 
     The 3D bed builders put their soil here and plants stand here
-    (``standing_base_cm``), so a plant is on its soil by construction.
+    (``standing_base_cm``), so for the bed builders a plant is on its soil by
+    construction. A bed whose outline is not one plain ring is built as a plain
+    block up to its rim instead (``scene3d.builders.common.plain_block``); its
+    plants stand ``SOIL_DROP_CM`` inside that block.
     """
     if height_cm is None or not math.isfinite(height_cm) or height_cm <= 0.0:
         return 0.0

@@ -41,12 +41,20 @@ MIN_DOUBLE_AREA: Final = 1e-4
 #: between the ends of the two edges. 2.0 is a turn of 120°, an interior angle of
 #: 60°: squarer corners keep their mitre, sharper ones (an acute-triangle house's
 #: eaves, a hairpin wall) would otherwise grow a spike — 3.9 offsets at 30°. So
-#: nothing built by ``sweep`` or ``offset_ring`` lies further than ``BEVEL_BEYOND``
-#: offsets from the line or ring it was built on.
+#: on that side nothing built by ``sweep`` or ``offset_ring`` lies further than
+#: ``BEVEL_BEYOND`` offsets from the line or ring it was built on. For the whole
+#: of a swept section that bound needs legs of at least ``MITER_LIMIT`` offsets
+#: (see ``MITER_LIMIT``).
 BEVEL_BEYOND: Final = 2.0
 #: On the side where the two offset edges run TOGETHER (the inside of a bend) the
 #: mitre is their true intersection and is kept; only a hairpin, whose
-#: intersection runs away, is cut off at this many offsets.
+#: intersection runs away, is cut off at this many offsets. That intersection
+#: lies ``tan(turn / 2)`` offsets back along each leg — up to this many. Where a
+#: leg is that long, the inside corner is one offset from the path; where a leg
+#: is SHORTER (a zigzag with legs shorter than the section is thick), the corner
+#: lies beyond the leg's other end, and the furthest a vertex can lie from the
+#: path is the mitre's own length: ``MITER_LIMIT`` offsets, not ``BEVEL_BEYOND``
+#: (measured: 2.06 offsets for a 10 cm half width along 20 cm legs at 160°).
 MITER_LIMIT: Final = 4.0
 #: Path points closer than this (cm) are one point.
 MIN_SEGMENT_CM: Final = 1e-3
@@ -391,10 +399,17 @@ def sweep(profile: ArrayLike, path: ArrayLike, colors: ArrayLike = _WHITE, *,
     along the mitre, so they stay on lines parallel to the segment. At a joint
     sharper than ``BEVEL_BEYOND`` the OUTSIDE of the bend is bevelled instead —
     the section ends square on each segment and a flat face joins the two — so a
-    hairpin grows no spike: no vertex lies further from the path than
-    ``BEVEL_BEYOND`` times its lateral offset (a mitre of up to 2 offsets, a
+    hairpin grows no spike: on the outside no vertex lies further from the path
+    than ``BEVEL_BEYOND`` times its lateral offset (a mitre of up to 2 offsets, a
     bevel of exactly 1). The inside of a bend keeps its mitre: the two inner
-    edges' intersection, within the section's own width of the path.
+    edges' intersection, up to ``MITER_LIMIT`` offsets from the joint.
+
+    The bound, stated with its condition: no vertex lies further from the path
+    than ``BEVEL_BEYOND`` times its lateral offset WHEN every leg is at least
+    ``MITER_LIMIT`` offsets long — then an inside corner is one offset from its
+    legs. A leg shorter than the inside mitre runs back along it
+    (``tan(turn / 2)`` offsets) leaves that corner beyond the leg's other end:
+    there the bound is ``MITER_LIMIT`` offsets, and the section overlaps itself.
     """
     section = np.asarray(profile, dtype=np.float64).reshape(-1, 2)
     line = clean_path(path)

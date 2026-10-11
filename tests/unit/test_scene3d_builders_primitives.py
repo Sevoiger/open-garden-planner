@@ -462,6 +462,44 @@ class TestSweep:
         assert float(plan[:, 1].max()) <= apex[1] + 5.0 + 1e-3  # round 0: + 19.3 (5 / sin 15°)
         assert float(flat_dots(loop).min()) > 0.9999
 
+    def test_the_reach_at_a_sharp_bend_depends_on_the_legs(self) -> None:
+        """Review round 2, P2-5. The furthest a swept vertex lies from the path, in
+        offsets: ``BEVEL_BEYOND`` when every leg is at least ``MITER_LIMIT`` offsets
+        long; with shorter legs the inside mitre of a sharp bend lies beyond the leg's
+        other end, and the bound is the mitre's own length, ``MITER_LIMIT``. Pinned:
+        a 10 cm half width along 20 cm legs at 160° reaches 2.06 offsets."""
+        def away(path: list[tuple[float, float]]) -> float:
+            mesh = sweep(BOX_PROFILE, path)
+            mesh.validate()
+            plan = mesh.positions.astype(np.float64)[:, :2]
+            line = np.asarray(path, dtype=np.float64)
+            distance = np.min([_distance_to_segment(plan, a, b)
+                               for a, b in zip(line[:-1], line[1:], strict=True)], axis=0)
+            return float(distance.max()) / 5.0
+
+        def zigzag(legs: list[float], turns: list[float]) -> list[tuple[float, float]]:
+            points, heading = [(0.0, 0.0)], 0.0
+            for index, leg in enumerate(legs):
+                points.append((points[-1][0] + leg * math.cos(heading),
+                               points[-1][1] + leg * math.sin(heading)))
+                if index < len(turns):
+                    heading += math.radians(turns[index])
+            return points
+
+        assert away(zigzag([10.0] * 4, [160.0, -160.0, 160.0])) == pytest.approx(2.06, abs=0.01)
+        assert away(zigzag([30.0] * 4, [160.0, -160.0, 160.0])) == pytest.approx(1.0, abs=1e-3)
+        rng = np.random.Generator(np.random.PCG64(20261011))
+        worst_short, worst_long = 0.0, 0.0
+        for _ in range(400):
+            count = int(rng.integers(2, 6))
+            turns = [float(rng.choice([-1.0, 1.0]) * rng.uniform(5.0, 178.0)) for _ in range(count - 1)]
+            short = [float(rng.uniform(0.2, 6.0)) * 5.0 for _ in range(count)]
+            long = [float(rng.uniform(MITER_LIMIT, 8.0)) * 5.0 for _ in range(count)]
+            worst_short = max(worst_short, away(zigzag(short, turns)))
+            worst_long = max(worst_long, away(zigzag(long, turns)))
+        assert worst_long <= BEVEL_BEYOND + 1e-6          # the stated bound, where it holds
+        assert BEVEL_BEYOND < worst_short <= MITER_LIMIT + 1e-6  # … and the real one elsewhere
+
     def test_plank(self) -> None:
         board = plank((0.0, 0.0), (0.0, 180.0), 14.0, 20.0, 24.0, 0.5, RED)
         board.validate()

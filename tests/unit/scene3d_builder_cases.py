@@ -114,6 +114,25 @@ ZIGZAG_PATH: tuple[Point, ...] = ((-300.0, 0.0), (0.0, 0.0), (-259.81, 150.0), (
                                   (-171.94, 362.13))
 #: A closed loop with a 30° corner: the acute triangle's outline.
 ACUTE_LOOP_PATH: tuple[Point, ...] = (*ACUTE_TRIANGLE, ACUTE_TRIANGLE[0])
+
+
+def zigzag_path(leg_cm: float, turn_deg: float, legs: int = 4) -> tuple[Point, ...]:
+    """A zigzag of equal legs turning left and right by ``turn_deg`` in turn, from the
+    origin, on the snapshot's grid of thousandths."""
+    points: list[Point] = [(0.0, 0.0)]
+    heading, sign = 0.0, 1.0
+    for _ in range(legs):
+        points.append((round(points[-1][0] + leg_cm * math.cos(heading), 3),
+                       round(points[-1][1] + leg_cm * math.sin(heading), 3)))
+        heading += sign * math.radians(turn_deg)
+        sign = -sign
+    return tuple(points)
+
+
+def square_loop(side_cm: float) -> tuple[Point, ...]:
+    """A closed square loop about the origin (the first point repeated)."""
+    half = side_cm / 2.0
+    return ((-half, -half), (half, -half), (half, half), (-half, half), (-half, -half))
 PATHS = {"straight": STRAIGHT_PATH, "bent": BENT_PATH, "closed": CLOSED_PATH,
          "nearly_closed": NEARLY_CLOSED_PATH, "hairpin": HAIRPIN_PATH, "zigzag": ZIGZAG_PATH,
          "acute_loop": ACUTE_LOOP_PATH}

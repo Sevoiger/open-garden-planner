@@ -10,8 +10,12 @@ of the item's kind and height: ``SOIL_DROP_CM`` (2 cm) below the rim of a BED �
 an assumption, the plan holds no fill for a bed — and AT the height of a
 CONTAINER, whose height is its soil fill height. The same function gives the
 height a plant stands at (``standing_base_cm``) and the base of its 2D shadow,
-so a plant is on the soil by construction: never inside the box, never floating
-over it (truth gate "Base"). A container therefore has no lip above its soil:
+so for the bed builders of this module a plant is on the soil by construction:
+never inside the box, never floating over it (truth gate "Base"). NOT for a bed
+that is built as the plain block instead (``common.plain_block``: an outline
+that is not one plain ring, e.g. a self-crossing drawing) — that block's top is
+the rim, so its plants stand ``SOIL_DROP_CM`` inside it. A container has no lip
+above its soil:
 the plan does not hold one, and drawing one would lower the plan's own soil
 level by 2 cm for the look of it.
 

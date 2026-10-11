@@ -24,11 +24,14 @@ this was written — is NOT quietly given some other style's look (it used to
 become a picket fence). It gets the one body the plan itself describes: its
 line, its stroke width, its height — the same solid the 2D shadow model casts.
 A new fence style is caught before that, at development time: the mirror
-``fences.FENCE_STYLES`` is pinned against the 2D table by a test.
+``fences.FENCE_STYLES`` is pinned against the 2D table by a test. At run time
+the fallback is not silent either: the first build of a line in such a style
+writes ONE warning to the application's log, per style name (``line_parts``).
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Final
 
 from ..build import BuilderRegistry
@@ -37,19 +40,42 @@ from ..record import PARAM_PATH_STYLE, Record
 from . import fences, walls
 from .common import BuiltBuilder, centre_line
 
+_log = logging.getLogger(__name__)
+
 #: kind -> what a line of that kind is built as when it carries no style
 DEFAULT_SOLID: Final = {"FENCE": fences.DEFAULT_FENCE_STYLE, "WALL": "STONE_WALL"}
+#: How many style names the one-warning-per-name memory holds before it starts
+#: over (a hand-edited plan can name anything; the 2D table has a dozen styles).
+REPORTED_STYLES_MAX: Final = 64
+#: The style names already reported as built plain — per process, not per build:
+#: every edit rebuilds the items it touches.
+_reported_styles: set[str] = set()
 
 
 def solid_of(record: Record) -> str:
     """What the line is built as: one of the five fence styles, or ``fences.PLAIN``
-    (the table in the module docstring)."""
+    (the table in the module docstring). A pure question: it reports nothing."""
     style = record.params.get(PARAM_PATH_STYLE)
     if style is None:
         return DEFAULT_SOLID.get(record.kind, fences.PLAIN)
     if fences.is_fence_style(style):
         return str(style)
     return fences.PLAIN
+
+
+def _report_plain(record: Record) -> None:
+    """One warning per style name that has no solid of its own."""
+    style = record.params.get(PARAM_PATH_STYLE)
+    name = repr(style)
+    if style is None or name in _reported_styles:
+        return
+    if len(_reported_styles) >= REPORTED_STYLES_MAX:
+        _reported_styles.clear()
+    _reported_styles.add(name)
+    _log.warning(
+        "3D: no solid for the line style %s (first met on %s item %r); every line in that "
+        "style is built as a plain panel - its stroke, as wide as drawn, up to its height",
+        name, record.kind, record.item_id)
 
 
 def line_parts(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
@@ -60,6 +86,8 @@ def line_parts(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
     solid = solid_of(record)
     if solid == "STONE_WALL":
         return walls.wall_parts(record, line, closed, height_cm)
+    if solid == fences.PLAIN:
+        _report_plain(record)
     return fences.fence_parts(record, line, closed, height_cm, solid)
 
 

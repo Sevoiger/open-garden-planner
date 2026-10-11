@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import logging
 import math
 
 import numpy as np
 import pytest
 
 from open_garden_planner.core.object_height import (
+    METADATA_KEY,
     SOIL_DROP_CM,
     soil_surface_cm,
     standing_base_cm,
@@ -63,6 +65,7 @@ from open_garden_planner.core.scene3d.builders import triangle_budget as triangl
 from open_garden_planner.core.scene3d.builders.common import BuiltBuilder, nominal_height_cm
 from open_garden_planner.core.scene3d.builders.primitives import (
     BEVEL_BEYOND,
+    MITER_LIMIT,
     ccw_ring,
     offset_ring,
 )
@@ -98,8 +101,10 @@ from tests.unit.scene3d_builder_cases import (
     polygon_record,
     positions,
     rectangle,
+    square_loop,
     triangle_count,
     turned,
+    zigzag_path,
 )
 
 REGISTRY = production_registry()
@@ -513,7 +518,9 @@ class TestAcuteCorners:
     acute-triangle house (30 cm overhang), a 76 cm spike of coping on a hairpin wall.
     A corner sharper than ``BEVEL_BEYOND`` (2 offsets, 60°) is cut flat, and the stated
     bound is: nothing further than ``BEVEL_BEYOND`` offsets outside the true outline —
-    in fact one offset at every bevelled corner."""
+    in fact one offset at every bevelled corner. For a swept LINE the bound assumes
+    legs at least ``MITER_LIMIT`` offsets long
+    (``test_legs_shorter_than_the_section_reach_up_to_the_inside_mitre``)."""
 
     @pytest.mark.parametrize(("ring", "ridge", "corner", "round_0_cm"), [
         (ACUTE_TRIANGLE, ACUTE_RIDGE, ACUTE_TRIANGLE[2], 115.9),     # 30°: 30 / sin 15°
@@ -563,6 +570,39 @@ class TestAcuteCorners:
         assert away <= BEVEL_BEYOND * half_cm + 1e-3 < round_0_cm
         if path is HAIRPIN_PATH:  # its one joint is bevelled: nothing past one half width
             assert away == pytest.approx(half_cm, abs=1e-3)
+
+    @pytest.mark.parametrize(("kind", "style", "stroke", "half_cm", "turn_deg", "offsets"), [
+        ("WALL", None, 4.0, 19.0, 150.0, 2.62),
+        ("WALL", None, 4.0, 19.0, 165.0, 2.70),
+        ("FENCE", "STONE_WALL", 5.0, 19.0, 150.0, 2.62),
+        ("FENCE", "HEDGE_FENCE", 8.0, 16.0, 165.0, 2.46),
+    ], ids=["wall-150", "wall-165", "stone-wall-fence-150", "hedge-fence-core-165"])
+    def test_legs_shorter_than_the_section_reach_up_to_the_inside_mitre(
+        self, kind: str, style: str | None, stroke: float, half_cm: float, turn_deg: float,
+        offsets: float,
+    ) -> None:
+        """Review round 2, P2-5. "Nothing further than ``BEVEL_BEYOND`` offsets from the
+        line" assumes legs at least as long as the inside mitre runs back along them —
+        at most ``MITER_LIMIT`` offsets, 76 cm for a wall's 19 cm of coping. On the
+        INSIDE of a sharp bend the two inner edges' true intersection is kept; with
+        25 cm legs under a 38 cm section it lies beyond the leg's other end, so the
+        nearest point of the line is further away than one offset. The real bound is
+        the mitre's own length: ``MITER_LIMIT`` offsets. (A wall drawn with legs
+        shorter than it is thick overlaps itself — the plan describes no such wall.)"""
+        path = zigzag_path(25.0, turn_deg)
+        record = line_record(kind, path, 120.0, width=stroke, style=style)
+        parts = verify_builder(REGISTRY.builder_for(kind), record, height_tolerance_cm=0.5,
+                               plan_margin_cm=MITER_LIMIT * half_cm)
+        solid = positions(parts) if style != "HEDGE_FENCE" else positions(parts)[:_core_vertices(parts)]
+        away = float(distance_to_path(solid[:, :2], path).max())
+        assert away == pytest.approx(offsets * half_cm, abs=0.01 * half_cm)  # measured, pinned
+        assert BEVEL_BEYOND * half_cm < away <= MITER_LIMIT * half_cm + 1e-3
+        # the same zigzag with legs of MITER_LIMIT offsets is inside the stated bound again
+        long_path = zigzag_path(MITER_LIMIT * half_cm, turn_deg)
+        long_parts = REGISTRY.build(line_record(kind, long_path, 120.0, width=stroke, style=style))
+        long_solid = (positions(long_parts) if style != "HEDGE_FENCE"
+                      else positions(long_parts)[:_core_vertices(long_parts)])
+        assert float(distance_to_path(long_solid[:, :2], long_path).max()) <= half_cm + 1e-3
 
     @pytest.mark.parametrize("ring", [ACUTE_TRIANGLE, SLIVER_TRIANGLE], ids=["30-degrees", "20-degrees"])
     def test_an_acute_bed_and_hedge_stay_on_their_footprint(self, ring) -> None:
@@ -626,6 +666,43 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         assert beyond_cm2 == 0.0  # nothing further than 50 cm from the line's stroke
         wide = lines.solid_of(record) in ("STONE_WALL", "HEDGE_FENCE")
         assert hole_cover <= (0.3 if wide else 0.03), hole_cover
+
+    @pytest.mark.parametrize(("kind", "style", "stroke", "reach_cm"), [
+        ("WALL", None, 4.0, 19.0),             # body 15 + coping 4 either side of the line
+        ("FENCE", "STONE_WALL", 5.0, 19.0),
+        ("FENCE", "HEDGE_FENCE", 8.0, 20.0),   # the hedge's 40 cm thickness
+    ], ids=["wall", "stone-wall-fence", "hedge-fence"])
+    def test_a_small_closed_loop_of_a_thick_line_needs_an_explicit_hole_limit(
+        self, kind: str, style: str | None, stroke: float, reach_cm: float
+    ) -> None:
+        """Review round 2, P2-3. ``verify_builder`` refuses a solid that covers more
+        than half of a hole. That default fits a fence round a garden — and NOT a wall
+        round a square metre: the wall's section reaches 19 cm either side of its line
+        where the stroke reaches 2, so of the 96 cm hole a 1 m loop encloses, the solid
+        covers a 17 cm strip all round — 58 % of it. The solid is right (such a wall
+        leaves a 62 cm opening); the bound is for large loops. Measured: a closed WALL
+        up to 120 cm side, a stone-wall or hedge fence up to 100 cm, is refused by the
+        default. So a small loop is verified with the limit stated here — the strip the
+        section reaches into, never the middle."""
+        side = 100.0
+        record = line_record(kind, square_loop(side), 120.0, width=stroke, style=style)
+        assert len(record.holes) == 1 and len(record.holes[0]) == 1
+        builder = REGISTRY.builder_for(kind)
+        with pytest.raises(BuilderContractError, match="hole"):
+            verify_builder(builder, record, height_tolerance_cm=0.5)  # the default: half a hole
+        parts = verify_builder(builder, record, height_tolerance_cm=0.5, hole_cover_limit=0.65)
+        beyond_cm2, cover = plan_overreach(parts, record.regions, 50.0)
+        assert beyond_cm2 == 0.0
+        # the strip of the hole within the section's reach of the line: 1 - (inner / hole)²
+        strip = 1.0 - ((side - 2.0 * reach_cm) / (side - stroke)) ** 2
+        assert 0.5 < cover <= strip + 0.02 < 0.65
+        meshes = [part.mesh for part in parts]
+        for x, y in ((0.0, 0.0), (15.0, -15.0), (-18.0, 18.0)):
+            assert not covers(meshes, x, y)  # the middle of the loop is open sky
+        # from 1.5 m on the same loop is inside the default bound
+        large = line_record(kind, square_loop(150.0), 120.0, width=stroke, style=style)
+        verify_builder(builder, large, height_tolerance_cm=0.5)
+        assert plan_overreach(REGISTRY.build(large), large.regions, 50.0)[1] < 0.5
 
     def test_a_gap_wider_than_the_stroke_leaves_no_hole_in_the_record(self) -> None:
         """A 5 cm gap in a 3 cm stroke: the outline does not close, the record has no
@@ -755,6 +832,60 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         up = np.abs(panel.mesh.normals.astype(np.float64)[:, 2])
         assert set(np.round(up, 4)) <= {0.0, 1.0}
         assert panel.mesh.triangle_count <= lines.triangle_budget(record)
+
+    def test_an_unknown_style_is_reported_once_per_name(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 2, P2-10. The plain panel is the honest fallback — and until
+        now a silent one at run time. ONE warning per style name, not one per build:
+        every edit of a plan rebuilds the items it touches, and forty fences in one
+        unknown style would otherwise write forty lines per edit to the app's log."""
+        monkeypatch.setattr(lines, "_reported_styles", set())
+
+        def styled(kind: str, style: object, seed: str) -> Record:
+            return dataclasses.replace(line_record(kind, BENT_PATH, 120.0, item_id=seed),
+                                       params=Params({"seed": seed, "path_style": style}))
+
+        logger = logging.getLogger(lines.__name__)
+        assert logger.propagate and logger.name.startswith("open_garden_planner.")  # the app's log
+        with caplog.at_level(logging.DEBUG, logger=lines.__name__):
+            for turn in range(3):
+                assert REGISTRY.build(styled("FENCE", "GRAVEL_PATH", f"a{turn}")) != ()
+                assert REGISTRY.build(styled("WALL", "GRAVEL_PATH", f"b{turn}")) != ()
+                assert REGISTRY.build(styled("FENCE", "BAMBOO_FENCE", f"c{turn}")) != ()
+                for known in FENCE_STYLES:  # a style with a solid: nothing to report
+                    REGISTRY.build(styled("FENCE", known, f"d{turn}"))
+                REGISTRY.build(line_record("FENCE", BENT_PATH, 120.0, item_id=f"e{turn}"))  # no style
+                REGISTRY.build(line_record("WALL", BENT_PATH, 120.0, item_id=f"f{turn}"))
+        reported = [record for record in caplog.records if record.name == lines.__name__]
+        assert [record.levelno for record in reported] == [logging.WARNING, logging.WARNING]
+        first, second = (record.getMessage() for record in reported)
+        assert "'GRAVEL_PATH'" in first and "FENCE" in first and "a0" in first  # where it was met
+        assert "'BAMBOO_FENCE'" in second and "c0" in second
+        assert "plain panel" in first and "plain panel" in second
+        # asking what a line WOULD be built as reports nothing: only a build does
+        monkeypatch.setattr(lines, "_reported_styles", set())
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger=lines.__name__):
+            assert lines.solid_of(styled("FENCE", "GRAVEL_PATH", "g")) == fences.PLAIN
+            assert lines.triangle_budget(styled("FENCE", "GRAVEL_PATH", "g")) > 0
+        assert [record for record in caplog.records if record.name == lines.__name__] == []
+
+    def test_the_memory_of_reported_styles_is_bounded(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hand-edited plan can name any style: the set of names already reported
+        never grows past ``lines.REPORTED_STYLES_MAX``."""
+        monkeypatch.setattr(lines, "_reported_styles", set())
+        with caplog.at_level(logging.WARNING, logger=lines.__name__):
+            for index in range(lines.REPORTED_STYLES_MAX + 10):
+                record = dataclasses.replace(
+                    line_record("FENCE", BENT_PATH, 120.0),
+                    params=Params({"seed": "s", "path_style": f"STYLE_{index}"}))
+                REGISTRY.build(record)
+                assert len(lines._reported_styles) <= lines.REPORTED_STYLES_MAX
+        reported = [record for record in caplog.records if record.name == lines.__name__]
+        assert len(reported) == lines.REPORTED_STYLES_MAX + 10  # each new name once
 
     def test_the_fence_builders_never_guess_a_style(self) -> None:
         record = line_record("FENCE", BENT_PATH, 120.0)
@@ -1182,6 +1313,27 @@ class TestGroundThatIsNotOnePlainRing:
         assert float(positions(parts)[:, 2].max()) == nominal
         assert plan_area([parts[0].mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6)
         assert built(make("GARDEN_BED", None)) == ()
+
+    @pytest.mark.parametrize("make", NOT_ONE_RING.values(), ids=NOT_ONE_RING.keys())
+    @pytest.mark.parametrize(("kind", "height", "soil"), [("RAISED_BED", 40.0, 38.0),
+                                                          ("GARDEN_BED", 25.0, 23.0),
+                                                          ("CONTAINER", 30.0, 30.0)])
+    def test_a_bed_built_as_the_plain_block_has_its_top_at_the_rim(
+        self, kind: str, height: float, soil: float, make
+    ) -> None:
+        """Review round 2, P2-11 — a stated limit, pinned. "A plant is on its soil by
+        construction" holds for the BED BUILDERS. A bed whose outline is not one plain
+        ring is the plain block: no frame, no soil mesh, its top at the rim — so a
+        plant on it (base = the soil rule's 38) stands ``SOIL_DROP_CM`` INSIDE the
+        block. A container's soil is at its height, so there the two agree."""
+        record = make(kind, height)
+        parts = built(record)
+        assert [part.name for part in parts] == ["prism"]
+        assert float(positions(parts)[:, 2].max()) == height
+        with pytest.raises(AssertionError, match="no soil"):
+            soil_level(parts)
+        assert soil_surface_cm(kind, height) == soil == standing_base_cm(kind, {METADATA_KEY: height})
+        assert height - soil == (0.0 if kind == "CONTAINER" else SOIL_DROP_CM)
 
     @pytest.mark.parametrize("make", NOT_ONE_RING.values(), ids=NOT_ONE_RING.keys())
     def test_footprint_of_refuses_to_take_one_ring_for_the_whole(self, make) -> None:
