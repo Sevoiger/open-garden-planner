@@ -2014,7 +2014,7 @@ rig's numbers.
 `core/scene3d/interleave.py`, `Quick3DSink.clear()` (the teardown the L1.1 review adds to
 `EngineSink` as its tenth method — implemented here ahead of the protocol change), a CI job, a
 third block in `--selftest`. No `.ogp` change, no `FILE_VERSION` bump, no new dependency, no
-user-visible string. Bundle +0.07 MB. The spike stays untouched and importable; it and the
+user-visible string. Bundle +0.08 MB. The spike stays untouched and importable; it and the
 spec's spike entries retire in L1.10. Seams left for later stories: `Quick3DHost.container()` and
 `set_shot` (L1.3), `set_look(Look)` and `windTime` (L1.4), the plan rectangle in `Garden.qml`
 (L1.5), `pick()` → `PickHit` (L1.8).
@@ -2038,8 +2038,8 @@ spec's spike entries retire in L1.10. Seams left for later stories: `Quick3DHost
 | Edit → finished readback (30 moves, the same plan) | GPU: median 7.1 ms, p95 17.9 ms, max 26.8 ms (snapshot 2.3, apply 0.2, grab 4.5). WARP: median 23.2 ms. Against ADR-048 entries 5/6's 50 ms p95 |
 | Engine import cost in the running app | the package 1 ms; the sink with `core/scene3d` 17 ms; the Qt Quick bindings 17 ms. App start loads none of it |
 | Embedding (criterion 3) with the window container | top-level surface stays `RasterSurface`; 2D pan step median 2.56 ms with the 3D container vs 2.63 ms without (×0.97; WARP ×0.92). Control: a `QQuickWidget` makes the surface `Direct3DSurface` and the step 262 ms on this machine (its presents wait for the sleeping display) |
-| `--selftest`, the whole command, three runs each | from source: 2.2–4.3 s (GPU), 2.1–5.7 s (WARP). Frozen exe via `Start-Process -Wait -PassThru`: 3.0–4.1 s (GPU), 3.0–3.1 s (WARP), 3.0 s (WARP, every shader cache disabled). Exit 0 in all; exit 1 under the offscreen platform, on a broken shader, on a hang (watchdog) |
-| Bundle | 650,814,304 vs 650,736,554 bytes for the base commit: +77,750 bytes (+0.07 MB); smoke exit 124 |
+| `--selftest`, the whole command, three runs each | from source: 2.2–4.3 s (GPU), 2.1–5.7 s (WARP). Frozen exe via `Start-Process -Wait -PassThru`: 3.0–4.1 s (GPU), 3.0–3.1 s (WARP), 3.0 s (WARP, every shader cache disabled); 6.1–7.2 s on either adapter while other test suites ran on the machine. Exit 0 in all; exit 1 under the offscreen platform, on a broken shader, on a hang (watchdog) |
+| Bundle | 650,815,562 vs 650,736,554 bytes for the base commit: +79,008 bytes (+0.08 MB); smoke exit 124 |
 | The whole render tier | 51 tests, about 50 s on the GPU; the driver's eight scenarios 22 s on WARP; zero Qt warnings and errors in both |
 
 **Not measured** — stated so nobody assumes it: anything on Linux (xcb, OpenGL, llvmpipe) and on

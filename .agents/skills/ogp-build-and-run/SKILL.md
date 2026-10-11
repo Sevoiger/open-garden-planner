@@ -178,7 +178,8 @@ after 180 s with exit code 1. Two things to know when it fails:
   then says `Microsoft Basic Render Driver`).
 
 Measured 2026-10-11 (three runs each, the whole `--selftest`): frozen exe
-3.0–4.1 s on an RTX 4070 and 3.0–3.1 s on WARP.
+3.0–4.1 s on an RTX 4070 and 3.0–3.1 s on WARP on a quiet machine; 6.1–7.2 s on either
+while other test suites were running.
 
 ```bash
 powershell -Command '$p = Start-Process "dist/OpenGardenPlanner/OpenGardenPlanner.exe" -ArgumentList "--selftest" -Wait -PassThru; exit $p.ExitCode'

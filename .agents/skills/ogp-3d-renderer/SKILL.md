@@ -325,10 +325,10 @@ topmost triangle under a vertical ray over every pickable mesh, merged per item)
 - Frozen Windows exe with the spike bundled: the unchanged `--selftest` gate still exits 0
   (ogp-change-control §2.8 is its home).
 - **L1.2:** the production package adds its five QML and shader files (a data loop in
-  `installer/ogp.spec`) and eleven modules: **+77,750 bytes** (650,814,304 vs 650,736,554,
+  `installer/ogp.spec`) and eleven modules: **+79,008 bytes** (650,815,562 vs 650,736,554,
   same machine, same day). `--selftest` now also RENDERS one hidden 160 × 120 frame from the
   bundle's QML and shaders and judges its pixels (§12); frozen exe 3.0–4.1 s on an RTX 4070
-  and 3.0–3.1 s on WARP for the whole command.
+  and 3.0–3.1 s on WARP for the whole command (6.1–7.2 s on a busy machine).
 
 ## 10. CPU-side baselines (not engine)
 

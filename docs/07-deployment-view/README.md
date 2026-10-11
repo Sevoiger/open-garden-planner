@@ -252,8 +252,9 @@ particular.
 The 3D block needs no GPU: on `windows-latest` Direct3D 11 renders it on WARP. Measured on the
 dev box with `Start-Process -Wait -PassThru` (the whole `--selftest`, three runs each): frozen
 exe 3.0–4.1 s on the RTX 4070 and 3.0–3.1 s on WARP (also with every shader cache disabled);
-from source 2.2–4.3 s and 2.1–5.7 s. The 3D frame itself took 1.0–1.8 s in most runs and up
-to 6.5 s while other test suites were running on the machine. A watchdog inside the exe ends a hung render after 180 s with a stack dump and exit
+from source 2.2–4.3 s and 2.1–5.7 s. With other test suites running on the machine the same
+frozen exe took 6.1–7.2 s on either adapter — the 3D frame itself 1.0–1.8 s on a quiet
+machine, 4.0–6.5 s on a busy one. A watchdog inside the exe ends a hung render after 180 s with a stack dump and exit
 code 1. The 3D block writes a log — the exe has no stdout — into the app's per-user log
 directory beside `app.log` (never the temp directory, §8.11), or where `OGP_SELFTEST_LOG`
 says; `release.yml` sets that variable and prints the log, and the exit code alone still
@@ -261,8 +262,8 @@ decides. Under `QT_QPA_PLATFORM=offscreen` the 3D block FAILS (nothing renders t
 `--selftest` with a real platform.
 
 **Bundle size (L1.2).** The Qt Quick 3D runtime already shipped; the engine package adds its
-five QML and shader files and eleven Python modules: 650,814,304 bytes against 650,736,554 for
-the base commit — **+77,750 bytes (+0.07 MB)**, both built on the same machine on 2026-10-11
+five QML and shader files and eleven Python modules: 650,815,562 bytes against 650,736,554 for
+the base commit — **+79,008 bytes (+0.08 MB)**, both built on the same machine on 2026-10-11
 from `git archive` exports (PyInstaller 6.18, Python 3.12.9, no UPX). Spec trimming — the
 dormant spike's files and `PyQt6.QtQuickWidgets` — happens when the spike retires (L1.10).
 
