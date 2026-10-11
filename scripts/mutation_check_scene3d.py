@@ -420,9 +420,16 @@ MUTANTS: tuple[Mutant, ...] = (
            (MESH,)),
     Mutant("a sliver of a hole is judged (an honest panel is refused)",
            SRC + "core/scene3d/build.py",
+           "    if len(lattice) and 2.0 * float(_distance_to_rings(lattice, (hole,)).max()) < HOLE_MIN_WIDTH_CM:\n"
+           "        return 0.0\n",
+           "",
+           (MESH,)),
+    Mutant("a hole is judged on its middle only (the rim no longer counts)",
+           SRC + "core/scene3d/build.py",
+           "    if len(lattice) and 2.0 * float(_distance_to_rings(lattice, (hole,)).max()) < HOLE_MIN_WIDTH_CM:\n"
+           "        return 0.0\n",
            "    if len(lattice):\n"
            "        lattice = lattice[_distance_to_rings(lattice, (hole,)) >= HOLE_MIN_WIDTH_CM / 2.0]\n",
-           "",
            (MESH,)),
     Mutant("a registration does not move the registry's version",
            SRC + "core/scene3d/build.py",

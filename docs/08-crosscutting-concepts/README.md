@@ -672,7 +672,7 @@ suite (ADR-054, "What the first version got wrong").
   turning" test turned the item *before* taking its baseline, one named for `reset()` never called
   it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
   fails if the named behaviour breaks?"
-- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 90
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 91
   single-rule mutations to the pipeline, each against the tests that must notice; its first run
   found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
@@ -2799,8 +2799,8 @@ parts = verify_builder(build_house, record)          # the contract, one call
 # tuple of MeshPart · deterministic · ignores transform, material, id, name, parent ·
 # every mesh validates · mesh top == record.height_cm (±1 %; height_tolerance=0.03 for plants,
 # height_tolerance_cm=0.5 for an absolute gate) · seen from above, two bounds on EXCESS:
-# no hole of the footprint built over (hole_cover_limit, default 0.5; None = off; a hole is
-# judged on its core, 5 cm in from its edge — one narrower than 10 cm is not judged) and nothing
+# no hole of the footprint built over (hole_cover_limit, default 0.5; None = off; a hole
+# narrower than 10 cm is a sliver and is not judged) and nothing
 # further than plan_margin_cm outside it (default 50; 0.0 = strictly inside; None = off).
 # Neither asks for coverage: a flower, a tuft, the pickets of a fence fill a fraction of their
 # footprint and pass.

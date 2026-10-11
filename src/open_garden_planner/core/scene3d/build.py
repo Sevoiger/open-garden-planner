@@ -55,10 +55,10 @@ PLAN_AREA_TOLERANCE: Final = 0.01
 #: eaves over a courtyard cover its rim, a builder that extruded the hole ring as
 #: a solid covers all of it.
 HOLE_COVER_LIMIT: Final = 0.5
-#: … and a hole is judged on its CORE only: the points at least half of this from
-#: the hole's own edge. A hole narrower than this has no core and is not judged
-#: at all — the 2 cm sliver between two parallel runs of a stroke is covered by
-#: any honest panel a little wider than the stroke.
+#: … unless the hole is narrower than this: one into which no circle of this
+#: diameter fits is not judged at all — the 2 cm sliver between two parallel runs
+#: of a stroke is covered by any honest panel a little wider than the stroke.
+#: A hole of this width and more is judged whole, rim included.
 HOLE_MIN_WIDTH_CM: Final = 10.0
 
 
@@ -339,19 +339,19 @@ def _distance_to_rings(points: NDArray[np.float64], rings: Iterable[Ring]) -> ND
 
 
 def _hole_cover(triangles: Triangles2D, hole: Ring) -> float:
-    """The share of a hole's CORE that upward-facing triangles cover, from a
-    24 x 24 lattice of points INSIDE the hole — so a slab of two huge triangles
-    over a small hole is seen as surely as a cap of many small ones. The core is
-    what lies at least ``HOLE_MIN_WIDTH_CM / 2`` from the hole's own edge; a hole
-    without one (a sliver) reads 0.0: it is not judged."""
+    """The share of a hole that upward-facing triangles cover, from a 24 x 24
+    lattice of points INSIDE the hole — so a slab of two huge triangles over a
+    small hole is seen as surely as a cap of many small ones. A hole narrower
+    than ``HOLE_MIN_WIDTH_CM`` — no lattice point lies half that far from its
+    edge — reads 0.0: a sliver is not judged."""
     xs = [x for x, _y in hole]
     ys = [y for _x, y in hole]
     steps = (np.arange(24) + 0.5) / 24.0
     gx, gy = np.meshgrid(min(xs) + steps * (max(xs) - min(xs)), min(ys) + steps * (max(ys) - min(ys)))
     lattice = np.column_stack([gx.ravel(), gy.ravel()])
     lattice = lattice[_inside(lattice, hole)]
-    if len(lattice):
-        lattice = lattice[_distance_to_rings(lattice, (hole,)) >= HOLE_MIN_WIDTH_CM / 2.0]
+    if len(lattice) and 2.0 * float(_distance_to_rings(lattice, (hole,)).max()) < HOLE_MIN_WIDTH_CM:
+        return 0.0
     a, b, c = triangles
     if not len(lattice) or not len(a):
         return 0.0
@@ -382,10 +382,10 @@ def plan_overreach(
       the footprint (outer rings minus holes). Estimated at four points per
       triangle (its centroid and the points halfway to each corner), overlapping
       layers counted each time: a net for gross errors, not a rasteriser.
-    - ``hole_cover`` — the largest share, 0 … 1, of any hole's core that
+    - ``hole_cover`` — the largest share, 0 … 1, of any hole that
       upward-facing triangles cover, measured on a lattice of points inside the
-      hole and at least ``HOLE_MIN_WIDTH_CM / 2`` from its edge (0.0 without
-      holes, and for a hole narrower than ``HOLE_MIN_WIDTH_CM``).
+      hole (0.0 without holes; a hole narrower than ``HOLE_MIN_WIDTH_CM`` is
+      not judged and counts as 0.0).
     """
     triangles, areas = _top_triangles(parts)
     a, b, c = triangles
@@ -448,9 +448,9 @@ def verify_builder(
       * ``hole_cover_limit`` (default ``HOLE_COVER_LIMIT``): at most this share
         of any HOLE of the footprint may be covered from above (a closed fence
         extruded with its inside filled covers all of it). ``None`` switches
-        this bound off. A hole is judged on its core — the points at least
-        ``HOLE_MIN_WIDTH_CM / 2`` from its own edge — so a hole narrower than
-        ``HOLE_MIN_WIDTH_CM`` (10 cm) is not judged at all.
+        this bound off. A hole narrower than ``HOLE_MIN_WIDTH_CM`` (10 cm:
+        no circle of that diameter fits into it) is not judged at all; every
+        other hole is judged whole.
 
       Neither bound asks for coverage: a mesh that fills a fraction of its
       footprint — a flower, a tuft, pickets inside a fence's stroke — passes.

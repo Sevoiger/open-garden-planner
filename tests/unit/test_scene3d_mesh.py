@@ -740,8 +740,8 @@ class TestVerifyBuilder:
 
     def test_a_sliver_of_a_hole_is_not_judged(self) -> None:
         """The re-review's case: this fence was refused for "covering 100 %" of a
-        hole 2 cm wide. A hole is judged on its core — what lies at least
-        ``HOLE_MIN_WIDTH_CM / 2`` from its own edge — and a sliver has none."""
+        hole 2 cm wide. A hole into which no circle of ``HOLE_MIN_WIDTH_CM``
+        fits is a sliver and is not judged."""
         assert HOLE_MIN_WIDTH_CM == 10.0
         fence = record(kind="FENCE", shape="polyline", footprints=(self.SLIVER_OUTER,),
                        holes=((self.SLIVER,),), height_cm=120.0)
@@ -749,8 +749,19 @@ class TestVerifyBuilder:
         assert plan_overreach(parts, fence.regions, PLAN_MARGIN_CM) == (0.0, 0.0)
         verify_builder(default_builder, fence)
 
+    @pytest.mark.parametrize("width", [8.0, 9.5])
+    def test_just_under_the_floor_is_still_a_sliver(self, width: float) -> None:
+        outer = ((0.0, 0.0), (20.0 + width, 0.0), (20.0 + width, 500.0), (0.0, 500.0))
+        hole = ((10.0, 5.0), (10.0, 495.0), (10.0 + width, 495.0), (10.0 + width, 5.0))
+        fence = record(kind="FENCE", shape="polyline", footprints=(outer,), holes=((hole,),),
+                       height_cm=120.0)
+        slab = (MeshPart(prism_mesh(fence.footprints, 120.0)),)
+        assert plan_overreach(slab, fence.regions, PLAN_MARGIN_CM)[1] == 0.0
+
     @pytest.mark.parametrize("width", [14.0, 20.0, 60.0])
-    def test_a_hole_wider_than_the_floor_is_judged_on_its_core(self, width: float) -> None:
+    def test_a_hole_wider_than_the_floor_is_judged_whole_as_before(self, width: float) -> None:
+        """A floor, not another measure: from 10 cm on a hole is judged on every
+        point of it, rim included — the numbers other stories pinned stand."""
         outer = ((0.0, 0.0), (20.0 + width, 0.0), (20.0 + width, 500.0), (0.0, 500.0))
         hole = ((10.0, 5.0), (10.0, 495.0), (10.0 + width, 495.0), (10.0 + width, 5.0))
         fence = record(kind="FENCE", shape="polyline", footprints=(outer,), holes=((hole,),),
@@ -764,13 +775,18 @@ class TestVerifyBuilder:
             verify_builder(slab, fence)
 
         def rim(rec: Record) -> tuple[MeshPart, ...]:
-            """Panels that overhang the stroke by 4 cm on the hole's side: its rim only."""
+            """Panels that overhang the stroke by 4 cm on the hole's side: 8 cm of its width."""
             runs = [((0.0, 0.0), (14.0, 0.0), (14.0, 500.0), (0.0, 500.0)),
                     ((6.0 + width, 0.0), (20.0 + width, 0.0), (20.0 + width, 500.0), (6.0 + width, 500.0))]
             return (MeshPart(prism_mesh(runs, 120.0)),)
 
-        assert plan_overreach(rim(fence), fence.regions, PLAN_MARGIN_CM)[1] == 0.0
-        verify_builder(rim, fence)
+        cover = plan_overreach(rim(fence), fence.regions, PLAN_MARGIN_CM)[1]
+        assert cover == pytest.approx(8.0 / width, abs=0.05)  # the rim counts, as it always did
+        if cover > HOLE_COVER_LIMIT:
+            with pytest.raises(BuilderContractError, match="of a hole"):
+                verify_builder(rim, fence)
+        else:
+            verify_builder(rim, fence)
 
     def test_half_a_hole_covered_is_half(self) -> None:
         outer = ((-100.0, -100.0), (100.0, -100.0), (100.0, 100.0), (-100.0, 100.0))

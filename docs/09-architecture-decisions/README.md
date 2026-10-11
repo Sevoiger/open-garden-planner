@@ -2573,9 +2573,10 @@ it stands after that round.
    - **`verify_builder` looks at the solid from above — and bounds EXCESS only.** Beside
      determinism, purity, mesh validity and the height, it refuses a builder that covers more
      than `hole_cover_limit` (default one half) of a HOLE of the footprint (a hole sampled on a
-     lattice of its own points — of its CORE: the points at least 5 cm from the hole's own edge,
-     so a hole narrower than `HOLE_MIN_WIDTH_CM` = 10 cm is not judged; a 12 cm panel on a 10 cm
-     stroke covers the 2 cm sliver between two runs and is right), or puts more than 1 % of the footprint's area as top surface
+     lattice of its own points; a hole narrower than `HOLE_MIN_WIDTH_CM` = 10 cm — one into which
+     no circle of that diameter fits — is not judged: a 12 cm panel on a 10 cm stroke covers the
+     2 cm sliver between two runs and is right. A hole of 10 cm and more is judged whole, as
+     before), or puts more than 1 % of the footprint's area as top surface
      further than `plan_margin_cm` (default 50 cm, for eaves) outside it. Each bound is a
      keyword the caller tunes or switches off with `None`. Neither asks a mesh to *cover* its
      footprint: a flower, a grass tuft, the posts and pickets of a fence fill a fraction of
@@ -2773,7 +2774,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 90 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 91 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
   resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to
