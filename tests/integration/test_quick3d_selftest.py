@@ -35,8 +35,14 @@ _RUN = (
 )
 
 
+#: Where the child's start-up hook (``quick3d_child_site``) reports, at exit, whether the
+#: settings module was imported and how many settings stores the process built.
+STORES = "OGP_TEST_CHILD_STORES"
+
+
 def _selftest(tmp_path: Path, *args: str, **env: str) -> tuple[subprocess.CompletedProcess[str], str]:
     log = tmp_path / "selftest.log"
+    env.setdefault(STORES, str(tmp_path / "stores.txt"))
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
         [sys.executable, "-c", _RUN, str(log), *args], env=render_env(tmp_path, **env),
         capture_output=True, text=True, timeout=600, cwd=REPO)
@@ -53,6 +59,12 @@ def test_the_3d_selftest_passes_on_the_default_adapter(tmp_path: Path) -> None:
     assert frame.startswith("  OK   Qt Quick 3D frame 160x120 on ") and "6 materials" in frame
     assert "[watchdog] armed=True" in log and "result=PASS" in log
     assert "adapter=None" not in log, "the log must name the graphics device"
+    # The frozen exe runs this code under the PRODUCTION settings names — nothing can
+    # rebind them there. So the 3D block must not build a settings store. (The settings
+    # MODULE is imported — importing anything below ``open_garden_planner.ui`` does that —
+    # which builds nothing: the second number is the count of stores built.)
+    _imported, built = (tmp_path / "stores.txt").read_text(encoding="utf-8").split()
+    assert built == "0", f"the 3D self-test built {built} settings store(s)"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="WARP is Direct3D's software rasteriser")
@@ -71,11 +83,16 @@ def test_the_whole_selftest_command_passes(tmp_path: Path) -> None:
     """``python -m open_garden_planner --selftest`` — the Qt3D block, the Agent API
     block and the new 3D block together, as the frozen exe runs them."""
     log = tmp_path / "selftest.log"
+    stores = tmp_path / "stores.txt"
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
         [sys.executable, "-m", "open_garden_planner", "--selftest"],
-        env=render_env(tmp_path, OGP_SELFTEST_LOG=str(log)), capture_output=True, text=True,
-        timeout=600, cwd=REPO)
+        env=render_env(tmp_path, OGP_SELFTEST_LOG=str(log), **{STORES: str(stores)}),
+        capture_output=True, text=True, timeout=600, cwd=REPO)
     assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:]
+    # THE WHOLE COMMAND builds no settings store (it imports the settings module for
+    # the application's two names, and nothing else of it): the frozen exe runs it under
+    # the production names, against the user's real settings — which it must not touch.
+    assert stores.read_text(encoding="utf-8").split() == ["1", "0"], "--selftest built a settings store"
     assert "SELFTEST: PASS" in proc.stdout
     assert "OK   Qt Quick 3D frame 160x120" in proc.stdout
     assert f"3D self-test log: {log}" in proc.stdout and log.is_file()
@@ -89,6 +106,15 @@ def test_the_whole_selftest_command_passes(tmp_path: Path) -> None:
     assert order == sorted(order), text
     assert "[watchdog] fired=True" not in text, "the watchdog must not have announced a hang"
     assert "Timeout (" not in text, "faulthandler must not have dumped"
+    # The self-test's own safety net is a subsystem too (review round 3, P2-5): a real
+    # supervising process was started for this run, released, and left with exit code 0
+    # — "supervisor=none" used to pass unnoticed. And no Qt message of the render arrived
+    # on another thread than the one that rendered (P2-10).
+    assert "what=--selftest supervisor=process " in text
+    assert "[watchdog] released=True what=--selftest supervisor_exit=0" in text
+    assert "[selftest_supervisor] ok=True detail=started, released, left" in text
+    assert "[supervisor]" not in text, "the supervisor had nothing to do, and wrote nothing"
+    assert "other_threads=0" in text
 
 
 def test_the_3d_selftest_fails_on_a_shader_that_does_not_compile(tmp_path: Path) -> None:

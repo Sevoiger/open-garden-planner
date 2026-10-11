@@ -10,29 +10,17 @@ Host choice (ADR-048 criterion 3): a ``QQuickView`` in a
 whole top-level window onto RHI composition. Create it once and keep it: hide
 and show it, never rebuild it per open.
 
-THE STATE MACHINE (ADR-048 addendum L1.2). A Qt Quick window can be asked for a
-frame in situations where answering kills the process or returns a picture that
-is not the scene, so the host never guesses. ``state`` is derived on every call
-from what Qt reports (``_facts()`` → ``lifecycle.state_of``, a pure function with
-the whole truth table in the unit tests), and every public method either answers
-truthfully or raises ``HostStateError``.
+THE STATE MACHINE. A Qt Quick window can be asked for a frame in situations where
+answering kills the process or returns a picture that is not the scene, so the
+host never guesses: ``state`` is derived on every call from what Qt reports
+(``_facts()`` → ``lifecycle.state_of``), and every public method either answers
+truthfully or raises ``HostStateError``. **The contract — the facts, the states,
+what each promises, which call is legal in which, what ``wait_ready()`` means,
+what raises what — is the docstring of ``lifecycle.py``, and only there.** This
+module supplies the facts and nothing else.
 
-==========  ============================================================  ===================
-state       what Qt says                                                  a frame?
-==========  ============================================================  ===================
-``NEW``     no platform window was ever created                           ONE, offscreen
-``STARTING``  shown, with an area, not live yet (first expose pending,    no — ``wait_ready()``
-            or the next one, or the root item is catching up a resize)
-``LIVE``    shown, with an area, scene graph up, exposed, root item at    yes: ``grab``, ``pick``
-            the window's size
-``HIDDEN``  it has (had) a platform window and shows nothing: not          no
-            visible, minimised, or no area (a collapsed splitter pane)
-``SPENT``   took its one offscreen frame                                   never again
-``CLOSED``  ``close()`` ran, or Qt destroyed the view                      —
-==========  ============================================================  ===================
-
-Measured, Qt 6.11 (Direct3D 11 on an RTX 4070 and on WARP; the xcb fact on
-GitHub's Linux runner):
+What Qt was measured to do, and why each fact is read (Qt 6.11; Direct3D 11 on
+an RTX 4070 and on WARP; xcb + OpenGL on llvmpipe):
 
 - ``grabWindow()`` on a window WITHOUT a scene graph renders one frame offscreen
   and tears everything down. For a window whose platform window was never
@@ -41,16 +29,21 @@ GitHub's Linux runner):
   waits for its first expose — or is shown afterwards — the process dies in the
   next event-loop pass (abort, access violation or heap corruption). On xcb the
   same death follows a window that was shown and hidden again before any event.
-  Hence: only ``NEW`` has the offscreen frame, ``STARTING`` refuses to grab,
-  ``SPENT`` refuses ``show()`` and ``container()``, and an embedded host has no
-  offscreen frame at all (its parent may show it at any time).
 - A window closed by the user keeps its scene graph and loses its platform
-  window; a raw grab of it is an access violation. It reads ``HIDDEN``.
+  window; a raw grab of it is an access violation.
 - A ``QSplitter`` pane collapsed to width 0 leaves the window visible, exposed
   and 0 px wide: a raw grab returns a blank image of the OLD size and a pick
-  returns a bogus hit. After every resize the QML root item lags the window by
-  one pass of the event loop. ``LIVE`` therefore needs an area and a root item
-  that has caught up; ``wait_ready()`` pumps until then.
+  returns a bogus hit. One pixel wide, nothing 3D is drawn.
+- A resize reaches the window in one of two ways, and each leaves something
+  behind for a moment. ASYNCHRONOUSLY (a splitter move, ``resize()``,
+  ``showMaximized()``): the window has the new size at once, the QML root item
+  only when the event loop delivered the resize event. SYNCHRONOUSLY
+  (``showFullScreen()``): window and root item agree at once — and a grab still
+  comes back in the OLD size, because ``grabWindow()`` on a shown window renders
+  into the swap chain as it is, and Qt resizes that with the next expose
+  (20 of 20). In every measured case the stale spell is exactly the time between
+  a resize event and the next expose event of the exposed window — which is the
+  fact the host tracks (``_WindowWatch``).
 - Under the SOFTWARE scene graph (``QT_QPA_PLATFORM=offscreen``) Qt Quick 3D
   draws nothing. ``renders_3d()`` is False there, and ``grab`` / ``pick`` /
   ``project`` raise ``EngineError``: a frame without the garden must not pass
@@ -60,10 +53,6 @@ Do not wait for ``frameSwapped`` to be sure of a frame: on Windows, update
 requests come from a display-vblank thread, and with the monitor asleep a live
 window presents its first frame and then none. ``grab()`` on a ``LIVE`` host
 renders the current state synchronously — it is the synchronisation point.
-
-A closed host: ``destroy_part``, ``clear`` and ``close`` are no-ops (they release
-what is gone already), ``state`` / ``is_closed`` / ``is_visible`` / ``health``
-answer, and every other call raises ``HostStateError``.
 
 TROUBLE IN A LIVE VIEW — ``health()``, on the GUI thread. A shown view has
 nobody to raise to, and a frozen exe has no stderr. What Qt itself reports on
@@ -143,7 +132,7 @@ _DIRECT: Final = Qt.ConnectionType.DirectConnection
 _QUEUED: Final = Qt.ConnectionType.QueuedConnection
 _LIGHT_FORWARD: Final = (0.0, 0.0, -1.0)  # a DirectionalLight shines down its local -Z
 _LOG: Final = logging.getLogger(__name__)
-_KEEP_WARNINGS: Final = 50  # QML warnings kept for health(); the rest are counted and logged
+_KEEP_WARNINGS: Final = 50  # QML warnings kept for health() and logged; the rest are only counted
 _WAIT_STEP_MS: Final = 5    # wait_ready(): how long one pass of its event loop may block
 
 _API: Final = QSGRendererInterface.GraphicsApi
@@ -246,20 +235,36 @@ class _Part:
         self.geometry = None
 
 
-class _SurfaceWatch(QObject):
-    """Latches "a platform window was created" from Qt's ``PlatformSurface`` event.
+class _WindowWatch(QObject):
+    """Two facts only events can tell, latched from the view's own event stream (an
+    event filter runs on the GUI thread, before the window handles the event).
 
-    ``QWindow.handle()`` is the same fact and PyQt6 does not bind it; ``winId()``
-    would CREATE the window. The event is sent synchronously by
-    ``QWindow::create()``, on the GUI thread.
+    ``created``: a platform window was created at some point (Qt's
+    ``PlatformSurface`` event). ``QWindow.handle()`` is the same fact and PyQt6
+    does not bind it; ``winId()`` would CREATE the window.
+
+    ``target_synced``: the render target has the window's size. A resize event
+    clears it; the next expose event of the EXPOSED window sets it — that expose
+    is what makes Qt resize the swap chain (``lifecycle.py``, fact T). Never
+    derived from ``frameSwapped``: that signal is queued from the render thread,
+    and one that was emitted before a resize can arrive after it.
     """
 
-    def __init__(self, parent: QObject) -> None:
+    def __init__(self, parent: QWindow) -> None:
         super().__init__(parent)
         self.created = False
+        self.target_synced = False
 
-    def eventFilter(self, _watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802 - Qt's name
-        if (isinstance(event, QPlatformSurfaceEvent) and event.surfaceEventType()
+    def eventFilter(self, watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802 - Qt's name
+        if event is None:
+            return False
+        kind = event.type()
+        if kind == QEvent.Type.Resize:
+            self.target_synced = False
+        elif kind == QEvent.Type.Expose:
+            if isinstance(watched, QWindow) and watched.isExposed():
+                self.target_synced = True
+        elif (isinstance(event, QPlatformSurfaceEvent) and event.surfaceEventType()
                 == QPlatformSurfaceEvent.SurfaceEventType.SurfaceCreated):
             self.created = True
         return False
@@ -319,10 +324,14 @@ class Quick3DHost:
         self.slot_calls_off_the_gui_thread = 0
         self.frames_presented = 0
         self.grabs = 0
+        #: Grabs of a live host that came back in another size than the window's (the
+        #: render target was stale although the event stream said otherwise). Each was
+        #: refused with ``HostStateError``. Expected: 0 — the render tier requires it.
+        self.stale_frames = 0
         started = time.perf_counter()
         self._view = QQuickView()
-        self._surface = _SurfaceWatch(self._view)
-        self._view.installEventFilter(self._surface)
+        self._watch = _WindowWatch(self._view)
+        self._view.installEventFilter(self._watch)
         self._view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
         # A hidden window keeps its scene graph (both are Qt's defaults; said out loud
         # because "scene graph up" must not flicker with visibility).
@@ -366,14 +375,15 @@ class Quick3DHost:
             top_level = container.window()
             minimised = top_level is not None and top_level.isMinimized()
         return WindowFacts(
-            surface_created=self._surface.created, visible=bool(view.isVisible()),
+            surface_created=self._watch.created, visible=bool(view.isVisible()),
             minimised=bool(minimised), width=int(view.width()), height=int(view.height()),
             scene_graph=bool(view.isSceneGraphInitialized()), exposed=bool(view.isExposed()),
-            root_width=float(self._root.width()), root_height=float(self._root.height()))
+            root_width=float(self._root.width()), root_height=float(self._root.height()),
+            target_synced=self._watch.target_synced)
 
     @property
     def state(self) -> HostState:
-        """Derived from Qt on every call (module docstring; ``lifecycle.state_of``)."""
+        """Derived from Qt on every call — the contract is ``lifecycle.py``'s docstring."""
         return state_of(self._facts(), closed=self._closed, spent=self._spent)
 
     @property
@@ -550,33 +560,28 @@ class Quick3DHost:
             self._view.hide()
 
     def wait_ready(self, timeout_s: float = 10.0) -> bool:
-        """Run the event loop until the host is ``LIVE``; True then — and only then is a
-        ``grab()`` issued right after it truthful.
+        """Deliver what is pending, then wait while the host is ``STARTING``. True means
+        ``LIVE``: the next ``grab()`` / ``pick()`` / ``project()`` answers. The contract
+        — when it waits, when it answers False at once — is ``lifecycle.py``'s docstring.
 
-        It waits while the host is ``STARTING`` (shown, on its way: the first expose
-        after ``show()``, the next one after a re-show, the root item after a resize
-        or a reopened pane — one pass each, on Windows). It returns False without
-        waiting when nothing is on its way — the host is new, hidden, minimised,
-        collapsed, spent, or Qt reported that the graphics device could not be
-        created — and False when ``timeout_s`` is up, when the host is closed or
-        its window is destroyed or hidden meanwhile. The state is looked at again
-        in every pass, and a pass BLOCKS for events (a few milliseconds at most):
-        no busy loop. It runs the event loop; call it where re-entrancy is
-        acceptable.
-
-        A visible host is first given what is ALREADY pending in the event loop:
-        a pane that was re-shown in a splitter a moment ago still has its old,
-        empty geometry until the layout request is delivered — it reads
-        ``HIDDEN`` (no area), and one delivery later it is on its way.
+        It runs the event loop; call it where re-entrancy is acceptable. Bounded in
+        every case: ``timeout_s``, a pass that blocks for events (``_WAIT_STEP_MS``)
+        instead of spinning, and no pass at all once the application is quitting.
         """
         self._open("wait_ready")
         started = time.perf_counter()
         deadline = started + timeout_s
-        if self.is_visible() and self.state is not HostState.LIVE:
-            QCoreApplication.processEvents()  # what is pending, without waiting
+        if self.is_visible():
+            # ONCE, without waiting, for ANY visible host — also one that reads live: the
+            # resize a parent's layout is about to hand this window, and the expose that
+            # resizes the render target after a synchronous resize, are still in the queue
+            QCoreApplication.processEvents()
+        passes_left = int(max(timeout_s, 0.0) * 1000.0 / _WAIT_STEP_MS) + 2
         while (self.state is HostState.STARTING and self._scene_graph_error is None
-               and time.perf_counter() < deadline):
-            self._run_events(_WAIT_STEP_MS)
+               and time.perf_counter() < deadline and passes_left > 0):
+            passes_left -= 1
+            if not self._run_events(_WAIT_STEP_MS):
+                break  # the application is quitting: no event loop will run, nothing can arrive
         ready = self.state is HostState.LIVE
         self._log("ready", ok=ready, state=self.state.value,
                   ms=round((time.perf_counter() - started) * 1000.0, 1))
@@ -606,7 +611,7 @@ class Quick3DHost:
                 _LOG.warning("close(): a Model could not be destroyed (%s); it goes with the view",
                              error)
         self._view.hide()
-        self._view.removeEventFilter(self._surface)
+        self._view.removeEventFilter(self._watch)
         container, self._container = self._container, None
         if container is not None and not sip.isdeleted(container):
             container.deleteLater()  # owns the window
@@ -633,14 +638,17 @@ class Quick3DHost:
         return self.graphics_api() in RENDERING_APIS
 
     def grab(self, label: str = "") -> QImage:
-        """Render the current state NOW and read it back (device pixels).
+        """Render the current state NOW and read it back (device pixels): the scene at
+        the window's current size, or ``HostStateError`` (``lifecycle.py``).
 
         Legal on a ``LIVE`` host, and ONCE on a ``NEW`` host that is not embedded
-        (the offscreen frame; the host is ``SPENT`` after). Every other state
-        raises ``HostStateError`` — in ``STARTING`` because a grab would kill the
-        process or show the old size, elsewhere because there is nothing to show.
-        ``EngineError`` when this backend cannot render 3D at all, and when the
-        image that comes back is not the window's size.
+        (the offscreen frame; the host is ``SPENT`` after). ``EngineError`` when
+        this backend cannot render 3D at all, or no image comes back.
+
+        The image's size is checked against the window's whatever the state said:
+        on a live host a mismatch means the render target was stale after all —
+        the host notes it (it reads ``STARTING`` until the next expose) and raises
+        ``HostStateError``; it never hands out a frame of another size.
         """
         state, facts = self._look("grab")
         self._require_3d("grab")
@@ -648,8 +656,7 @@ class Quick3DHost:
             self._spent = True  # before the grab: whatever happens, never a second one
             self._view.create()
         elif state is not HostState.LIVE:
-            raise HostStateError(
-                f"grab(): {why_no_frame(state, facts, embedded=self._container is not None)}")
+            raise HostStateError(f"grab(): {self._why(state, facts)}")
         started = time.perf_counter()
         image = self._view.grabWindow()
         elapsed = (time.perf_counter() - started) * 1000.0
@@ -660,9 +667,18 @@ class Quick3DHost:
         ratio = float(image.devicePixelRatio())
         if (abs(image.width() - facts.width * ratio) > 2.0
                 or abs(image.height() - facts.height * ratio) > 2.0):
-            raise EngineError(
-                f"grab({label!r}) returned a {image.width()} x {image.height()} px image for a "
-                f"{facts.width} x {facts.height} window at ratio {ratio:g}: not the current scene")
+            found = (f"Qt rendered a {image.width()} x {image.height()} px image for a "
+                     f"{facts.width} x {facts.height} window at ratio {ratio:g}")
+            if state is not HostState.LIVE:  # the one offscreen frame: there is no "later"
+                raise EngineError(f"grab({label!r}): {found} — not the scene at this size")
+            # A state fact, not an engine failure: the render target has not caught up.
+            self._watch.target_synced = False
+            self.stale_frames += 1
+            self._log("stale_frame", label=label, px=f"{image.width()}x{image.height()}",
+                      window=f"{facts.width}x{facts.height}")
+            raise HostStateError(
+                f"grab(): {found}: the render target has not caught up with the window's size "
+                "(Qt resizes it with the next expose). Call wait_ready() first")
         self.grabs += 1
         return image
 
@@ -786,6 +802,9 @@ class Quick3DHost:
             if len(self._qml_warnings) < _KEEP_WARNINGS:
                 self._qml_warnings.append(text)
                 _LOG.warning("3D view: QML warning: %s", text)
+            elif self._qml_warning_count == _KEEP_WARNINGS + 1:
+                _LOG.warning("3D view: more than %d QML warnings; further ones are only counted "
+                             "(health().qml_warning_count)", _KEEP_WARNINGS)
         self._log("qml_warnings", count=self._qml_warning_count)
 
     def _on_scene_graph_error(self, _error: Any, message: str) -> None:
@@ -796,11 +815,16 @@ class Quick3DHost:
         self._log("scene_graph_error", message=self._scene_graph_error)
 
     @staticmethod
-    def _run_events(milliseconds: int) -> None:
-        """One pass of a local event loop that BLOCKS for events — never a busy spin."""
+    def _run_events(milliseconds: int) -> bool:
+        """One pass of a local event loop that BLOCKS for events — never a busy spin.
+
+        False when the loop could not run: once the application is quitting,
+        ``QEventLoop.exec()`` returns -1 at once (measured: 2 microseconds a pass),
+        and a caller that went on asking would spin.
+        """
         loop = QEventLoop()
         QTimer.singleShot(milliseconds, loop.quit)
-        loop.exec()
+        return loop.exec() == 0
 
     def _call(self, function: str, *arguments: object) -> Any:
         """Call a function of ``Garden.qml`` that returns an object. A function that is
@@ -824,12 +848,15 @@ class Quick3DHost:
                 f"{call}(): Qt Quick runs on the {api} backend here, where Qt Quick 3D draws "
                 "nothing (QT_QPA_PLATFORM=offscreen selects the software scene graph)")
 
+    def _why(self, state: HostState, facts: WindowFacts) -> str:
+        return why_no_frame(state, facts, embedded=self._container is not None,
+                            graphics_error=self._scene_graph_error)
+
     def _require_live(self, call: str) -> None:
         state, facts = self._look(call)
         self._require_3d(call)
         if state is not HostState.LIVE:
-            raise HostStateError(
-                f"{call}(): {why_no_frame(state, facts, embedded=self._container is not None)}")
+            raise HostStateError(f"{call}(): {self._why(state, facts)}")
 
     def _destroy(self, part: _Part) -> None:
         """Destroy one Model in the engine. The part leaves the host's books ONLY when the

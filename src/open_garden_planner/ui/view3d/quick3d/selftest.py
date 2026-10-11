@@ -211,6 +211,10 @@ class Rendered:
     qt_counts: dict[str, int]
     #: Items whose builder failed (``OffscreenFrame.build_failures``): any is a FAIL.
     build_failures: tuple[str, ...] = ()
+    #: Qt messages of the render that arrived on another thread than the one that
+    #: rendered (``QtMessages.other_threads``): any is a FAIL — the recorder is only
+    #: allowed here because there are none, and a frozen exe is where that must hold.
+    other_threads: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +251,8 @@ def _render(log: RenderLog, qml_dir: Path | None) -> Rendered:
                            registry=registry(), qml_dir=qml_dir, log=log, graphics_info=True)
     return Rendered(frame.rgba(), frame.device_pixel_ratio, frame.graphics_api, frame.adapter,
                     frame.open_ms, dict(frame.qt.get("counts", {})),
-                    tuple(f"{item_id}: {error}" for item_id, error in frame.build_failures.items()))
+                    tuple(f"{item_id}: {error}" for item_id, error in frame.build_failures.items()),
+                    int(frame.qt.get("other_threads", 0)))
 
 
 def run_selftest(log_path: Path | None = None, *, watchdog_s: float | None = WATCHDOG_S,
@@ -291,6 +296,10 @@ def run_selftest(log_path: Path | None = None, *, watchdog_s: float | None = WAT
                     rendered = _render(log, qml_dir)
             problems = [f"the builder of {failure} failed: the item has no solid"
                         for failure in rendered.build_failures]
+            if rendered.other_threads:
+                problems.append(
+                    f"{rendered.other_threads} Qt message(s) of the render arrived on another "
+                    "thread than the one that rendered: the message recorder is not safe here")
             problems += judge_frame(rendered.rgba, rendered.device_pixel_ratio)
             where = f"{rendered.graphics_api} / {rendered.adapter or 'adapter unknown'}"
             if problems:

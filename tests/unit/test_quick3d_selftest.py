@@ -235,6 +235,32 @@ class TestRun:
         (failure,) = [line for line in result.lines if "FAIL" in line]
         assert "the builder of water: ValueError: degenerate footprint failed" in failure
 
+    def test_a_message_from_another_thread_fails_the_selftest_even_if_the_frame_looks_right(
+            self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        """Review round 3, P2-10. The recorder may be installed around the self-test's frame
+        only because every message of it arrives on the rendering thread. The render tier
+        asserted that; the self-test dropped the number — and a frozen exe on a runner is
+        where it must hold."""
+        monkeypatch.setattr(selftest, "_render", lambda *_a, **_k: selftest.Rendered(
+            _good_frame(), 1.0, "Direct3D11", "Microsoft Basic Render Driver", 321.0, {"error": 0},
+            other_threads=2))
+        result = selftest.run_selftest(tmp_path / "selftest.log")
+        assert not result.ok
+        (failure,) = [line for line in result.lines if "FAIL" in line]
+        assert "2 Qt message(s) of the render arrived on another thread" in failure
+
+    def test_the_render_hands_the_thread_count_to_the_judge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """…and ``_render`` really takes it from the frame (not a default of 0)."""
+        from types import SimpleNamespace
+
+        from open_garden_planner.ui.view3d.quick3d import offscreen
+
+        frame = SimpleNamespace(rgba=_good_frame, device_pixel_ratio=1.0, graphics_api="Direct3D11",
+                                adapter="x", open_ms=1.0, build_failures={},
+                                qt={"counts": {"error": 0}, "other_threads": 3})
+        monkeypatch.setattr(offscreen, "render_records", lambda *_a, **_k: frame)
+        assert selftest._render(lambda *_a, **_k: None, None).other_threads == 3  # noqa: SLF001
+
     def test_with_the_callers_log_it_arms_no_watchdog_and_leaves_the_log_open(
             self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         """``main`` bounds the WHOLE ``--selftest`` with one watchdog and one log
@@ -447,12 +473,19 @@ def test_a_hang_ends_the_process_even_with_nowhere_to_write(tmp_path: Path) -> N
 # is the render tier's control (``test_the_supervised_watchdog_ends_the_deadlock``);
 # here the first line of defence is switched off instead, so that only the second one
 # can end the child — on every machine, without a GPU.
+#
+# Review round 3: a supervisor acts for ONE block of its own PARENT, on validated
+# arguments. Every test that starts one runs in a child process of its own — a
+# supervisor that got something wrong must never be able to reach the test runner.
 
 windows_only = pytest.mark.skipif(sys.platform != "win32",
                                   reason="the supervising process is Windows-only (runlog.py)")
+NONCE = "0123456789abcdef0123456789abcdef"
 
 _SUPERVISED = textwrap.dedent("""
     import faulthandler
+    import os
+    import subprocess
     import sys
     import time
     from pathlib import Path
@@ -469,8 +502,9 @@ _SUPERVISED = textwrap.dedent("""
     elif mode == "in-time":
         # a block that is over before the supervising process is even up: the supervisor
         # must not end a process that finished its block and simply lives on
-        with runlog.watchdog(1.5, log, what="the supervised block", supervised=True):
+        with runlog.watchdog(1.5, log, what="the supervised block", supervised=True) as armed:
             pass
+        print("SUPERVISOR_EXIT", armed.supervisor_exit, armed.supervised, flush=True)
         time.sleep(6.0)   # past the deadline and the grace period
     elif mode == "released":
         supervisor = runlog.start_supervisor(60.0, log_path, "a released block")
@@ -478,13 +512,37 @@ _SUPERVISED = textwrap.dedent("""
         time.sleep(1.5)   # the supervisor is up and waiting
         print("WAITING", supervisor.process.poll() is None, flush=True)
         supervisor.release()
-        print("GONE", supervisor.process.wait(timeout=30), flush=True)
-    elif mode == "another-process":
-        import os
-        # the right pid with the wrong creation time: a process that reused the pid
-        print("CODE", runlog.supervisor_main([str(os.getpid()), "12345", "0.5", "-", "what:x"]),
-              flush=True)
-        time.sleep(1.5)
+        print("GONE", supervisor.wait(30.0), flush=True)
+    elif mode == "two-blocks":
+        # The reviewer's sequence, raw (no waiting for A's supervisor): block A is over at
+        # once, block B begins before A's supervising process is up. With ONE event name
+        # per process, A's late supervisor found B's event, took it for its own, and
+        # terminated the healthy block 2 s later.
+        first = runlog.start_supervisor(2.0, log_path, "block A")
+        first.release()
+        second = runlog.start_supervisor(60.0, log_path, "block B")
+        time.sleep(5.0)   # block B is healthy, and longer than A's deadline
+        print("B_ALIVE_AFTER_A_DEADLINE", flush=True)
+        second.release()
+        print("EXITS", first.wait(30.0), second.wait(30.0), flush=True)
+    elif mode == "two-watchdogs":
+        # the same through the public door: two supervised blocks, one after the other
+        with runlog.watchdog(1.0, log, what="block A", supervised=True) as a:
+            pass
+        with runlog.watchdog(30.0, log, what="block B", supervised=True) as b:
+            time.sleep(5.0)
+        print("EXITS", a.supervisor_exit, b.supervisor_exit, flush=True)
+    elif mode == "wrong-creation-time":
+        # Our own child, the right pid, the right event — and a creation time that is not
+        # ours: a process that reused the pid. Only that check stands between it and us.
+        k32 = runlog._kernel32()
+        created = runlog._created(k32, k32.GetCurrentProcess()) + 1
+        nonce = "0123456789abcdef0123456789abcdef"
+        event = k32.CreateEventW(None, True, False, runlog._event_name(os.getpid(), created, nonce))
+        helper = subprocess.Popen([*runlog.self_command(), str(os.getpid()), str(created), nonce,
+                                   "1", "-", "what:not ours"])
+        print("HELPER", helper.wait(timeout=30), flush=True)
+        time.sleep(2.0)
     print("returned", flush=True)
 """)
 
@@ -520,6 +578,9 @@ def test_the_supervisor_leaves_a_process_alone_whose_block_finished_first(tmp_pa
     proc, text = _supervised("in-time", tmp_path)
     assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
     assert "supervisor=process " in text and "[supervisor]" not in text
+    # the block learns how its supervisor ended: it left, with the code for "done"
+    assert "SUPERVISOR_EXIT 0 True" in proc.stdout
+    assert "[watchdog] released=True what=the supervised block supervisor_exit=0" in text
 
 
 @windows_only
@@ -532,50 +593,219 @@ def test_a_released_supervisor_goes_at_once(tmp_path: Path) -> None:
 
 
 @windows_only
+@pytest.mark.parametrize("mode", ["two-blocks", "two-watchdogs"])
+def test_a_finished_blocks_supervisor_cannot_end_the_block_after_it(tmp_path: Path, mode: str) -> None:
+    """Review round 3, P1-2. The release event was named per PROCESS. Block A finished
+    before its supervising process was up; block B created "the" event again; A's late
+    supervisor opened it, waited out A's deadline and terminated the process — 4.1 s
+    into a healthy block with a 60 s budget, with "block A was still alive" in the log.
+    The event is named per BLOCK now (a random nonce on the supervisor's command
+    line): A's supervisor finds nothing and leaves."""
+    proc, text = _supervised(mode, tmp_path)
+    assert proc.returncode == 0 and "returned" in proc.stdout, (
+        f"exit {proc.returncode}: the healthy second block did not survive the first one's "
+        f"supervisor\n{proc.stdout}{proc.stderr[-1500:]}\n{text}")
+    assert "EXITS 0 0" in proc.stdout, proc.stdout
+    assert "[supervisor]" not in text, text
+
+
+@windows_only
 def test_the_supervisor_never_ends_another_process_that_got_the_pid(tmp_path: Path) -> None:
-    """A pid is reused. The supervisor knows its process by pid AND creation time."""
-    proc, _text = _supervised("another-process", tmp_path)
+    """A pid is reused. The supervisor knows its process by pid AND creation time: here
+    it is our own child, the pid is ours, the release event exists — and the creation
+    time is not ours. It leaves; we live."""
+    proc, _text = _supervised("wrong-creation-time", tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:]
-    assert "CODE 0" in proc.stdout and "returned" in proc.stdout
+    assert "HELPER 0" in proc.stdout and "returned" in proc.stdout
 
 
-def test_the_supervisor_refuses_arguments_it_does_not_understand() -> None:
+@windows_only
+def test_the_supervisor_only_acts_for_the_process_that_started_it(tmp_path: Path) -> None:
+    """Review round 3, P2-4: any pid was accepted. A supervisor started by THIS process
+    and pointed at another one — a stand-in that sleeps — with everything else in
+    order (the right creation time, a release event that exists): it refuses with one
+    line and exit code 2, and the stand-in lives past the deadline."""
     from open_garden_planner.ui.view3d.quick3d import runlog
 
-    assert runlog.supervisor_main([]) == 2
-    assert runlog.supervisor_main(["not-a-pid", "1", "1", "-"]) == 2
+    env = isolated_env(tmp_path, QT_QPA_PLATFORM="offscreen")
+    victim = subprocess.Popen(  # noqa: S603 - fixed argv
+        [runlog.self_command()[0], "-I", "-c", "import time; time.sleep(60)"], env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    k32 = runlog._kernel32()  # noqa: SLF001
+    handle = k32.OpenProcess(0x1000, False, victim.pid)
+    created = runlog._created(k32, handle)  # noqa: SLF001
+    k32.CloseHandle(handle)
+    event = k32.CreateEventW(None, True, False, runlog._event_name(victim.pid, created, NONCE))  # noqa: SLF001
+    try:
+        assert created > 0 and event
+        supervisor = subprocess.run(  # noqa: S603 - fixed argv, our own code
+            [*runlog.self_command(), str(victim.pid), str(created), NONCE, "1", "-", "what:not mine"],
+            env=env, capture_output=True, text=True, timeout=60)
+        assert supervisor.returncode == runlog.SUPERVISOR_REFUSED == 2, supervisor.stderr
+        assert supervisor.stderr.strip().splitlines() == [
+            "--selftest-supervisor: refused: the process named is not the one that started this "
+            "supervisor."]
+        with pytest.raises(subprocess.TimeoutExpired):
+            victim.wait(timeout=3.0)  # past the supervisor's deadline: nobody ended it
+    finally:
+        victim.kill()
+        victim.wait(timeout=30)
+        k32.CloseHandle(event)
+
+
+def _valid_arguments(tmp_path: Path, **changes: str) -> list[str]:
+    log = tmp_path / "block.log"
+    log.write_text("", encoding="utf-8")
+    order = {"pid": "4711", "created": "133000000000000000", "nonce": NONCE, "seconds": "310",
+             "log": str(log), "what": "what:--selftest"}
+    order.update(changes)
+    return list(order.values())
+
+
+def test_a_supervisors_arguments_are_read_into_an_order(tmp_path: Path) -> None:
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    order = runlog.parse_supervisor_arguments(_valid_arguments(tmp_path))
+    assert (order.pid, order.created, order.nonce, order.seconds, order.what) == (
+        4711, 133000000000000000, NONCE, 310.0, "--selftest")
+    assert order.log_path == str(tmp_path / "block.log")
+    assert runlog.parse_supervisor_arguments(_valid_arguments(tmp_path, log="-")).log_path is None
+    # the label goes into a log line: one line, bounded
+    long = runlog.parse_supervisor_arguments(_valid_arguments(tmp_path, what="what:a\nb " + "x" * 500))
+    assert "\n" not in long.what and len(long.what) == 200
+    assert (runlog.MIN_SUPERVISED_S, runlog.MAX_SUPERVISED_S) == (0.5, 86_400.0)
+    for edge in ("0.5", "86400"):
+        assert runlog.parse_supervisor_arguments(_valid_arguments(tmp_path, seconds=edge)).seconds > 0
+
+
+@pytest.mark.parametrize(("change", "words"), [
+    ({"pid": "abc"}, "process id"), ({"pid": "0"}, "process id"), ({"pid": "-5"}, "process id"),
+    ({"pid": "1e3"}, "process id"), ({"pid": str(2**32)}, "process id"),
+    ({"created": "0"}, "creation time"), ({"created": "yesterday"}, "creation time"),
+    ({"nonce": "0123"}, "nonce"), ({"nonce": NONCE.upper()}, "nonce"), ({"nonce": "g" * 32}, "nonce"),
+    # nan and inf used to be an uncaught traceback, -1 a wait of 49 days, 0 a kill at once
+    ({"seconds": "nan"}, "deadline"), ({"seconds": "inf"}, "deadline"), ({"seconds": "-inf"}, "deadline"),
+    ({"seconds": "-1"}, "deadline"), ({"seconds": "0"}, "deadline"), ({"seconds": "0.49"}, "deadline"),
+    ({"seconds": "86401"}, "deadline"), ({"seconds": "soon"}, "deadline"),
+    ({"log": "relative.log"}, "not absolute"), ({"what": "--selftest"}, "does not name"),
+])
+def test_a_supervisor_refuses_arguments_it_may_not_act_on(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+        change: dict[str, str], words: str) -> None:
+    """Review round 3, P2-4. Malformed arguments: exit code 2 and ONE line — never a
+    traceback, never a terminate (nothing is opened before the arguments are in order)."""
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    monkeypatch.setattr(runlog, "_supervise", lambda _order: pytest.fail("it went on to supervise"))
+    arguments = _valid_arguments(tmp_path, **change)
+    with pytest.raises(ValueError, match=words):
+        runlog.parse_supervisor_arguments(arguments)
+    assert runlog.supervisor_main(arguments) == runlog.SUPERVISOR_REFUSED == 2
+    (line,) = capsys.readouterr().err.strip().splitlines()
+    assert line.startswith("--selftest-supervisor: refused: ") and words in line
+    assert "internal" in line and "Traceback" not in line
+
+
+def test_a_supervisor_refuses_the_wrong_number_of_arguments_and_a_log_it_would_have_to_create(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    monkeypatch.setattr(runlog, "_supervise", lambda _order: pytest.fail("it went on to supervise"))
+    valid = _valid_arguments(tmp_path)
+    missing = tmp_path / "never-written.log"
+    folder = tmp_path / "a-folder"
+    folder.mkdir()
+    for arguments, words in (([], "6 arguments expected, 0 given"), (valid[:5], "5 given"),
+                             ([*valid, "extra"], "7 given"),
+                             (_valid_arguments(tmp_path, log=str(missing)), "creates no file"),
+                             (_valid_arguments(tmp_path, log=str(folder)), "not a regular file")):
+        assert runlog.supervisor_main(arguments) == 2
+        assert words in capsys.readouterr().err
+    assert not missing.exists(), "a supervisor creates no file"
+
+
+def test_a_supervisor_that_fails_itself_says_one_line_and_terminates_nothing(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    def broken(_order: object) -> int:
+        raise OSError("kernel32 said no")
+
+    monkeypatch.setattr(runlog, "_supervise", broken)
+    assert runlog.supervisor_main(_valid_arguments(tmp_path)) == runlog.SUPERVISOR_FAILED == 3
+    assert capsys.readouterr().err.strip() == "--selftest-supervisor: failed: OSError"
+
+
+def test_one_watchdog_per_process_a_second_one_is_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review round 3, P1-2: a supervisor acts for exactly one block, and ``faulthandler``
+    has ONE timer — a watchdog inside a watchdog used to replace the outer one's timer
+    and cancel it on the way out. Refused BEFORE anything is touched: the outer watchdog
+    stays armed, and a new one can be armed once it is over."""
+    import faulthandler
+
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    calls: list[str] = []
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda *_a, **_k: calls.append("arm"))
+    monkeypatch.setattr(faulthandler, "cancel_dump_traceback_later", lambda: calls.append("cancel"))
+    log = runlog.RenderLog(tmp_path / "one.log", mirror=False)
+    try:
+        with runlog.watchdog(60.0, log, what="the outer block") as outer:
+            for supervised in (False, True):
+                with pytest.raises(runlog.WatchdogError, match="already armed.*'the outer block'"), \
+                        runlog.watchdog(30.0, log, what="the inner block", supervised=supervised):
+                    pytest.fail("the inner block ran")
+            assert calls == ["arm"], "the refusal touched the outer watchdog's timer"
+            with runlog.watchdog(0.0, log, what="a watchdog that is switched off"):
+                pass  # not armed: nothing to collide with
+        assert calls == ["arm", "cancel"] and outer.supervisor is None
+        with runlog.watchdog(60.0, log, what="the next block"):
+            pass
+        assert calls == ["arm", "cancel", "arm", "cancel"]
+    finally:
+        log.close()
+    assert "the inner block" not in (tmp_path / "one.log").read_text(encoding="utf-8")
 
 
 def test_the_supervisor_is_started_as_this_checkouts_own_file() -> None:
     """From source it runs ``runlog.py`` itself — never ``-m open_garden_planner``, which
-    from a git worktree could start another checkout's application — and nothing but
-    the standard library is imported at the top of that file."""
+    from a git worktree could start another checkout's application — isolated, under
+    the interpreter BEHIND the virtual environment (a venv's ``python.exe`` is a
+    launcher on Windows: its child would be the supervisor's parent, not us). Nothing
+    but the standard library is imported at the top of that file."""
     import ast
 
     from open_garden_planner.ui.view3d.quick3d import runlog
 
     command = runlog.self_command()
-    assert command[0] == sys.executable and "-m" not in command
-    assert Path(command[-1]).resolve() == Path(runlog.__file__).resolve()
+    assert command[1:] == ["-I", str(Path(runlog.__file__).resolve())]
+    assert Path(command[0]).is_file()
+    assert command[0] == (getattr(sys, "_base_executable", None) or sys.executable)
     tree = ast.parse(Path(runlog.__file__).read_text(encoding="utf-8"))
     top_level = {alias.name.split(".")[0] for node in tree.body if isinstance(node, ast.Import)
                  for alias in node.names}
     top_level |= {(node.module or "").split(".")[0] for node in tree.body
                   if isinstance(node, ast.ImportFrom)}
-    assert top_level <= {"__future__", "contextlib", "faulthandler", "os", "subprocess", "sys",
-                         "threading", "time", "collections", "pathlib", "typing"}, top_level
+    assert top_level <= {"__future__", "contextlib", "faulthandler", "math", "os", "re", "secrets",
+                         "stat", "subprocess", "sys", "threading", "time", "collections",
+                         "dataclasses", "pathlib", "typing"}, top_level
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the supervisor exists on Windows")
-def test_without_a_supervisor_the_log_says_so(tmp_path: Path) -> None:
-    """Elsewhere ``faulthandler``'s exit was measured to end even the deadlock (Linux)."""
+def test_without_a_supervisor_the_log_says_so_and_what_bounds_a_deadlock(tmp_path: Path) -> None:
+    """Elsewhere ``faulthandler``'s exit was measured to end even the deadlock (Linux);
+    the log says that there is no supervisor, and what the bound is beyond that."""
     from open_garden_planner.ui.view3d.quick3d import runlog
 
     assert runlog.start_supervisor(5.0, None, "x") is None
     log = runlog.RenderLog(tmp_path / "plain.log", mirror=False)
     try:
-        with runlog.watchdog(30.0, log, what="a block", supervised=True):
+        with runlog.watchdog(30.0, log, what="a block", supervised=True) as armed:
             pass
     finally:
         log.close()
-    assert "supervisor=none (not available here)" in (tmp_path / "plain.log").read_text(encoding="utf-8")
+    assert armed.supervisor is None and not armed.supervised
+    text = (tmp_path / "plain.log").read_text(encoding="utf-8")
+    assert "supervisor=none (not on this platform: _exit ends the process" in text
+    assert "in CI the step's" in text

@@ -8,6 +8,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+import types
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +110,79 @@ class TestSelfTest:
         assert _run_selftest() == 1
         assert "SELFTEST: FAIL" in capsys.readouterr().out
 
+    def test_the_real_blocks_build_no_settings_store(self, monkeypatch) -> None:
+        """The Qt3D imports and a real Agent API server, in this process: no settings
+        store is asked for. (The 3D block and the whole command are shown the same way
+        in a child with a real platform: ``tests/integration/test_quick3d_selftest.py``.)
+        A consumer that bound the factory's name before this test replaced it would not
+        be seen here — the child's start-up hook has no such gap."""
+        import open_garden_planner.app.settings as app_settings
+
+        asked: list[int] = []
+        real = app_settings.create_qsettings
+
+        def create_qsettings() -> Any:
+            asked.append(1)
+            return real()
+
+        monkeypatch.setattr(app_settings, "create_qsettings", create_qsettings)
+        _stub_3d(monkeypatch)
+        assert _run_selftest() == 0
+        assert asked == []
+
+
+#: What a self-test must never name: it runs in the frozen exe under the PRODUCTION
+#: settings names, against the user's real settings and data.
+_NOT_IN_A_SELFTEST = frozenset({
+    "get_settings", "create_qsettings", "AppSettings", "QSettings", "ProjectManager",
+    "add_recent_file", "GardenPlannerApp", "get_app_data_dir", "get_plant_library"})
+
+
+def test_the_selftest_names_no_settings_store_and_loads_no_plan() -> None:
+    """The static half (every platform). ``--selftest`` in the frozen exe cannot be
+    isolated: there the app's settings are the user's own. So its path — the four
+    functions in ``main.py`` — names no settings accessor, no project manager and no
+    app-data helper; from the settings module it takes the application's two NAMES and
+    nothing else; and the two packages the 3D block runs in do not import the app
+    layer at all."""
+    import ast
+
+    root = Path(__file__).resolve().parents[2] / "src" / "open_garden_planner"
+    tree = ast.parse((root / "main.py").read_text(encoding="utf-8"))
+    path = {"_run_selftest", "_run_selftest_bounded", "_selftest_quick3d", "_name_application_for_selftest"}
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    assert path <= set(functions)
+    taken: set[str] = set()
+    for name in sorted(path):
+        function = functions[name]
+        named = {node.id for node in ast.walk(function) if isinstance(node, ast.Name)}
+        named |= {node.attr for node in ast.walk(function) if isinstance(node, ast.Attribute)}
+        named |= {alias.name for node in ast.walk(function) if isinstance(node, (ast.Import, ast.ImportFrom))
+                  for alias in node.names}
+        assert not named & _NOT_IN_A_SELFTEST, (name, sorted(named & _NOT_IN_A_SELFTEST))
+        taken |= {alias.name for node in ast.walk(function) if isinstance(node, ast.ImportFrom)
+                  and (node.module or "").endswith("app.settings") for alias in node.names}
+    assert taken == {"APPLICATION_NAME", "ORGANIZATION_NAME"}
+    checked = 0
+    for package in (root / "ui" / "view3d" / "quick3d", root / "core" / "scene3d"):
+        for source in sorted(package.rglob("*.py")):
+            home = ["open_garden_planner", *source.relative_to(root).parent.parts]
+            for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom):
+                    base = home[:len(home) - node.level + 1] if node.level else []
+                    stem = ".".join([*base, *([node.module] if node.module else [])])
+                    modules = [stem, *(f"{stem}.{alias.name}" for alias in node.names)]
+                elif isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                else:
+                    continue
+                checked += 1
+                for module in modules:
+                    assert not module.startswith(("open_garden_planner.app", "open_garden_planner.services",
+                                                  "open_garden_planner.core.project")), (
+                        f"{source.name} imports {module}")
+    assert checked > 60, "the scan read the packages' imports"
+
 
 @pytest.mark.usefixtures("keep_the_qt_identity")
 class TestSelfTestQuick3d:
@@ -209,9 +283,10 @@ class TestMainUtilities:
 
     def test_the_supervisor_flag_is_dispatched_first_and_starts_nothing_else(self, monkeypatch) -> None:
         """Review round 2, P2-6. The frozen exe is also the process that supervises a
-        running self-test (``<exe> --selftest-supervisor <pid> … what:--selftest``). Its
-        arguments NAME the self-test — and must never start one: a supervisor that ran
-        the self-test would start a supervisor that runs the self-test."""
+        running self-test (the internal flag ``--selftest-supervisor`` and six arguments,
+        the last of them ``what:--selftest``). Its arguments NAME the self-test — and
+        must never start one: a supervisor that ran the self-test would start a
+        supervisor that runs the self-test."""
         import open_garden_planner.main as ogp_main
         from open_garden_planner.ui.view3d.quick3d import runlog
 
@@ -220,7 +295,8 @@ class TestMainUtilities:
         monkeypatch.setattr(runlog, "supervisor_main", lambda arguments: handed.append(arguments) or 7)
         monkeypatch.setattr(ogp_main, "_run_selftest_bounded",
                             lambda: pytest.fail("the supervisor must not run the self-test"))
-        arguments = ["4711", "133", "310", "C:/logs/selftest.log", "what:--selftest"]
+        arguments = ["4711", "133", "0123456789abcdef0123456789abcdef", "310",
+                     "C:/logs/selftest.log", "what:--selftest"]
         monkeypatch.setattr(sys, "argv", ["ogp", runlog.SUPERVISOR_FLAG, *arguments])
         assert ogp_main.main() == 7 and handed == [arguments]
         # … also when a caller put the self-test flag itself on the command line
@@ -254,44 +330,132 @@ _HUNG_BLOCK = textwrap.dedent("""
 """)
 
 
+class _StandInSupervisor:
+    """What ``runlog.start_supervisor`` hands out — without a process behind it."""
+
+    def __init__(self, exit_code: int | None) -> None:
+        self.exit_code = exit_code
+        self.released = 0
+
+    def describe(self) -> str:
+        return "process 4711 (a stand-in), ends this one 310 s from now"
+
+    def release(self) -> None:
+        self.released += 1
+
+    def wait(self, _timeout_s: float) -> int | None:
+        return self.exit_code
+
+
 @pytest.mark.usefixtures("keep_the_qt_identity")
 class TestBoundedSelfTest:
     """Review P1-4. The watchdog used to cover the 3D render only; the Qt3D imports and
     the Agent API block could hang a release job until GitHub's six-hour limit."""
 
     @pytest.fixture(autouse=True)
-    def supervisors(self, monkeypatch) -> list[tuple[float, Any, str]]:
+    def supervisors(self, monkeypatch) -> Any:
         """The bounded self-test asks for a SUPERVISED watchdog — a second process that
-        ends this one from outside. In-process tests record the request instead of
-        starting one against the pytest process; the real one runs in children
-        (``test_a_hang_in_any_block…`` below, ``test_quick3d_selftest.py``)."""
+        ends this one from outside. In-process tests get a stand-in instead of a process
+        aimed at pytest; ``outcome`` says what it does: an exit code, ``None`` (it did
+        not leave), ``"none"`` (nothing was started) or an exception (it could not be
+        started). The real one runs in children (``test_a_hang_in_any_block…`` below,
+        ``tests/unit/test_quick3d_selftest.py``, ``tests/integration/test_quick3d_selftest.py``)."""
         from open_garden_planner.ui.view3d.quick3d import runlog
 
-        asked: list[tuple[float, Any, str]] = []
+        book = types.SimpleNamespace(asked=[], made=[], outcome=0)
 
-        def recorded(seconds: float, log_path: Any, what: str) -> None:
-            asked.append((seconds, log_path, what))
+        def start(seconds: float, log_path: Any, what: str) -> Any:
+            book.asked.append((seconds, log_path, what))
+            if isinstance(book.outcome, Exception):
+                raise book.outcome
+            if book.outcome == "none":
+                return None
+            book.made.append(_StandInSupervisor(book.outcome))
+            return book.made[-1]
 
-        monkeypatch.setattr(runlog, "start_supervisor", recorded)
-        return asked
+        monkeypatch.setattr(runlog, "start_supervisor", start)
+        return book
 
     def test_the_whole_selftest_is_supervised_from_outside(self, monkeypatch, tmp_path,
                                                            supervisors) -> None:
         """Review round 2, P2-6: in a process deadlocked inside Qt the watchdog wrote its
         dump and the process stayed alive. The supervisor ends it ``GRACE_S`` after the
-        watchdog's deadline, and is told where the log is."""
+        watchdog's deadline, and is told where the log is. Round 3, P2-5: the log says
+        that it was started, released and gone — the safety net is checked like the
+        three subsystems it guards."""
         import open_garden_planner.main as ogp_main
         from open_garden_planner.ui.view3d.quick3d import runlog
 
+        monkeypatch.setattr(sys, "platform", "win32")  # where a supervisor exists
         log_file = tmp_path / "selftest.log"
         monkeypatch.setenv("OGP_SELFTEST_LOG", str(log_file))
         monkeypatch.setattr(ogp_main, "_run_selftest", lambda _log=None: 0)
         assert ogp_main._run_selftest_bounded() == 0
-        assert supervisors == [(ogp_main.SELFTEST_WATCHDOG_S + runlog.GRACE_S, log_file, "--selftest")]
+        assert supervisors.asked == [
+            (ogp_main.SELFTEST_WATCHDOG_S + runlog.GRACE_S, log_file, "--selftest")]
         assert runlog.GRACE_S == 10.0
+        (stand_in,) = supervisors.made
+        assert stand_in.released == 1
         text = log_file.read_text(encoding="utf-8")
-        # the stand-in started none — and the log says so instead of claiming one
-        assert "what=--selftest supervisor=none (not available here)" in text
+        order = [text.index(marker) for marker in (
+            "what=--selftest supervisor=process 4711 (a stand-in)",
+            "[watchdog] released=True what=--selftest supervisor_exit=0",
+            "[selftest_supervisor] ok=True detail=started, released, left",
+            "[selftest_exit] code=0 result=PASS")]
+        assert order == sorted(order), text
+
+    @pytest.mark.parametrize(("outcome", "words"), [
+        ("none", "none (it could not be started)"),
+        (OSError("no such interpreter"),
+         "none (it could not be started: OSError: no such interpreter)"),
+        (2, "its supervising process ended with exit code 2"),
+        (3, "its supervising process ended with exit code 3"),
+        (None, "its supervising process did not leave when it was released"),
+    ], ids=["nothing started", "start raised", "refused", "failed", "did not leave"])
+    def test_without_its_supervisor_the_selftest_fails_on_windows(
+            self, monkeypatch, tmp_path, capsys, supervisors, outcome: Any, words: str) -> None:
+        """Review round 3, P2-5 — the #291 pattern in the gate's own safety net. A
+        supervisor that could not start was swallowed as ``supervisor=none`` and the
+        self-test passed: the day a build could not start it, a deadlocked self-test
+        would have held the release job, and no run before that day would have said
+        so. Every block passed here; the verdict is FAIL."""
+        import open_garden_planner.main as ogp_main
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        supervisors.outcome = outcome
+        log_file = tmp_path / "selftest.log"
+        monkeypatch.setenv("OGP_SELFTEST_LOG", str(log_file))
+        ran: list[int] = []
+        monkeypatch.setattr(ogp_main, "_run_selftest", lambda _log=None: ran.append(1) or 0)
+        assert ogp_main._run_selftest_bounded() == 1
+        assert ran == [1], "the blocks still ran: a missing supervisor fails the run, it does not skip it"
+        out = capsys.readouterr().out
+        assert f"FAIL self-test supervisor -> {words}" in out
+        assert "SELFTEST: FAIL (a hang would not have been ended)" in out
+        text = log_file.read_text(encoding="utf-8")
+        assert "[selftest_supervisor] ok=False" in text and words in text
+        assert "[selftest_exit] code=1 result=FAIL" in text
+        assert "[selftest_exit] code=0" not in text
+
+    def test_off_windows_there_is_no_supervisor_and_the_log_says_what_bounds_a_deadlock(
+            self, monkeypatch, tmp_path, supervisors) -> None:
+        """Measured on Linux: the in-process exit ends the deadlock (5 of 5). Beyond that
+        the bound is the caller's own time limit — in CI the step's — and the log line
+        says so instead of a bare "none"."""
+        import open_garden_planner.main as ogp_main
+        from open_garden_planner.ui.view3d.quick3d import runlog
+
+        monkeypatch.setattr(sys, "platform", "linux")
+        log_file = tmp_path / "selftest.log"
+        monkeypatch.setenv("OGP_SELFTEST_LOG", str(log_file))
+        monkeypatch.setattr(ogp_main, "_run_selftest", lambda _log=None: 0)
+        assert ogp_main._run_selftest_bounded() == 0
+        assert supervisors.asked == [], "no supervising process is started off Windows"
+        text = log_file.read_text(encoding="utf-8")
+        assert f"what=--selftest supervisor={runlog.NOT_NEEDED_HERE}" in text
+        assert "_exit ends the process" in runlog.NOT_NEEDED_HERE
+        assert "in CI the step's" in runlog.NOT_NEEDED_HERE
+        assert "[selftest_supervisor]" not in text and "[selftest_exit] code=0 result=PASS" in text
 
     def test_every_block_runs_under_one_watchdog_and_one_log(self, monkeypatch, tmp_path) -> None:
         import open_garden_planner.main as ogp_main

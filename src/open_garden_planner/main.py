@@ -210,7 +210,10 @@ def _run_selftest_bounded() -> int:
     ``--selftest-supervisor``) ends this one from outside when it is still alive
     ten seconds after the deadline. The in-process exit alone was measured not
     to end a process that is deadlocked inside Qt and the graphics driver
-    (``runlog.py``).
+    (``runlog.py``). That safety net is a subsystem like the three under test:
+    on Windows the self-test FAILS when its supervising process did not start,
+    refused, or did not leave when it was released (the #291 pattern - a dead
+    subsystem that the gate itself would never have noticed).
 
     If the log cannot be opened the blocks still run, still under the watchdog
     (it ends a hang without a file to dump into), and the result is FAIL: a
@@ -234,8 +237,22 @@ def _run_selftest_bounded() -> int:
     try:
         log("selftest_start", frozen=bool(getattr(sys, "frozen", False)),
             python=sys.version.split()[0])
-        with watchdog(SELFTEST_WATCHDOG_S, log, what="--selftest", supervised=True):
+        with watchdog(SELFTEST_WATCHDOG_S, log, what="--selftest", supervised=True) as armed:
             code = _run_selftest(log)
+        if sys.platform == "win32":
+            if armed.supervisor is None:
+                missing = armed.unsupervised_because
+            elif armed.supervisor_exit is None:
+                missing = "its supervising process did not leave when it was released"
+            elif armed.supervisor_exit != 0:
+                missing = f"its supervising process ended with exit code {armed.supervisor_exit}"
+            else:
+                missing = ""
+            log("selftest_supervisor", ok=not missing, detail=missing or "started, released, left")
+            if missing:
+                print(f"  FAIL self-test supervisor -> {missing}")
+                print("SELFTEST: FAIL (a hang would not have been ended)")
+                code = 1
         if log_error is not None:
             print(f"  FAIL self-test log -> {log_error!r}")
             print("SELFTEST: FAIL (no log)")

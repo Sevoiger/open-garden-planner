@@ -243,7 +243,7 @@ that gap:
 | Runner, environment | `windows-latest`, the shared locked setup, `permissions: contents: read`, no action `ci.yml` does not use |
 | Build | the release recipe, not a copy: `python installer/build_installer.py --skip-nsis` (the same script, spec and PyInstaller flags; no installer). One difference: `release.yml` passes `--version`, this does not, so the script writes `_version.py` with its default and **the pull-request bundle calls itself v1.0.0** |
 | Checks | the 8-second smoke (exit code 124, and only 124, passes), then `--selftest` and the step that prints its log — both with the SAME scripts as `release.yml` (a test pins the texts as identical) |
-| Limits | job 45 minutes; build step 30, smoke step 5, self-test step 10 |
+| Limits | EVERY step has one — checkout 5, environment 10, build 30, smoke 5, self-test 10, log 2: 62 minutes together — and the job's, 70, is larger than their sum. A job limit that ends a step also ends the step that prints the log; the first version's three step limits added up to exactly its job's 45 (a test pins the inequality) |
 | Cost | one Windows build per push to such a pull request. Not measured yet (the workflow has not run); a release run, which also builds the installer, takes 9–13 minutes |
 | Protection | NOT a required check: a required check that a path filter skips never reports, and would block every pull request it does not run on |
 
@@ -298,16 +298,31 @@ from source 2.2–4.3 s and 2.1–5.7 s. With other test suites running on the m
 frozen exe took 6.1–7.2 s on either adapter — the 3D frame itself 1.0–1.8 s on a quiet
 machine, 4.0–6.5 s on a busy one.
 
+**The exe's flags.**
+
+| Flag | For | What it does |
+|---|---|---|
+| (none) | everybody | the application |
+| `--selftest` | the release gate; a developer before a merge | the three blocks above; the exit code is the verdict |
+| `--spike-q3d …` | nobody any more | the dormant L0 spike (ADR-048); it retires in L1.10 |
+| `--selftest-supervisor` and six arguments | **internal** — only the self-test's own watchdog passes it | the process that ends a hung self-test from outside (below). Started by hand, or with arguments that do not name a running block of its own parent process, it refuses: one line, exit code 2, nothing opened, nothing terminated. (0: it had nothing to do, or it did its job; 3: it failed itself) |
+
 **It cannot hang a job.** Inside the exe ONE watchdog bounds the whole self-test — all three
 blocks, not only the render: after 300 s it writes the reason in words and every thread's stack
 into the log and ends the process with exit code 1; without a log file and without a stderr it
 still ends the process. That exit was measured NOT to end a Windows process whose threads are
 deadlocked inside Qt (§11.4.9), so the watchdog is supervised: the exe starts itself a second
-time (with the flag `--selftest-supervisor` and the first process's pid), and that process terminates the
+time (`--selftest-supervisor` with the first process's pid and creation time, a random name
+for this run's release event, the deadline and the log), and that process terminates the
 first with exit code 1 — and says so in the log — when it is still alive at 310 s. It ends
-with the self-test and can only ever touch the process it was started for. Around it, the
-workflow steps that run the self-test have a limit of 10 minutes and their jobs one of 45 (a
-release run takes 9–13 minutes).
+with the self-test and can only ever touch the process that started it, for the one run it
+was started for. **On Windows the self-test FAILS when that process did not start, refused,
+or did not leave after its release** — the log's `[selftest_supervisor]` line says which; a
+missing safety net used to pass unnoticed. On other platforms there is none: the in-process
+exit was measured to end the deadlock on Linux, and beyond that the bound is the caller's own
+time limit — in CI the step's — which the log's `[watchdog]` line says in so many words.
+Around it, the workflow steps that run the self-test have a limit of 10 minutes; the release
+job has one of 45 (a release run takes 9–13 minutes), the pull-request job one of 70.
 
 **The exit code alone decides; the log has a step of its own.** The self-test writes a log —
 the exe has no stdout — into the app's per-user log directory beside `app.log` (never the temp

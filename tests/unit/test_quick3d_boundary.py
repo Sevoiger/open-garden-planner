@@ -10,6 +10,9 @@ The scan is an AST scan over the WHOLE source tree, and it also reads module
 names out of string literals: ``__import__("PyQt6.QtQuick3D")`` is an import.
 The dormant L0 spike keeps its own, older rule (``test_spike_q3d_isolation.py``)
 until it retires in L1.10.
+
+The second half of the file is the same kind of scan for a second boundary: NO
+PYTHON ON QT'S RENDER THREAD (review round 3; see the section's own comment).
 """
 
 from __future__ import annotations
@@ -213,3 +216,238 @@ def test_the_engine_free_modules_load_without_the_engine(tmp_path: Path) -> None
         tmp_path)
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert proc.stdout.strip().splitlines()[-1] == "[]"
+
+
+# ── no Python on Qt's render thread (review rounds 2 and 3) ──────────────────
+#
+# Qt renders a shown Qt Quick window on a thread of its own. Python that Qt calls on that
+# thread needs the interpreter lock; when the GUI thread holds it inside a Qt call that
+# waits for the render thread (``hide()``), the process deadlocks for good — measured 5 of
+# 5 on Direct3D 11 (GPU and WARP) and on xcb, with a Python Qt message handler
+# (``qt_messages.py``; the render tier's control is
+# ``test_a_python_message_handler_beside_a_shown_window_deadlocks``).
+#
+# The host does NOT refuse to show itself while such a handler is installed (ruled out:
+# the host cannot know whose handler it is). What keeps the product clear of the hazard is
+# static, and it is this scan. It is NECESSARY, NOT SUFFICIENT. It sees: this repository's
+# own source naming a process-wide hook, reaching the recorder's ``install``, or touching a
+# render-thread signal other than through the queued helper. It cannot see: a handler that
+# a third-party package or a plugin installs (pytest-qt does, per test — the tests that
+# show hosts switch it off: ``no_qt_log``); C++ code; a name put together at run time;
+# and a Python OVERRIDE of a virtual that Qt calls on the render thread
+# (``QQuickItem.updatePaintNode``, a ``QSGRenderNode``, a ``QQuickFramebufferObject``
+# renderer) — the product has none, and anybody who adds one owns this problem. The
+# run-time witness is ``Quick3DHost.slot_calls_off_the_gui_thread``, which the render
+# tier requires to be 0.
+
+#: Qt calls that install a process-wide Python callback, run on WHATEVER thread logs.
+PROCESS_WIDE_HOOKS = frozenset({"qInstallMessageHandler", "installFilter"})
+SPIKE = PRODUCT / "spike_q3d"
+#: The files that may name one: the offscreen render's recorder — and the dormant L0
+#: spike's own (it installs one beside shown windows; ``--spike-q3d`` only, and it retires
+#: with the spike in L1.10).
+HOOK_FILES = {PACKAGE / "qt_messages.py", SPIKE / "qt_messages.py"}
+#: The one module that may reach the recorder's ``install``: the offscreen render, which
+#: refuses beside a shown window BEFORE it installs.
+RECORDER = "qt_messages"
+RECORDER_CALLERS = {PACKAGE / "offscreen.py"}
+#: Signals a Qt Quick window emits on its render thread (or may: Qt documents them as
+#: "emitted from the scene graph rendering thread" under the threaded render loop).
+RENDER_THREAD_SIGNALS = frozenset({
+    "frameSwapped", "sceneGraphError", "sceneGraphInitialized", "sceneGraphInvalidated",
+    "sceneGraphAboutToStop", "beforeSynchronizing", "afterSynchronizing", "beforeRendering",
+    "afterRendering", "beforeRenderPassRecording", "afterRenderPassRecording",
+    "beforeFrameBegin", "afterFrameEnd"})
+#: The one way to connect one: ``host._connect_queued(signal, slot)``.
+QUEUED_HELPER = "_connect_queued"
+
+
+def hook_names(path: Path) -> set[str]:
+    """Every way a file can NAME a process-wide hook: as a name, an attribute, an
+    imported name, or a string (``getattr(QtCore, "qInstallMessageHandler")``)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            found.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            found.add(node.attr)
+        elif isinstance(node, ast.alias):
+            found.add(node.name.rsplit(".", 1)[-1])
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.add(node.value)
+    return found & PROCESS_WIDE_HOOKS
+
+
+def recorder_reach(path: Path) -> set[str]:
+    """How a file can reach the recorder's ``install``: it binds the module
+    ``qt_messages`` (then every call on it counts), imports ``install`` / ``uninstall``
+    from it, or names the module in a string. Importing its pure helpers
+    (``classify``, ``graphics_adapter``) is not a reach."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names
+                         if alias.name.rsplit(".", 1)[-1] == RECORDER)
+        elif isinstance(node, ast.ImportFrom):
+            module = (node.module or "").rsplit(".", 1)[-1]
+            for alias in node.names:
+                if alias.name == RECORDER:
+                    found.add(f"from {'.' * node.level}{node.module or ''} import {RECORDER}")
+                elif module == RECORDER and alias.name in ("install", "uninstall", "*"):
+                    found.add(f"{RECORDER}.{alias.name}")
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and node.value.rsplit(".", 1)[-1] == RECORDER and " " not in node.value):
+            found.add(repr(node.value))
+    return found
+
+
+def unqueued_render_thread_signals(path: Path) -> list[str]:
+    """Uses of a render-thread signal that are NOT the first argument of the queued
+    helper — a direct ``.connect``, a connect with the connection type spelled out by
+    hand, the signal handed to anything else, or its name in a string (``getattr``)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    queued = {id(node.args[0]) for node in ast.walk(tree)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+              and node.func.id == QUEUED_HELPER and node.args}
+    found = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Attribute) and node.attr in RENDER_THREAD_SIGNALS
+                and id(node) not in queued):
+            found.append(f"{path.name}:{node.lineno} {ast.unparse(node)}")
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and node.value in RENDER_THREAD_SIGNALS):
+            found.append(f"{path.name}:{node.lineno} {node.value!r}")
+    return found
+
+
+def _product_sources() -> list[Path]:
+    """The shipped product without the dormant spike (which predates every rule here and
+    is deleted in L1.10; ``test_the_spike_is_the_only_exception…`` says what it does)."""
+    return [path for path in _sources() if SPIKE not in path.parents]
+
+
+def test_only_the_recorder_names_a_process_wide_qt_hook() -> None:
+    """``qInstallMessageHandler`` and ``QLoggingCategory.installFilter`` — nowhere in
+    ``src/`` but in the two allow-listed files."""
+    namers = {path for path in _sources() if hook_names(path)}
+    assert namers <= HOOK_FILES, sorted(str(path.relative_to(SRC)) for path in namers - HOOK_FILES)
+    assert hook_names(PACKAGE / "qt_messages.py") == {"qInstallMessageHandler"}
+    assert not any(hook_names(path) for path in _product_sources()
+                   if path != PACKAGE / "qt_messages.py")
+
+
+def test_only_the_offscreen_render_reaches_the_recorders_install() -> None:
+    """…and it refuses beside a shown window before it does (``render_records``): the
+    refusal's question is asked on an earlier line than the install."""
+    reachers = {path for path in _product_sources() if recorder_reach(path)}
+    assert reachers == RECORDER_CALLERS, sorted(str(path.relative_to(SRC)) for path in reachers)
+    tree = ast.parse((PACKAGE / "offscreen.py").read_text(encoding="utf-8"))
+    functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+    installs = [(function.name, node.lineno) for function in functions for node in ast.walk(function)
+                if isinstance(node, ast.Call) and ast.unparse(node.func) == f"{RECORDER}.install"]
+    assert [name for name, _line in installs] == ["render_records"], installs
+    (render,) = [function for function in functions if function.name == "render_records"]
+    asked = [node.lineno for node in ast.walk(render)
+             if isinstance(node, ast.Call) and ast.unparse(node.func) == "shown_quick_windows"]
+    raised = [node.lineno for node in ast.walk(render) if isinstance(node, ast.Raise)]
+    assert asked and asked[0] < installs[0][1], "the question comes before the install"
+    assert any(asked[0] < line < installs[0][1] for line in raised), "and so does the refusal"
+
+
+def test_every_render_thread_signal_is_connected_queued() -> None:
+    """A Python slot on ``frameSwapped`` / ``sceneGraphError`` / the ``afterRendering``
+    family runs on the render thread unless the connection is queued — the same hazard
+    as a message handler. The product touches these signals only through ONE helper,
+    whose body is the queued connect. (Qt's automatic connection type would queue as
+    well while the receiver lives on the GUI thread; the explicit form does not depend
+    on where the receiver lives.)"""
+    offenders = [use for path in _product_sources() for use in unqueued_render_thread_signals(path)]
+    assert offenders == []
+    host = ast.parse((PACKAGE / "host.py").read_text(encoding="utf-8"))
+    helpers = [(path.name, node) for path in _product_sources()
+               for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+               if isinstance(node, ast.FunctionDef) and node.name == QUEUED_HELPER]
+    assert [name for name, _node in helpers] == ["host.py"], "one helper, one definition"
+    body = [statement for statement in helpers[0][1].body
+            if not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant))]
+    assert [ast.unparse(statement) for statement in body] == ["signal.connect(slot, _QUEUED)"]
+    queued = [ast.unparse(node.value) for node in ast.walk(host)
+              if isinstance(node, ast.AnnAssign) and ast.unparse(node.target) == "_QUEUED"]
+    assert queued == ["Qt.ConnectionType.QueuedConnection"]
+    connected = sorted(ast.unparse(node.args[0]).rsplit(".", 1)[-1] for node in ast.walk(host)
+                       if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                       and node.func.id == QUEUED_HELPER)
+    assert connected == ["frameSwapped", "sceneGraphError"], "what the host listens to today"
+
+
+def test_the_spike_is_the_only_exception_and_it_is_dormant() -> None:
+    """Record, not approval: the L0 spike installs a process-wide Python handler and
+    connects render-thread signals directly, beside shown windows. It runs only under
+    ``--spike-q3d`` and is deleted in L1.10; until then this pins that the exception has
+    not grown beyond the spike's own two files."""
+    assert {path.relative_to(SPIKE).as_posix() for path in SPIKE.rglob("*.py") if hook_names(path)} == {
+        "qt_messages.py"}
+    direct = {path.relative_to(SPIKE).as_posix() for path in SPIKE.rglob("*.py")
+              if unqueued_render_thread_signals(path)}
+    assert direct == {"quick.py"}
+    importers = sorted(
+        str(path.relative_to(PRODUCT)) for path in _product_sources()
+        if any(isinstance(node, (ast.Import, ast.ImportFrom)) and "spike_q3d" in ast.unparse(node)
+               for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))))
+    assert importers == ["main.py"], "only main's --spike-q3d dispatch names the spike"
+
+
+@pytest.mark.parametrize(("source", "expected"), [
+    ("from PyQt6.QtCore import qInstallMessageHandler\n", {"qInstallMessageHandler"}),
+    ("from PyQt6.QtCore import qInstallMessageHandler as hook\n", {"qInstallMessageHandler"}),
+    ("from PyQt6 import QtCore\nQtCore.qInstallMessageHandler(print)\n", {"qInstallMessageHandler"}),
+    ("import PyQt6.QtCore as c\nh = c.qInstallMessageHandler\n", {"qInstallMessageHandler"}),
+    ("from PyQt6 import QtCore\nh = getattr(QtCore, 'qInstallMessageHandler')\n",
+     {"qInstallMessageHandler"}),
+    ("from PyQt6.QtCore import QLoggingCategory\nQLoggingCategory.installFilter(print)\n",
+     {"installFilter"}),
+    ("def f(view, watch):\n    view.installEventFilter(watch)\n", set()),
+    ('"""Never call qInstallMessageHandler beside a shown window."""\n', set()),
+])
+def test_the_hook_scan_sees_every_spelling(tmp_path: Path, source: str, expected: set[str]) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(source, encoding="utf-8")
+    assert hook_names(probe) == expected
+
+
+@pytest.mark.parametrize(("source", "reaches"), [
+    ("from . import qt_messages\n", True),
+    ("from . import qt_messages as recorder\n", True),
+    ("from open_garden_planner.ui.view3d.quick3d import qt_messages\n", True),
+    ("import open_garden_planner.ui.view3d.quick3d.qt_messages\n", True),
+    ("from .qt_messages import install\n", True),
+    ("from .qt_messages import uninstall as off\n", True),
+    ("from .qt_messages import *\n", True),
+    ("import importlib\nm = importlib.import_module('open_garden_planner.ui.view3d.quick3d.qt_messages')\n",
+     True),
+    ("from .qt_messages import classify, graphics_adapter\n", False),
+    ('"""See qt_messages.py for why."""\nfrom .host import Quick3DHost\n', False),
+])
+def test_the_recorder_scan_sees_every_way_in(tmp_path: Path, source: str, reaches: bool) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(source, encoding="utf-8")
+    assert bool(recorder_reach(probe)) is reaches
+
+
+@pytest.mark.parametrize(("source", "unqueued"), [
+    ("def f(view, slot):\n    _connect_queued(view.frameSwapped, slot)\n", 0),
+    ("def f(view, slot):\n    view.frameSwapped.connect(slot)\n", 1),
+    ("def f(view, slot):\n    view.afterRendering.connect(slot, Qt.ConnectionType.QueuedConnection)\n", 1),
+    ("def f(view, slot):\n    view.sceneGraphError.connect(slot, Qt.ConnectionType.DirectConnection)\n", 1),
+    ("def f(view, slot):\n    signal = view.beforeSynchronizing\n    signal.connect(slot)\n", 1),
+    ("def f(view, slot):\n    getattr(view, 'afterFrameEnd').connect(slot)\n", 1),
+    ("def f(view, slot):\n    _connect_queued(slot, view.frameSwapped)\n", 1),
+    ("def f(view, slot):\n    view.widthChanged.connect(slot)\n", 0),
+])
+def test_the_signal_scan_sees_every_connect_that_is_not_the_helpers(
+        tmp_path: Path, source: str, unqueued: int) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(source, encoding="utf-8")
+    assert len(unqueued_render_thread_signals(probe)) == unqueued

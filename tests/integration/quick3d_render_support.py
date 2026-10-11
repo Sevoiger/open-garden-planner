@@ -12,13 +12,22 @@ Running the tier (opt-in; it opens windows on the desktop)::
 
     <files> = tests/integration/test_quick3d_render.py tests/integration/test_quick3d_engine.py
 
-TWO rules for every child process a test of the engine package starts:
+THREE rules for every child process a test of the engine package starts:
 
+- **It never builds a settings store on the developer's key.** The app's settings are a
+  registry key on Windows, which no environment variable moves; ``tests/conftest.py``
+  rebinds the store's names for the test process, and a child does not import
+  conftest. ``isolated_env`` therefore puts ``quick3d_child_site`` first on the
+  child's ``PYTHONPATH``: its ``sitecustomize`` rebinds the names the moment the
+  child imports the app's settings module — before a store can exist — and empties
+  the child's own key at exit. (Loading a plan ends with a write to Recent Files.)
 - **It never sees the developer's data, and leaves nothing in the developer's
   profile.** ``isolated_env`` points the variables the app's data directory hangs on
   at a directory of the test's own, and the user PROFILE itself (which Qt's standard
-  paths and the graphics driver's caches follow) at one of this test process's own —
-  whatever the parent's environment says.
+  paths and the graphics driver's caches follow: ``USERPROFILE`` on Windows, ``HOME``
+  elsewhere) at one of this test process's own — whatever the parent's environment
+  says. It is the parent's environment with those variables REPLACED, not an empty
+  one: a child still needs ``PATH``, the display, the CI switches.
 - **No Python Qt message handler beside a shown window.** Qt renders a shown window
   on a thread of its own, and PyQt's handler trampoline needs the GIL: the two
   deadlock (``qt_messages.py``). So the driver installs none for its shown-host
@@ -33,6 +42,7 @@ import atexit
 import json
 import os
 import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -50,6 +60,11 @@ from open_garden_planner.ui.view3d.quick3d.shots import TopDownShot, top_down_pi
 REPO = Path(__file__).resolve().parents[2]
 DRIVER = Path(__file__).resolve().with_name("quick3d_render_driver.py")
 QML_SOURCE = REPO / "src" / "open_garden_planner" / "ui" / "view3d" / "quick3d" / "qml"
+#: A directory that holds one file, ``sitecustomize.py``: Python imports it at start-up in
+#: every child whose environment ``isolated_env`` built (module docstring, first rule).
+CHILD_SITE = Path(__file__).resolve().with_name("quick3d_child_site")
+#: Set in every environment ``isolated_env`` builds: "this process was started isolated".
+ISOLATED_MARK = "OGP_TEST_ISOLATED_CHILD"
 DRIVER_TIMEOUT_S = 840
 QT_ERRORS_EXIT = 4
 #: How Qt prints a message on the child's stderr, and what the driver prints between
@@ -121,8 +136,9 @@ def profile_dirs() -> dict[str, str]:
     Windows: ``USERPROFILE``. Measured (Qt 6.11): the shell expands its known folders
     from it, so ``QStandardPaths`` answers ``<USERPROFILE>/AppData/Roaming`` and
     ``…/AppData/Local`` — it does NOT read ``APPDATA``. ``LOCALAPPDATA`` goes along
-    for code that reads the variable. Elsewhere: ``XDG_CACHE_HOME`` (the data and
-    config homes are per test: ``private_dirs``).
+    for code that reads the variable. Elsewhere: ``HOME`` — what every XDG location
+    without a variable of its own falls back to (the state directory, Documents) —
+    and ``XDG_CACHE_HOME`` (the data and config homes are per test: ``private_dirs``).
     """
     profile = session_profile()
     if sys.platform == "win32":
@@ -130,15 +146,37 @@ def profile_dirs() -> dict[str, str]:
         local.mkdir(parents=True, exist_ok=True)
         (profile / "AppData" / "Roaming").mkdir(parents=True, exist_ok=True)
         return {"USERPROFILE": str(profile), "LOCALAPPDATA": str(local)}
-    cache = profile / "cache"
+    cache, home = profile / "cache", profile / "home"
     cache.mkdir(parents=True, exist_ok=True)
-    return {"XDG_CACHE_HOME": str(cache)}
+    home.mkdir(parents=True, exist_ok=True)
+    return {"HOME": str(home), "XDG_CACHE_HOME": str(cache)}
+
+
+def kept_from_the_real_home(environ: dict[str, str]) -> dict[str, str]:
+    """What a child still needs once ``HOME`` points elsewhere (not on Windows) — two
+    read-only lookups, named so that nothing else follows the real home by accident:
+
+    - ``PYTHONUSERBASE``: Python's per-user site directory hangs on ``HOME``; a
+      ``pip install --user`` environment would lose its packages in the child;
+    - ``XAUTHORITY``: Xlib falls back to ``~/.Xauthority`` for the display's cookie
+      (``xvfb-run`` sets the variable itself).
+    """
+    if sys.platform == "win32":
+        return {}
+    kept = {}
+    user_base = site.getuserbase()
+    if "PYTHONUSERBASE" not in environ and user_base:
+        kept["PYTHONUSERBASE"] = user_base
+    cookie = Path.home() / ".Xauthority"
+    if "XAUTHORITY" not in environ and cookie.is_file():
+        kept["XAUTHORITY"] = str(cookie)
+    return kept
 
 
 def isolated_env(scratch: Path, **extra: str) -> dict[str, str]:
-    """A child's environment that cannot reach the developer's data or profile, with
-    THIS checkout's code on its path — the base of every child a test of the engine
-    package starts.
+    """A child's environment that cannot reach the developer's data, profile or
+    settings, with THIS checkout's code on its path — the base of every child a test
+    of the engine package starts.
 
     ``APPDATA`` / ``XDG_DATA_HOME`` / ``XDG_CONFIG_HOME`` are set EXPLICITLY to
     directories under ``scratch`` (``private_dirs``), whatever the parent has: the
@@ -146,13 +184,17 @@ def isolated_env(scratch: Path, **extra: str) -> dict[str, str]:
     and a child that loads a plan creates them. The user profile is this test
     process's own (``profile_dirs``): logs and caches. PYTHONPATH: a
     ``python tests/…/driver.py`` child would otherwise import whatever the venv's
-    editable install points at — from a git worktree, the main checkout.
+    editable install points at — from a git worktree, the main checkout. Its FIRST
+    entry is ``CHILD_SITE``: the start-up hook that gives the child a settings key
+    of its own.
     """
     env = dict(os.environ)
+    env.update(kept_from_the_real_home(env))  # read BEFORE the home moves
     env.update(private_dirs(scratch))
     env.update(profile_dirs())
-    paths = [str(REPO / "src"), str(REPO), env.get("PYTHONPATH", "")]
+    paths = [str(CHILD_SITE), str(REPO / "src"), str(REPO), env.get("PYTHONPATH", "")]
     env["PYTHONPATH"] = os.pathsep.join(p for p in paths if p)
+    env[ISOLATED_MARK] = "1"
     env.update(extra)
     return env
 

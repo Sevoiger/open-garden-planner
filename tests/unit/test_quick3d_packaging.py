@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -228,13 +231,27 @@ class TestFrozenSelftestWorkflow:
         script = (REPO / "installer" / "build_installer.py").read_text(encoding="utf-8")
         assert '"--skip-nsis"' in script and '"--noconfirm"' in script and '"--clean"' in script
 
-    def test_the_build_step_has_a_limit_of_its_own(self) -> None:
-        """Review round 2, P2-10: only the job's 45 minutes bounded the build."""
+    def test_every_step_has_a_limit_and_the_jobs_is_larger_than_their_sum(self) -> None:
+        """Review round 2, P2-10: only the job's 45 minutes bounded the build. Round 3,
+        P2-9: the three step limits then added up to exactly those 45 — before checkout
+        and the environment — and this test pinned ``max(limits) < job``, the wrong
+        inequality. The job's limit must never be what ends a step (the step that
+        prints the log would not get its turn): EVERY step has a limit, and the job's
+        is larger than their sum."""
         step = _step(FROZEN, "Build the bundle")
         assert "        timeout-minutes: 30\n" in step
-        limits = [int(n) for n in re.findall(r"^        timeout-minutes: (\d+)$", _code(FROZEN), re.MULTILINE)]
+        code = _code(FROZEN)
+        steps = re.findall(r"^      - (?:name|uses): (.+)$", code, re.MULTILINE)
+        limits = [int(n) for n in re.findall(r"^        timeout-minutes: (\d+)$", code, re.MULTILINE)]
         job = int(re.search(r"^    timeout-minutes: (\d+)$", FROZEN, re.MULTILINE).group(1))  # type: ignore[union-attr]
-        assert limits == [30, 5, 10] and max(limits) < job, "each step ends before the job does"
+        assert len(steps) == 6 and steps[:2] == ["actions/checkout@v4", "./.github/actions/setup-locked-env"]
+        assert limits == [5, 10, 30, 5, 10, 2], "one limit per step, in the steps' order"
+        for name, after in zip(steps, re.split(r"^      - (?:name|uses): .+$", code, flags=re.MULTILINE)[1:],
+                               strict=True):
+            assert len(re.findall(r"^        timeout-minutes: \d+$", after, re.MULTILINE)) == 1, name
+        assert job > sum(limits), f"the job's {job} min must exceed the steps' {sum(limits)}"
+        assert job - sum(limits) >= 5, "and leave room for the runner's own set-up and clean-up"
+        assert f"({sum(limits)} minutes)" in FROZEN, "the comment beside the job's limit states the sum"
 
     def test_the_comments_say_what_the_bundle_and_the_smoke_really_are(self) -> None:
         """Review round 2, P2-7 / P2-10. The workflow said "no ``_version.py`` is written"
@@ -360,7 +377,8 @@ def test_the_driver_gets_a_real_platform_and_this_checkouts_code(monkeypatch, tm
     assert (linux["QT_QPA_PLATFORM"], linux["QSG_RHI_BACKEND"]) == ("xcb", "opengl")
     assert linux["LIBGL_ALWAYS_SOFTWARE"] == "1" and linux["XDG_CONFIG_HOME"].startswith(str(tmp_path))
     for env in (windows, linux):
-        first, second = env["PYTHONPATH"].split(support.os.pathsep)[:2]
+        hook, first, second = env["PYTHONPATH"].split(support.os.pathsep)[:3]
+        assert Path(hook) == support.CHILD_SITE, "the settings hook comes before everything"
         assert Path(first) == REPO / "src" and Path(second) == REPO
     forced = support.render_env(tmp_path, QT_QPA_PLATFORM="offscreen")
     assert forced["QT_QPA_PLATFORM"] == "offscreen"  # a test may ask for the no-3D platform
@@ -380,9 +398,11 @@ def test_no_child_of_an_engine_test_can_reach_the_developers_data_or_profile(
     from tests.integration import quick3d_render_support as support
 
     data = [name for name, _folder in support.PRIVATE_DIRS]
-    moved = ["USERPROFILE", "LOCALAPPDATA"] if platform == "win32" else ["XDG_CACHE_HOME"]
+    # review round 3, P2-8: HOME was left alone off Windows — and every XDG location
+    # without a variable of its own (the state directory, Documents) follows it
+    moved = ["USERPROFILE", "LOCALAPPDATA"] if platform == "win32" else ["HOME", "XDG_CACHE_HOME"]
     assert data == ["APPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]
-    for name in (*data, "USERPROFILE", "LOCALAPPDATA", "XDG_CACHE_HOME"):
+    for name in (*data, "USERPROFILE", "LOCALAPPDATA", "XDG_CACHE_HOME", "HOME"):
         monkeypatch.setenv(name, str(tmp_path / "the-developers-own" / name))
     monkeypatch.setattr(support.sys, "platform", platform)
     scratch = tmp_path / "scratch"
@@ -400,10 +420,111 @@ def test_no_child_of_an_engine_test_can_reach_the_developers_data_or_profile(
     assert tmp_path not in profile.parents and profile != Path.home()
 
 
+def test_what_a_child_keeps_from_the_real_home_is_named(monkeypatch, tmp_path: Path) -> None:
+    """Off Windows the child's ``HOME`` is not the developer's. Two things a child reads
+    from the real one are handed over by name — Python's per-user site directory and the
+    X display's cookie — and only when the parent has not set them itself."""
+    from tests.integration import quick3d_render_support as support
+
+    home = tmp_path / "the-developers-own" / "home"
+    home.mkdir(parents=True)
+    (home / ".Xauthority").write_bytes(b"cookie")
+    monkeypatch.setattr(support.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(support.site, "getuserbase", lambda: str(home / ".local"))
+    monkeypatch.delenv("PYTHONUSERBASE", raising=False)
+    monkeypatch.delenv("XAUTHORITY", raising=False)
+
+    monkeypatch.setattr(support.sys, "platform", "linux")
+    env = support.isolated_env(tmp_path / "scratch")
+    assert Path(env["HOME"]) != home and support.session_profile() in Path(env["HOME"]).parents
+    assert env["PYTHONUSERBASE"] == str(home / ".local")
+    assert env["XAUTHORITY"] == str(home / ".Xauthority")
+    # what the parent set itself is passed through, not replaced
+    monkeypatch.setenv("PYTHONUSERBASE", "/opt/base")
+    monkeypatch.setenv("XAUTHORITY", "/tmp/xvfb-run.cookie")  # noqa: S108 - a name, never opened
+    env = support.isolated_env(tmp_path / "scratch")
+    assert (env["PYTHONUSERBASE"], env["XAUTHORITY"]) == ("/opt/base", "/tmp/xvfb-run.cookie")  # noqa: S108
+    # nothing of the kind on Windows: the profile variable is USERPROFILE there
+    monkeypatch.delenv("PYTHONUSERBASE")
+    monkeypatch.delenv("XAUTHORITY")
+    monkeypatch.setattr(support.sys, "platform", "win32")
+    assert support.kept_from_the_real_home({}) == {}
+
+
+_ENV_HELPERS = ("isolated_env", "render_env", "_child_env")
+
+
+def _helper_call(node: ast.AST | None) -> bool:
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in _ENV_HELPERS)
+
+
+def child_environment_problems(source: str, name: str = "<source>") -> tuple[list[str], int]:
+    """What is wrong with the way a test file builds its children's environments, and
+    how many children it starts.
+
+    The rule: every ``subprocess.run`` / ``Popen`` gets ``env=`` — a call of one of the
+    helpers, or a variable that the SAME function assigns from such a call and from
+    nothing else (never a parameter, never a module global). ``os.environ`` is read key
+    by key and never handed on whole; a local ``_child_env`` must itself return a
+    helper's call. (``taskkill``, the tree kill, runs no code of ours.)"""
+    tree = ast.parse(source, filename=name)
+    parent: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+    problems: list[str] = []
+    children = 0
+    for node in ast.walk(tree):
+        whole_environ = (isinstance(node, ast.Attribute) and node.attr == "environ"
+                         and isinstance(node.value, ast.Name) and node.value.id == "os")
+        if whole_environ and not isinstance(parent.get(node), (ast.Attribute, ast.Subscript, ast.Compare)):
+            problems.append(f"{name}:{node.lineno} hands on the parent's whole environment: "
+                            f"{ast.unparse(parent[node])[:60]}")
+        if isinstance(node, ast.FunctionDef) and node.name == "_child_env":
+            returns = [inner for inner in ast.walk(node) if isinstance(inner, ast.Return)]
+            if len(returns) != 1 or not _helper_call(returns[0].value):
+                problems.append(f"{name}:{node.lineno} _child_env() does not return a helper's call")
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("run", "Popen")
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"):
+            continue
+        if "taskkill" in ast.unparse(node):
+            continue
+        children += 1
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        if "env" not in keywords:
+            problems.append(f"{name}:{node.lineno} starts a child with the parent's environment")
+            continue
+        value = keywords["env"]
+        if _helper_call(value):
+            continue
+        function: ast.AST | None = node
+        while function is not None and not isinstance(function, ast.FunctionDef):
+            function = parent.get(function)
+        if not isinstance(value, ast.Name) or function is None:
+            problems.append(f"{name}:{node.lineno}: env={ast.unparse(value)[:60]} is not a helper's call")
+            continue
+        arguments = function.args
+        if value.id in {argument.arg for argument in (
+                *arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)}:
+            problems.append(f"{name}:{node.lineno}: env={value.id} is a parameter of "
+                            f"{function.name}(): anything could be passed")
+            continue
+        sources = [inner.value for inner in ast.walk(function)
+                   if isinstance(inner, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))
+                   and any(isinstance(target, ast.Name) and target.id == value.id
+                           for target in (inner.targets if isinstance(inner, ast.Assign) else [inner.target]))]
+        if not sources or not all(_helper_call(made) for made in sources):
+            problems.append(f"{name}:{node.lineno}: env={value.id} is not built by a helper alone "
+                            f"in {function.name}()")
+    return problems, children
+
+
 def test_every_child_environment_of_the_engine_tests_is_built_by_the_helper() -> None:
-    """…and nobody builds a child's environment by hand again: the tests of the engine
-    package never copy ``os.environ`` themselves, and every ``env=`` they pass names a
-    variable — which the two tests above show can only come from the helper."""
+    """…and nobody builds a child's environment by hand again (``child_environment_problems``
+    states the rule). Review round 3, P2-8: this guard used to accept ANY variable that
+    was called ``env``."""
     files = [*sorted((REPO / "tests").glob("*/test_quick3d_*.py")),
              *sorted((REPO / "tests" / "integration").glob("quick3d_*.py")),
              REPO / "tests" / "unit" / "test_main_hardening.py"]
@@ -412,22 +533,229 @@ def test_every_child_environment_of_the_engine_tests_is_built_by_the_helper() ->
     for path in files:
         if path.name == "quick3d_render_support.py":
             continue  # the helper itself
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                call = ast.unparse(node)
-                assert not call.startswith(("dict(os.environ", "os.environ.copy(")), (
-                    f"{path.name}:{node.lineno} copies the parent's environment: {call[:60]}")
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in ("run", "Popen")
-                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"):
-                continue
-            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-            if path.name == "quick3d_lifecycle_child.py" or "taskkill" in ast.unparse(node):
-                continue  # not a child of the tests' own code (the tree kill)
-            children += 1
-            assert "env" in keywords, f"{path.name}:{node.lineno} starts a child with the parent's environment"
-            value = ast.unparse(keywords["env"])
-            assert value == "env" or value.startswith(("isolated_env(", "render_env(", "_child_env(")), (
-                f"{path.name}:{node.lineno}: env={value}")
-    assert children >= 10
+        problems, started = child_environment_problems(path.read_text(encoding="utf-8"), path.name)
+        assert not problems, "\n".join(problems)
+        children += started
+    assert children >= 14
+
+
+@pytest.mark.parametrize(("body", "problem"), [
+    ("    subprocess.run(cmd, env=isolated_env(tmp_path))\n", None),
+    ("    env = render_env(tmp_path)\n    env['X'] = '1'\n    subprocess.run(cmd, env=env)\n", None),
+    ("    subprocess.run(['taskkill', '/F'], check=False)\n", None),
+    ("    home = os.environ.get('HOME')\n    subprocess.run(cmd, env=_child_env(tmp_path))\n", None),
+    ("    subprocess.run(cmd)\n", "starts a child with the parent's environment"),
+    ("    env = dict(os.environ)\n    subprocess.run(cmd, env=env)\n", "whole environment"),
+    ("    env = os.environ.copy()\n    subprocess.run(cmd, env=env)\n", "not built by a helper alone"),
+    ("    env = {**os.environ, 'X': '1'}\n    subprocess.run(cmd, env=env)\n", "whole environment"),
+    ("    env = {'PATH': '/bin'}\n    subprocess.run(cmd, env=env)\n", "not built by a helper alone"),
+    ("    env = isolated_env(tmp_path)\n    env = other()\n    subprocess.run(cmd, env=env)\n",
+     "not built by a helper alone"),
+    ("    env = isolated_env(tmp_path)\n    env.update(os.environ)\n    subprocess.run(cmd, env=env)\n",
+     "whole environment"),
+    ("    subprocess.Popen(cmd, env=GLOBAL_ENV)\n", "not built by a helper alone"),
+    ("    subprocess.run(cmd, env=make_env())\n", "is not a helper's call"),
+], ids=["helper call", "variable from a helper", "tree kill", "a key read", "no env", "dict copy",
+        "environ.copy", "unpacked", "hand-made", "reassigned", "updated from the parent",
+        "module global", "another function"])
+def test_the_child_environment_guard_sees_what_it_is_for(body: str, problem: str | None) -> None:
+    source = "import os, subprocess\ndef test_it(tmp_path):\n" + body
+    problems, children = child_environment_problems(source)
+    assert children == (0 if "taskkill" in body else 1), "the tree kill is not a child of ours"
+    if problem is None:
+        assert problems == []
+    else:
+        assert any(problem in line for line in problems), problems
+
+
+def test_the_child_environment_guard_refuses_a_parameter_and_a_loose_wrapper() -> None:
+    by_parameter = "import subprocess\ndef run(cmd, env):\n    subprocess.run(cmd, env=env)\n"
+    problems, _children = child_environment_problems(by_parameter)
+    assert len(problems) == 1 and "is a parameter of run()" in problems[0]
+    loose = ("import os, subprocess\ndef _child_env(scratch):\n    return {'HOME': str(scratch)}\n"
+             "def test_it(tmp_path):\n    subprocess.run(['x'], env=_child_env(tmp_path))\n")
+    problems, _children = child_environment_problems(loose)
+    assert len(problems) == 1 and "_child_env() does not return a helper's call" in problems[0]
+
+
+# ── the host's state contract is written down in ONE place (review round 3) ──
+
+CONTRACT_HOME = PACKAGE / "lifecycle.py"
+#: Every text that once carried a copy of the contract. Nine places; three were wrong.
+CONTRACT_LINKERS = (
+    PACKAGE / "host.py",
+    REPO / "docs" / "05-building-block-view" / "README.md",
+    REPO / "docs" / "08-crosscutting-concepts" / "README.md",
+    REPO / "docs" / "09-architecture-decisions" / "README.md",
+    REPO / "docs" / "11-risks-and-technical-debt" / "README.md",
+    REPO / "docs" / "12-glossary" / "README.md",
+    REPO / ".claude" / "skills" / "ogp-3d-renderer" / "SKILL.md",
+    REPO / ".agents" / "skills" / "ogp-3d-renderer" / "SKILL.md",
+)
+_STATES = "NEW|STARTING|LIVE|HIDDEN|SPENT|CLOSED"
+#: A row of a state table — Markdown (``| `LIVE` | …``) or reStructuredText
+#: (````LIVE````, blanks, the rule): a line that BEGINS with a state's name as code.
+STATE_ROW = re.compile(
+    rf"^[ \t]*(?:\|[ \t]*)?`{{1,2}}({_STATES}|{_STATES.lower()})`{{1,2}}[ \t]*(?:\||[ \t]{{2,}}\S)",
+    re.MULTILINE)
+#: The states' rules spelled in the facts' letters, and the count the old copies carried.
+CONTRACT_PHRASES = ("G and E and R", "V and not M and A", "nine facts")
+
+
+def test_the_state_contract_is_written_down_in_one_place() -> None:
+    """``lifecycle.py``'s module docstring is the contract; every other text LINKS to it.
+
+    After review round 2 the state table stood in nine places and three of them said
+    "after every resize the host is starting for one pass" — which the code did not do.
+    This cannot check prose for truth; it checks that there is no second copy of the
+    TABLE (a row keyed by a state, the rules in the facts' letters) to go stale, and
+    that each of those texts names the place where the contract is."""
+    home = CONTRACT_HOME.read_text(encoding="utf-8")
+    rows = {match.group(1).upper() for match in STATE_ROW.finditer(home)}
+    assert rows == set(_STATES.split("|")), f"the contract's own state table is gone: {sorted(rows)}"
+    assert "G and E and R and T" in home and "What raises what" in home
+    assert "Which call is legal in which state" in home and "``wait_ready``" in home
+    for path in CONTRACT_LINKERS:
+        text = path.read_text(encoding="utf-8")
+        where = path.relative_to(REPO).as_posix()
+        assert "lifecycle.py" in text, f"{where} does not say where the contract is"
+        copies = [match.group(0).strip() for match in STATE_ROW.finditer(text)]
+        assert not copies, f"{where} carries a copy of the state table: {copies[:3]}"
+        for phrase in CONTRACT_PHRASES:
+            assert phrase not in text, f"{where} restates the contract: {phrase!r}"
+
+
+@pytest.mark.parametrize(("line", "is_row"), [
+    ("| `LIVE` | else: G and E and R | yes | yes |", True),
+    ("  | `starting` | everything else | no |", True),
+    ("``HIDDEN``    else: not (V and not M and A)", True),
+    ("`SPENT`   the one offscreen frame was taken", True),
+    ("`LIVE` also needs an area of at least 2 × 2 px.", False),
+    ("| `lifecycle.py` | no | the host's state contract |", False),
+    ("a host that reads `STARTING` until the next expose", False),
+    ("| Field | From | Means |", False),
+], ids=["markdown", "markdown lower", "rst", "rst single", "prose", "another table", "mid-line",
+        "a header"])
+def test_the_state_table_fingerprint_sees_a_copy_and_not_prose(line: str, is_row: bool) -> None:
+    assert bool(STATE_ROW.search(line)) is is_row
+
+
+# ── a child's settings are a test key (review round 3, the coordinator's rule) ──
+
+# The child ASKS before it builds anything: with the developer's names it stops (exit 3).
+_SETTINGS_CHILD = r'''
+import os, sys
+import sitecustomize
+print("HOOK", sitecustomize.__file__)
+print("APP_BEFORE", sorted(m for m in sys.modules if m.startswith(("open_garden_planner", "PyQt6"))))
+import open_garden_planner.app.settings as settings
+print("NAMES", settings.ORGANIZATION_NAME, "|", settings.APPLICATION_NAME, "|", os.getpid())
+if settings.ORGANIZATION_NAME != "cofade_test" or "Test Child" not in settings.APPLICATION_NAME:
+    sys.exit(3)
+from open_garden_planner.app.settings import create_qsettings, get_settings
+if len(sys.argv) > 1:  # the second child: what did the first one leave in ITS key?
+    settings.APPLICATION_NAME = sys.argv[1]
+    print("LEFT", get_settings().recent_files)
+    sys.exit(0)
+print("BUILT_BEFORE", len(sitecustomize.stores_built))
+get_settings().add_recent_file("C:/nowhere/plan.ogp")  # what ProjectManager.load() ends with
+store = create_qsettings()
+print("STORE", store.organizationName(), "|", store.applicationName(), "|", get_settings().recent_files)
+print("BUILT", len(sitecustomize.stores_built))
+'''
+
+
+def _settings_child(scratch: Path, *arguments: str, **extra: str) -> dict[str, str]:
+    from tests.integration.quick3d_render_support import isolated_env
+
+    proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
+        [sys.executable, "-c", _SETTINGS_CHILD, *arguments],
+        env=isolated_env(scratch, QT_QPA_PLATFORM="offscreen", **extra), capture_output=True,
+        text=True, timeout=170, cwd=scratch)
+    assert proc.returncode == 0, (
+        f"exit {proc.returncode} (3: the child had the DEVELOPER's settings names and stopped "
+        f"before building a store)\n{proc.stdout}\n{proc.stderr[-2000:]}")
+    return dict(line.split(" ", 1) for line in proc.stdout.splitlines() if " " in line)
+
+
+def test_every_child_environment_starts_with_the_settings_hook(tmp_path: Path) -> None:
+    """The app's settings are a registry key on Windows; no environment variable moves it,
+    and a child does not import ``tests/conftest.py``. ``isolated_env`` — the one source of
+    every child's environment (the guard above) — puts a start-up hook first on the
+    child's path. The hook itself imports nothing of the app and names no store."""
+    from tests.integration import quick3d_render_support as support
+
+    hook = support.CHILD_SITE / "sitecustomize.py"
+    assert hook.is_file() and sorted(p.name for p in support.CHILD_SITE.glob("*.py")) == ["sitecustomize.py"]
+    for build in (support.isolated_env, support.render_env):
+        env = build(tmp_path)
+        assert Path(env["PYTHONPATH"].split(os.pathsep)[0]) == support.CHILD_SITE, build
+        assert env[support.ISOLATED_MARK] == "1"
+    tree = ast.parse(hook.read_text(encoding="utf-8"))
+    imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
+                for alias in node.names}
+    imported |= {(node.module or "").split(".")[0] for node in ast.walk(tree)
+                 if isinstance(node, ast.ImportFrom)}
+    assert imported <= {"__future__", "atexit", "contextlib", "importlib", "os", "sys", "types",
+                        "typing"}, f"the hook imports more than the standard library: {imported}"
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    names |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    assert "QSettings" not in names, "only the factory in app/settings.py may name a store (§8.8)"
+
+
+def test_a_child_that_imports_the_app_builds_its_stores_on_a_key_of_its_own(tmp_path: Path) -> None:
+    """End to end, in a real child with the environment every child gets: nothing of the
+    app is loaded by the hook; the moment the child imports the settings module the two
+    names are a test key of that process; a store built then — and the Recent Files write
+    a plan load ends with — lands there; and the key is empty again once the child is
+    gone (asked by a second child, which looks into the first one's key)."""
+    from tests.integration import quick3d_render_support as support
+
+    report = tmp_path / "stores.txt"
+    first = _settings_child(tmp_path, OGP_TEST_CHILD_STORES=str(report))
+    assert Path(first["HOOK"]) == support.CHILD_SITE / "sitecustomize.py"
+    assert first["APP_BEFORE"] == "[]", "the hook itself loads nothing of the app, and no Qt"
+    organisation, application, pid = first["NAMES"].split(" | ")
+    assert organisation == "cofade_test" and application == f"Open Garden Planner Test Child {pid}"
+    assert first["BUILT_BEFORE"] == "0", "importing the settings module builds no store"
+    assert first["STORE"] == f"cofade_test | {application} | ['C:/nowhere/plan.ogp']"
+    assert int(first["BUILT"]) >= 1
+    imported, built = report.read_text(encoding="utf-8").split()
+    assert imported == "1" and int(built) == int(first["BUILT"])
+    second = _settings_child(tmp_path, application)
+    assert second["LEFT"] == "[]", "the first child's key was not emptied at its exit"
+    assert second["NAMES"].split(" | ")[1] != application, "a key per process"
+
+
+def test_the_driver_is_safe_when_it_is_run_by_hand(monkeypatch, tmp_path: Path) -> None:
+    """The render driver loads a plan, and it is also started by hand to look at frames.
+    Started through the tests it has the helper's environment (the mark says so) and
+    changes nothing; without the mark it points the app's data directory into its own
+    output directory itself — and in both cases it rebinds the settings names before
+    anything of the app runs."""
+    from tests.integration import quick3d_render_driver as driver
+    from tests.integration import quick3d_render_support as support
+
+    names = [name for name, _folder in support.PRIVATE_DIRS]
+    for name in names:
+        monkeypatch.setenv(name, str(tmp_path / "the-developers-own" / name))
+    monkeypatch.setenv(support.ISOLATED_MARK, "1")
+    driver._isolate_app_data(tmp_path / "out")  # noqa: SLF001
+    assert all("the-developers-own" in os.environ[name] for name in names), "started isolated: untouched"
+    monkeypatch.delenv(support.ISOLATED_MARK)
+    driver._isolate_app_data(tmp_path / "out")  # noqa: SLF001
+    for name in names:
+        assert tmp_path / "out" / "private" in Path(os.environ[name]).parents, name
+        assert Path(os.environ[name]).is_dir()
+    # the order in main(): both isolations come before the first import of the engine
+    tree = ast.parse(Path(driver.__file__).read_text(encoding="utf-8"))
+    (main,) = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"]
+    called = {ast.unparse(node.func): node.lineno for node in ast.walk(main)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    imports = [node.lineno for node in ast.walk(main)
+               if isinstance(node, (ast.Import, ast.ImportFrom)) and "open_garden_planner" in ast.unparse(node)]
+    assert called["_isolate_app_data"] < called["_isolate_settings"] < min(imports)
+    finals = [ast.unparse(node) for node in ast.walk(main) if isinstance(node, ast.Try)
+              for statement in node.finalbody for node in ast.walk(statement)
+              if isinstance(node, ast.Call) and ast.unparse(node.func) == "_clear_settings"]
+    assert finals == ["_clear_settings()"], "the driver's test key is emptied also after a failure"

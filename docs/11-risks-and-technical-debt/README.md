@@ -1239,9 +1239,11 @@ a container with the CI job's packages.
   expose the two disagree: visible, no scene graph. The error message of the hidden case even
   recommended `show()`. And a Python flag "was shown" could not have been right either: the
   parent of an embedded container shows and hides it without telling the host. *Fix:* the host
-  is a state machine over what Qt reports (§8.26.2) — `STARTING` refuses to grab, `SPENT`
-  refuses `show()` and `container()`, an embedded host has no offscreen frame, `wait_ready()`
-  pumps to the first expose and reports. Pinned by one call order per child process in
+  is a state machine over what Qt reports — a host that waits for its first expose refuses to
+  grab, one that took its offscreen frame refuses `show()` and `container()`, an embedded host
+  has no offscreen frame, `wait_ready()` pumps to the first expose and reports. (The contract
+  in full is the module docstring of `ui/view3d/quick3d/lifecycle.py`, and only there; the
+  entries below say what each of its facts cost.) Pinned by one call order per child process in
   `tests/integration/test_quick3d_lifecycle.py`, with controls that must die; the rule
   itself runs in the default tier too (`tests/ui/test_quick3d_host.py::TestStateMachine`,
   `tests/unit/test_quick3d_lifecycle_states.py`).
@@ -1273,15 +1275,65 @@ a container with the CI job's packages.
   geometry.** A `QSplitter` pane dragged shut leaves the embedded window visible, exposed,
   with a scene graph — and 0 px wide. A raw grab returns an image of the OLD size without one
   pixel of the scene; a raw pick returns a hit; `mapFrom3DScene` returns (0, 0). The first
-  state machine said "live". Two more facts of the same family: after EVERY change of size
-  the QML root item keeps the old size until one pass of the event loop ran (a pane reopened
-  from 0 is still 0 wide in the scene, and a frame taken then is blank); and a window ONE
-  pixel wide or high draws no 3D at all — the bare clear colour — while 2 px draws the scene.
-  And a pane re-shown inside a splitter keeps its stale, empty geometry until the pending
-  layout request is delivered. *Fix:* `LIVE` also needs an area of at least 2 × 2 px and a
-  root item that has the window's size; no area reads `HIDDEN`, a lagging root `STARTING`;
-  `wait_ready()` first delivers what is already pending, then waits for the root to catch up;
-  and `grab()` rejects an image that does not have the window's size.
+  state machine said "live". Two more facts of the same family: after an ASYNCHRONOUS change
+  of size (a splitter move, `resize()`, `showMaximized()`) the QML root item keeps the old
+  size until the event loop delivered the resize event (a pane reopened from 0 is still 0
+  wide in the scene, and a frame taken then is blank); and a window ONE pixel wide or high
+  draws no 3D at all — the bare clear colour — while 2 px draws the scene. And a pane
+  re-shown inside a splitter keeps its stale, empty geometry until the pending layout request
+  is delivered. *Fix:* a live host also needs an area of at least 2 × 2 px and a root item
+  that has the window's size; `wait_ready()` first delivers what is already pending, then
+  waits; and `grab()` rejects an image that does not have the window's size. *Corrected in
+  review round 3:* this entry said "after EVERY change of size … until one pass of the event
+  loop ran". False twice — the next entry.
+- **(Round 3) A resize can arrive INSIDE the call that caused it — and then the scene has
+  the new size and the render target the old one.** *Symptom:* `wait_ready()` answered True
+  and the very next `grab()` raised `EngineError` ("Qt rendered a 320 × 240 px image for a
+  5120 × 1440 window") — after every `showFullScreen()`, 20 of 20, standalone and embedded,
+  on the GPU and on WARP. `application.py` calls `showFullScreen()` on the very window the
+  workspace embeds the host into. *Wrong theory (round 2's, the entry above):* "after every
+  resize the root item lags by one pass, so a root item of the window's size means the host
+  has caught up". *Measured, with an event filter on the view:* `showFullScreen()` delivers
+  `Resize`, `Move` and `WindowStateChange` inside the call — window and root item agree at
+  once — and `Expose` only in the next pass of the event loop; `grabWindow()` on a shown
+  window renders into the swap chain as it is, and Qt resizes the swap chain when it handles
+  that expose. `showNormal()` delivers its expose inside the call too (the grab is right at
+  once); `showMaximized()` and a splitter move deliver nothing inside the call; and a main
+  window that was maximised has not touched the embedded view at all until its layout ran —
+  the view is, truthfully, live at its old size until then. In every case a grab has the
+  wrong size exactly between a `Resize` event and the next `Expose` event of the exposed
+  window. *Fix:* that is the tenth fact, latched by the event filter that already latches
+  "a platform window was created": a resize event clears it, the next expose event of the
+  exposed window sets it, and a live host needs it. `wait_ready()` delivers what is pending
+  once for ANY visible host before it answers — also for one that reads live, whose parent's
+  resize may still be in the queue. A grab whose image has another size after all is the
+  same STATE, not an engine failure: `HostStateError`, counted (`stale_frames`, expected 0
+  and 0 in every run so far), and the host reads "starting" until the next expose. Not
+  derived from `frameSwapped`: that signal is queued from the render thread, and one emitted
+  before a resize can arrive after it. *Lesson:* "one pass of the event loop" is not a unit
+  of anything — which events a call delivers before it returns differs per call and per
+  platform. Promise an ANSWER (`wait_ready()`), not a number of passes; and test the promise
+  against orders nobody wrote down: the hand-written matrix had no full-screen row, the
+  seeded random walk that joined it (250 operations) has found nothing since. Pinned by
+  `test_after_wait_ready_the_frame_has_the_windows_new_size` and
+  `test_a_seeded_random_order_never_yields_a_wrong_frame`.
+- **(Round 3) A contract written down in nine places is wrong in three.** The host's state
+  table stood in `lifecycle.py`, `host.py`, §8.26.2, ADR-048, this section, the glossary, the
+  building-block view and both copies of the `ogp-3d-renderer` skill; after round 2 three of
+  them said "after every resize the host is starting for one pass", which the code did not
+  do and Qt does not do. *Fix:* the module docstring of `lifecycle.py` IS the contract; every
+  other text links to it, and `tests/unit/test_quick3d_packaging.py` fails a second copy of
+  the state table. *Lesson:* a table a caller must obey belongs next to the function that
+  implements it, once.
+- **(Round 3) `QEventLoop.exec()` returns at once when the application is quitting, and a
+  bounded wait built on it spins.** *Symptom:* `wait_ready()` on a host that was still
+  starting while the app closed: 158,574 looks at Qt in 3.0 s. *Measured:* inside a running
+  main loop after `QCoreApplication.quit()`, a local `QEventLoop.exec()` returns −1 in about
+  2 µs; without a running main loop `quit()` does nothing, which is why no in-process test
+  had met it. *Fix:* the pass reports whether the loop ran; `wait_ready()` answers False at
+  once when it did not, and the number of passes is bounded by the timeout whatever a pass
+  does. Pinned in a child process with a real main loop
+  (`test_a_pass_of_the_event_loop_says_whether_it_ran`).
 - **(Round 2) A judge that asks the suspect sees nothing.** The lifecycle matrix compared
   every frame with the state the host had reported for it: a host that says "live" must give
   a frame, one that says "hidden" must refuse. A host that reported the WRONG state passed —
@@ -1352,6 +1404,29 @@ a container with the CI job's packages.
   called the bounded self-test had passed. A missing event now means "released"; the
   supervisor also checks the process's creation time, so a reused pid is never touched.
   Pinned by `test_the_supervisor_leaves_a_process_alone_whose_block_finished_first`.
+- **(Round 3) "A missing event means released" was right; "an event that exists is mine" was
+  not.** The release event was named after the PROCESS (pid and creation time). *Symptom
+  (the review's measurement):* block A — a supervised watchdog of 1 s around an empty body —
+  then block B, 60 s, healthy, in the same process. A's supervising process came up after A
+  was over, found B's event under the same name, waited on it, and terminated the process
+  4.1 s into B, writing "block A was still alive …" into A's log. Latent: the self-test and
+  the render driver arm one block per process; but `supervised=True` was advertised for
+  reuse, and three texts said a supervisor could only ever act for its own block. *Fix:* a
+  random nonce per block in the event's name, handed to the supervisor on its command line;
+  one armed watchdog per process (a second raises `WatchdogError` — `faulthandler` has a
+  single timer anyway); and a supervisor that checks who it is working for before it opens
+  anything: validated arguments (a deadline of `nan` used to be a traceback, `-1` a wait of
+  49 days, `0` an immediate terminate), its target must be its own PARENT process and, in the
+  frozen build, run the same image, and it appends to the log it was handed and creates no
+  file. *And the gate's own #291:* a supervisor that could not be started was logged as
+  `supervisor=none` and the self-test passed — the day a build could not start it, nothing
+  would have said so until a deadlocked self-test held a release job. On Windows the
+  self-test now FAILS without a supervising process that started, was released and left.
+  *Lesson:* something that may kill must name its target by what nobody else can have (a
+  random name it was handed), never by what the next user will have too (the pid). Pinned by
+  `test_a_finished_blocks_supervisor_cannot_end_the_block_after_it`,
+  `test_the_supervisor_only_acts_for_the_process_that_started_it` and
+  `test_without_its_supervisor_the_selftest_fails_on_windows`.
 - **(Round 2) Without a slot on `sceneGraphError`, a graphics device that cannot be created
   takes the whole app down.** Forced with `QT_D3D_ADAPTER_INDEX=9`. With a slot connected, Qt
   emits `(ContextNotAvailable, "Failed to initialize graphics backend for D3D11.")` and goes

@@ -34,6 +34,7 @@ error (shader / QML).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -1021,7 +1022,9 @@ SCENARIOS: dict[str, Callable[[Context], dict[str, Any]]] = {
 
 def _isolate_settings() -> None:
     """Loading a plan records Recent Files: never in the developer's own store (the
-    redirection ``tests/conftest.py`` performs for the test process)."""
+    redirection ``tests/conftest.py`` performs for the test process). Done HERE as
+    well as by the start-up hook the tests hand every child (``quick3d_child_site``):
+    this file is also run by hand, and must be safe by itself."""
     import open_garden_planner.app.settings as app_settings
 
     app_settings.ORGANIZATION_NAME = "cofade_test"
@@ -1032,6 +1035,22 @@ def _clear_settings() -> None:
     import open_garden_planner.app.settings as app_settings
 
     app_settings.create_qsettings().clear()
+
+
+def _isolate_app_data(out: Path) -> None:
+    """Run by hand — not through the tests' ``isolated_env`` — this file still must not
+    touch the developer's data: loading a plan opens the app's data directory (the
+    custom-plant library), and ``get_app_data_dir`` reads these variables on every
+    call. Point them into the output directory.
+
+    What this cannot move from inside a running process is the user PROFILE (Qt's
+    QML and shader caches), nor macOS's data directory (it hangs on the home
+    directory): to keep those out of your profile, start the driver the way the
+    tests do (``quick3d_render_support.run_driver``)."""
+    from tests.integration.quick3d_render_support import ISOLATED_MARK, private_dirs
+
+    if os.environ.get(ISOLATED_MARK) != "1":
+        os.environ.update(private_dirs(out / "private"))
 
 
 def main(argv: list[str]) -> int:
@@ -1046,7 +1065,8 @@ def main(argv: list[str]) -> int:
     if unknown:
         parser.error(f"unknown scenarios {unknown}; choose from {sorted(SCENARIOS)}")
     args.out.mkdir(parents=True, exist_ok=True)
-    _isolate_settings()
+    _isolate_app_data(args.out)  # before anything of the app can ask where its data is
+    _isolate_settings()          # before anything of the app can build a settings store
 
     from PyQt6.QtCore import QT_VERSION_STR
 
@@ -1089,7 +1109,6 @@ def main(argv: list[str]) -> int:
                 result["scenarios"][name] = data
                 write()
             print("OGPQT|scenario|", file=sys.stderr, flush=True)
-            _clear_settings()
         result["status"] = "ok"
     except Exception as error:  # noqa: BLE001 - a driver: record it, never lose it
         result["status"] = "error"
@@ -1104,6 +1123,8 @@ def main(argv: list[str]) -> int:
         write()
         log("done", status=result["status"], total_s=result["total_s"])
         log.close()
+        with contextlib.suppress(Exception):  # a key that cannot be emptied fails no render
+            _clear_settings()  # the test key of this process — also after a scenario that failed
     return code
 
 

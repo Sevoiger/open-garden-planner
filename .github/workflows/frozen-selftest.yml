@@ -44,12 +44,17 @@ jobs:
   frozen-selftest:
     name: Frozen self-test (windows-latest)
     runs-on: windows-latest
-    # The build takes most of it; every step below has a limit of its own.
-    timeout-minutes: 45
+    # EVERY step below has a limit of its own, and this one is larger than their
+    # sum (62 minutes): the job's limit must never be what ends a step, or the
+    # step that prints the log would not get its turn. Pinned, with the sum, by
+    # tests/unit/test_quick3d_packaging.py.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 5
 
       - uses: ./.github/actions/setup-locked-env
+        timeout-minutes: 10
 
       # The release recipe, not a copy of it: the same script, the same spec, the
       # same `PyInstaller --noconfirm --clean`; without NSIS no installer is built.
@@ -113,6 +118,7 @@ jobs:
       - name: Print the self-test log
         if: always()
         shell: pwsh
+        timeout-minutes: 2
         env:
           OGP_SELFTEST_LOG: ${{ runner.temp }}/ogp-selftest-3d.log
         run: |

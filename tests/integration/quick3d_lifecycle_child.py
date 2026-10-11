@@ -1,6 +1,7 @@
 """One call order of the host's lifecycle, in a process of its own — not a test module.
 
     python tests/integration/quick3d_lifecycle_child.py <order> [<qml dir>]
+    python tests/integration/quick3d_lifecycle_child.py random_walk <seed> <steps>
 
 Why a process per order: the failures this matrix exists for are not exceptions.
 A Qt Quick window grabbed at the wrong moment returns a perfectly good image, and
@@ -170,10 +171,20 @@ def _centre_pick(host: Any) -> Any:
     return _attempt(pick)
 
 
+def _window_size(host: Any) -> list[int] | None:
+    """The Qt Quick window's logical size, asked of QT — never of the host (the judge
+    compares a frame with this; ``host.view_size()`` is the scene's size, which may lag)."""
+    from PyQt6 import sip
+
+    view = host._view  # noqa: SLF001 - the matrix asks Qt directly
+    return None if sip.isdeleted(view) else [int(view.width()), int(view.height())]
+
+
 def _look(host: Any) -> dict[str, Any]:
-    """Everything a caller can ask a host at one moment: state, frame, pick, projection."""
-    return {"state": host.state.value, "grab": _grab(host), "pick": _centre_pick(host),
-            "project": _attempt(lambda: host.project(0.0, 0.0, 20.0)),
+    """Everything a caller can ask a host at one moment: state, frame, pick, projection —
+    and, asked of Qt BEFORE the grab, the size the window has at that moment."""
+    return {"state": host.state.value, "window": _window_size(host), "grab": _grab(host),
+            "pick": _centre_pick(host), "project": _attempt(lambda: host.project(0.0, 0.0, 20.0)),
             "view": _attempt(host.view_size)}
 
 
@@ -497,6 +508,140 @@ def embed_after_show(app: Any, _qml: Path | None = None) -> dict[str, Any]:
     return out
 
 
+def _through_window_states(app: Any, host: Any, target: Any, out: dict[str, Any]) -> None:
+    """Full screen, normal, maximised, full screen from maximised, normal — each asked at
+    once, then after ``wait_ready()``. ``target``: the top-level window whose state changes
+    (the host's own view, or the main window that embeds it)."""
+    for step, change in (("fullscreen", target.showFullScreen), ("normal", target.showNormal),
+                         ("maximised", target.showMaximized),
+                         ("fullscreen_from_maximised", target.showFullScreen),
+                         ("normal_again", target.showNormal)):
+        change()
+        out[f"{step}_at_once"] = _look(host)
+        started = time.perf_counter()
+        out[f"ready_{step}"] = host.wait_ready(10.0)
+        out[f"wait_{step}_s"] = round(time.perf_counter() - started, 3)
+        out[step] = _look(host)
+        _pump(app, 200)
+        out[f"{step}_later"] = _look(host)
+    out["stale_frames"] = host.stale_frames
+
+
+def window_states_standalone(app: Any, _qml: Path | None = None) -> dict[str, Any]:
+    """Review round 3, P1-1 — the app's own F11 path. ``showFullScreen()`` resizes the window
+    SYNCHRONOUSLY: window and scene agree at once, and a grab still comes back in the old
+    size until the next expose. A truthful host refuses in between, and after
+    ``wait_ready()`` said yes the frame has the window's NEW size."""
+    host, _sink, _sync = _host()
+    host.show()
+    out: dict[str, Any] = {"ready": host.wait_ready(10.0), "open": _look(host)}
+    _through_window_states(app, host, host._view, out)  # noqa: SLF001 - the user's F11; no host call
+    host.close()
+    return out
+
+
+def window_states_embedded(app: Any, _qml: Path | None = None) -> dict[str, Any]:
+    """The same for the Split workspace's shape: the MAIN window goes full screen, normal,
+    maximised — the host in its splitter pane is resized by the layout, at once for one
+    transition and one event-loop pass later for another."""
+    window, _splitter, host = _in_splitter()
+    out: dict[str, Any] = {"ready": host.wait_ready(10.0), "open": _look(host)}
+    _through_window_states(app, host, window, out)
+    host.close()
+    window.close()
+    return out
+
+
+def random_walk(app: Any, seed: str = "1", steps: str = "250") -> dict[str, Any]:
+    """Review round 3 — the state machine under a SEEDED random order of everything a
+    parent can do to an embedded host: move the splitter (to nothing, to one pixel, wide),
+    resize, maximise, full screen, minimise, hide and show the pane, the host, the window.
+    After every operation the host is asked for a frame, a pick and a projection — at once,
+    after ``wait_ready()``, or after the event loop ran. Nothing is judged in here: every
+    answer is recorded beside what QT said about the window at that moment."""
+    import random
+
+    rng = random.Random(int(seed))
+    window, splitter, host = _in_splitter()
+    view = host._view  # noqa: SLF001 - the matrix asks Qt directly
+    records: list[dict[str, Any]] = []
+
+    def qt_says() -> dict[str, Any]:
+        return {"window": [int(view.width()), int(view.height())], "visible": bool(view.isVisible()),
+                "exposed": bool(view.isExposed()), "minimised": bool(window.isMinimized())}
+
+    def observe(what: str, **extra: Any) -> None:
+        said = qt_says()  # before the grab
+        records.append({"what": what, "qt": said, "look": _look(host), **extra})
+
+    def sizes() -> str:
+        width = rng.choice([0, 0, 1, 1, 2, 3, 5, 24, 49, 50, 51, 137, 450, 899, 900])
+        splitter.setSizes([900 - width, width])
+        return f"setSizes(.., {width})"
+
+    def window_resize() -> str:
+        width, height = rng.choice([320, 500, 901, 1203, 1500]), rng.choice([60, 120, 333, 500, 701])
+        window.resize(width, height)
+        return f"window.resize({width}, {height})"
+
+    def named(call: Callable[[], Any], label: str) -> Callable[[], str]:
+        def run() -> str:
+            call()
+            return label
+        return run
+
+    container = host.container()
+    operations: dict[str, Callable[[], str]] = {
+        "sizes": sizes, "sizes2": sizes, "sizes3": sizes, "window_resize": window_resize,
+        "minimise": named(window.showMinimized, "showMinimized"),
+        "normal": named(window.showNormal, "showNormal"),
+        "maximise": named(window.showMaximized, "showMaximized"),
+        "fullscreen": named(window.showFullScreen, "showFullScreen"),
+        "hide_container": named(container.hide, "container.hide"),
+        "show_container": named(container.show, "container.show"),
+        "host_hide": named(host.hide, "host.hide"), "host_show": named(host.show, "host.show"),
+        "hide_window": named(window.hide, "window.hide"),
+        "show_window": named(window.show, "window.show"),
+    }
+    names = sorted(operations)
+    out: dict[str, Any] = {"seed": int(seed), "steps": int(steps), "ready": host.wait_ready(10.0),
+                           "api": host.graphics_api(), "dpr": host.device_pixel_ratio()}
+    observe("open", mode="open")
+    for _ in range(int(steps)):
+        label = operations[rng.choice(names)]()
+        mode = rng.choice(["at_once", "wait", "pump", "wait", "pump_wait"])
+        if mode == "at_once":
+            observe(label, mode=mode)
+            continue
+        if mode in ("pump", "pump_wait"):
+            _pump(app, 120)
+        if mode in ("wait", "pump_wait"):
+            started = time.perf_counter()
+            ready = host.wait_ready(5.0)
+            observe(label, mode=mode, ready=ready, took=round(time.perf_counter() - started, 3))
+        else:
+            observe(label, mode=mode)
+        # liveness: Qt says the window can show something, and the event loop has run
+        _pump(app, 150)
+        said = qt_says()
+        if (said["visible"] and said["exposed"] and not said["minimised"]
+                and min(said["window"]) >= 2):
+            records[-1]["settles"] = host.wait_ready(3.0)
+            if not records[-1]["settles"]:
+                records[-1]["stuck"] = f"{host.state.value}: {host._facts()}"  # noqa: SLF001
+    window.showNormal()
+    window.show()
+    container.show()
+    splitter.setSizes([450, 450])
+    out["final_ready"] = host.wait_ready(10.0)
+    observe("final", mode="wait", ready=out["final_ready"], took=0.0)
+    _pump(app, 300)
+    out.update(records=records, stale_frames=host.stale_frames, health=_health(host))
+    host.close()
+    window.close()
+    return out
+
+
 def wait_while_it_goes(app: Any, _qml: Path | None = None) -> dict[str, Any]:
     """wait_ready() is inside its event loop when the window is hidden, minimised, closed
     or destroyed: it must come back at once with False, not spin to its timeout."""
@@ -794,6 +939,9 @@ ORDERS: dict[str, Callable[..., dict[str, Any]]] = {
     "minimised_window": minimised_window,
     "embedded_never_shown_grab": embedded_never_shown_grab,
     "embed_after_show": embed_after_show,
+    "window_states_standalone": window_states_standalone,
+    "window_states_embedded": window_states_embedded,
+    "random_walk": random_walk,
     "wait_while_it_goes": wait_while_it_goes,
     "sink_clear_orders": sink_clear_orders,
     "health": health,
@@ -810,19 +958,30 @@ ORDERS: dict[str, Callable[..., dict[str, Any]]] = {
 }
 
 
+#: Orders whose arguments are their own (a log path; a seed and a number of steps) and not
+#: a QML directory.
+OWN_ARGUMENTS = {"deadlock_supervised": 1, "random_walk": 2}
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) not in (1, 2) or argv[0] not in ORDERS:
-        print(f"usage: quick3d_lifecycle_child.py <{'|'.join(ORDERS)}> [<qml dir>]",
-              file=sys.stderr)
+    order = argv[0] if argv else ""
+    wanted = (OWN_ARGUMENTS[order],) if order in OWN_ARGUMENTS else (0, 1)
+    if order not in ORDERS or len(argv) - 1 not in wanted:
+        print(f"usage: quick3d_lifecycle_child.py <{'|'.join(ORDERS)}> [<qml dir>] "
+              "(random_walk: <seed> <steps>; deadlock_supervised: <log>)", file=sys.stderr)
         return 2
-    qml_dir = Path(argv[1]).resolve() if len(argv) == 2 and argv[0] != "deadlock_supervised" else None
     faulthandler.enable(all_threads=True)
-    faulthandler.dump_traceback_later(120, exit=True)  # a hang is a failure too
+    # a hang is a failure too (the random walk is the long one)
+    faulthandler.dump_traceback_later(600 if order == "random_walk" else 120, exit=True)
     from PyQt6.QtWidgets import QApplication
 
     app = QApplication(sys.argv[:1])
     _register_calls()
-    result = ORDERS[argv[0]](app, qml_dir)
+    if order == "random_walk":
+        result = random_walk(app, argv[1], argv[2])
+    else:
+        qml_dir = Path(argv[1]).resolve() if len(argv) == 2 and order not in OWN_ARGUMENTS else None
+        result = ORDERS[order](app, qml_dir)
     _pump(app, 500)  # a process doomed by a bad grab dies HERE, in the next event-loop passes
     print("RESULT " + json.dumps(result, default=str), flush=True)
     print("END", flush=True)

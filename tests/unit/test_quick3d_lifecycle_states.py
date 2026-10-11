@@ -1,16 +1,18 @@
 """The host's states as a function of Qt's facts — the whole truth table (L1.2, #385).
 
-``ui/view3d/quick3d/lifecycle.py`` is engine-free: it turns nine facts Qt reports
-about a window into one of six states, and ``Quick3DHost`` contains no state logic
-of its own. So the table can be checked here, without a window, on every machine.
+``ui/view3d/quick3d/lifecycle.py`` is engine-free: it turns ten facts about a
+window into one of six states, and ``Quick3DHost`` contains no state logic of its
+own. So the table can be checked here, without a window, on every machine. The
+contract itself is written down in that module's docstring, and only there.
 
 Two kinds of test:
 
 - ``MEASURED`` — the rows somebody paid for: each is what Qt 6.11 was MEASURED to
   report in a situation (Direct3D 11 on an RTX 4070 and on WARP; the xcb row on
   GitHub's runner), and the state a truthful host must derive from it. Three of
-  them were wrong in the first state machine (review round 2): they are marked.
-- invariants over EVERY combination of the facts (3,072) — stated as what must
+  them were wrong in the first state machine (review round 2) and one in the
+  second (round 3): they are marked.
+- invariants over EVERY combination of the facts (6,144) — stated as what must
   never happen, not as a second copy of the function.
 
 That Qt really reports these facts, and what a host does in each state, is the
@@ -35,7 +37,8 @@ from open_garden_planner.ui.view3d.quick3d.lifecycle import (
 
 LIVE_FACTS: dict[str, Any] = {
     "surface_created": True, "visible": True, "minimised": False, "width": 447, "height": 500,
-    "scene_graph": True, "exposed": True, "root_width": 447.0, "root_height": 500.0}
+    "scene_graph": True, "exposed": True, "root_width": 447.0, "root_height": 500.0,
+    "target_synced": True}
 
 
 def facts(**changes: Any) -> WindowFacts:
@@ -45,8 +48,10 @@ def facts(**changes: Any) -> WindowFacts:
 # (what was done, the facts Qt reported, the state)
 MEASURED: list[tuple[str, dict[str, Any], str]] = [
     ("a new QQuickView",
-     {"surface_created": False, "visible": False, "scene_graph": False, "exposed": False}, "new"),
-    ("show(), no event yet", {"scene_graph": False, "exposed": False}, "starting"),
+     {"surface_created": False, "visible": False, "scene_graph": False, "exposed": False,
+      "target_synced": False}, "new"),
+    ("show(), no event yet",
+     {"scene_graph": False, "exposed": False, "target_synced": False}, "starting"),
     ("show(), one pass of the event loop", {}, "live"),
     ("hide(), no event yet: Qt still says exposed", {"visible": False}, "hidden"),
     ("hide(), later", {"visible": False, "exposed": False}, "hidden"),
@@ -54,7 +59,8 @@ MEASURED: list[tuple[str, dict[str, Any], str]] = [
     ("minimised: Qt still says visible", {"minimised": True, "exposed": False}, "hidden"),
     # review round 2, P1-A — read as "new", took the offscreen frame, segfault on xcb
     ("show(); hide() before any event",
-     {"visible": False, "scene_graph": False, "exposed": False}, "hidden"),
+     {"visible": False, "scene_graph": False, "exposed": False, "target_synced": False},
+     "hidden"),
     # review round 2, P1-B — read as "live": a blank frame of the old size, a bogus pick
     ("the splitter pane collapsed to width 0: visible AND exposed", {"width": 0}, "hidden"),
     ("the pane reopened, no event yet: the scene is still 0 wide", {"root_width": 0.0}, "starting"),
@@ -62,10 +68,23 @@ MEASURED: list[tuple[str, dict[str, Any], str]] = [
     ("one pixel high", {"height": 1, "root_height": 1.0}, "hidden"),
     ("two pixels wide: the scene is drawn", {"width": 2, "root_width": 2.0}, "live"),
     ("resized, no event yet: the scene has the old size", {"width": 200}, "starting"),
+    # review round 3, P1-1 — read as "live": wait_ready() said True and the grab raised.
+    # Qt delivers THIS resize inside the call: window and scene agree at once, and the
+    # render target is only resized by the expose of the next pass.
+    ("showFullScreen(): the resize is delivered at once, the expose is not",
+     {"width": 5120, "height": 1440, "root_width": 5120.0, "root_height": 1440.0,
+      "target_synced": False}, "starting"),
+    ("a splitter moved, the resize event delivered, the expose pending",
+     {"width": 300, "root_width": 300.0, "target_synced": False}, "starting"),
+    ("the main window was maximised, no event yet: the embedded view has not changed at all",
+     {}, "live"),
+    ("a grab came back in another size than the window's: the host noted it",
+     {"target_synced": False}, "starting"),
     # a window closed with its X button loses its platform window and keeps the scene graph
     ("closed by the user", {"visible": False, "exposed": False}, "hidden"),
     # no graphics device: Qt says visible and exposed and never gets a scene graph
-    ("the graphics device could not be created", {"scene_graph": False}, "starting"),
+    ("the graphics device could not be created",
+     {"scene_graph": False, "target_synced": False}, "starting"),
 ]
 
 
@@ -81,19 +100,20 @@ def test_only_live_is_answerable() -> None:
 
 
 def every_combination() -> Iterator[WindowFacts]:
-    for surface, visible, minimised, width, height, graph, exposed, root_w, root_h in itertools.product(
+    for (surface, visible, minimised, width, height, graph, exposed, root_w, root_h,
+         target) in itertools.product(
             (False, True), (False, True), (False, True), (0, 1, 2, 447), (0, 1, 2, 500),
-            (False, True), (False, True), ("same", 0.0, 320.0), ("same", 240.0)):
+            (False, True), (False, True), ("same", 0.0, 320.0), ("same", 240.0), (False, True)):
         yield WindowFacts(surface, visible, minimised, width, height, graph, exposed,
                           float(width) if root_w == "same" else root_w,
-                          float(height) if root_h == "same" else root_h)
+                          float(height) if root_h == "same" else root_h, target)
 
 
 ALL = list(every_combination())
 
 
 def test_the_table_is_complete() -> None:
-    assert len(ALL) == 3072
+    assert len(ALL) == 6144
     assert {state_of(row) for row in ALL} == {
         HostState.NEW, HostState.STARTING, HostState.LIVE, HostState.HIDDEN}
 
@@ -118,8 +138,25 @@ def test_live_needs_every_fact() -> None:
     for row in ALL:
         everything = (row.surface_created and row.visible and not row.minimised
                       and row.width >= 2 and row.height >= 2 and row.scene_graph and row.exposed
-                      and round(row.root_width) == row.width and round(row.root_height) == row.height)
+                      and round(row.root_width) == row.width and round(row.root_height) == row.height
+                      and row.target_synced)
         assert (state_of(row) is HostState.LIVE) is everything, row
+
+
+def test_a_render_target_that_lags_is_the_only_thing_the_tenth_fact_changes() -> None:
+    """T turns live into starting and nothing else: it never hides a host, never makes one
+    new, and a host without it is still waited for (``wait_ready()`` waits while starting)."""
+    for row in ALL:
+        if row.target_synced:
+            continue
+        with_it = WindowFacts(row.surface_created, row.visible, row.minimised, row.width,
+                              row.height, row.scene_graph, row.exposed, row.root_width,
+                              row.root_height, True)
+        before, after = state_of(with_it), state_of(row)
+        if before is HostState.LIVE:
+            assert after is HostState.STARTING, row
+        else:
+            assert after is before, row
 
 
 def test_without_a_scene_graph_no_state_gives_a_frame_but_new() -> None:
@@ -177,6 +214,12 @@ def test_every_refusal_says_why_and_what_to_do() -> None:
     ({"scene_graph": False, "exposed": False}, False, "would kill the process"),
     ({"exposed": False}, False, "shown again but not exposed yet"),
     ({"root_width": 0.0}, False, "window 447 x 500, scene 0 x 500"),
+    ({"target_synced": False}, False,
+     "the render target has not caught up with the window's size yet (window 447 x 500"),
+    # the order of the reasons: the fatal one first, the scene before its target
+    ({"scene_graph": False, "target_synced": False}, False, "would kill the process"),
+    ({"exposed": False, "target_synced": False}, False, "shown again but not exposed yet"),
+    ({"root_width": 0.0, "target_synced": False}, False, "scene 0 x 500"),
     ({"visible": False}, False, "not visible"),
     ({"minimised": True}, False, "minimised"),
     ({"width": 0}, False, "no usable area (0 x 500 px"),
@@ -187,6 +230,25 @@ def test_the_refusal_names_the_fact_that_is_missing(changes: dict[str, Any], emb
                                                     words: str) -> None:
     row = facts(**changes)
     assert words in why_no_frame(state_of(row), row, embedded=embedded)
+
+
+def test_a_host_whose_graphics_device_never_came_is_not_told_to_wait() -> None:
+    """Review round 3, P2-6: ``wait_ready()`` answers False for such a host — the refusal
+    said "Call wait_ready() first". It names the failure and where to read it instead."""
+    row = facts(scene_graph=False, target_synced=False)
+    assert state_of(row) is HostState.STARTING
+    text = why_no_frame(HostState.STARTING, row, embedded=False,
+                        graphics_error="Failed to create the D3D11 device")
+    assert "could not create the graphics device" in text
+    assert "Failed to create the D3D11 device" in text
+    assert "health().scene_graph_error" in text and "wait_ready() answers False" in text
+    assert "Call wait_ready() first" not in text and "would kill the process" not in text
+    # without such a report the same facts are the ordinary "not exposed yet"
+    assert "Call wait_ready() first" in why_no_frame(HostState.STARTING, row, embedded=False)
+    # and a host that HAS its scene graph is not blamed for an old report
+    live_soon = facts(exposed=False)
+    assert "graphics device" not in why_no_frame(
+        HostState.STARTING, live_soon, embedded=False, graphics_error="an old report")
 
 
 def test_a_spent_host_is_never_told_to_show_itself() -> None:
