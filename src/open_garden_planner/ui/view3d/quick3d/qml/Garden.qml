@@ -25,7 +25,7 @@ Item {
     // ---- look (Quick3DHost.set_look; defaults = look.NEUTRAL_DAY) ----
     property color sunColor: "#fff1dc"
     property real sunBrightness: 1.9
-    property color fillColor: "#768ca9"     // flat fill: stands in for the sky's light until L1.4
+    property color fillColor: "#778cab"     // flat fill: stands in for the sky's light until L1.4
     property real exposure: 0.85
     property color skyColor: "#cfe2f2"
     property color meadowColor: "#487f34"   // ONE albedo for the meadow and for bare plan ground

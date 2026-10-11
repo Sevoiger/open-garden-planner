@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -93,7 +94,22 @@ def run_driver(out: Path, scenarios: str, *, qml_dir: Path | None = None,
         timeout=DRIVER_TIMEOUT_S, cwd=REPO)
     result_file = out / "result.json"
     result = json.loads(result_file.read_text(encoding="utf-8")) if result_file.is_file() else {}
+    keep_artifacts(out, proc)
     return proc, result
+
+
+def keep_artifacts(out: Path, proc: subprocess.CompletedProcess[str]) -> None:
+    """Copy a driver run's frames, ``result.json`` and log to ``OGP_RENDER3D_ARTIFACTS``
+    (CI uploads that directory) — a failed render on a runner nobody can log into is
+    only debuggable from its pictures."""
+    target = os.environ.get("OGP_RENDER3D_ARTIFACTS")
+    if not target:
+        return
+    destination = Path(target) / f"{out.parent.name}-{out.name}"
+    shutil.copytree(out, destination, dirs_exist_ok=True)
+    (destination / "driver-stdio.txt").write_text(
+        f"exit {proc.returncode}\n--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}",
+        encoding="utf-8")
 
 
 def failure_report(proc: subprocess.CompletedProcess[str], out: Path) -> str:
