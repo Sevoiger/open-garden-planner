@@ -7,7 +7,10 @@ are written down:
 - ``installer/ogp.spec`` ships the QML and shader files and names the lazily
   imported package (a missing data file only fails when a Model uses the shader);
 - ``release.yml`` still runs ``--selftest`` the one way that tests the shipping
-  condition, and gives the 3D log a path it can print;
+  condition, gives the log a path it can print, decides before it prints and
+  cannot hang;
+- ``frozen-selftest.yml`` runs the same gate on pull requests, with the release
+  recipe and the same step script, when a path that can break the bundle changes;
 - ``ci.yml`` has the ``render3d`` job on both platforms, running files that
   exist and are opt-in, and the job is not a required check.
 """
@@ -23,9 +26,11 @@ PACKAGE = REPO / "src" / "open_garden_planner" / "ui" / "view3d" / "quick3d"
 SPEC = (REPO / "installer" / "ogp.spec").read_text(encoding="utf-8")
 CI = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 RELEASE = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+FROZEN = (REPO / ".github" / "workflows" / "frozen-selftest.yml").read_text(encoding="utf-8")
 RENDER_TESTS = ("tests/integration/test_quick3d_render.py",
                 "tests/integration/test_quick3d_engine.py",
-                "tests/integration/test_quick3d_selftest.py")
+                "tests/integration/test_quick3d_selftest.py",
+                "tests/integration/test_quick3d_lifecycle.py")
 
 
 def _code(text: str) -> str:
@@ -66,37 +71,138 @@ class TestSpec:
         assert "L1.10" in SPEC
 
 
+def _selftest_step(workflow: str) -> str:
+    """The ``Verify frozen subsystems`` step of a workflow, up to the next step."""
+    start = workflow.index("- name: Verify frozen subsystems")
+    end = workflow.find("\n      - name:", start + 10)
+    return workflow[start:] if end < 0 else workflow[start:end]
+
+
+def _script(step: str) -> str:
+    """The step's ``run: |`` block."""
+    return step[step.index("        run: |\n") + len("        run: |\n"):]
+
+
 class TestReleaseWorkflow:
     def _step(self) -> str:
-        start = RELEASE.index("- name: Verify frozen subsystems")
-        return RELEASE[start:RELEASE.index("\n      - name:", start + 10)]
+        return _selftest_step(RELEASE)
 
     def test_the_step_names_the_new_coverage(self) -> None:
         step = self._step()
         assert "Qt Quick 3D" in step.splitlines()[0]
-        failure = next(line for line in step.splitlines() if "Write-Error \"Frozen self-test failed" in line)
-        for covered in ("#277", "#291", "Qt Quick 3D", "WARP"):
+        failure = next(line for line in step.splitlines() if "Frozen self-test failed" in line)
+        assert failure.strip().startswith('Write-Host "::error::Frozen self-test failed (exit ')
+        for covered in ("#277", "#291", "Qt Quick 3D", "WARP", "watchdog"):
             assert covered in failure, covered
 
     def test_the_verdict_is_still_the_exit_code_alone(self) -> None:
-        """The 3D log is printed for a human; nothing but ``$p.ExitCode`` decides."""
+        """The log is printed for a human; nothing but ``$p.ExitCode`` decides."""
         step = self._step()
         assert step.count("exit 1") == 2  # the missing exe, the failed self-test — as before
         assert re.search(r"\$p = Start-Process -FilePath \$exe -ArgumentList \"--selftest\" "
                          r"-Wait -PassThru", step)
-        assert "if ($p.ExitCode -ne 0) {" in step
         decisions = [line.strip() for line in step.splitlines() if line.strip().startswith("if (")]
         assert decisions == [
-            'if (-not (Test-Path $exe)) { Write-Error "Frozen exe not found: $exe"; exit 1 }',
-            "if (Test-Path $env:OGP_SELFTEST_LOG) {",
-            "if ($p.ExitCode -ne 0) {",
+            'if (-not (Test-Path $exe)) { Write-Host "::error::Frozen exe not found: $exe"; exit 1 }',
+            "if ($failed) {",
+            "if (Test-Path -LiteralPath $env:OGP_SELFTEST_LOG) {",
+            "if ($failed) { exit 1 }",
         ]
+        assert "$failed = $p.ExitCode -ne 0" in step
 
-    def test_the_3d_log_gets_a_path_the_step_can_print(self) -> None:
+    def test_the_log_gets_a_path_the_step_can_print(self) -> None:
         step = self._step()
         setting = step.index('$env:OGP_SELFTEST_LOG = Join-Path $env:RUNNER_TEMP "ogp-selftest-3d.log"')
         assert setting < step.index("$p = Start-Process"), "the child must inherit the variable"
-        assert "Get-Content $env:OGP_SELFTEST_LOG | Write-Host" in step
+        assert "Get-Content -LiteralPath $env:OGP_SELFTEST_LOG -ErrorAction Stop" in step
+
+    def test_the_verdict_comes_first_and_the_log_cannot_change_it(self) -> None:
+        """Review P1-4 (3). The step used to print the log BEFORE the verdict with a bare
+        ``Get-Content``; under GitHub's pwsh an unreadable log ended the step there."""
+        script = _script(self._step())
+        order = [script.index(marker) for marker in (
+            "$p = Start-Process", "$failed = $p.ExitCode -ne 0", "Frozen self-test failed",
+            "Frozen self-test passed", "try {", "Get-Content", "} catch {",
+            "The verdict above stands", "if ($failed) { exit 1 }")]
+        assert order == sorted(order), order
+        assert "Write-Error" not in script, "Write-Error ends the step before the log is printed"
+
+    def test_neither_the_step_nor_the_job_can_run_for_six_hours(self) -> None:
+        """Review P1-4 (1): the step and the job are bounded — and so is the exe itself
+        (``main.SELFTEST_WATCHDOG_S``), well inside the step's limit."""
+        from open_garden_planner.main import SELFTEST_WATCHDOG_S
+
+        step = self._step()
+        assert "        timeout-minutes: 10\n" in step
+        assert SELFTEST_WATCHDOG_S <= 0.5 * 10 * 60, "the in-exe watchdog must fire first"
+        job = RELEASE[RELEASE.index("\n  release:\n"):RELEASE.index("\n    steps:\n")]
+        assert re.search(r"\n    timeout-minutes: \d+\n", job), "the release job has no time limit"
+
+
+class TestFrozenSelftestWorkflow:
+    """Review P1-4 (2): the frozen gate BEFORE a merge, not only after it."""
+
+    def _triggers(self) -> str:
+        return _code(FROZEN[FROZEN.index("\non:\n"):FROZEN.index("\npermissions:")])
+
+    def test_it_runs_on_demand_and_on_pull_requests_that_can_break_the_bundle(self) -> None:
+        triggers = self._triggers()
+        assert "  workflow_dispatch:\n" in triggers
+        assert "  pull_request:\n    branches: [master]\n    paths:\n" in triggers
+        assert "push:" not in triggers, "not on every push: the build takes minutes"
+        paths = re.findall(r'^      - "([^"]+)"$', triggers, re.MULTILINE)
+        assert paths == [
+            "installer/**",
+            "src/open_garden_planner/main.py",
+            "src/open_garden_planner/__main__.py",
+            "src/open_garden_planner/ui/view3d/**",
+            "pyproject.toml",
+            "uv.lock",
+            "pylock.toml",
+            ".github/workflows/frozen-selftest.yml",
+            ".github/workflows/release.yml",
+            ".github/actions/setup-locked-env/**",
+        ]
+
+    def test_every_filtered_path_exists(self) -> None:
+        """A path filter that matches nothing is a workflow that never runs."""
+        for pattern in re.findall(r'^      - "([^"]+)"$', self._triggers(), re.MULTILINE):
+            target = REPO / pattern.removesuffix("/**")
+            assert target.exists(), pattern
+        assert (REPO / "src/open_garden_planner/ui/view3d/quick3d/selftest.py").is_file()
+
+    def test_it_can_only_read_the_repository(self) -> None:
+        assert "\npermissions:\n  contents: read\n" in FROZEN
+        assert FROZEN.count("permissions:") == 1, "no job widens the workflow's permissions"
+
+    def test_it_uses_no_action_that_ci_does_not_use(self) -> None:
+        used = set(re.findall(r"uses: (\S+)", _code(FROZEN)))
+        assert used == {"actions/checkout@v4", "./.github/actions/setup-locked-env"}
+        assert used <= set(re.findall(r"uses: (\S+)", _code(CI)))
+
+    def test_it_builds_with_the_release_recipe_not_a_copy_of_it(self) -> None:
+        code = _code(FROZEN)
+        assert "runs-on: windows-latest" in code
+        assert "        run: python installer/build_installer.py --skip-nsis\n" in code
+        assert "PyInstaller" not in code and "ogp.spec" not in code, "no second build recipe"
+        assert "run: python installer/build_installer.py --version" in _code(RELEASE)
+        script = (REPO / "installer" / "build_installer.py").read_text(encoding="utf-8")
+        assert '"--skip-nsis"' in script and '"--noconfirm"' in script and '"--clean"' in script
+
+    def test_it_runs_the_same_selftest_step_as_the_release(self) -> None:
+        """One script, two workflows: a fix to the release step that is not made here (or
+        the other way round) would leave the pull-request gate testing something else."""
+        assert _script(_selftest_step(FROZEN)) == _script(_selftest_step(RELEASE))
+        assert "        shell: pwsh\n        timeout-minutes: 10\n" in _selftest_step(FROZEN)
+
+    def test_the_job_is_bounded_and_not_a_required_check(self) -> None:
+        job = FROZEN[FROZEN.index("\njobs:\n"):FROZEN.index("    steps:\n")]
+        assert re.search(r"\n    timeout-minutes: \d+\n", job)
+        name = re.search(r"\n    name: (.+)\n", job)
+        assert name is not None
+        protection = json.loads((REPO / "quality" / "master-protection.json").read_text(encoding="utf-8"))
+        contexts = protection["required_status_checks"]["contexts"]
+        assert name.group(1) not in contexts and not [c for c in contexts if "frozen" in c.lower()]
 
 
 class TestRenderJob:
