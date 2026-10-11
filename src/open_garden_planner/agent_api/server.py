@@ -1956,7 +1956,9 @@ def build_server(
             The plant does NOT have to be geometrically inside the bed -- the
             app's own Link action doesn't require it either. The result's
             link_is_geometric tells you whether the link and the geometry
-            agree, so you can point out a mismatch.
+            agree, so you can point out a mismatch. (It is exact to about
+            2 cm at a bed's edge, where a warning badge on the plant can tip
+            it: see the field's description.)
 
             Pass bed_id=None to detach the plant from whatever bed it is in.
 

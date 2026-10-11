@@ -44,12 +44,18 @@ _log = logging.getLogger(__name__)
 
 #: kind -> what a line of that kind is built as when it carries no style
 DEFAULT_SOLID: Final = {"FENCE": fences.DEFAULT_FENCE_STYLE, "WALL": "STONE_WALL"}
-#: How many style names the one-warning-per-name memory holds before it starts
-#: over (a hand-edited plan can name anything; the 2D table has a dozen styles).
+#: How many style names the one-warning-per-name memory holds (a hand-edited plan
+#: can name anything; the 2D table has a dozen styles). Bounded in memory AND in
+#: volume: once it is full nothing new is logged for the rest of the session,
+#: and one line says so — starting over instead would log every unknown style
+#: again on every rebuild pass.
 REPORTED_STYLES_MAX: Final = 64
 #: The style names already reported as built plain — per process, not per build:
 #: every edit rebuilds the items it touches.
 _reported_styles: set[str] = set()
+#: In ``_reported_styles`` once the line "no further ones are logged" was written.
+#: No ``repr`` of a style equals it.
+_NO_MORE: Final = "<no more>"
 
 
 def solid_of(record: Record) -> str:
@@ -64,13 +70,20 @@ def solid_of(record: Record) -> str:
 
 
 def _report_plain(record: Record) -> None:
-    """One warning per style name that has no solid of its own."""
+    """One warning per style name that has no solid of its own — for the first
+    ``REPORTED_STYLES_MAX`` names of a session; then one line that says no more
+    follow, and silence."""
     style = record.params.get(PARAM_PATH_STYLE)
     name = repr(style)
     if style is None or name in _reported_styles:
         return
     if len(_reported_styles) >= REPORTED_STYLES_MAX:
-        _reported_styles.clear()
+        if _NO_MORE not in _reported_styles:
+            _reported_styles.add(_NO_MORE)
+            _log.warning(
+                "3D: %d line styles without a solid have been logged; further ones are built "
+                "as plain panels without a log line", REPORTED_STYLES_MAX)
+        return
     _reported_styles.add(name)
     _log.warning(
         "3D: no solid for the line style %s (first met on %s item %r); every line in that "

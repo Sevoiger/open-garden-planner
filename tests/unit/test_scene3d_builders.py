@@ -680,16 +680,19 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         round a square metre: the wall's section reaches 19 cm either side of its line
         where the stroke reaches 2, so of the 96 cm hole a 1 m loop encloses, the solid
         covers a 17 cm strip all round — 58 % of it. The solid is right (such a wall
-        leaves a 62 cm opening); the bound is for large loops. Measured: a closed WALL
-        up to 120 cm side, a stone-wall or hedge fence up to 110 cm, is refused by the
-        default. So a small loop is verified with the limit stated here — the strip the
-        section reaches into, never the middle.
+        leaves a 62 cm opening); the bound is for large loops. So a small loop is
+        verified with the limit stated here — the strip the section reaches into, never
+        the middle.
 
-        Re-measured after the merge of 9944012, whose gate has a size floor: a hole
-        narrower than ``HOLE_MIN_WIDTH_CM`` (10 cm) is not judged at all. That is the
-        other end of the range — a 12 cm loop, whose wall is one solid block over an
-        8 cm "hole", passes the default — and it leaves the 1 m loop where it was: its
-        hole is 92 to 96 cm wide. The default refuses a wall loop from 16 to 120 cm."""
+        The gate also has a size floor: a hole narrower than ``HOLE_MIN_WIDTH_CM``
+        (10 cm) is not judged at all. That is the other end of the range — a 12 cm loop,
+        whose wall is one solid block over an 8 cm "hole", passes the default.
+
+        This test pins three sides and no range: 12 cm passes, stroke + 12 cm and 1 m
+        are refused, 1.5 m passes. Where the default refuses in between was measured
+        once, for square loops at 1 cm steps of the side (ADR-054, decision 5): a WALL
+        15 – 120 cm, a stone-wall fence 16 – 118 cm, a hedge fence 19 – 111 cm and
+        again at 114 cm — the gate samples the hole on a coarse grid."""
         side = 100.0
         record = line_record(kind, square_loop(side), 120.0, width=stroke, style=style)
         assert len(record.holes) == 1 and len(record.holes[0]) == 1
@@ -893,18 +896,36 @@ class TestPolylinesAreBuiltFromTheCentreLine:
     def test_the_memory_of_reported_styles_is_bounded(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A hand-edited plan can name any style: the set of names already reported
-        never grows past ``lines.REPORTED_STYLES_MAX``."""
+        """A hand-edited plan can name any style. The memory of names is bounded — and
+        so is the LOG: once it is full nothing new is logged for the rest of the session,
+        and one line says so. (Review round 3, P2-5: the first version started over when
+        full, so a plan with 65 unknown names wrote 65 lines on EVERY rebuild pass — the
+        policy ``ui/view3d/snapshot.py`` rejects for its own log.)"""
         monkeypatch.setattr(lines, "_reported_styles", set())
+        names = lines.REPORTED_STYLES_MAX + 10
         with caplog.at_level(logging.WARNING, logger=lines.__name__):
-            for index in range(lines.REPORTED_STYLES_MAX + 10):
-                record = dataclasses.replace(
-                    line_record("FENCE", BENT_PATH, 120.0),
-                    params=Params({"seed": "s", "path_style": f"STYLE_{index}"}))
-                REGISTRY.build(record)
-                assert len(lines._reported_styles) <= lines.REPORTED_STYLES_MAX
-        reported = [record for record in caplog.records if record.name == lines.__name__]
-        assert len(reported) == lines.REPORTED_STYLES_MAX + 10  # each new name once
+            for rebuild_pass in range(3):  # every edit rebuilds: the same plan, three times
+                for index in range(names):
+                    record = dataclasses.replace(
+                        line_record("FENCE", BENT_PATH, 120.0),
+                        params=Params({"seed": "s", "path_style": f"STYLE_{index}"}))
+                    assert REGISTRY.build(record) != ()  # built all the same, as a plain panel
+                    assert len(lines._reported_styles) <= lines.REPORTED_STYLES_MAX + 1
+                reported = [record for record in caplog.records if record.name == lines.__name__]
+                # the first 64 names once each, then ONE line that says no more follow
+                assert len(reported) == lines.REPORTED_STYLES_MAX + 1, rebuild_pass
+        messages = [record.getMessage() for record in reported]
+        assert all(f"'STYLE_{index}'" in messages[index] for index in range(lines.REPORTED_STYLES_MAX))
+        assert "further" in messages[-1] and str(lines.REPORTED_STYLES_MAX) in messages[-1]
+        assert "STYLE_" not in messages[-1]
+        # a name that WAS reported stays silent; a known style never spoke
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=lines.__name__):
+            REGISTRY.build(dataclasses.replace(
+                line_record("FENCE", BENT_PATH, 120.0),
+                params=Params({"seed": "s", "path_style": "STYLE_0"})))
+            REGISTRY.build(line_record("FENCE", BENT_PATH, 120.0, style="WOODEN_FENCE"))
+        assert [record for record in caplog.records if record.name == lines.__name__] == []
 
     def test_the_fence_builders_never_guess_a_style(self) -> None:
         record = line_record("FENCE", BENT_PATH, 120.0)
