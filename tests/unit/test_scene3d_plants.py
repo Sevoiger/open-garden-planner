@@ -521,6 +521,20 @@ class TestPlaceholder:
         order = np.argsort(r)
         assert (np.diff(marker.mesh.positions[order, 2]) <= 1e-4).all()
 
+    @pytest.mark.parametrize("radius", [4.0, 80.0, 1500.0])
+    def test_its_rim_is_the_canopy_circle(self, radius: float) -> None:
+        """Seen from above the marker IS the canopy circle: the polygon of its rim
+        covers the circle to within 0.5 % (48 sides: 99.7 %). The first cut had 24
+        sides — 98.9 % — and its rim read as a polygon at close range through the
+        spike's engine; nothing measured said so."""
+        marker = build_plant(record_for(SpriteRef("species", "oak"), None, radius))[0]
+        points = marker.mesh.positions.astype(np.float64)
+        rim = points[points[:, 2] <= 1e-9 * radius][:, :2]
+        rim = rim[np.argsort(np.arctan2(rim[:, 1], rim[:, 0]))]
+        x, y = rim[:, 0], rim[:, 1]
+        area = 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+        assert 0.995 * np.pi * radius**2 <= area <= np.pi * radius**2
+
     def test_its_colour_is_one_neutral_tone_no_plant_has(self) -> None:
         marker = build_plant(record_for(SpriteRef("species", "oak"), None, 80.0))[0]
         colours = marker.mesh.colors[:, :3]

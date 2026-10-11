@@ -5,11 +5,16 @@ Every plant of the two bench plans, at two dates, goes through the real pipeline
 builder registered — and three things are pinned:
 
 - **time**: building all plants of a plan from scratch. Measured on the dev box
-  (Windows 11, Python 3.12.9, 2026-10-11): ``bench_small`` (61 plants) median
-  66–68 ms, ``bench_large`` (320 plants) median 329–333 ms — about 1.0 ms a
-  plant, sink bookkeeping included. The bounds below are six times that: a
-  tripwire against a builder that starts looping in Python, not a frame budget
-  (when builds run, and off which thread, is L1.3's);
+  (Windows 11, Python 3.12.9, 2026-10-11), on a quiet machine and one commit
+  before the builder was frozen: ``bench_small`` (61 plants) median 66–68 ms,
+  ``bench_large`` (320 plants) median 329–333 ms — about 1.0 ms a plant, sink
+  bookkeeping included. The frozen builder (its shell leaves are cast onto the
+  lobes) costs 1.0–1.35 times that — compared with it in one process,
+  interleaved, three times: 1.01–1.08 by the median, 1.12–1.35 by the minimum —
+  and this test read 196–208 ms and 750–958 ms while three other full test runs
+  shared the machine. No quiet reading of the frozen builder exists. The bounds
+  below are a tripwire against a builder that starts looping in Python, not a
+  frame budget (when builds run, and off which thread, is L1.3's);
 - **triangles**: no plant over ``TRIANGLE_BUDGET``, and the plan totals
   (measured: 70,802 for ``bench_small``, 300,212 / 300,292 for ``bench_large``
   in June / December — a conifer's tier count follows its proportions);

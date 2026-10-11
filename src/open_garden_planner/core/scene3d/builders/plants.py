@@ -529,6 +529,24 @@ def _trunk(top: float, radius: float, taper: tuple[float, float, float, float],
     return _geo(pos, _smooth_normals(pos, tri), tri, 0.0, 1.0, 0.0, 0.0)
 
 
+def _lumps(dice: _Dice, amount: float) -> Callable[[Floats], Floats]:
+    """A smooth closed curve round the axis, between ``1 - amount`` and 1: two low
+    harmonics with a random weight and random phases. Returns curve(angle)."""
+    weight, first, second = dice.uf(0.3, 0.7), dice.uf(0.0, _TAU), dice.uf(0.0, _TAU)
+
+    def at(angle: Floats) -> Floats:
+        wave = weight * np.sin(2.0 * angle + first) + (1.0 - weight) * np.sin(3.0 * angle + second)
+        return np.asarray(1.0 - amount * (0.5 + 0.5 * wave), np.float64)
+
+    return at
+
+
+def _even_angles(dice: _Dice, count: int, jitter: float) -> Floats:
+    """``count`` directions round the axis, one per equal slot, each off its slot's
+    middle by at most ``jitter`` slots; the whole ring turned at random."""
+    return dice.uf(0.0, _TAU) + _TAU * (np.arange(count) + dice.u(-jitter, jitter, count)) / count
+
+
 # ── the archetypes ────────────────────────────────────────────────────────────
 
 
@@ -763,24 +781,6 @@ def _hedge(p: _Plan) -> _Shape:
     size = 0.16 * p.leaf_scale() * math.sqrt(r * max(r, 0.5 * h))
     leaves = _leaves(d, shell, outward, size * d.u(0.8, 1.2, count), 0.6, heart, p.phase, droop=0.05)
     return None, _join([drum, leaves])
-
-
-def _lumps(dice: _Dice, amount: float) -> Callable[[Floats], Floats]:
-    """A smooth closed curve round the axis, between ``1 - amount`` and 1: two low
-    harmonics with a random weight and random phases. Returns curve(angle)."""
-    weight, first, second = dice.uf(0.3, 0.7), dice.uf(0.0, _TAU), dice.uf(0.0, _TAU)
-
-    def at(angle: Floats) -> Floats:
-        wave = weight * np.sin(2.0 * angle + first) + (1.0 - weight) * np.sin(3.0 * angle + second)
-        return np.asarray(1.0 - amount * (0.5 + 0.5 * wave), np.float64)
-
-    return at
-
-
-def _even_angles(dice: _Dice, count: int, jitter: float) -> Floats:
-    """``count`` directions round the axis, one per equal slot, each off its slot's
-    middle by at most ``jitter`` slots; the whole ring turned at random."""
-    return dice.uf(0.0, _TAU) + _TAU * (np.arange(count) + dice.u(-jitter, jitter, count)) / count
 
 
 def _whorl(p: _Plan, count: int, tip_radius: float, tip_height: float, width: float, bow: float,
