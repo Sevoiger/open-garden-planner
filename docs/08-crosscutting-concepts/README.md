@@ -693,10 +693,32 @@ Added by the senior review's first round (the same story):
   the ground (`scripts/measure_built_world_shadows.py`) showed the opposite for three of five
   fence styles. A table in an ADR needs a script a reader can re-run and a test that fails when
   the table goes stale.
-- **A mutation check for each fix.** Each rule of this round was switched off in the source
-  (the link alone lifts; a 3-tuple is a caster; no bevel; an unknown style is a picket fence; a
-  container's soil 2 cm low; a block on the first ring only …) and the tests that should notice
-  were run: fourteen of fourteen failed with assertions.
+- **A mutation check for each fix — committed, or it is a number nobody can check.** Each rule
+  of the review rounds is switched off in the source (the link alone lifts; a 3-tuple is a
+  caster; no bevel; an unknown style is a picket fence; a container's soil 2 cm low; a block on
+  the first ring only; the lift asks the bounding rect's centre; the parent's shape is its
+  bounding box …) and the tests that should notice are run:
+  `scripts/mutation_check_built_world.py`, next to the scene contract's
+  `mutation_check_scene3d.py`. A mutant counts as KILLED only when pytest exits with code 1 and
+  names a failed test — a collection error or a crash is reported as BROKEN, not as a kill. The
+  first round quoted its count from a script that lived in a scratch folder.
+- **A guard that counts a construct must see every spelling of it.** "The containment test
+  exists once" matched `x.contains(y.mapFromScene(p))` written as one expression; the same test
+  in two statements passed. The guard now follows a mapped point through local names (and a
+  parametrised test feeds it both spellings and three near misses), and states the limit that
+  remains: attributes, containers, parameters.
+- **Pin which input each decision takes when a refactor claims "identical behaviour".** Five
+  inline expressions became two shared functions; swapping the point they used passed all 114
+  related tests, because no test had a case where the two candidate points differ. One probe
+  where they do (a plant under its warning badge at a bed's edge) and one assertion per
+  decision turned the claim from read into tested.
+- **No universal sentence next to a gate without a measured number.** The truth-gate row said
+  that a 3D shadow ends where the 2D one ends, for every kind; the committed script, asked for
+  the reach, printed −270 cm for a house. The reach is now a column of the script, and a test
+  scans the docs and skills for the claim.
+- **Wait for a count, never for a duration.** `qtbot.wait(400)` after a 150 ms debounce is a
+  guess about the machine. `waitUntil(count reached)`, then `waitUntil(debounce idle)`, then
+  the exact count — and for "nothing happens", assert that nothing is scheduled.
 
 ## 8.11 Security Scanning (SAST)
 
@@ -2868,7 +2890,9 @@ The last row is the honest fallback: a style without a solid of its own is never
 style's look (it used to become a picket fence). It gets the body the plan itself describes — the
 solid the 2D shadow model casts. The five names are a mirror (`fences.FENCE_STYLES`;
 `core/object_types.py` imports Qt) pinned against `PATH_FENCE_STYLES`' "fence" category, so a new
-fence style fails a test until a builder is chosen for it. A style change sets the stroke's colour
+fence style fails a test until a builder is chosen for it. At run time the fallback writes ONE
+warning per style name to the application's log (`lines._report_plain`), on the first build of a
+line in that style — never one per build. A style change sets the stroke's colour
 and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `update_material`.
 
 **The rules a builder obeys** (on top of §8.26.1's contract):
@@ -2892,7 +2916,11 @@ and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `upd
    segment. Never take `record.footprints` of a polyline for its shape: they are the outline of
    its STROKE — for a closed line one outer ring, with the ground it encloses as a hole in
    `record.holes` — and the outer ring alone lids the garden. Nothing may be built over that
-   hole: `verify_builder` refuses a solid that covers more than half of it.
+   hole: `verify_builder` refuses a solid that covers more than half of it. That default is for
+   loops the size of a garden. A wall or hedge reaches 19–20 cm either side of its line, so a
+   closed WALL loop up to 120 cm side (a stone-wall or hedge-fence loop up to 100 cm) covers
+   over half of what it encloses and is refused although it is right: verify such a loop with
+   an explicit `hole_cover_limit` and say why (the test for a 1 m loop uses 0.65).
    **One plain ring, or the plain block**: a builder that needs ONE simple outline — a gable
    roof, a bed's frame, a pot, a hedge — checks that it has one (`common.has_one_plain_ring`;
    `footprint_of` raises otherwise). A record with several regions or with a hole — a polygon
@@ -2907,9 +2935,14 @@ and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `upd
    exceptions: a roof oversails by its overhang; a hedge leaf's tip may pass the outline by a few
    centimetres; a linear item has a nominal thickness (the plan has none). **Corners**: `sweep`
    and `offset_ring` mitre a corner up to `BEVEL_BEYOND` = 2 offsets (a turn of 120°) and bevel a
-   sharper one on the side where the edges run apart, so nothing lies further than 2 offsets from
-   the line or ring it was built on — no eave spike on an acute-triangle house, no spike of
-   coping on a hairpin wall. Where the edges run together (an inset) the true intersection stays.
+   sharper one on the side where the edges run apart — no eave spike on an acute-triangle house,
+   no spike of coping on a hairpin wall. Where the edges run together (an inset, the inside of
+   a bend) the true intersection stays, up to `MITER_LIMIT` = 4 offsets from the joint. **The
+   bound and its condition:** nothing lies further than 2 offsets from the line or ring it was
+   built on when every leg of a line is at least 4 offsets long (76 cm for a wall). A leg
+   shorter than the inside mitre runs back along it puts that corner beyond the leg's other
+   end; there the bound is 4 offsets (a wall zigzag with 25 cm legs: 2.6–2.7), and the solid
+   overlaps itself.
 6. **Flat faces from their winding.** Build flat geometry with `primitives.flat_mesh` (normals
    are computed, never written) and pass `outward=` where you know which way a face looks — the
    winding then follows it.
@@ -2954,48 +2987,89 @@ when BOTH hold:
 1. its `parent_bed_id` names a visible `is_bed_type` parent with a resolved height —
    `object_height.standing_base_cm` → `soil_surface_cm(type, height)`: `SOIL_DROP_CM` (2 cm)
    under the rim of a bed, AT the height of a container (whose height is its soil fill height);
-2. its centre lies inside that parent's shape — `footprints.centre_is_inside`, the app's one
-   point-in-bed test (auto-parenting, the re-link after a drag, `link_is_geometric` and
-   `find_smallest_bed_containing` call the same functions).
+2. its **stable geometric centre** lies inside that parent's shape —
+   `footprints.standing_point(item)` (the outline's anchor in scene coordinates: a plant
+   circle's centre, the origin of its record) tested with `footprints.shape_contains`, the
+   app's one point-in-bed predicate.
 
 Otherwise 0, as before L1.6. The second condition is there because the link is bookkeeping: it is
-set when a plant is created or dropped and by nothing else, so a bed resized away from its plant
-keeps the link. `item_base_cm` is asked by `snapshot_records` (→ `transform.base_cm`) and by
+evaluated when a plant is created (one by one, in bulk, or pasted — `_auto_parent_plant`), when a
+selected plant is dropped after a drag, and when the agent moves a plant (`move_object`'s
+re-link); nothing that changes a BED evaluates it, so a bed resized away from its plant keeps the
+link.
+
+**One predicate, two points.** Every link decision and the lift ask `shape_contains`. The link
+decisions ask it with `bed_membership_point` — the centre of `boundingRect()`, kept exactly as
+shipped; the lift asks it with `standing_point`. They are the same point until the antagonist
+badge shows: the badge grows the bounding rect towards +x / +y and moves its centre by up to
+1.8 cm. So a plant's base does not change when a warning badge appears (it did after round 1:
+38 ↔ 0 for a plant 1 cm inside its bed's edge), and within that margin of an edge a link decision
+and the lift can differ — pinned decision by decision in
+`tests/integration/test_scene3d_base_stacking.py::TestWhichPointEachDecisionAsks`. A new caller
+that asks "where does it stand" takes `standing_point`; one that asks "which bed is it linked
+to" takes `bed_membership_point`; neither writes its own containment test (a guard counts them).
+
+`item_base_cm` is asked by `snapshot_records` (→ `transform.base_cm`) and by
 `collect_shadow_casters` (→ `ShadowCaster.base_cm`, §8.20), and `beds.py` puts the soil at the
 same `soil_surface_cm` — one function for the soil mesh, the 3D base and the 2D caster's base. A
 bed that changes height reaches each of its plants as one `update_transform`; no plant mesh is
 rebuilt. A bed that is resized reaches a plant it no longer contains the same way (38 → 0).
+**Cost**: 2.8 µs per lifted plant; the parent's shape is built once per walk
+(`ItemLookup.shape_of` — Qt's `contains` rebuilds it per call). bench_large, 240 lifted plants:
+the caster walk 3.9 ms before L1.6, 5.0 ms now; `snapshot_records` 8.6 → 10.0 ms.
+
+**A known smell.** `ui/canvas/footprints.py` is collecting jobs: footprints, the base rule and
+the app's point-in-bed test — and `core/commands.py` imports the last one from `ui/` (lazily,
+inside the function, as it already imported `GardenItemMixin`). The predicate belongs somewhere
+both layers may import without that arrow; it is not restructured in L1.6.
 
 **Known limits of base stacking** — a plant can be IN a raised bed and not ON it, because the
-app does not reconcile links (ADR-037 addendum; a follow-up issue). Each is pinned in
-`tests/integration/test_scene3d_base_stacking.py::TestTheLinkAloneNeverLifts`:
+app does not reconcile links when a bed is created or changed (ADR-037 addendum; a follow-up
+issue, which also takes the link decisions' dependence on the antagonist badge). Each is pinned
+in `tests/integration/test_scene3d_base_stacking.py::TestTheLinkAloneNeverLifts`:
 
 | State | What the plan holds | Result |
 |---|---|---|
 | a raised bed drawn around an existing plant | no link | the plant stays at ground level: in 2D it casts from the ground, in 3D it is drawn inside the box |
 | a climber on a trellis that stands in a raised bed | linked to the trellis (the smallest parent) | the climber at 0, its neighbour in the bed at 38 |
 | a pot standing on a raised bed | the pot has no parent (only plants do) | the pot on the ground, its plant at the pot's soil (30), not at 68 |
+| a bed whose outline is not one plain ring (a self-crossing drawing) | built as the plain block, top at the rim | its plants stand 2 cm INSIDE the block: "on its soil by construction" holds for the bed builders only |
 
 **3D shadows against the 2D model.** The truth gate "Shadows" (`ogp-lush-cinematic` §1,
 IoU ≥ 0.85) is defined on a solid box caster. The built world is not a set of boxes, and the
-committed `scripts/measure_built_world_shadows.py` says what that costs — 3D area ÷ 2D area and
-IoU of the mesh's ground shadow against the 2D model's, at a sun of 15° / 35° / 60°:
+committed `scripts/measure_built_world_shadows.py` says what that costs — 3D area ÷ 2D area, IoU
+of the mesh's ground shadow against the 2D model's, and the REACH (how much further, +, or less
+far, −, the 3D shadow extends along the shadow direction: where its tip is), each at a sun of
+15° / 35° / 60°:
 
-| Kind | 3D ÷ 2D area | IoU | Why |
-|---|---|---|---|
-| raised bed, box, plain panel | 1.00 | 0.99–1.00 | none: the same prism |
-| hedge (polygon, section) | 0.94–0.98 | 0.93–0.97 | leaf shell drawn in |
-| round tub / terracotta pot | 0.89–0.91 / 0.81–0.83 | the same | taper |
-| house, shed | 0.81–1.06 | 0.74–0.88 | gable roof vs flat-topped prism |
-| wall | 1.04 / 1.10 / 1.24 | 0.96 / 0.91 / 0.81 | nominal section: WIDER in 3D |
-| stone-wall fence, hedge fence | 1.04–1.06 / 1.13–1.15 / 1.31–1.37 | 0.94–0.96 / 0.87–0.89 / 0.73–0.76 | nominal section |
-| picket fence | 0.67 / 0.68 / 0.70 | 0.65 / 0.66 / 0.68 | porosity: LESS in 3D |
-| metal fence | 0.19 / 0.21 / 0.24 | 0.19 / 0.20 / 0.24 | porosity |
-| chain-link fence | 0.13 / 0.14 / 0.19 | 0.12 / 0.13 / 0.19 | porosity |
+| Kind | 3D ÷ 2D area | IoU | Reach 3D − 2D (cm) | Why |
+|---|---|---|---|---|
+| raised bed, box, plain panel | 1.00 | 0.99–1.00 | −0.6 … 0.0 | none: the same prism (its top edge bevelled) |
+| hedge (polygon, section) | 0.94–0.98 | 0.93–0.97 | +2.7 … +4.4 | leaf shell drawn in; leaf tips |
+| round tub / terracotta pot | 0.89–0.91 / 0.81–0.83 | the same | −0.6 … −0.3 | taper |
+| house, sun square to the ridge | 0.92 / 0.81 / 0.92 | 0.85 / 0.74 / 0.82 | −270.0 / −270.0 / −108.2 | gable: the ridge is mid-house, the 2D prism's top edge at the far wall |
+| shed, sun square to the ridge | 0.92 / 0.93 / 1.03 | 0.85 / 0.83 / 0.88 | −150.0 / −81.4 / −21.0 | the same, on a 3 m deep shed |
+| house, sun along the ridge | 0.90 / 0.99 / 1.06 | 0.82 / 0.86 / 0.88 | +30.0 / +30.0 / +30.0 | the roof's overhang past the gable wall |
+| wall | 1.04 / 1.10 / 1.24 | 0.96 / 0.91 / 0.81 | +15.0 / +15.0 / +15.8 | nominal section: WIDER in 3D |
+| stone-wall fence, hedge fence | 1.04–1.06 / 1.13–1.15 / 1.31–1.37 | 0.94–0.96 / 0.87–0.89 / 0.73–0.76 | +14.5 … +15.3, +19.5 … +19.6 | nominal section |
+| picket fence | 0.67 / 0.68 / 0.70 | 0.65 / 0.66 / 0.68 | +2.0 / +2.0 / +2.4 | porosity: LESS in 3D |
+| metal fence | 0.19 / 0.21 / 0.24 | 0.19 / 0.20 / 0.24 | +0.8 / +0.8 / +0.8 | porosity |
+| chain-link fence | 0.13 / 0.14 / 0.19 | 0.12 / 0.13 / 0.19 | +1.5 / +1.5 / +1.5 | porosity |
 
 So: a solid line item casts a wider shadow in 3D than the 2D model, more at a high sun; a porous
 fence casts a fraction of it — the hours-of-sun map shows shade behind a chain-link fence where
-the 3D fence lets over four fifths of the sun through. The analysis stays the 2D model's; a 3D
-reviewer measuring shadow IoU on these kinds reads this table, not the box gate. The full table
-is in ADR-054's builders addendum; `tests/unit/test_scene3d_shadow_agreement.py` holds the
-builders to it within 0.05.
+the 3D fence lets over four fifths of the sun through. **Where the tip is** agrees within 2.5 cm
+for the prisms, the pots and the post fences, and does not for a gabled building with the sun
+square to its ridge: the 2D model extrudes the footprint to the ridge height, so its tip is cast
+from the far wall while the gable's is cast from the middle of the house — half the depth short
+at a low sun (2.7 m on the bench house). That is the two models' difference, not a roof to fix.
+
+**What the numbers are for.** They are analytic references for the builders: one item, the sun
+square to a straight 10 m line (a building: square to or along its ridge), the mesh projected
+onto the ground without a shadow map. A builder's number below the listed one is a finding. An
+ENGINE render is judged on solid casters (the box gate); thin members — a 0.8 cm wire, a 1.6 cm
+bar, about one shadow-map texel — will read lower there through no fault of the builder and are
+exempt from a per-pixel IoU. The analysis stays the 2D model's; a 3D reviewer measuring shadow
+IoU on these kinds reads this table, not the box gate. The full table is in ADR-054's builders
+addendum; `tests/unit/test_scene3d_shadow_agreement.py` holds the builders to it within 0.05
+(a reach within 1 cm) and every copy of the table to the script's.

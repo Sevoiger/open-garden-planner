@@ -1203,17 +1203,20 @@ Found by the senior review's first round, in code whose tests were all green:
 
 - **A link is not a location.** The first cut lifted a plant onto its bed's soil whenever
   `parent_bed_id` named a raised bed. But the app keeps that link as bookkeeping: it is evaluated
-  when a plant is created or dropped and by nothing else, and `set_parent_bed` sets it on purpose
+  when a plant is created (also in bulk, also pasted), dropped, or moved by the agent — and by
+  nothing that changes a bed — and `set_parent_bed` sets it on purpose
   without containment. Shrink a raised bed away from its plant and the link stays — the plant on
   the lawn then cast from 38 cm, and at a 15° sun its shadow began 141.8 cm away from it, with
   111.8 cm of lit ground in between. New wrong output in the shipped overlay and heatmap, from a
   change whose golden proved "nothing on the ground moved" (true — and beside the point). Fix:
   `item_base_cm` lifts only when the link holds AND the item's centre is inside the parent's
   shape, with the app's own point-in-bed construct, extracted once
-  (`footprints.centre_is_inside`). Pinned by
+  (`footprints.shape_contains`; WHICH point it is asked with was corrected in the second round,
+  below). Pinned by
   `tests/integration/test_scene3d_base_stacking.py::TestTheLinkAloneNeverLifts`. *Before keying
   geometry on a relation, find out when the relation is re-evaluated — here: when a plant is
-  created and when one is dropped, never when a bed changes.*
+  created (also in bulk, also pasted), when one is dropped, when the agent moves one; never when
+  a bed changes.*
 - **"Bit-identical" has to say on which machine.** The golden compares exactly only on win32;
   the CI test jobs run on Linux, where the gate is structure plus 2e-3 cm. The ADR said
   "bit-identical, by construction and by proof". The proof that holds everywhere is a different
@@ -1250,6 +1253,43 @@ Found by the senior review's first round, in code whose tests were all green:
   from 40 / 60 to 60 / 90 ms in the last commit of the first cut, although the loaded medians it
   quoted were under the old ones. With the ×3 CI factor a per-vertex Python loop would have
   passed. They are back, and a clock-free call count stands next to them (§8.10.4).
+
+Found by the senior review's second round, again with every test green:
+
+- **The first fix made a shadow depend on a warning badge.** Round 1 asked "is the plant inside
+  its bed" with the app's own membership point, the centre of `boundingRect()` — the review had
+  prescribed exactly that, for consistency with auto-parenting. But `CircleItem.boundingRect()`
+  grows towards +x / +y while the antagonist badge shows, so its centre moves by up to 1.8 cm:
+  a linked plant 1 cm inside a raised bed's east edge stood at 38 without the badge and at 0
+  with it, in the 3D record and in the 2D caster. Fix: the LIFT asks the item's stable
+  geometric centre (`footprints.standing_point`, the outline's anchor — the origin of the 3D
+  record); the link decisions keep their shipped point; one predicate (`shape_contains`) serves
+  both. *A bounding rect is a paint rect. Before using one as geometry, list everything that
+  changes it: here a badge, a companion highlight, the shadow margin, the spacing ring.* And
+  the "identical behaviour" of the refactor that extracted that point was true by reading
+  only: swapping it for the geometric centre passed all 114 related tests, until one probe
+  where the two points differ pinned each decision (`TestWhichPointEachDecisionAsks`).
+- **A universal sentence stood next to a truth gate with no number behind it.** The gate row
+  said that a 3D shadow ends where the 2D one ends, whatever the kind — reasoned from "the
+  height is the same number". The tip is cast by the highest EDGE, and a gable's ridge stands
+  mid-house while the 2D prism's top edge is at the far wall: asked for the reach, the story's
+  own script printed −270 cm for the bench house with the sun square to its ridge, −150 cm for
+  a shed, +30 cm along the ridge (the overhang), +15 cm for a wall (its section). A reviewer
+  would have reported a 2.7 m truth-gate miss, or a creator would have "fixed" the roof. Fix:
+  the sentence is deleted, the reach is a column of the script and of every copy of the table,
+  and a test scans docs and skills for the claim. *Next to a gate, only numbers a script
+  prints.*
+- **"Every line solid is held to the bound" held for the sizes in the matrix.** `verify_builder`
+  refuses a solid over more than half of a hole. The matrix's loops are 8 m × 6 m; a closed
+  wall of 1 m side covers 56 % of what it encloses with its 38 cm section — correctly — and is
+  refused. The bound is stated with its size now, and a 1 m loop is pinned with an explicit
+  limit. The same shape of mistake as the corner bound: "nothing further than 2 offsets" held
+  for legs longer than the section; a 25 cm-leg zigzag under a 38 cm wall reaches 2.7 offsets.
+  *A bound asserted over a matrix is a bound for the matrix's parameter ranges; say the range.*
+- **A lookup that is "one per walk" is the place for what a walk needs once.** The base rule
+  called Qt's `contains` per plant, which rebuilds the parent's shape each time; with the
+  plant's `boundingRect()` (a Python override) that was 6 µs of the 7.6 µs the rule cost per
+  plant. `ItemLookup.shape_of` builds the shape once per parent and walk; the rule costs 2.8 µs.
 
 ### CI/release hardening: locked metadata also contains the application version
 

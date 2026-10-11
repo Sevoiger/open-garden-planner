@@ -1,12 +1,13 @@
 """The built world's 3D shadows against the 2D shadow model (Phase 17 L1.6, review
-round 1, P1-3).
+round 1, P1-3; the reach column: review round 2, P1).
 
 ``scripts/measure_built_world_shadows.py`` projects every built-world mesh onto the
 ground along the sun ray and compares it with what the 2D sun & shade model casts
 for the same item. This file runs that measurement and holds the builders to the
 table the docs quote (ADR-054's builders addendum, §8.26.6, FR-SUN-09,
-``ogp-lush-cinematic`` §1 "Shadows") — within ``TOLERANCE`` (0.05), so a builder
-change that moves a kind by a tenth of an IoU fails here and takes the docs with it.
+``ogp-lush-cinematic`` §1 "Shadows") — within ``TOLERANCE`` (0.05; a reach within
+``REACH_TOLERANCE_CM``, 1 cm), so a builder change that moves a kind by a tenth of
+an IoU or a tip by a centimetre fails here and takes the docs with it.
 
 It also states the RULE the table is an instance of, kind by kind:
 
@@ -18,23 +19,38 @@ It also states the RULE the table is an instance of, kind by kind:
 - a wall, a stone-wall fence and a hedge fence have a nominal section the plan does
   not hold: their 3D shadow is the WIDER one, more so the higher the sun.
 
-Before this round the ADR said of every line item that "the body is wider". For
-three of the five fence styles the opposite is true.
+And WHERE THE TIP IS (the reach along the shadow direction, 3D minus 2D). Round 1
+wrote "shadow length and tip always agree (the height is exact)" into the truth-gate
+row. The height is the same number in both models — but the tip is cast by the
+highest EDGE, and a gable's ridge stands mid-house where the 2D prism's top edge is
+at the far wall: 270 cm short on the bench house. No sentence about shadows goes
+next to the gate unless this script prints the number behind it; the doc tests at
+the end hold every copy of the table to the script's.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import math
+import re
 from functools import cache
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "measure_built_world_shadows.py"
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "scripts" / "measure_built_world_shadows.py"
 PRISMS = ("raised bed", "container (box)", "plain panel (unknown style)")
+POTS = ("terracotta pot", "round tub")
 POROUS = ("chain-link fence", "metal fence", "picket fence")  # least solid first
 NOMINAL_SECTION = ("wall", "stone-wall fence", "hedge fence")
+HEDGES = ("hedge (polygon)", "hedge (section)")
+GABLE_SQUARE = ("house, sun square to the ridge", "shed, sun square to the ridge")
+ADR = ROOT / "docs" / "09-architecture-decisions" / "README.md"
+CONCEPTS = ROOT / "docs" / "08-crosscutting-concepts" / "README.md"
+SKILLS = tuple(ROOT / tree / "skills" / "ogp-lush-cinematic" / "SKILL.md"
+               for tree in (".claude", ".agents"))
 
 
 @cache
@@ -57,21 +73,33 @@ def _rows() -> dict[str, object]:
 def test_the_measurement_matches_the_documented_table() -> None:
     script = _script()
     assert script.TOLERANCE == 0.05 and script.ELEVATIONS_DEG == (15.0, 35.0, 60.0)
+    assert script.REACH_TOLERANCE_CM == 1.0
     assert script.drift(tuple(_rows().values())) == []
     assert set(_rows()) == set(script.DOCUMENTED) and len(script.DOCUMENTED) == 16
+    for ratio, iou, reach in script.DOCUMENTED.values():
+        assert len(ratio) == len(iou) == len(reach) == 3
 
 
 def test_the_drift_check_can_fail() -> None:
-    """A row that moved by a tenth is reported; so is a missing case."""
+    """A row that moved by a tenth is reported; so is a tip that moved by two
+    centimetres; so is a missing case."""
     script = _script()
     rows = list(_rows().values())
-    moved = script.Row(rows[0].name, rows[0].why,
-                       tuple(value + 0.1 for value in rows[0].ratio), rows[0].iou)
+    first = rows[0]
+    moved = script.Row(first.name, first.why, tuple(value + 0.1 for value in first.ratio),
+                       first.iou, first.reach_cm)
     assert script.drift([moved, *rows[1:]]) == [
-        f"{rows[0].name} at {elevation:g} deg: area ratio {value + 0.1:.2f}, documented {documented:.2f}"
+        f"{first.name} at {elevation:g} deg: area ratio {value + 0.1:.2f}, documented {documented:.2f}"
         for elevation, value, documented in zip(
-            script.ELEVATIONS_DEG, rows[0].ratio, script.DOCUMENTED[rows[0].name][0], strict=True)
+            script.ELEVATIONS_DEG, first.ratio, script.DOCUMENTED[first.name][0], strict=True)
     ]
+    shifted = script.Row(first.name, first.why, first.ratio, first.iou,
+                         (first.reach_cm[0] + 2.0, *first.reach_cm[1:]))
+    (problem,) = script.drift([shifted, *rows[1:]])
+    assert problem.startswith(f"{first.name} at 15 deg: reach ") and "documented" in problem
+    within = script.Row(first.name, first.why, first.ratio, first.iou,
+                        tuple(value + 0.4 for value in first.reach_cm))
+    assert script.drift([within, *rows[1:]]) == []
     assert script.drift(rows[1:])[0].startswith("cases differ")
 
 
@@ -127,16 +155,173 @@ def test_which_kinds_meet_the_box_gate_at_every_elevation() -> None:
     assert max(below.values()) < BOX_GATE_IOU - 0.01  # none of the others is a borderline case
 
 
-def test_the_gate_s_number_is_the_skill_s() -> None:
-    """Both skill trees state the gate and now list the built-world kinds next to it."""
-    root = SCRIPT.parents[1]
-    for tree in (".claude", ".agents"):
-        text = (root / tree / "skills" / "ogp-lush-cinematic" / "SKILL.md").read_text(encoding="utf-8")
-        row = next(line for line in text.splitlines() if line.startswith("| Shadows |"))
-        assert "IoU ≥ 0.85" in row and "box caster" in row
-        assert "scripts/measure_built_world_shadows.py" in row
-        for kind in ("picket", "chain-link", "wall", "house", "pot"):
-            assert kind in row, (tree, kind)
+# ── where the tip is: the reach column (review round 2, P1) ──────────────────
+
+
+def _reach(name: str) -> tuple[float, float, float]:
+    reach: tuple[float, float, float] = _rows()[name].reach_cm  # type: ignore[attr-defined]
+    return reach
+
+
+def test_the_reach_is_measured_along_the_shadow_direction() -> None:
+    """``reach_cm`` is the tip's position along the shadow direction: for the raised
+    bed (a 300 x 120 cm prism, 40 cm high, the sun due south) the 2D shadow ends
+    ``60 + 40 / tan a`` north of its centre."""
+    script = _script()
+    case = next(case for case in script.cases() if case.name == "raised bed")
+    for elevation in script.ELEVATIONS_DEG:
+        tip = script.reach_cm(script.caster_shadow(case.record, elevation, case.azimuth_deg),
+                              case.azimuth_deg)
+        assert tip == pytest.approx(60.0 + 40.0 / math.tan(math.radians(elevation)), abs=1e-2)
+
+
+@pytest.mark.parametrize("name", [*PRISMS, *POTS, *POROUS])
+def test_prisms_pots_and_post_fences_end_where_the_2d_shadow_ends(name: str) -> None:
+    """What agrees: within 2.5 cm at every elevation. A prism's and a pot's top edge
+    is bevelled in by 0.6 cm (the tip is that much short); a fence post is wider than
+    the stroke (2 cm, 0.75 cm, 1.5 cm further); a plain panel IS the stroke strip."""
+    reach = _reach(name)
+    assert max(abs(value) for value in reach) <= 2.5
+    if name == "plain panel (unknown style)":
+        assert max(abs(value) for value in reach) <= 1e-6
+    elif name in POROUS:
+        assert min(reach) > 0.0   # the posts stand out of the stroke
+    else:
+        assert min(reach) > -1.0 and max(reach) < 0.0  # the bevel: a hair short
+
+
+@pytest.mark.parametrize("name", HEDGES)
+def test_a_hedge_s_leaves_reach_a_few_centimetres_further(name: str) -> None:
+    reach = _reach(name)
+    assert min(reach) > 2.0 and max(reach) < 6.0
+
+
+@pytest.mark.parametrize(("name", "half_depth_cm"), [(GABLE_SQUARE[0], 270.0), (GABLE_SQUARE[1], 150.0)])
+def test_a_gable_s_tip_is_half_the_depth_short_with_the_sun_square_to_the_ridge(
+    name: str, half_depth_cm: float
+) -> None:
+    """What does NOT agree, and why. The 2D model extrudes the whole footprint to the
+    ridge height: its highest edge is at the FAR WALL. A gable's ridge is mid-house.
+    At a low sun the ridge casts the tip — exactly half the depth short (270 cm on the
+    5.4 m deep house, 150 cm on the 3 m shed). At a high sun the far eave casts it —
+    lower, but half the depth plus the overhang further out — and the miss shrinks."""
+    script = _script()
+    case = next(case for case in script.cases() if case.name == name)
+    ys = [y for _x, y in case.record.footprints[0]]
+    assert (max(ys) - min(ys)) / 2.0 == half_depth_cm  # the footprint's depth, square to the ridge
+    reach = _reach(name)
+    assert reach[0] == pytest.approx(-half_depth_cm, abs=1e-2)  # 15°: the ridge is the tip
+    assert reach[0] <= reach[1] <= reach[2] < -20.0             # the miss shrinks, never closes
+    assert reach[2] > -half_depth_cm + 100.0                     # 60°: the eave has taken over
+    # … and no builder change is asked for: the roof IS on the ridge (gate G2); the
+    # difference is the 2D model's flat-topped prism
+
+
+def test_along_the_ridge_the_overhang_carries_the_tip_further() -> None:
+    from open_garden_planner.core.scene3d.builders import buildings
+
+    reach = _reach("house, sun along the ridge")
+    assert all(value == pytest.approx(buildings.HOUSE_ROOF.overhang_cm, abs=1e-2) for value in reach)
+    assert buildings.HOUSE_ROOF.overhang_cm == 30.0
+
+
+@pytest.mark.parametrize(("name", "further_cm"), [("wall", 15.0), ("stone-wall fence", 14.5),
+                                                  ("hedge fence", 16.0)])
+def test_a_nominal_section_carries_the_tip_further(name: str, further_cm: float) -> None:
+    """A wall's coping edge stands 17 cm from the centre line (15 cm of body, 4 cm of
+    coping, a 2 cm chamfer) where the 4 cm stroke's edge stands at 2: the tip lies
+    15 cm further. A stone-wall fence (a 5 cm stroke): 14.5. A hedge fence: its 40 cm
+    thickness less the 8 cm stroke, halved — 16 — plus a leaf's poke."""
+    reach = _reach(name)
+    assert min(reach) >= further_cm - 1e-2
+    assert max(reach) <= further_cm + (5.0 if name == "hedge fence" else 1.0)
+
+
+# ── every copy of the table is the script's ──────────────────────────────────
+
+
+def _minus(text: str) -> str:
+    return text.replace("−", "-").replace("÷", "/")
+
+
+def _table_cells(text: str, name: str) -> list[list[str]]:
+    """The cells of every Markdown table row whose first cell is ``name``."""
+    rows = []
+    for line in _minus(text).splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if line.strip().startswith("|") and cells and cells[0] == name:
+            rows.append(cells)
+    return rows
+
+
+def test_the_adr_s_table_is_the_documented_one() -> None:
+    """ADR-054's builders addendum holds the full table: sixteen rows, each with the
+    script's three number cells, character for character."""
+    script = _script()
+    text = ADR.read_text(encoding="utf-8")
+    text = text[text.index("**The built world's 3D shadows are not the 2D model's shadows"):]
+    text = text[:text.index("**Open owner question (porous fences):**")]
+    for name, (ratio, iou, reach) in script.DOCUMENTED.items():
+        rows = _table_cells(text, name)
+        assert len(rows) == 1, (name, rows)
+        assert tuple(rows[0][1:4]) == script.cells(ratio, iou, reach), name
+
+
+def test_the_concepts_table_carries_the_reach() -> None:
+    """§8.26.6 groups the kinds; its numbers are the script's, and it has the reach
+    column with the two that matter: the gable's miss and the nominal sections'."""
+    text = _minus(CONCEPTS.read_text(encoding="utf-8"))
+    script = _script()
+    section = text[text.index("**3D shadows against the 2D model.**"):]
+    section = section[:section.index("\n### ") if "\n### " in section else len(section)]
+    for name in (*POROUS, "wall"):
+        (row,) = _table_cells(section, name)
+        assert tuple(row[1:4]) == script.cells(*script.DOCUMENTED[name]), name
+    for needle in ("Reach 3D - 2D", "-270.0 / -270.0 / -108.2", "-150.0 / -81.4 / -21.0",
+                   "+30.0", "analytic", "shadow map"):
+        assert needle in section, needle
+
+
+@pytest.mark.parametrize("skill", SKILLS, ids=[".claude", ".agents"])
+def test_the_gate_row_states_the_gate_the_conditions_and_the_reach(skill: Path) -> None:
+    """Both skill trees: the gate's number, the measuring conditions of the listed
+    numbers, and where the tip is — per kind, with the script's numbers."""
+    text = skill.read_text(encoding="utf-8")
+    row = _minus(next(line for line in text.splitlines() if line.startswith("| Shadows |")))
+    assert "IoU ≥ 0.85" in row and "box caster" in row
+    assert "scripts/measure_built_world_shadows.py" in row
+    for kind in ("picket", "chain-link", "wall", "house", "pot"):
+        assert kind in row, kind
+    # the measuring conditions (review round 2, P2-4)
+    for needle in ("analytic", "10 m", "shadow map", "thin members", "exempt"):
+        assert needle in row, needle
+    # the reach, per kind, from DOCUMENTED
+    script = _script()
+    for name in ("house, sun square to the ridge", "shed, sun square to the ridge", "wall",
+                 "stone-wall fence", "hedge fence", "picket fence"):
+        reach = script.cells(*script.DOCUMENTED[name])[2]
+        assert reach.replace(" / ", "/") in row.replace(" / ", "/"), (name, reach)
+    assert "half the depth" in row
+
+
+def test_the_twin_skills_are_identical() -> None:
+    assert SKILLS[0].read_bytes() == SKILLS[1].read_bytes()
+
+
+def test_no_document_says_that_tips_always_agree() -> None:
+    """The sentence round 1 wrote next to the gate — "shadow length and tip always
+    agree (the height is exact)" — is false for every gabled building and every
+    nominal section. It is gone from every document and skill, in any wording."""
+    claim = re.compile(r"length\s+and\s+tips?\s+(always\s+)?agree|tips?\s+always\s+agree"
+                       r"|\(the\s+height\s+is\s+exact\)", re.IGNORECASE)
+    files = [*sorted((ROOT / "docs").rglob("*.md")),
+             *sorted((ROOT / ".claude" / "skills").rglob("*.md")),
+             *sorted((ROOT / ".agents" / "skills").rglob("*.md"))]
+    assert len(files) > 30
+    hits = [f"{path.relative_to(ROOT).as_posix()}: {match.group(0)!r}"
+            for path in files
+            for match in claim.finditer(" ".join(path.read_text(encoding="utf-8").split()))]
+    assert hits == []
 
 
 def test_the_stroke_widths_are_the_2d_presets() -> None:

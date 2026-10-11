@@ -16,8 +16,10 @@ What is compared, for one item at a sun elevation:
   triangle projected along the sun ray onto the ground, united. What a shadow map
   of that mesh shows, without the map's resolution.
 
-and two numbers: the 3D area divided by the 2D area, and the intersection over
-union (IoU) of the two. The truth gate "Shadows" (``ogp-lush-cinematic`` §1,
+and three numbers: the 3D area divided by the 2D area, the intersection over
+union (IoU) of the two, and the REACH difference — how much further (+) or less
+far (-) the 3D shadow extends along the shadow direction than the 2D one, in cm:
+where the shadow's TIP is. The truth gate "Shadows" (``ogp-lush-cinematic`` §1,
 IoU >= 0.85) is defined on a solid box caster, where both models are the same
 solid. The built world departs from the prism in four stated ways, and this table
 is what each costs:
@@ -28,16 +30,26 @@ is what each costs:
 * a PICKET, METAL or CHAIN-LINK fence is mostly air: its 3D shadow is the bars'
   and wires', a fraction of the solid strip the 2D model casts;
 * a HOUSE or shed has a gable roof where 2D extrudes a flat-topped prism to the
-  ridge height — less shadow square to the ridge, and eaves that overhang;
+  ridge height — less shadow square to the ridge, and eaves that overhang. The
+  2D prism's top edge is at the FAR WALL, the gable's ridge is mid-house: with the
+  sun square to the ridge the 3D tip is short by up to half the depth minus the
+  overhang (270 cm less 30 on a 5.4 m deep house);
 * a POT tapers and a hedge is a leaf shell drawn in from its outline.
 
-A raised bed and a box are prisms in both: IoU 1.00. A plain panel (a line in a
-style no builder knows) is the stroke strip itself: IoU 1.00.
+A raised bed and a box are prisms in both: IoU 1.00, reach equal. A plain panel
+(a line in a style no builder knows) is the stroke strip itself: IoU 1.00.
+
+**Measuring conditions.** One item on flat ground, the sun square to a straight
+10 m line (or to / along the ridge, as the case says), the mesh projected
+ANALYTICALLY — no shadow map, no texel. The numbers are references for the
+BUILDERS. An engine render reads lower for members near one shadow-map texel
+(0.8 cm wires, 1.6 cm bars) through no fault of the builder.
 
 Qt-free: numpy, pyclipper and the Qt-free ``core`` modules.
 """
 from __future__ import annotations
 
+import logging
 import math
 import sys
 from collections.abc import Sequence
@@ -70,6 +82,8 @@ ELEVATIONS_DEG = (15.0, 35.0, 60.0)
 SCALE = 1000.0
 #: ``--check`` and the test fail when a number has moved by more than this.
 TOLERANCE = 0.05
+#: The same for a reach difference, in cm.
+REACH_TOLERANCE_CM = 1.0
 #: A straight 10 m line running east-west; the sun due south is square to it.
 LINE = ((-500.0, 0.0), (500.0, 0.0))
 SOUTH, EAST = 180.0, 90.0
@@ -90,12 +104,14 @@ class Case:
 
 @dataclass(frozen=True)
 class Row:
-    """One case's result: per elevation, 3D area / 2D area and the IoU."""
+    """One case's result: per elevation, 3D area / 2D area, the IoU, and how much
+    further the 3D shadow reaches along the shadow direction than the 2D one (cm)."""
 
     name: str
     why: str
     ratio: tuple[float, ...]
     iou: tuple[float, ...]
+    reach_cm: tuple[float, ...]
 
 
 def _rectangle(width: float, depth: float) -> Ring:
@@ -234,12 +250,19 @@ def caster_shadow(record: Record, elevation_deg: float,
     return [_to_grid(polygon) for polygon in polygons]
 
 
+def reach_cm(paths: Sequence[Sequence[tuple[int, int]]], azimuth_deg: float) -> float:
+    """How far the shadow extends along the shadow direction, from the item's origin:
+    the position of its TIP, in cm."""
+    east, north = shadow_direction_scene(azimuth_deg)
+    return max(x * east + y * north for path in paths for x, y in path) / SCALE
+
+
 def measure(selected: Sequence[Case] | None = None) -> tuple[Row, ...]:
     registry = production_registry()
     rows = []
     for case in selected if selected is not None else cases():
         parts = registry.build(case.record)
-        ratios, ious = [], []
+        ratios, ious, reaches = [], [], []
         for elevation in ELEVATIONS_DEG:
             in_3d = mesh_shadow(parts, elevation, case.azimuth_deg)
             in_2d = caster_shadow(case.record, elevation, case.azimuth_deg)
@@ -247,36 +270,42 @@ def measure(selected: Sequence[Case] | None = None) -> tuple[Row, ...]:
             either = _area_cm2(_clip(in_3d, in_2d, pyclipper.CT_UNION))
             ratios.append(_area_cm2(in_3d) / _area_cm2(in_2d))
             ious.append(both / either)
-        rows.append(Row(case.name, case.why, tuple(ratios), tuple(ious)))
+            reaches.append(reach_cm(in_3d, case.azimuth_deg) - reach_cm(in_2d, case.azimuth_deg))
+        rows.append(Row(case.name, case.why, tuple(ratios), tuple(ious), tuple(reaches)))
     return tuple(rows)
 
 
 #: The table as documented (ADR-054 builders addendum, §8.26.6, ``ogp-lush-cinematic``
-#: §1): name -> (3D / 2D area, IoU), each at 15 / 35 / 60 degrees. Measured by this
-#: script on 2026-10-11; ``--check`` and the test hold the builders to it within
-#: ``TOLERANCE``. A builder change that moves a number updates this table AND the docs.
-DOCUMENTED: dict[str, tuple[tuple[float, float, float], tuple[float, float, float]]] = {
-    "picket fence": ((0.67, 0.68, 0.70), (0.65, 0.66, 0.68)),
-    "metal fence": ((0.19, 0.21, 0.24), (0.19, 0.20, 0.24)),
-    "chain-link fence": ((0.13, 0.14, 0.19), (0.12, 0.13, 0.19)),
-    "hedge fence": ((1.04, 1.13, 1.31), (0.96, 0.89, 0.76)),
-    "stone-wall fence": ((1.06, 1.15, 1.37), (0.94, 0.87, 0.73)),
-    "plain panel (unknown style)": ((1.00, 1.00, 1.00), (1.00, 1.00, 1.00)),
-    "wall": ((1.04, 1.10, 1.24), (0.96, 0.91, 0.81)),
-    "house, sun square to the ridge": ((0.92, 0.81, 0.92), (0.85, 0.74, 0.82)),
-    "house, sun along the ridge": ((0.90, 0.99, 1.06), (0.82, 0.86, 0.88)),
-    "shed, sun square to the ridge": ((0.92, 0.93, 1.03), (0.85, 0.83, 0.88)),
-    "raised bed": ((1.00, 1.00, 1.00), (1.00, 1.00, 1.00)),
-    "container (box)": ((1.00, 0.99, 0.99), (1.00, 0.99, 0.99)),
-    "terracotta pot": ((0.83, 0.81, 0.81), (0.83, 0.81, 0.81)),
-    "round tub": ((0.91, 0.89, 0.89), (0.91, 0.89, 0.89)),
-    "hedge (polygon)": ((0.98, 0.96, 0.94), (0.97, 0.96, 0.94)),
-    "hedge (section)": ((0.97, 0.96, 0.94), (0.96, 0.95, 0.93)),
+#: §1): name -> (3D / 2D area, IoU, reach 3D - 2D in cm), each at 15 / 35 / 60 degrees.
+#: Measured by this script on 2026-10-11; ``--check`` and the test hold the builders to
+#: it within ``TOLERANCE`` (``REACH_TOLERANCE_CM`` for the reach). A builder change that
+#: moves a number updates this table AND the docs.
+Triple = tuple[float, float, float]
+DOCUMENTED: dict[str, tuple[Triple, Triple, Triple]] = {
+    "picket fence": ((0.67, 0.68, 0.70), (0.65, 0.66, 0.68), (2.0, 2.0, 2.4)),
+    "metal fence": ((0.19, 0.21, 0.24), (0.19, 0.20, 0.24), (0.8, 0.8, 0.8)),
+    "chain-link fence": ((0.13, 0.14, 0.19), (0.12, 0.13, 0.19), (1.5, 1.5, 1.5)),
+    "hedge fence": ((1.04, 1.13, 1.31), (0.96, 0.89, 0.76), (19.6, 19.5, 19.6)),
+    "stone-wall fence": ((1.06, 1.15, 1.37), (0.94, 0.87, 0.73), (14.5, 14.5, 15.3)),
+    "plain panel (unknown style)": ((1.00, 1.00, 1.00), (1.00, 1.00, 1.00), (0.0, 0.0, 0.0)),
+    "wall": ((1.04, 1.10, 1.24), (0.96, 0.91, 0.81), (15.0, 15.0, 15.8)),
+    "house, sun square to the ridge": ((0.92, 0.81, 0.92), (0.85, 0.74, 0.82),
+                                       (-270.0, -270.0, -108.2)),
+    "house, sun along the ridge": ((0.90, 0.99, 1.06), (0.82, 0.86, 0.88), (30.0, 30.0, 30.0)),
+    "shed, sun square to the ridge": ((0.92, 0.93, 1.03), (0.85, 0.83, 0.88),
+                                      (-150.0, -81.4, -21.0)),
+    "raised bed": ((1.00, 1.00, 1.00), (1.00, 1.00, 1.00), (-0.6, -0.6, -0.3)),
+    "container (box)": ((1.00, 0.99, 0.99), (1.00, 0.99, 0.99), (-0.6, -0.6, -0.3)),
+    "terracotta pot": ((0.83, 0.81, 0.81), (0.83, 0.81, 0.81), (-0.6, -0.6, -0.3)),
+    "round tub": ((0.91, 0.89, 0.89), (0.91, 0.89, 0.89), (-0.5, -0.5, -0.3)),
+    "hedge (polygon)": ((0.98, 0.96, 0.94), (0.97, 0.96, 0.94), (3.6, 4.0, 4.4)),
+    "hedge (section)": ((0.97, 0.96, 0.94), (0.96, 0.95, 0.93), (2.7, 3.0, 3.2)),
 }
 
 
 def drift(rows: Sequence[Row]) -> list[str]:
-    """What differs from ``DOCUMENTED`` by more than ``TOLERANCE``, as sentences."""
+    """What differs from ``DOCUMENTED`` by more than ``TOLERANCE`` (a reach: by more
+    than ``REACH_TOLERANCE_CM``), as sentences."""
     problems = []
     if {row.name for row in rows} != set(DOCUMENTED):
         problems.append(f"cases differ: measured {sorted(row.name for row in rows)}, "
@@ -284,33 +313,53 @@ def drift(rows: Sequence[Row]) -> list[str]:
     for row in rows:
         if row.name not in DOCUMENTED:
             continue
-        ratio, iou = DOCUMENTED[row.name]
+        ratio, iou, reach = DOCUMENTED[row.name]
         for label, measured, documented in (("area ratio", row.ratio, ratio), ("IoU", row.iou, iou)):
             for elevation, got, want in zip(ELEVATIONS_DEG, measured, documented, strict=True):
                 if abs(got - want) > TOLERANCE:
                     problems.append(f"{row.name} at {elevation:g} deg: {label} {got:.2f}, "
                                     f"documented {want:.2f}")
+        for elevation, got, want in zip(ELEVATIONS_DEG, row.reach_cm, reach, strict=True):
+            if abs(got - want) > REACH_TOLERANCE_CM:
+                problems.append(f"{row.name} at {elevation:g} deg: reach {signed(got)} cm, "
+                                f"documented {signed(want)} cm")
     return problems
 
 
+def signed(value_cm: float) -> str:
+    """A reach difference as the tables print it: one decimal, signed, a plain 0.0."""
+    return "0.0" if abs(value_cm) < 0.05 else f"{value_cm:+.1f}"
+
+
+def cells(ratio: Sequence[float], iou: Sequence[float], reach: Sequence[float]) -> tuple[str, str, str]:
+    """The three number cells of a table row, as every copy of the table writes them."""
+    return (" / ".join(f"{value:.2f}" for value in ratio),
+            " / ".join(f"{value:.2f}" for value in iou),
+            " / ".join(signed(value) for value in reach))
+
+
 def table(rows: Sequence[Row]) -> str:
-    lines = ["| Kind | 3D area / 2D area (15 / 35 / 60 deg) | IoU (15 / 35 / 60 deg) | Why they differ |",
-             "|---|---|---|---|"]
+    lines = ["each at a sun of 15 / 35 / 60 deg",
+             "| Kind | 3D area / 2D area | IoU | Reach 3D - 2D (cm) | Why they differ |",
+             "|---|---|---|---|---|"]
     for row in rows:
-        ratio = " / ".join(f"{value:.2f}" for value in row.ratio)
-        iou = " / ".join(f"{value:.2f}" for value in row.iou)
-        lines.append(f"| {row.name} | {ratio} | {iou} | {row.why} |")
+        ratio, iou, reach = cells(row.ratio, row.iou, row.reach_cm)
+        lines.append(f"| {row.name} | {ratio} | {iou} | {reach} | {row.why} |")
     return "\n".join(lines)
 
 
 def main(argv: Sequence[str]) -> int:
+    # One case IS a line in a style no builder knows (the plain panel); the builders'
+    # one-warning-per-style line about it is not news here.
+    logging.getLogger("open_garden_planner.core.scene3d.builders.lines").setLevel(logging.ERROR)
     rows = measure()
     print(table(rows))
     if "--python" in argv:
         for row in rows:
             ratio = ", ".join(f"{value:.2f}" for value in row.ratio)
             iou = ", ".join(f"{value:.2f}" for value in row.iou)
-            print(f'    "{row.name}": (({ratio}), ({iou})),')
+            reach = ", ".join(f"{value + 0.0:.1f}" for value in row.reach_cm)
+            print(f'    "{row.name}": (({ratio}), ({iou}), ({reach})),')
     if "--check" in argv:
         problems = drift(rows)
         for problem in problems:

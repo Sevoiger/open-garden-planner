@@ -55,7 +55,10 @@ description: >
 > `core/object_height.standing_base_cm`: 2 cm under a bed's rim — an assumption — and AT a
 > container's height, which is its soil fill height), so its shadow starts, and its tip
 > lies, `base / tan α` further from the sun. The link alone never lifts: the app does not
-> keep it geometric (a bed resized away from its plant keeps the link). Where the text
+> keep it geometric (a bed resized away from its plant keeps the link). "Centre" is the
+> plant's stable geometric centre (`footprints.standing_point`), NOT the centre of its
+> `boundingRect()` — that one moves by up to 1.8 cm while the antagonist badge shows, and
+> it stays the link decisions' point (`bed_membership_point`), exactly as shipped. Where the text
 > below says `(polygon, height)`, read `ShadowCaster`; the shadow functions take a
 > `ShadowCaster` or an exact `(footprint, height)` pair and raise `TypeError` for anything
 > else. A caster on the ground runs the Phase 14 code unchanged — proven on every platform
