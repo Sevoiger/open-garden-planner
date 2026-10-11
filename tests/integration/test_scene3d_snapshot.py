@@ -1872,7 +1872,7 @@ class TestOutlinesTooLargeToCut:
             points[10], points[70] = points[70], points[10]
         house = PolygonItem([QPointF(x, y) for x, y in points], object_type=ObjectType.HOUSE)
         canvas.scene().addItem(house)
-        monkeypatch.setattr(polygon_module, "is_simple_ring", _never("the simplicity test ran"))
+        monkeypatch.setattr(polygon_module, "_is_simple", _never("the simplicity test ran"))
         monkeypatch.setattr(polygon_module, "touching_pairs", _never("its pairs were counted"))
         monkeypatch.setattr(snapshot_module, "_resolved_regions", _never("the outline was resolved"))
         snapshot, skipped = snapshot_with_report(canvas.scene())
@@ -2038,7 +2038,7 @@ class TestTheInputIsBoundedBeforeTheWork:
                                      5000.0 * math.sin(2.0 * math.pi * k / count)) for k in range(count)],
                             object_type=ObjectType.HOUSE)
         canvas.scene().addItem(large)
-        monkeypatch.setattr(polygon_module, "is_simple_ring", _never("the simplicity test ran"))
+        monkeypatch.setattr(polygon_module, "_is_simple", _never("the simplicity test ran"))
         monkeypatch.setattr(polygon_module, "touching_pairs", _never("its pairs were counted"))
         monkeypatch.setattr(snapshot_module, "_clip_tree", _never("the clipper was asked"))
         snapshot, skipped = snapshot_with_report(canvas.scene())

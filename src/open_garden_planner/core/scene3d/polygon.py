@@ -121,18 +121,42 @@ class RingKeyed(Generic[_P, _R]):
     def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         if kwargs:
             return self.__wrapped__(*args, **kwargs)
+        entry = self._entry(args)
+        if entry is not None:
+            return entry.answer
+        answer = self.__wrapped__(*args, **kwargs)
+        self.remember(args, answer)
+        return answer
+
+    def _size(self, args: tuple[Any, ...]) -> int | None:
+        """The vertices these arguments hold — None when they are too many to be a key."""
         size = self._vertices(*args)
-        if size > MAX_ITEM_VERTICES:
-            return self.__wrapped__(*args, **kwargs)  # never hashed, never a key
+        return None if size > MAX_ITEM_VERTICES else size
+
+    def _entry(self, args: tuple[Any, ...]) -> _Entry[_R] | None:
+        if self._size(args) is None:
+            return None  # never hashed
         with self._lock:
             self._asked += 1
             entry = self._entries.get(args)
-            if entry is not None:
+            if entry is None:
+                self._misses += 1
+            else:
                 entry.asked = self._asked
                 self._hits += 1
-                return entry.answer
-            self._misses += 1
-        answer = self.__wrapped__(*args, **kwargs)
+            return entry
+
+    def known(self, *args: Any) -> _R | None:
+        """The remembered answer to these arguments, or None. Nothing is computed."""
+        entry = self._entry(args)
+        return entry.answer if entry is not None else None
+
+    def remember(self, args: tuple[Any, ...], answer: _R) -> None:
+        """Keep ``answer`` as the answer to ``args`` — for a caller that worked it
+        out on its own account (``pay_for_region``). Too large to be a key: not kept."""
+        size = self._size(args)
+        if size is None:
+            return
         weight = _ENTRY_VERTICES + size + (self._holds(answer) if self._holds is not None else 0)
         with self._lock:
             if args not in self._entries:
@@ -140,7 +164,6 @@ class RingKeyed(Generic[_P, _R]):
                 self._held += weight
                 if self._held > self._max:
                     self._forget()
-        return answer
 
     def _forget(self) -> None:
         """Drop the least recently asked answers until three quarters of the room is in use."""
@@ -298,37 +321,26 @@ def _edges_touch_loop(ring: Ring) -> bool:
     return False
 
 
-def _edges_touch_numpy(ring: Ring) -> bool:
-    """``_edges_touch_loop`` on arrays, in two steps.
+def _edges_touch_numpy(ring: Ring, work: WorkBudget | None = None) -> bool:
+    """``_edges_touch_loop`` on arrays: ``touching_pairs`` of the closed ring.
 
-    First the pairs of non-adjacent edges whose bounding boxes meet — two closed
-    segments that share a point have boxes that do, so nothing is lost, and for
-    an outline that leaves a few pairs per edge instead of n. Then, on those
-    pairs only, the four cross products of ``segments_touch``, written in the
-    same order of operations: the answer is the loop's, bit for bit (pinned by
-    a test over random rings on both sides of the threshold).
+    In two steps. First the pairs of non-adjacent edges whose bounding boxes
+    meet — two closed segments that share a point have boxes that do, so nothing
+    is lost, and for an outline that leaves a few pairs per edge instead of n.
+    Then, on those pairs only, the four cross products of ``segments_touch``,
+    written in the same order of operations: the answer is the loop's, bit for
+    bit (pinned by a test over random rings on both sides of the threshold).
+
+    Paid for out of ``work`` (a budget of its own when none is given): the first
+    step by the square of the edges, the second by the pairs it leaves — ALL of
+    them before one is tested. For an outline those are few. For a ring
+    scribbled across a plan they are half of all pairs, and testing them cost a
+    hundred times what the square alone was priced at (3,500 vertices: half a
+    second, three times the bound) until they were priced as well.
     """
-    points = np.asarray(ring, dtype=np.float64)
-    n = len(points)
-    following = np.roll(points, -1, axis=0)
-    low, high = np.minimum(points, following), np.maximum(points, following)
-    index = np.arange(n)
-    for start in range(0, n, _SIMPLE_RING_ROWS):
-        rows = slice(start, min(start + _SIMPLE_RING_ROWS, n))
-        later = slice(start, n)  # a pair is looked at once: an edge against the LATER ones
-        row = index[rows, None]
-        column = index[None, later]
-        near = ((low[rows, None, 0] <= high[None, later, 0]) & (low[None, later, 0] <= high[rows, None, 0])
-                & (low[rows, None, 1] <= high[None, later, 1]) & (low[None, later, 1] <= high[rows, None, 1])
-                & (column > row) & ((column + 1) % n != row) & ((row + 1) % n != column))
-        i, j = np.nonzero(near)
-        if not len(i):
-            continue
-        i, j = i + start, j + start
-        if bool(np.any(_touch(points[i, 0], points[i, 1], following[i, 0], following[i, 1],
-                              points[j, 0], points[j, 1], following[j, 0], following[j, 1]))):
-            return True
-    return False
+    budget = work if work is not None else WorkBudget(
+        f"the simplicity test of a ring of {len(ring)} vertices")
+    return touching_pairs(ring, budget, closed=True)[1] > 0
 
 
 def _touch(ax: _Floats, ay: _Floats, bx: _Floats, by: _Floats,
@@ -362,19 +374,24 @@ def is_simple_ring(ring: Ring) -> bool:
 
     Quadratic in the vertex count: from ``SIMPLE_RING_NUMPY_FROM`` vertices on it
     runs on arrays, and a ring whose test ALONE would cost more than
-    ``MAX_REGION_WORK`` (about 7,000 vertices) is refused with
-    ``RegionTooLargeError`` — a question is not answered at any price. Not
-    remembered: its one caller, the cut of a region, is (``cut_region``).
+    ``MAX_REGION_WORK`` — about 7,000 vertices of an outline, far fewer of a
+    ring scribbled across a plan — is refused with ``RegionTooLargeError``: a
+    question is not answered at any price. Not remembered: the cut of a region
+    is (``cut_region``), and that is where a ring out of a plan is asked.
     """
+    return _is_simple(ring, WorkBudget(f"the simplicity test of a ring of {len(ring)} vertices"))
+
+
+def _is_simple(ring: Ring, work: WorkBudget) -> bool:
+    """``is_simple_ring``, paid for out of ``work``."""
     n = len(ring)
-    if _simplicity_work(n) > MAX_REGION_WORK:
-        _refuse(f"the simplicity test of a ring of {n} vertices")
     if n < 3 or _signed_area(ring) == 0.0:
         return False
     if any(ring[i] == ring[(i + 1) % n] for i in range(n)):
         return False  # an edge without a length
     if n >= SIMPLE_RING_NUMPY_FROM:
-        return not _edges_touch_numpy(ring)
+        return not _edges_touch_numpy(ring, work)  # pays as it counts
+    work.spend(_simplicity_work(n))
     return not _edges_touch_loop(ring)
 
 
@@ -571,10 +588,15 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 #:   loop each time one is tested.
 #:
 #: What fits, measured (``scripts/measure_region_work.py``, which prints the
-#: table in section 8.26.1): a plain traced outline of about 3,500 vertices; a
-#: comb of about 1,600; a closed fence along about 1,400 traced points; a
-#: square mesh of 16 x 16 openings drawn as one stroke. At the bound a unit
-#: took 0.35 to 1.5 ns on the development box, quiet to busy: 0.05 to 0.22 s.
+#: tables in section 8.26.1). As ONE region: a plain traced outline of 3,557
+#: vertices; a comb of 1,648; a spiral of 4,334. As a whole outline, clipper and
+#: all: a closed fence along 1,321 traced points (933 when every segment lies
+#: level with every other); a ladder of 164 rungs or a mesh of 15 x 15 openings
+#: drawn as one stroke; a drawn outline of 1,513 vertices that crosses itself.
+#: What a large plan needs is far inside it — a closed fence along 400 traced
+#: points 16 % of the bound, a line of 2 km 0.02 %, a rectangle 10,200 units. A
+#: unit took 0.35 to 1.15 ns on the development box when it was quiet and 0.7 to
+#: 2.3 ns beside three other test runs: the bound is 0.05 to 0.35 s.
 MAX_REGION_WORK: Final = 150_000_000
 
 # The price list, in work units. Fitted to measurements on the development box
@@ -654,7 +676,9 @@ class WorkBudget:
 
 
 def _simplicity_work(vertices: int) -> int:
-    """What ``is_simple_ring`` costs for a ring of that many vertices."""
+    """What ``is_simple_ring`` costs for a ring of that many vertices AT LEAST: every
+    pair of its edges once. (On arrays the pairs whose boxes meet cost more, and
+    are paid for as they are counted — ``touching_pairs``.)"""
     pair = _PAIR_UNITS if vertices >= SIMPLE_RING_NUMPY_FROM else _SMALL_PAIR_UNITS
     return pair * vertices * vertices
 
@@ -680,7 +704,8 @@ def touching_pairs(points: Sequence[Sequence[float]], work: WorkBudget, *, close
     seconds.
 
     The count itself is every pair once, on arrays, and is paid into ``work``
-    before it runs; the near pairs are paid before they are tested one by one.
+    before it runs; the near pairs are paid for — all of them — before the first
+    is tested.
     """
     segments = len(points) if closed else len(points) - 1
     if segments < 3:
@@ -690,7 +715,8 @@ def touching_pairs(points: Sequence[Sequence[float]], work: WorkBudget, *, close
     first, second = xy[:segments], np.roll(xy, -1, axis=0)[:segments]
     low, high = np.minimum(first, second) - reach, np.maximum(first, second) + reach
     index = np.arange(segments)
-    near_pairs = touching = 0
+    found: list[tuple[NDArray[np.intp], NDArray[np.intp]]] = []
+    near_pairs = 0
     for start in range(0, segments, _SIMPLE_RING_ROWS):
         rows = slice(start, min(start + _SIMPLE_RING_ROWS, segments))
         later = slice(start, segments)
@@ -706,7 +732,11 @@ def touching_pairs(points: Sequence[Sequence[float]], work: WorkBudget, *, close
             continue
         near_pairs += len(i)
         work.spend(_NEAR_PAIR_UNITS * len(i))
-        i, j = i + start, j + start
+        found.append((i + start, j + start))
+    # … and only now, with ALL of them paid for, is the first one tested: a path whose near
+    # pairs alone are beyond the budget is refused on the count
+    touching = 0
+    for i, j in found:
         touching += int(np.count_nonzero(_touch(first[i, 0], first[i, 1], second[i, 0], second[i, 1],
                                                 first[j, 0], first[j, 1], second[j, 0], second[j, 1])))
     return near_pairs, touching
@@ -1013,7 +1043,10 @@ def _examined(outer: Ring, holes: tuple[Ring, ...]) -> _Examined:
     """``_cut``, remembered — refusals included: a region that cannot be built
     must not be tried again on every tick. ONE memory for the verdict, what it
     cost and the cut, so that the builder gets the cut the verdict made."""
-    work = WorkBudget(_described(outer, holes))
+    return _examination(outer, holes, WorkBudget(_described(outer, holes)))
+
+
+def _examination(outer: Ring, holes: tuple[Ring, ...], work: WorkBudget) -> _Examined:
     try:
         cut = _cut(outer, holes, work)
     except RegionTooLargeError as error:
@@ -1067,24 +1100,52 @@ def region_cost(outer: Ring, holes: tuple[Ring, ...] = ()) -> int:
     """What finding out about this region HAS cost, in work units — remembered
     with the verdict, and the same whether the region could be built or not
     (``region_work`` is the least a cut can cost, from the sizes alone; this is
-    what it did cost). 0 for a region refused from its size alone. What a
-    caller that judges several regions against ONE budget pays per region."""
+    what it did cost). 0 for a region refused from its size alone."""
     return _examine(outer, holes).spent
+
+
+def pay_for_region(outer: Ring, holes: tuple[Ring, ...], work: WorkBudget) -> bool:
+    """``is_buildable_region``, paid out of ``work``: True when the region can be
+    built, False when its SHAPE cannot. For a caller that judges several regions
+    against ONE budget — a thousand regions that each fit the bound do not fit it
+    together.
+
+    The region is not hashed, let alone cut, unless the least it can cost
+    (``region_work``) is still in ``work``; then it is cut out of what ``work``
+    has LEFT, never out of a bound of its own, and what it cost is paid when it
+    is known (a remembered region costs what it cost the first time: the total
+    does not depend on what happens to be remembered). ``RegionTooLargeError``
+    when ``work`` does not cover it, or when the region is beyond the bound by
+    itself. A region refused only for what its caller had left is no fact about
+    the region, and is not remembered.
+    """
+    if region_work(outer, holes) > work.left:
+        work.refuse()
+    examined = _examined.known(outer, holes)
+    if examined is None:
+        own = WorkBudget(_described(outer, holes), min(work.left, MAX_REGION_WORK))
+        examined = _examination(outer, holes, own)
+        if examined.verdict == _TOO_LARGE and own.budget < MAX_REGION_WORK:
+            work.spend(own.spent)  # more than the caller had left — this raises
+            work.refuse()
+        _examined.remember((outer, holes), examined)
+    work.spend(examined.spent)
+    if examined.verdict == _TOO_LARGE:
+        work.refuse()
+    return examined.verdict == _BUILDABLE
 
 
 def _cut(outer: Ring, holes: tuple[Ring, ...], work: WorkBudget) -> _Cut:
     if exceeds_work_bound(outer, holes):
         _refuse(work.what)
     work.spend(_REGION_UNITS)
-    for ring in (outer, *holes):
-        work.spend(_simplicity_work(len(ring)))
-    if not is_simple_ring(outer) or not ring_area(outer) > 0.0:
+    if not _is_simple(outer, work) or not ring_area(outer) > 0.0:
         raise ValueError(
             f"a footprint ring of {len(outer)} vertices is not a simple polygon "
             "(it crosses or touches itself)"
         )
     for hole in holes:
-        if not is_simple_ring(hole) or not ring_area(hole) < 0.0:
+        if not _is_simple(hole, work) or not ring_area(hole) < 0.0:
             raise ValueError(
                 f"a hole ring of {len(hole)} vertices is not a simple polygon "
                 "(it crosses or touches itself)"

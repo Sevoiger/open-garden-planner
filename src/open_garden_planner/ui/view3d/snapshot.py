@@ -89,9 +89,7 @@ from open_garden_planner.core.scene3d.polygon import (
     RegionTooLargeError,
     WorkBudget,
     is_buildable_region,
-    is_region_too_large,
-    region_cost,
-    region_work,
+    pay_for_region,
     regions_area,
     ring_keyed,
     stack_height,
@@ -394,8 +392,10 @@ def _tree_regions(tree: Any) -> tuple[Region, ...]:
     then (measured)."""
     regions: list[Region] = []
     outers = list(tree.Childs)
-    while outers:
-        node = outers.pop(0)
+    at = 0
+    while at < len(outers):  # in the order they are found — and no ``pop(0)``: that is the list, squared
+        node = outers[at]
+        at += 1
         outer = _quantized((x / CLIPPER_SCALE, y / CLIPPER_SCALE) for x, y in node.Contour)
         holes: list[Ring] = []
         for child in node.Childs:
@@ -423,20 +423,17 @@ def _buildable(regions: tuple[Region, ...], budget: WorkBudget | None = None) ->
     """True when every region can be built; False at the first whose SHAPE cannot.
 
     All of them are paid out of ONE budget (the item's; one of its own when
-    none is given): a region is not looked at unless the least it can cost
-    (``region_work``, from its sizes alone) is still there, and what it did
-    cost is paid when it is known — a thousand regions that each fit the bound
-    do not fit it together. A region or a sum beyond the bound raises
-    ``RegionTooLargeError``: nothing else is tried on an outline like that.
+    none is given — ``core.scene3d.polygon.pay_for_region``): a region is not
+    looked at unless the least it can cost is still there, it is cut out of
+    what is LEFT, and what it cost is paid when it is known — a thousand regions
+    that each fit the bound do not fit it together. A region or a sum beyond
+    the bound raises ``RegionTooLargeError``: nothing else is tried on an
+    outline like that.
     """
     budget = budget if budget is not None else WorkBudget("the regions of an outline")
     for outer, holes in regions:
-        if region_work(outer, holes) > budget.left:
-            budget.refuse()
-        budget.spend(region_cost(outer, holes))
-        if not is_buildable_region(outer, holes):
-            if is_region_too_large(outer, holes):
-                budget.refuse()
+        pay_for_region(outer, holes, budget)  # what asking costs — out of what the item has left
+        if not is_buildable_region(outer, holes):  # THE predicate, asked of every region
             return False
     return True
 

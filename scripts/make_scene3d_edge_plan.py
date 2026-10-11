@@ -43,6 +43,12 @@ It is written through the real ``ProjectManager`` serializer with seeded ids,
 exactly like ``scripts/make_bench_plans.py``, whose plumbing it reuses — and
 which it never modifies: the bench plans stay byte for byte what they were.
 
+Saving through ``ProjectManager`` records Recent Files. Run as a script this
+file therefore isolates itself before it builds anything — the profile before
+the app is imported, the settings names first thing in ``main()``
+(``scripts/script_isolation.py``): it never touches the user's own settings or
+app data. Imported by a test it changes nothing; pytest has isolated the process.
+
 One difference from the bench plans: this plan has TURNED items, so some of its
 numbers went through ``cos`` / ``sin`` (the ridge item Qt re-derives when the
 house turns, the two plants placed inside the turned bed), and the last bit of
@@ -69,6 +75,11 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+
+import script_isolation  # noqa: E402  (before the app is imported — below, through make_bench_plans)
+
+if __name__ == "__main__":  # run as a script: nothing from here on may reach the user's own stores
+    script_isolation.isolate_profile()
 
 import make_bench_plans as bench  # noqa: E402  (sets up sys.path for the package and Qt's platform)
 from PyQt6.QtWidgets import QApplication  # noqa: E402
@@ -189,7 +200,11 @@ def same_plan(fresh: Any, committed: Any, tolerance: float = FLOAT_TOLERANCE) ->
 
 
 def main(argv: list[str] | None = None) -> int:
-    bench._isolate_settings()
+    # Saving through ``ProjectManager`` records Recent Files, and the scene reads the
+    # app-data folder: both are pointed away from the user's own before anything is built
+    # (``script_isolation``; a key of this process, cleared at exit — not the bench
+    # generator's standing one).
+    script_isolation.isolate()
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--check", action="store_true",
                         help="regenerate to a temp dir and compare with the committed fixture")
