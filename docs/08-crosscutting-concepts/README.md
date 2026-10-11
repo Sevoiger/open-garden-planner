@@ -691,7 +691,7 @@ the module skips (on CI it fails: the runners can). The first canary built a `Qu
 a `Garden.qml` that did not load turned the whole file into 32 skips and 0 failures — the guard
 skipped exactly the defect it stood in front of. The positive control is a test of its own: the
 file is run again in a child pytest with every host pointed at a scene file that does not load,
-and must report failures and not one skip (measured: 9 failed, 41 errors, 12 passed, 0 skipped).
+and must report failures and not one skip (measured: 9 failed, 43 errors, 12 passed, 0 skipped).
 
 **Rules the tier is built on** (each one paid for):
 

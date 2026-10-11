@@ -1233,7 +1233,7 @@ and WARP, PyQt6 6.11.0, 2026-10-11.
   a `Quick3DHost` — product code. A `Garden.qml` that did not load therefore failed the CANARY:
   32 skipped, 0 failed, a broken engine package, green. *Fix:* the canary is bare Qt with inline
   QML and may only say "this platform cannot"; the positive control runs the file against a
-  broken scene and demands failures and no skip (now 9 failed, 41 errors, 0 skipped). The same
+  broken scene and demands failures and no skip (now 9 failed, 43 errors, 0 skipped). The same
   family, found in the same round: a positive control whose host went out of scope before the
   event loop ran could not die; a timing budget that counted an UNKNOWN graphics adapter as a
   software rasteriser would have skipped itself green; Qt debug lines were run through the
