@@ -18,7 +18,8 @@ Style contract: resources/plants/README.md ("Lush Sprite" — user-approved
 The RECIPE TABLES (`PALETTES`, `FRUITS`, `FLOWERS`, `SPECIES`, `CATEGORIES`) live
 in `src/open_garden_planner/core/plant_art/recipes.py` since Phase 17 L1.7
 (#385): the 3D plant builder reads the same recipes. This script keeps the
-drawing code and imports the tables; edit a recipe THERE, then run this.
+drawing code and loads the tables from that file; edit a recipe THERE, then run
+this. It still needs nothing but the standard library (see `_load_recipes`).
 
 Usage:
     venv/Scripts/python.exe scripts/generate_plant_sprites.py           # write all
@@ -30,28 +31,51 @@ from __future__ import annotations
 
 import argparse
 import colorsys
+import importlib.util
 import math
 import random
 import sys
 from pathlib import Path
+from types import ModuleType
 
+_PACKAGE_DIR = Path(__file__).resolve().parent.parent / "src" / "open_garden_planner"
 PLANTS_DIR = Path(__file__).parent.parent / "src" / "open_garden_planner" / "resources" / "plants"
 SPECIES_DIR = PLANTS_DIR / "species"
 CATEGORIES_DIR = PLANTS_DIR / "categories"
+#: The one home of the recipe tables — the file the app imports as
+#: ``open_garden_planner.core.plant_art.recipes``.
+RECIPES_FILE = _PACKAGE_DIR / "core" / "plant_art" / "recipes.py"
 
-# The tables come from THIS checkout's source tree, whatever else is installed
-# (a venv's editable install may point at another checkout).
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from open_garden_planner.core.plant_art.recipes import (  # noqa: E402
-    CATEGORIES,
-    DEFAULT_PALETTE,
-    FLOWERS,
-    FRUITS,
-    HEDGE_PALETTE,
-    PALETTES,
-    SPECIES,
-)
+def _load_recipes() -> ModuleType:
+    """The recipe tables, executed from THIS checkout's ``recipes.py``.
+
+    By file path, not ``import open_garden_planner.core.plant_art.recipes``: that
+    import first runs ``open_garden_planner/core/__init__.py``, which loads PyQt6
+    and some twenty app modules — and this script needed nothing but the standard
+    library before the tables moved out of it, and should not need more now.
+    ``recipes.py`` imports the standard library only (an AST scan in
+    ``tests/unit/test_plant_art.py`` holds it to that), so it runs on its own.
+    A file path also cannot be led astray by what is installed: a venv's
+    editable install may point at another checkout's ``open_garden_planner``.
+    """
+    spec = importlib.util.spec_from_file_location("ogp_plant_art_recipes", RECIPES_FILE)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load the recipe tables from {RECIPES_FILE}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_RECIPES = _load_recipes()
+CATEGORIES = _RECIPES.CATEGORIES
+DEFAULT_PALETTE = _RECIPES.DEFAULT_PALETTE
+FLOWERS = _RECIPES.FLOWERS
+FRUITS = _RECIPES.FRUITS
+HEDGE_PALETTE = _RECIPES.HEDGE_PALETTE
+PALETTES = _RECIPES.PALETTES
+SPECIES = _RECIPES.SPECIES
 
 
 # --------------------------------------------------------------------------- #

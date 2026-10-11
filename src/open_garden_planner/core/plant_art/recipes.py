@@ -18,8 +18,14 @@ moved verbatim, in their original order — order matters: the generator seeds e
 sprite from its name, and the tables' order is the order files are written in.
 
 The module is data plus two one-line rules, standard library only (pinned by an
-AST scan, ``tests/unit/test_plant_art.py``): a script without Qt and the Qt-free
-3D builders both import it. Style contract and the meaning of every recipe key:
+AST scan, ``tests/unit/test_plant_art.py``). That is a rule about THIS FILE's
+imports, and it is what lets the sprite generator — a script that needs no Qt —
+execute the file by its path. It is not a promise about importing it by name:
+``import open_garden_planner.core.plant_art.recipes`` first runs
+``open_garden_planner/core/__init__.py``, which loads PyQt6 for other ``core``
+modules. The Qt-free 3D builders import it by name (the app has Qt anyway); the
+generator must not, and a test runs it with PyQt6 blocked. Style contract and
+the meaning of every recipe key:
 ``resources/plants/README.md`` and §8.22 of the crosscutting concepts.
 
 To change a plant: edit its recipe here, run the generator, commit both.

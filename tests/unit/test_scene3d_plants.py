@@ -398,7 +398,8 @@ def test_every_recipe_fits_the_plan_s_numbers(sprite: SpriteRef) -> None:
             span = max(high[0] - low[0], high[1] - low[1])
             assert span == pytest.approx(2.0 * radius, rel=1e-5)          # gate: ± 10 %
             # centred on the plan position, and nothing leaves the canopy circle by more
-            # than 10 % (measured over this matrix: at most 5 %)
+            # than 10 % (measured over 1,000 ids per archetype: at most 9.2 % — see
+            # test_the_plant_stays_on_its_canopy_circle)
             assert abs(high[0] + low[0]) <= 1e-4 * radius + 1e-5
             assert abs(high[1] + low[1]) <= 1e-4 * radius + 1e-5
             reach = max(float(np.hypot(p.mesh.positions[:, 0], p.mesh.positions[:, 1]).max())
@@ -459,12 +460,18 @@ def test_the_plant_stays_on_its_canopy_circle(archetype: str) -> None:
     truth: seen from above, no vertex is further than 1.10 × the canopy radius
     from the axis, for 40 ids × three proportions × a coarse and a fine recipe.
 
-    Measured over 1,000 ids × three proportions × three recipes per archetype
-    (scratch, 2026-10-11): at most 1.081 (hedge), 1.078 (palm), 1.077 (feathery),
-    1.071 (canopy); every other archetype under 1.06.
+    Measured over 1,000 ids × three proportions × three recipe forms per
+    archetype (``scripts/measure_plant_art_3d.py reach``, 2026-10-11): at most
+    1.092 (mound), 1.083 (canopy), 1.080 (hedge), 1.079 (ground), 1.075 (palm);
+    every other archetype under 1.07; the 99.9th percentile at most 1.077.
     With outlines of any reach at any angle it was 1.39 (feathery), 1.37
     (allium), 1.23 (flower) — and scaling the farthest vertex onto the circle
-    instead left a bounding box of 72 % of the canopy diameter."""
+    instead left a bounding box of 72 % of the canopy diameter.
+
+    What this test is: a tripwire on a fixed sample. The bound is by measurement,
+    not by construction — the fit scales a plant whose bounding box is a little
+    short of the canopy diameter onto it (by at most 1.09), and with it the leaf
+    tips that already stood on the circle. 1.10 is not proven for every id."""
     worst = 0.0
     for extra in ({"leaf_scale": 1.35, "n_out": 10, "frilly": True},
                   {"leaf_scale": 0.55, "n_out": 22, "narrow": True, "heart": False}):
@@ -1023,7 +1030,8 @@ def sprite_foliage_rgb(generator: ModuleType, sprite: SpriteRef) -> np.ndarray:
     shipped = (PLANTS_DIR / sprite.group / f"{sprite.name}.svg").read_text(encoding="utf-8")
     name = palette_key(recipe)
     black = dict.fromkeys(PALETTES[name], "#000000")
-    with patch.dict(PALETTES, {name: black}):
+    assert generator.PALETTES == PALETTES                    # the same table, its own copy
+    with patch.dict(generator.PALETTES, {name: black}):
         blacked = (generator.build_hedge(sprite.name) if recipe["a"] == "hedge"
                    else generator.build_sprite(sprite.name, recipe))
     real, dark = _render(shipped), _render(blacked)
@@ -1285,3 +1293,88 @@ class TestShapeCache:
     def test_a_size_that_is_no_size_is_refused(self, height: float, radius: float) -> None:
         with pytest.raises(ValueError, match="positive height and radius"):
             build_silhouette(SPECIES["tomato"], 1, height, radius)
+
+
+# ── the fit's report is the instrument: it must tell the truth ────────────────
+
+
+class TestFitReport:
+    @staticmethod
+    def _plant(points: list[list[float]]) -> object:
+        pos = np.array(points, np.float64)
+        tri = np.array([[0, 1, 5], [0, 2, 5], [0, 3, 5], [0, 4, 5], [1, 2, 6], [2, 3, 7]])
+        return plants._geo(pos, np.tile([0.0, 0.0, 1.0], (len(pos), 1)), tri, 0.5, 1.0, 0.5, 0.0)
+
+    def test_it_says_what_it_repaired(self) -> None:
+        """A hand-made plant for a 100 × 100 cm slot that is 1.3 times too tall, has
+        one vertex 1.5 radii out and one 13 cm under the ground: the fit makes the
+        box right — and says so, number for number."""
+        foliage = self._plant([[0, 0, 0], [50, 0, 0], [0, 50, 0], [-50, 0, 0], [0, -50, 0],
+                               [0, 0, 130], [75, 0, 40], [10, 10, -13]])
+        report = plants._fit(None, foliage, 100.0, 50.0)
+        assert report.built_top == pytest.approx(1.30)
+        assert report.z_scale == pytest.approx(100.0 / 130.0)
+        assert (report.clamped_share, report.pressed_share) == (1 / 8, 1 / 8)
+        assert report.clamped_reach == pytest.approx(1.5)
+        assert report.xy_scale == pytest.approx(1.0) and report.set_down == 0.0
+        assert report.centre_shift == pytest.approx(0.0) and report.stretch == 1.0
+        low, high = foliage.pos.min(axis=0), foliage.pos.max(axis=0)       # type: ignore[attr-defined]
+        np.testing.assert_allclose([low[2], high[2], high[0] - low[0]], [0.0, 100.0, 100.0], atol=1e-9)
+
+    def test_a_plant_built_to_the_data_has_nothing_to_report(self) -> None:
+        foliage = self._plant([[0, 0, 0], [50, 0, 0], [0, 50, 0], [-50, 0, 0], [0, -50, 0],
+                               [0, 0, 100], [30, 0, 40], [10, 10, 13]])
+        report = plants._fit(None, foliage, 100.0, 50.0)
+        assert report == FitReport(built_top=1.0, z_scale=1.0, xy_scale=1.0, clamped_share=0.0,
+                                   clamped_reach=1.0, pressed_share=0.0, set_down=0.0,
+                                   centre_shift=0.0)
+
+    def test_it_reports_a_plant_set_down_and_one_moved_to_its_centre(self) -> None:
+        hovering = self._plant([[0, 0, 20], [50, 0, 20], [0, 50, 20], [-50, 0, 20], [0, -50, 20],
+                                [0, 0, 100], [30, 0, 40], [10, 10, 33]])
+        assert plants._fit(None, hovering, 100.0, 50.0).set_down == pytest.approx(0.20)
+        heights = hovering.pos[:, 2]                                        # type: ignore[attr-defined]
+        # ... and it WAS set down: on the ground, and as tall as the plan says (no builder
+        # hovers any more, so nothing else exercises this last safety net of the fit)
+        assert float(heights.min()) == 0.0 and float(heights.max()) == pytest.approx(100.0)
+        lopsided = self._plant([[10, 0, 0], [50, 0, 0], [10, 40, 0], [-30, 0, 0], [10, -40, 0],
+                                [10, 0, 100], [30, 0, 40], [20, 10, 13]])
+        report = plants._fit(None, lopsided, 100.0, 50.0)
+        assert report.centre_shift == pytest.approx(0.20)       # 10 cm of a 50 cm radius
+        assert report.xy_scale == pytest.approx(50.0 / 40.0)
+
+    def test_the_built_plant_s_report_is_the_shape_s(self) -> None:
+        """``fit_report`` is the report of the very shape ``build_silhouette`` scales —
+        and carries the stretch from the proportion it was built at."""
+        recipe = SPECIES["tomato"]
+        exact = fit_report(recipe, 7, 100.0 * PROPORTION_STEP ** 3, 100.0)     # on a step
+        assert exact.stretch == pytest.approx(1.0, abs=1e-12) and exact.built_top == pytest.approx(1.0)
+        between = fit_report(recipe, 7, 100.0 * PROPORTION_STEP ** 3.4, 100.0)
+        assert between.stretch == pytest.approx(PROPORTION_STEP ** 0.4)
+        assert dataclasses.replace(between, stretch=1.0) == dataclasses.replace(exact, stretch=1.0)
+
+
+# ── where the tip weights come from ───────────────────────────────────────────
+
+
+def test_the_tip_weights_are_measured_from_the_sprites(qtbot) -> None:
+    """``FOLIAGE_TIP_WEIGHT``, derived: for each of the 123 sprites, the tip weight
+    whose plain sRGB mix of its palette's base and tip anchors has the hue of the
+    sprite's foliage as QSvgRenderer draws it; the constant is the median of its
+    archetype's sprites (run with ``-s`` to see the medians)."""
+    generator = _load_generator()
+    weights = np.linspace(0.0, 1.0, 201)
+    found: dict[str, list[float]] = {archetype: [] for archetype in sorted(ARCHETYPES)}
+    for sprite in ALL_SPRITES:
+        recipe = recipe_of(sprite)
+        reference = hue_deg(sprite_foliage_rgb(generator, sprite))
+        anchors = plants._palette(palette_key(recipe))             # t0, t1, b0, b1 in sRGB
+        tip, base = anchors[:2].mean(axis=0), anchors[2:].mean(axis=0)
+        off = [hue_difference(hue_deg(base * (1.0 - w) + tip * w), reference) for w in weights]
+        found[recipe["a"]].append(float(weights[int(np.argmin(off))]))
+    medians = {archetype: float(np.median(values)) for archetype, values in found.items()}
+    print("\ntip weight medians:", {a: round(m, 3) for a, m in medians.items()})
+    print("constants:        ", dict(FOLIAGE_TIP_WEIGHT))
+    # 0.02: the search steps by 0.005, and a rasteriser's anti-aliasing moves a hue a little
+    for archetype, median in medians.items():
+        assert FOLIAGE_TIP_WEIGHT[archetype] == pytest.approx(median, abs=0.02), archetype

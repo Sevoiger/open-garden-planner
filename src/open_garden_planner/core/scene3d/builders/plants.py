@@ -117,22 +117,25 @@ _PLACEHOLDER_SIDES: Final = 48
 
 #: How much of its palette's TIP tone an archetype's foliage shows, on average
 #: (0 = the base anchors b0/b1, 1 = the tip anchors t0/t1). Measured from the 2D
-#: sprites, 2026-10-11: the tip weight whose mix has the hue of the sprite's
-#: rendered foliage, median per archetype over all 123 sprites. It is what keeps
-#: the 3D foliage within 10° of the sprite's hue (a palette spans up to 41°).
+#: sprites: the tip weight whose mix has the hue of the sprite's rendered
+#: foliage, median per archetype over all 123 sprites. It is what keeps the 3D
+#: foliage within 10° of the sprite's hue (a palette spans up to 41°). The
+#: derivation runs as a test and holds these numbers to its result:
+#: ``tests/unit/test_scene3d_plants.py::test_the_tip_weights_are_measured_from_the_sprites``
+#: (a ground cover's sprite sits at its palette's base anchors: 0).
 FOLIAGE_TIP_WEIGHT: Final[Mapping[str, float]] = MappingProxyType({
-    "allium": 0.65,
-    "canopy": 0.42,
-    "climber": 0.36,
-    "conifer": 0.12,
+    "allium": 0.68,
+    "canopy": 0.43,
+    "climber": 0.365,
+    "conifer": 0.11,
     "feathery": 0.36,
-    "flower": 0.21,
-    "grass": 0.40,
-    "ground": 0.05,
+    "flower": 0.225,
+    "grass": 0.39,
+    "ground": 0.0,
     "head": 0.29,
     "hedge": 0.24,
     "mound": 0.38,
-    "palm": 0.54,
+    "palm": 0.505,
     "rosette": 0.31,
 })
 #: Spread of the tip weight inside one plant: exposure 0 … 1 covers this much of

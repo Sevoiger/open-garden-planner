@@ -6,8 +6,9 @@ of the sprite generator and the 2D renderer into a stdlib-only package, so the
 pins the move:
 
 - the package imports nothing but the standard library (gate G8);
-- the generator and the renderer hold no table of their own any more — they hold
-  the package's objects;
+- the generator and the renderer hold no table of their own any more: the
+  renderer holds the package's objects, the generator executes the package's
+  ``recipes.py`` by file path (so that it still needs no Qt);
 - ``resolve_sprite`` answers exactly what the 2D resolver answered before the
   extraction (``tests/fixtures/plant_art/sprite_resolution_golden.json``, written
   from the unchanged code in the commit before the move; its generator, with
@@ -25,6 +26,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -150,22 +152,58 @@ class TestTables:
         assert len(recipes.FLOWERS) == 13
 
     def test_the_generator_holds_the_package_s_tables(self) -> None:
+        """The generator executes the package's own ``recipes.py`` — the same file, by
+        its path — and holds what that file defines: the package's tables, key
+        order included (sprites are seeded and drawn per table entry)."""
         generator = _load_generator()
+        assert generator.RECIPES_FILE.resolve() == Path(recipes.__file__).resolve()
         for name in TABLES:
-            assert getattr(generator, name) is getattr(recipes, name), name
+            loaded, packaged = getattr(generator, name), getattr(recipes, name)
+            assert loaded == packaged and list(loaded) == list(packaged), name
+        assert generator.DEFAULT_PALETTE == recipes.DEFAULT_PALETTE == "fresh"
+        assert generator.HEDGE_PALETTE == recipes.HEDGE_PALETTE == "dark"
         assert len(generator.generate_all()) == 123
 
     def test_the_generator_defines_no_table_of_its_own(self) -> None:
-        """A table literal left behind in the script would be a second source."""
+        """A table literal left behind in the script would be a second source: every
+        table name in it is bound to the loaded recipes module's attribute of the
+        same name, and to nothing else."""
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
-        assigned = {
-            target.id
-            for node in tree.body
-            if isinstance(node, (ast.Assign, ast.AnnAssign))
-            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
-            if isinstance(target, ast.Name)
-        }
-        assert assigned.isdisjoint(TABLES), assigned & set(TABLES)
+        bound: dict[str, list[ast.expr | None]] = {}
+        for node in tree.body:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                    if isinstance(target, ast.Name):
+                        bound.setdefault(target.id, []).append(node.value)
+        for name in (*TABLES, "DEFAULT_PALETTE", "HEDGE_PALETTE"):
+            assert len(bound.get(name, [])) == 1, name
+            value = bound[name][0]
+            assert isinstance(value, ast.Attribute) and value.attr == name, name
+            assert isinstance(value.value, ast.Name) and value.value.id == "_RECIPES", name
+
+    def test_the_generator_needs_nothing_but_the_standard_library(self) -> None:
+        """It was a standard-library script before the tables moved out of it, and it
+        still is: with PyQt6 and numpy unimportable it loads, imports no app module,
+        and regenerates all 123 sprites without drift. (An ``import
+        open_garden_planner.core.plant_art.recipes`` in it looked just as innocent:
+        the package's files are stdlib-only — and importing them runs
+        ``core/__init__.py``, which loads PyQt6. Review round 1.)"""
+        code = (
+            "import importlib.util, sys\n"
+            "for blocked in ('PyQt6', 'numpy'):\n"
+            "    sys.modules[blocked] = None\n"
+            "spec = importlib.util.spec_from_file_location('generator_alone', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "app = [name for name in sys.modules if name.startswith('open_garden_planner')]\n"
+            "files = module.generate_all()\n"
+            "drift = [p for p, text in files.items() if p.read_text(encoding='utf-8') != text]\n"
+            "print(len(files), len(drift), len(app))\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code, str(SCRIPT)], capture_output=True,
+                                text=True, timeout=120, check=False)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.split() == ["123", "0", "0"]
 
     def test_every_palette_has_the_six_anchors(self) -> None:
         for name, palette in recipes.PALETTES.items():
@@ -395,7 +433,9 @@ class TestResolution:
 
     def test_plant_kinds_are_the_repo_s_plant_types(self, qtbot) -> None:
         """Drift guard: one answer to "is this a plant?" (the 3D builder registers
-        for ``PLANT_KINDS``)."""
+        for ``PLANT_KINDS``). Two modules keep a list of their own — the Qt-free
+        height model and the agent API — and both are held to it here."""
+        from open_garden_planner.agent_api import creates
         from open_garden_planner.core.object_height import _PLANT_TYPE_NAMES
         from open_garden_planner.core.object_types import ObjectType
         from open_garden_planner.core.plant_renderer import is_plant_type
@@ -403,6 +443,8 @@ class TestResolution:
         assert frozenset({"TREE", "SHRUB", "PERENNIAL"}) == PLANT_KINDS
         assert {t.name for t in ObjectType if is_plant_type(t)} == PLANT_KINDS
         assert _PLANT_TYPE_NAMES == PLANT_KINDS
+        assert creates._PLANT_TYPE_NAMES == PLANT_KINDS
+        assert {t.name for t in ObjectType if creates.is_plant_type_name(t.name)} == PLANT_KINDS
 
     def test_every_sprite_the_maps_name_has_a_recipe(self) -> None:
         assert set(SPECIES_SPRITES.values()) == set(recipes.SPECIES)
