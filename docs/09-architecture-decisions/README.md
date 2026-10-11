@@ -1038,6 +1038,37 @@ Phase 14's sun/shade features (shadow overlay US-E3, hours-of-sun heatmap US-E4,
 
 **Rendering redesign (2026-07, `feature/sun-display-polish`).** The original 4-band discrete fill (hard colours + nearest-neighbour scaling) read as blocks. The overlay now renders a **continuous cool→warm ramp** — Qt-free `core/heatmap_render.py::build_sun_lut` (deep indigo in shade → amber/pale-yellow in full sun; alpha fades out toward full sun so a good spot shows the garden through) drawn with `SmoothTransformation` — plus **topographic contour lines every hour** (pure-numpy marching squares `iso_segments`, drawn as cosmetic-pen `QGraphicsPathItem`s that follow the terrain) with **even-hour `{n} h` labels** (`QGraphicsSimpleTextItem` + `ItemIgnoresTransformations`, the dimension-line idiom — zoom-stable). The labeled contours are the key, so the toolbar swatch legend is removed. **Display-only**: the aggregation, the toy-case gates and the worker are unchanged; contour extraction is cheap GUI-thread work after the compute. The horticultural bands (`BAND_THRESHOLDS_MINUTES`) stay as the domain classification the even-hour contours align with.
 
+### ADR-037 addendum: base stacking in the shared caster model (Phase 17, L1.6)
+
+**Status**: Accepted (2026-10-11, #385 story L1.6). **Changes shipped 2D behaviour** — the sun & shade overlay (FR-SUN-03) and the hours-of-sun heatmap (FR-SUN-05) — for one class of item: a plant whose parent is a soil container with a height.
+
+**Context.** The resolver above answers *how tall*; nothing answered *standing on what*. Every caster was a prism from the ground: a 60 cm perennial in a 40 cm raised bed cast as if it grew out of the lawn *through* the bed. Two consequences, both measured. (a) In 3D the same plant would stand inside its box, breaking the "Base" truth gate of `ogp-lush-cinematic` §1. (b) In 2D the plant was simply **invisible in the shadow map**: at a 35° sun its tip reached 85.7 cm past its footprint, the bed's own shadow 57.1 cm past the bed's edge — a plant in the middle of a bed never left the bed's shadow. Its real tip is 140.0 cm out. And the two views were about to disagree: 3D needs the base (L1.6 stands plants on their soil), the 2D casters had none.
+
+**Decision.**
+
+1. **A caster is a solid `footprint × [base, base + h]`** — `core/shadow_geometry.ShadowCaster(footprint, height_cm, base_cm = 0.0)`, a `NamedTuple` (plain data: it still crosses to the heatmap worker thread). `height_cm` stays `effective_height_cm`, measured from the caster's own ground.
+2. **The shadow of a raised caster, defined once**: with the sun at elevation α and unit shadow direction `d`,
+   `S(F, b, h) = { p + t·d : p ∈ F, t ∈ [b / tan α, (b + h) / tan α] }` —
+   the footprint projected from the base, swept on to its projection from the top; equivalently the ground shadow `S(F, 0, h)` translated by `(b / tan α)·d`. The **tip lies `b / tan α` further from the sun** and so does the near edge: what is below the base is not this caster's shadow but that of whatever it stands on (the bed is a caster of its own, so the union stays one region). Implemented as one step in front of the unchanged sweep: `_caster_paths_int` translates the integer footprint by `round(b / tan α · d · 1000)` and then sweeps exactly as before.
+3. **`base = 0` is bit-identical to before, by construction and by proof.** For a caster on the ground the translation step does not run, so the integer paths are the ones the old code produced. A golden fixture generated from the unchanged code (commit `8d1cd0a`, one commit before the change) pins it: `compute_scene_shadows` over 120 footprint × height × sun cases, the caster walk and shadow unions of both bench plans, the real overlay's painter path at a high and a low sun, and the heatmap toy case. Plain `(footprint, height)` pairs are still accepted and mean "on the ground" (the dormant spike's probes and the unit tests pass them).
+4. **One rule for where an item stands** — `core/object_height.standing_base_cm(parent_type, parent_metadata, at_date)`: the **soil surface** of a soil-capable parent that has a resolved height, `soil_surface_cm(h) = max(h − SOIL_DROP_CM, 0)` with `SOIL_DROP_CM = 2.0`; `0.0` for every other parent. "Soil-capable" is the repo's one predicate, `is_bed_type` (`SOIL_CONTAINER_TYPES`), mirrored by name in the Qt-free module and pinned against the real set (the module's existing convention); "above ground" is not a type property but *the parent has a height* — so an in-ground `GARDEN_BED` is the ground, a `GARDEN_BED` the user gave a height is raised, and a `TRELLIS` (a plant parent that holds no soil) is the ground.
+5. **One caller for items** — `ui/canvas/footprints.item_base_cm(item, lookup, at_date)` resolves `parent_bed_id` (a `GardenItem` property, never metadata) and asks rule 4. It is called by `collect_shadow_casters` (→ overlay **and** heatmap, which share that one walk) and by `snapshot_records` (→ `transform.base_cm`). A parent that is not *visible* is not there: it casts nothing and has no solid, so its plants stand on the ground rather than float.
+6. **The overlay's change key carries the base**, so an edit that changes only what a plant stands on (a re-parent) recomputes.
+
+**What changes for the user.** A plant on raised soil now casts from the soil: its shadow tip is `base / tan α` further out (54.3 cm for the example above; 141.8 cm at a 15° winter sun) and the plant becomes visible in the overlay and in the hours-of-sun map where it was hidden inside its bed's shadow. Everything else is unchanged to the bit. On the bench plans: 22 of 87 casters (bench_small) and 240 of 379 (bench_large) are raised.
+
+**Alternatives considered (rejected).**
+- *A base only in 3D.* Two answers to one question; the Split view would show a 3D shadow and a 2D overlay that disagree by half a metre.
+- *Lift the height instead (`h' = h + base`, base 0).* The tip would be right and the near edge wrong — the plant would also shade the ground under and beside its bed's far side that the bed alone does not — and the 3D solid would be a pole from the ground.
+- *A new name set for "raised parents" (the spike's four names).* It left out a `GARDEN_BED` with a height and would drift from `is_bed_type`; the height test needs no list.
+- *Counting a hidden parent.* Its plants would float in 3D and cast from thin air in 2D.
+- *Fixing the closed-polyline footprint in the same change.* `polyline_footprint` of a closed line returns an outer ring and a hole, and both shipped consumers shade the enclosed area. It is a separate defect with its own issue; the golden deliberately pins today's behaviour, defect included, so this change proves it moved nothing else.
+- *Keeping the 2-tuple and adding a parallel list of bases.* Two lists that must stay in step; six test call sites unpack the tuple and now name the third field instead.
+
+**Consequences.** `collect_shadow_casters` returns `list[ShadowCaster]`. `transform.base_cm` of a scene record is real (ADR-054): a bed that changes height reaches its plants as `update_transform` — no plant mesh is rebuilt — and a re-parent is a transform change (it was an empty diff). No `.ogp` change, no `FILE_VERSION` bump, no user-visible string. Not changed: the shipped Qt 3D view (`collect_scene3d_records`) still extrudes a plant from the ground; it has no shadows and retires in L1.10. Parents do not nest (only plants are parented), so there is nothing to sum.
+
+**Validation.** `tests/unit/test_shadow_caster_base.py` — tip shift = `base / tan α` at 15° / 35° / 60° × five azimuths × three footprints (≤ 0.1 cm; measured ≤ 2e-3, the integer grid); `S(F, b, h)` = the translated ground shadow; a ray oracle that knows no polygons (a ground point is shaded iff the ray toward the sun crosses the solid), 4,000 points per case; the bed casts the part below; base 0 ≡ the plain pair; the soil rule. `tests/integration/test_shadow_caster_golden.py` — the golden, plus on both bench plans: same walk, grounded union unchanged, ground casters unchanged, raised count = an independent oracle's. `tests/integration/test_scene3d_base_stacking.py` — gate G3 through a real scene, 3D base = 2D caster base for nine parent cases, one caster walk (AST guard), the real overlay painting the raised tip. `tests/unit/test_object_height.py::test_soil_parent_names_match_the_soil_predicate`.
+
 ## ADR-038: 3D Engine Choice — GO/NO-GO Spike (Phase 14, US-E5)
 
 **Status**: Proposed — GO recommendation, owner sign-off pending on the US-E5 PR (evaluated 2026-07-19/20) | **Context**: Epic #255, issue #260, `docs/11` §11.1 open question ("Qt6 3D capabilities vs dedicated engine? Prototype with Qt3D, evaluate PyVista"). Timebox: 5 working days, hard stop.
@@ -2547,3 +2578,115 @@ story: it is the Qt-free foundation L1.2–L1.7 build on.
 - A mutation check (21 single-rule breaks — mirrored frame, flipped rotation, no grid, no value
   compare, colour baked into the mesh, a prism 1 % too tall, builders inside the transaction …)
   was run once while writing the tests: every mutant failed at least one test.
+
+### ADR-054 addendum: builders v0 — the built world (Phase 17, L1.6)
+
+**Status**: Accepted (2026-10-11, #385 story L1.6). Nothing is rendered by this story either: the
+builders are judged by numbers on `Mesh` and `RecordingSink`; the look is judged later, by the
+combined look-dev pass and the independent 3D reviewer.
+
+**Context.** Decision 9 left every kind on the default prism. The L0 spike has builders for
+buildings, fences, walls, beds and hedges (`spike_q3d/meshes.py`), measured and owner-signed, but
+they build at absolute scene positions, take their colours from literals, handle convex footprints
+only, and correct their heights with a fit after the fact.
+
+**Decision.**
+
+1. **A package of pure builders**, `core/scene3d/builders/`, one module per family with a
+   module-level `register(registry)`; `production_registry()` returns a fresh registry holding all
+   of them (the plant story adds one line there). Registered kinds: `HOUSE`, `GARAGE_SHED`,
+   `TOOL_SHED`, `FENCE`, `WALL`, `RAISED_BED`, `CONTAINER`, `WALL_PLANTER`, `CONTAINER_ROUND`,
+   `GARDEN_BED`, `HEDGE_SECTION`, `HEDGE_POLYGON`. Every other kind keeps the default: paths,
+   lawns and ridge items have no height (ground); furniture, glass, water and pergolas are L4.
+2. **The top is the height, by construction.** Every builder shapes its item FOR a height and its
+   highest vertex is that height to the float32 — posts are the top of a fence, the ridge tile's
+   apex the top of a house, a pot's rim the top of a pot, the highest leaf of a hedge is put on
+   its trim line. `fit_parts` (one z-scale for all parts, the spike's `fit_height`) stays as a
+   safety net, and a test asserts every builder's fit scale is 1.0 ± 1e-6 over the whole matrix.
+   The spike's builders decorated first and fitted afterwards; a fit hides a builder that is
+   wrong.
+3. **No height, no shadow.** `BuiltBuilder` wraps a shape function `(record, height) -> parts`:
+   an item the plan gives no height is built at its kind's nominal height — read from the 2D
+   resolver's own tables, never a second table — as decoration, every part
+   `casts_shadow=False`. A kind without a nominal height (an in-ground bed) gets no solid.
+4. **A gable roof is two planes through the ridge LINE** (`roofs.gable_roof`):
+   `z = top − cap rise − slope·|distance to the line|` over the footprint grown by the overhang.
+   That is the model the 2D canvas paints (`_paint_with_ridge` splits the polygon along the
+   infinite line), so it holds for concave footprints and for a ridge the user dragged. The walls
+   are one trapezoid per footprint edge — split where an edge crosses the line — up to the slab's
+   underside, so gable ends need no special case. **The ridge is consumed, never derived**
+   (ADR-046): `params["ridge"]` is the live ridge item's ends; a HOUSE without a usable one is a
+   plain block. The ridge tile's apex line lies ON that line and runs to the roof's edge:
+   `overhang / cos θ` beyond a ridge end whose wall it meets at θ, exactly the 30 cm overhang
+   where it meets the wall squarely. Sheds have no ridge item; theirs is the long axis of the
+   bounding box **aligned with the footprint's longest edge**, in the item-local frame.
+5. **Polylines are built from the centre line** (`record.path`, `record.path_width_cm`), segment
+   by segment, never from the stroke polygon in `record.footprints`: a fence round a garden is a
+   closed loop whose stroke polygon is an outer ring and a hole, and extruding it lays a slab over
+   the garden (the default builder does exactly that — pinned as the trap it is). A closed centre
+   line is swept as a loop.
+6. **The plan's own colour is a tint; everything else is a mirrored 2D table entry.** Read from
+   the code, not assumed: every 2D fence and wall style paints from the item's own pen colour (the
+   style table only pre-sets it), and containers are filled in the item's colour. So fences,
+   walls, building walls and containers are `tinted` parts with pure white vertices — a recolour
+   never rebuilds them. What 2D draws from a fixed material is baked: roof tiles, shingles,
+   timber, a raised bed's oak (it is SVG-rendered), soil, hedge greens. Those 13 colours live in
+   `builders/palette.py`, each naming its source, and a drift guard loads both generator scripts
+   and fails when a mirror and its source disagree.
+7. **One soil rule.** The soil of every bed and container is at
+   `object_height.soil_surface_cm(height)` — the function that gives a plant its base (ADR-037
+   addendum above). A `GARDEN_BED` with an explicit height gets a bed solid for the same reason:
+   its plants stand 2 cm under its rim, so there must be soil there.
+8. **Budgets are per metre and per corner**, and asserted: a picket fence ≤ 105 triangles per
+   metre + 60 per segment, metal 100 + 35, chain link 55 + 110; a building 80 + 30 per footprint
+   corner; a hedge at most 6,000 leaves (12,000 triangles) whatever its size.
+
+**Alternatives considered (rejected).**
+- *Moving `MATERIALS` out of `scripts/generate_object_sprites.py` into the package.* One table,
+  no mirror — but the sprite generator would have to import the application (and Qt, through
+  `core/__init__`), the provenance record of 24 shipped sprites would move (ADR-042), and the
+  texture palettes are locals inside generator functions anyway. A 13-entry mirror with a drift
+  guard is the smaller change; the precedent is `TRAMPOLINE_MAT`.
+- *Baked fence and wall colours from the style table.* `core/object_types` imports Qt, and the
+  table is only a preset: a recoloured fence would have stayed brown in 3D.
+- *Shading weights on tinted parts* (posts darker than pickets). Not in any table; v0 carries
+  none, and a look pass can add them with evidence.
+- *Importing pyclipper for the roof's overhang.* The package's import rule allows the standard
+  library, numpy and Qt-free `core` modules only. A mitre offset in numpy (every edge moves
+  exactly the distance) is what a roof needs and all it needs.
+- *The scene-frame bounding box for a shed's ridge* (the spike). Found by turning the local
+  footprint in the test matrix: a shed drawn as a turned polygon got a ridge askew to its walls.
+- *Clamping hedge leaves at the trim height vertex by vertex.* It flattened leaves into the
+  plane and turned some inside out; a leaf is moved whole instead.
+- *The stroke width as the wall's thickness.* See the first consequence.
+
+**Consequences.**
+- **A linear item is thicker in 3D than its 2D footprint.** A polyline's stroke is a line weight
+  (fence 3 cm, wall 4–5 cm, hedge 8 cm); the 2D shadow extrudes that strip. The 3D bodies use the
+  L0 board's sections — posts 9 cm, a wall `max(stroke, 30)` cm, a hedge `max(stroke, 40)` cm.
+  Shadow LENGTH and tip agree with 2D (the height is the same); the body is wider. The plan
+  holds no thickness to resolve this with.
+- A HOUSE's fill colour tints its WALLS in 3D; in 2D it tints the roof texture (a 31 % overlay).
+- Tinted parts are one flat colour; default fences are saddle brown and default walls dim grey —
+  darker than the L0 board's literals, which were in no 2D table (plaster `#efe4cf`, roof
+  `#b4553d`, fence `#a0744a`, wall `#9b9384`, bed `#9a6b3f`, soil `#4a3222`, pot `#c46a3c`,
+  hedge core `#1f4a26`).
+- A hedge whose shell exceeds 18 m² — about 5 m of a 1.5 m hedge — is at the leaf cap, and its
+  coverage thins:
+  bench_small's 10.5 m hedge has 47 % of the uncapped count, bench_large's 30 m hedge 17 %. The
+  spike had the same cap; "larger leaves at the same coverage" is a look decision left to the
+  look-dev pass.
+- `MATERIAL_KINDS` has one opaque kind, so wood, plaster, stone and soil share its roughness until
+  L1.4.
+- Measured: both bench plans' built worlds build in 9.8 ms (15 items, 16,874 triangles) and
+  18.7 ms (28 items, 22,482 triangles) median; budgets 40 / 60 ms.
+
+**Validation.** `tests/unit/test_scene3d_builders_primitives.py` (outward winding, exact tops,
+mitres, the lathe's ring = the 2D circle footprint); `tests/unit/test_scene3d_builders.py` — a
+matrix of 286 records (every kind × sizes × local geometry turned by 0 / 17 / 90 / 213.5° × a
+closed and a nearly closed line per style × with and without a height) through `verify_builder`,
+exact top, base 0, fit scale 1, budget, winding, footprint containment, colours → palette;
+`tests/unit/test_scene3d_builders_palette.py` (palette → 2D sources);
+`tests/integration/test_scene3d_built_world.py` (§8.10: a garden drawn with the real tools, an
+edit session with exact sink calls, the ridge in the mesh against the live ridge item for turned
+and non-rectangular houses, ≤ 0.1 cm); `tests/perf/test_scene3d_built_world_budget.py`.

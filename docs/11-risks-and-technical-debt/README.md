@@ -1044,6 +1044,70 @@ None of these was reported by a user: each was found by measuring a claim before
   a corner fixed is reported as geometry **and** transform: correct — the record's frame hangs on
   the item's centre, and that centre moved. Both are pinned as behaviour, not worked around.
 
+### 11.4.9 What the built world and base stacking taught (Phase 17 L1.6, #385)
+
+None of these reached a user. Each was caught by a test written to be able to fail — and each
+passed the tests that only looked at one number.
+
+- **A caster from the ground is not conservative — it hides the plant.** A plant in a raised bed
+  was extruded from the garden floor *through* its bed. That looked like a harmless
+  simplification ("its shadow is a little short"). Measured at a 35° sun: a 60 cm plant's tip
+  reached 85.7 cm past its footprint, the 40 cm bed's own shadow 57.1 cm past the bed's edge — so
+  a plant more than 28.6 cm from that edge cast nothing the bed did not cast already. Every plant
+  in the middle of a raised bed was absent from the shadow overlay and the hours-of-sun map. Fix:
+  a caster has a base (`core/shadow_geometry.ShadowCaster`, ADR-037 addendum); the tip moves
+  `base / tan α` out (54.3 cm here). Pinned by
+  `tests/unit/test_shadow_caster_base.py::TestSweptShadowDefinition::test_the_bed_casts_the_part_below`,
+  which asserts the old tip was inside the bed's shadow. *"Slightly wrong" hid "missing": measure
+  a simplification against what it is next to, not on its own.*
+- **Changing shipped behaviour for one class of input: pin everything else first, and let an
+  independent oracle say who is in the class.** The golden
+  (`tests/fixtures/shadows/shadow_golden.json`) was generated from the unchanged code one commit
+  before the change, and holds per bench plan the union of all shadows *and* the union of the
+  casters the change must not touch. The test's own re-derivation of "which casters stand on
+  raised soil" (it does not call the new function) found 22 of bench_small's 45 parented plants —
+  the other 23 are in in-ground beds or on a trellis. The first assertion said 45. *An oracle
+  that shares the implementation's assumption shares its mistakes.*
+- **A closed polyline's stroke polygon is a ring with a hole — and height, validity and budget all
+  pass on the slab.** `polyline_footprint` of a fence drawn round a garden returns two rings; the
+  default builder extrudes both and lays a lid over all 48 m² of the test garden
+  (`TestPolylinesAreBuiltFromTheCentreLine::test_the_trap_is_real`). Every built-world builder
+  for a polyline therefore reads `record.path` and works segment by segment; what catches a
+  regression is plan-view AREA (`plan_area`: the union of the mesh's triangles seen from above ≈
+  length × width) and `covers(x, y)` at points inside the loop. The 2D shadow and heatmap have the
+  same defect and it is deliberately not fixed here (a separate issue; the golden pins it as is).
+  - **The first `covers` probe sat on a diagonal.** It tested the centre of a symmetric loop,
+    which lies exactly on an ear-clipping diagonal of the lid: "not covered", under a lid. Probe
+    points go off every axis of symmetry.
+- **A bounding box is aligned with the frame, not with the building.** The spike laid a shed's
+  ridge along its scene-frame bounding box. In the item-local frame a *rectangle item* is
+  axis-aligned and the rule looks right; a shed drawn as a *polygon* at an angle has its vertices
+  turned inside the local frame, and the ridge came out askew to its walls. Found only because the
+  builder matrix turns the local geometry by 17° and 213.5°, and only by a containment assertion
+  (the ridge tile left the roof). Fix: the box aligned with the footprint's longest edge
+  (`roofs.bounding_box_ridge`). Pinned by
+  `tests/unit/test_scene3d_builders.py::TestShedRidge::test_it_turns_with_a_footprint_drawn_at_an_angle`.
+  *A builder never sees the item's rotation, so "parametrise over rotation" must also mean the
+  geometry inside the record.*
+- **A ridge tile with square ends overshoots an eave it meets at an angle** — by
+  `half width × tan θ` (2.4 cm on a dragged ridge, 3.2 cm on a trapezoid). The top was exact, the
+  budget held, every face validated. Fix: each of the tile's two foot lines ends where *it*
+  crosses the roof's edge. Caught by `outside_distance(plan points, eaves) ≤ 1e-3`.
+- **Clamping a leaf's vertices at the trim height turns leaves inside out.** The first hedge
+  brought every vertex above the height down onto it. A leaf standing mostly above the line was
+  flattened into the plane and its winding flipped against its stored facing (24 matrix cases).
+  Fix: a leaf that reaches too high is moved down *whole* (`hedges.leaf_shell`); the highest leaf
+  sits on the height, so the top is still exact by construction.
+- **`core/scene3d/` cannot import pyclipper** — the package's import rule (AST scan) allows the
+  standard library, numpy and Qt-free `core` modules. A roof's overhang needs an outward offset;
+  `primitives.offset_ring` is a mitre offset in numpy in which every edge moves exactly the
+  distance (asserted per edge). If a builder ever needs polygon booleans, they go through a
+  `core` module, not around the scan.
+- **Six tests unpacked the caster as a pair.** `footprint, height = collect_shadow_casters(...)[0]`
+  — the cost of a positional type is paid when it grows. `ShadowCaster` is a `NamedTuple`, so the
+  third field is named from now on; the shadow functions still accept a bare pair (the spike's
+  probes pass one) and treat it as standing on the ground.
+
 ### CI/release hardening: locked metadata also contains the application version
 
 A version-only edit to `pyproject.toml` makes `uv.lock` stale. The measured probe failed

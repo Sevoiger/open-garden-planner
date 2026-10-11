@@ -55,8 +55,10 @@ src/open_garden_planner/
 │   ├── plant_sizing.py           # PlantSizing resolver — footprint/override/max_spread precedence (ADR-028)
 │   ├── solar.py                  # Qt-free NOAA solar position engine — elevation/azimuth/declination/EoT (US-E1, ADR-037)
 │   ├── sim_clock.py              # Qt-free ONE sim moment: local plan date + wall time → UTC; date_changed / instant_changed channels (Phase 17 L1.0, ADR-053)
-│   ├── object_height.py          # Qt-free effective-height resolver — explicit/container/species/type-default (US-E2, ADR-037)
-│   ├── shadow_geometry.py        # Qt-free shadow sweep/union — L=h/tanα, Minkowski sweep, pyclipper union (US-E3, ADR-037)
+│   ├── object_height.py          # Qt-free effective-height resolver — explicit/container/species/type-default (US-E2, ADR-037);
+│   │                             #   and where an item STANDS: standing_base_cm / soil_surface_cm (Phase 17 L1.6)
+│   ├── shadow_geometry.py        # Qt-free shadow sweep/union — L=h/tanα, Minkowski sweep, pyclipper union (US-E3, ADR-037);
+│   │                             #   ShadowCaster(footprint, height, base): a raised caster's shadow starts base/tanα out (L1.6)
 │   ├── shade_aggregation.py      # Qt-free hours-of-sun sampling/bands/grid — rasterizer injected (US-E4, ADR-037)
 │   ├── heatmap_render.py         # Qt-free heatmap rendering — cool→warm ramp LUT + marching-squares hour contours (US-E4)
 │   ├── scene3d/                  # Qt-free 3D scene core (Phase 17 L1.1, ADR-054) — see §5.10
@@ -68,6 +70,16 @@ src/open_garden_planner/
 │   │   ├── build.py              #   Builder seam, BuilderRegistry, default prism builder, verify_builder
 │   │   ├── sync.py               #   SceneSync — snapshots in, minimal sink calls out
 │   │   ├── color.py              #   sRGB → linear, the one conversion
+│   │   ├── builders/             #   the production builders (Phase 17 L1.6) — production_registry(); see §5.10
+│   │   │   ├── primitives.py     #     flat_mesh, boxes, bevelled_boxes, prism, sweep, plank, lathe, tubes, plan helpers
+│   │   │   ├── palette.py        #     the 13 baked colours, mirrored from the 2D generators (drift-guarded); TINT
+│   │   │   ├── common.py         #     BuiltBuilder: the top is the height (fit safety net); no height, no shadow
+│   │   │   ├── roofs.py          #     gable roof + walls from a ridge line; shed ridge from the local bounding box
+│   │   │   ├── buildings.py      #     HOUSE, GARAGE_SHED, TOOL_SHED
+│   │   │   ├── fences.py         #     FENCE per PathFenceStyle: picket, metal, chain link, hedge, stone wall
+│   │   │   ├── walls.py          #     WALL: body + coping swept along the centre line
+│   │   │   ├── beds.py           #     RAISED_BED, CONTAINER, WALL_PLANTER, CONTAINER_ROUND, raised GARDEN_BED — frame + soil
+│   │   │   └── hedges.py         #     HEDGE_SECTION, HEDGE_POLYGON: core + seeded leaf shell, trimmed at the height
 │   │   └── legacy.py             #   the former scene3d.py (US-E6, ADR-038): triangulation, extrusion, sun vector — until L1.10
 │   ├── walk_camera.py            # Qt-free walkthrough rules — eye height, bounds clamp, pitch-limited look vector (US-E7)
 │   ├── growth_model.py           # Qt-free current-size→mature interpolation by planting date — one model for shadows/heatmap/3D (US-E8, ADR-037)
@@ -435,7 +447,7 @@ AST scan that follows those siblings).
 | Building block | Responsibility | Interface (in → out) |
 |----------------|----------------|----------------------|
 | `ui/canvas/footprints.py` | The ONE footprint extraction. `item_outline` enumerates an item's outline in its own coordinates (which vertices, which centre, radius or stroke width); `item_footprints` is that outline through `mapToScene`; `plant_canopy_radius_cm` is a plant's canopy at a date. Read by the shadow overlay, the heatmap, the Qt 3D collector and the 3D snapshot, so a solid cannot disagree with its shadow. | canvas item (+ date) → `ItemOutline` · scene polygons · radius |
-| `ui/view3d/snapshot.py` (`snapshot_records`) | Live items → contract-v2 records on the GUI thread: item-local geometry on the record grid, a rigid transform from `sceneTransform()`, the resolved height, material and params. Bottom-to-top; skips invisible, untyped, footprint-less and non-finite items. `collect_scene3d_records` (Qt 3D) is unchanged beside it. | `QGraphicsScene`, plan date → `dict[str, Record]` |
+| `ui/view3d/snapshot.py` (`snapshot_records`) | Live items → contract-v2 records on the GUI thread: item-local geometry on the record grid, a rigid transform from `sceneTransform()` whose `base_cm` is where the item stands (`item_base_cm`, L1.6), the resolved height, material and params. Bottom-to-top; skips invisible, untyped, footprint-less and non-finite items. `collect_scene3d_records` (Qt 3D) is unchanged beside it. | `QGraphicsScene`, plan date → `dict[str, Record]` |
 | `core/scene3d/record.py` | The contract: `Record`, `Transform`, `Material`, `Params`; the field groups behind `geometry_sig` / `transform_sig` / `material_sig`; `quantize_cm` / `quantize_deg`. Equality is confirmed on the values (hashes collide). | plain data |
 | `core/scene3d/diff.py` | `diff(old, new)` → `SceneDiff(added, removed, transform, material, geometry, reordered)`: three independent comparisons per surviving item. | two snapshots → what changed |
 | `core/scene3d/frame.py` | Every frame conversion, once: scene ↔ engine (numpy, determinant +1), item-local → scene (`pose_*`), `engine_pose`, and `LocalFrame` (an affine scene transform → rigid transform + local coordinates; non-rigid parts are baked). | floats / arrays → floats / arrays |
@@ -443,6 +455,12 @@ AST scan that follows those siblings).
 | `core/scene3d/build.py` | The builder seam: `Builder`, `BuilderRegistry`, `default_builder` (prism to the resolved height, tinted; nothing without a height), `prism_mesh`, `item_seed`, and `verify_builder` — the test instrument for every builder. | `Record` → `tuple[MeshPart, ...]` |
 | `core/scene3d/sink.py` | `EngineSink` (nine methods) and `RecordingSink`, its protocol-enforcing double; `SunState` (angles from `core/solar`), `GroundSpec` (minimal, L1.5 extends it). | calls → engine state / a call log |
 | `core/scene3d/sync.py` | `SceneSync`: owns the last applied snapshot; builders before the sink is touched; one transaction or none; contains a failing builder, is poisoned by a failing sink until `reset()`. | snapshots → minimal sink calls |
+| `core/scene3d/builders/` (`production_registry`, `register`, `BUILT_WORLD_KINDS`) | The production builders (L1.6, ADR-054 addendum): one module per family, each a `BuiltBuilder` over a shape function. Buildings (walls + a gable roof from the record's live ridge), fences per style, walls, beds and containers (frame + soil at `soil_surface_cm`), hedges (seeded). Twelve kinds; every other kind keeps the default prism. Rules and how-to: §8.26.6. | `Record` → `tuple[MeshPart, ...]`, top = `height_cm` exactly |
+| `core/scene3d/builders/primitives.py` | Numpy primitives in the item-local frame: `flat_mesh` (every triangle stores its winding normal; `outward=` forces the winding), `boxes`, `bevelled_boxes`, `prism`, `polygon_cap`, `sweep` (profile along a plan polyline, mitred, open or closed), `plank`, `lathe` (ring vertices on the 2D circle footprint), `tubes`; `offset_ring`, `split_triangles_by_line`. | arrays → `Mesh` |
+| `core/scene3d/builders/palette.py` | The built world's 13 baked colours, each a mirror of a 2D table entry (object-sprite `MATERIALS`, texture-forge literals) naming its source; `TINT` for parts that take the item's own colour. Pinned to the generators by `tests/unit/test_scene3d_builders_palette.py`. | name → linear RGBA |
+| `core/object_height.py` (`standing_base_cm`, `soil_surface_cm`, `SOIL_DROP_CM`) | Where an item stands (L1.6, ADR-037 addendum): the soil surface of a soil-capable parent with a height — its height minus 2 cm — else the ground. One rule for the 3D records, the 2D shadow casters and the bed meshes' soil. | parent type + metadata (+ date) → cm |
+| `ui/canvas/footprints.py` (`item_base_cm`, `ItemLookup`) | Resolves an item's `parent_bed_id` (visible parents only) and asks `standing_base_cm`. The one caller for items: `collect_shadow_casters` and `snapshot_records` both use it. | canvas item → base in cm |
+| `core/shadow_geometry.py` (`ShadowCaster`) | The shared 2D caster: `(footprint, height_cm, base_cm)`. A raised caster's shadow is its ground shadow moved `base / tan α` along the shadow direction; base 0 is the unchanged path. Overlay and heatmap consume the same list. | casters + sun → unioned shadow polygons |
 | `core/scene3d/legacy.py` | The pre-L1.1 contract, moved verbatim and re-exported by the package: `Scene3DRecord`, `records_from_raw`, `triangulate_polygon`, `extrude_footprint`, `sun_direction_scene`, `to_engine_frame`. Feeds the shipped Qt 3D window and the dormant spike; contract v2 reuses its triangulation and extrusion. Removed in L1.10. | raw footprints → scene-space prisms |
 
 ## Developer quality and release tooling

@@ -47,6 +47,16 @@ description: >
 > prominent enough to carry a major-version claim). Read "v2.0" as "Phase 14" — the
 > scope exclusions it labels (flat ground, no terrain slopes, geometric sun elevation)
 > are all still real.
+>
+> **A caster has a base since Phase 17 L1.6 (ADR-037 addendum "base stacking").**
+> The shared caster is `core/shadow_geometry.ShadowCaster(footprint, height_cm, base_cm)`:
+> a plant on the soil of a raised bed or container casts from that soil
+> (`core/object_height.standing_base_cm` — the parent's height minus the 2 cm soil drop),
+> so its shadow starts, and its tip lies, `base / tan α` further from the sun. Where the
+> text below says `(polygon, height)`, read `ShadowCaster`. A caster on the ground is
+> bit-identical to the Phase 14 shadows — pinned by
+> `tests/integration/test_shadow_caster_golden.py`; the definition and its proofs are in
+> `tests/unit/test_shadow_caster_base.py`; §8.20 has the worked example.
 
 **Status of the inventory below (2026-07-04):** Everything under "EXISTS (verified)"
 was read from the repo at v1.23.0 (post-US-D1.3). Items marked **TO BUILD** were

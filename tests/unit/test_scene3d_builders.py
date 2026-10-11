@@ -87,7 +87,7 @@ HEIGHT_TOLERANCE_CM = 0.5  # gate G1; every builder is in fact exact to the floa
 LEAF_OVERSHOOT_CM = 6.0
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def built(record: Record) -> tuple[MeshPart, ...]:
     """The production builder's parts for a record — cached: builders are pure, and
     the matrix asks for the same record from several tests."""

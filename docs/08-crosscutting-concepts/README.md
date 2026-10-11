@@ -599,6 +599,41 @@ them where they fit.
   identified), and a hover test that does not check would have passed vacuously there. Assert an
   effect of the hover (the handle's highlight brush) before asserting that it changed nothing else.
 
+### 8.10.4 Patterns from the built world and base stacking (Phase 17 L1.6)
+
+Established by `tests/integration/test_shadow_caster_golden.py`,
+`tests/unit/test_shadow_caster_base.py`, `tests/unit/test_scene3d_builders.py` and
+`tests/integration/test_scene3d_built_world.py`.
+
+- **A golden before a behaviour change, plus an independent oracle of who changes.** §8.10.3's
+  golden pins a refactor (nothing may change). When behaviour changes for ONE class of input, the
+  golden pins everything else: generate it from the unchanged code, and store two things per
+  scene — the result as it was, and the result of only the inputs the change will NOT touch. The
+  test then proves (a) with the change switched off the old result returns, (b) the untouched
+  inputs still give the second result, (c) the touched inputs are exactly the expected ones. Which
+  inputs are "untouched" is decided in the test by a re-derivation that does not call the new code
+  (`_walk` in the golden test): it found that only 22 of bench_small's 45 parented plants stand
+  on raised soil — the first draft of the assertion said 45.
+- **A geometric claim gets an oracle that shares no code with it.** The swept shadow of a raised
+  caster is checked point by point against a ray test (is `q − t·d` inside the footprint for some
+  `t` in the height interval?) that knows nothing of polygons, sweeps or the integer grid — next
+  to the algebraic identity (the raised shadow is the ground shadow translated). The identity
+  alone would pass a wrong formula that is self-consistent.
+- **A builder matrix turns the local geometry, not only the item.** A builder never sees an
+  item's rotation (it is the transform's), so "parametrise over rotation" has to mean the
+  footprint and the path *inside the local frame*. Doing that found a shed whose ridge lay askew
+  to its walls (the bounding box of a turned polygon) and a ridge tile that overshot the eaves
+  where the ridge met them at an angle.
+- **Assert containment, not only extremes.** "The top is the height" and "the triangle budget
+  holds" passed for both defects above. What failed was "every vertex lies inside the footprint
+  grown by the overhang" (`outside_distance`) — a statement about the whole solid.
+- **Probe points off the axes of symmetry.** A plan-view "is this point covered" test at the
+  centre of a symmetric outline sits exactly on an ear-clipping diagonal and reads "not covered"
+  under a lid that covers everything. Use points like (37, 11).
+- **Plan-view area as the hole detector.** For anything built along a line, the area of the
+  union of its triangles seen from above must be about `length × width`; a slab over the
+  enclosed area is two orders of magnitude off. Height, validity and budget all pass on the slab.
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
@@ -1899,6 +1934,34 @@ shadow south. The binding pixel test in
 asserts the tip lands at the formula-predicted pixel; if a change mirrors
 shadows, that test fails before any human has to eyeball a canvas.
 
+**A caster has a base (Phase 17 L1.6, ADR-037 addendum).** A shadow caster
+is a solid `footprint × [base, base + h]` —
+`core/shadow_geometry.ShadowCaster(footprint, height_cm, base_cm)`. With the
+sun at elevation α its ground shadow is the footprint projected from the
+base, swept on to its projection from the top:
+
+    S(F, b, h) = { p + t·d : p ∈ F,  t ∈ [b / tan α, (b + h) / tan α] }
+
+that is, the ground shadow `S(F, 0, h)` moved `b / tan α` along `d_scene`.
+The tip — and the near edge — lie `b / tan α` further from the sun; the
+ground between the footprint and the near edge is shaded by what the caster
+stands on, which is a caster of its own. `base_cm` is 0 for everything on
+the garden floor and the **soil surface** for a plant whose parent
+(`parent_bed_id`) is a soil container with a height:
+`core/object_height.standing_base_cm` = the parent's effective height minus
+the 2 cm soil drop. Worked example: a 60 cm perennial on the soil of a 40 cm
+raised bed (base 38), α = 35° → the tip lies `(38 + 60) / tan 35° = 140.0 cm`
+beyond the plant, 54.3 cm further than from the ground (85.7 cm) — and no
+longer inside the bed's own 57.1 cm shadow. **One walk makes the casters**
+(`collect_shadow_casters`): the overlay and the heatmap both call it, and the
+3D records take `transform.base_cm` from the same
+`ui/canvas/footprints.item_base_cm` (§8.26.6) — a drift guard counts the
+callers. A caster on the ground takes the unchanged integer path, pinned bit
+for bit by `tests/integration/test_shadow_caster_golden.py`. Known and
+unchanged: a CLOSED polyline's footprint (`polyline_footprint`) is an outer
+ring plus a hole, and the shadow of a fence drawn as a closed loop covers
+the enclosed area — a separate defect, not touched by base stacking.
+
 **Recompute discipline** for canvas-scale overlays (shadow overlay,
 heatmap): precompute on change — `scene.changed` debounced (150 ms) +
 `stack_changed` for repaint-less metadata edits — cache the result, and
@@ -2524,8 +2587,8 @@ drags Qt in. The engine is imported by one package only, `ui/view3d/quick3d/` (L
 (circles: the footprint radius, a plant's canopy at the sim date), `ridge` (a HOUSE's two ridge
 ends in the HOUSE's local frame, from the live ridge item), `species_key` (ADR-016) and
 `species_name`, `plant_category`, `path_style` (a polyline's `PathFenceStyle`, when set),
-`container_material`. Selection and hover are not in the record at all. `base_cm` is 0.0 until
-L1.6 stands plants on their bed.
+`container_material`. Selection and hover are not in the record at all. `transform.base_cm` is
+where the item stands: the soil of its parent bed or container, 0.0 on the ground (§8.26.6).
 
 Where the local frame hangs: the circle's centre; `rect().center()` of an ellipse or rectangle;
 the centre of the vertex bounding box of a polygon or polyline (`ui/canvas/footprints.item_outline`).
@@ -2553,7 +2616,8 @@ across items (the seed is the item id).
 | recolour (fill; a polyline's stroke) | `material` |
 | height, centred resize, vertex edit inside the bounding box, a plant growing with the date, a ridge edit (on its HOUSE) | `geometry` |
 | one-sided resize, vertex edit that grows the bounding box | `geometry` + `transform` |
-| select, deselect, hover, rename, re-parent, a rotation of a circle about its centre | empty |
+| a bed's height (on each plant in it), re-parenting a plant onto or off raised soil (§8.26.6) | `transform` — the base |
+| select, deselect, hover, rename, re-parenting between parents without raised soil, a rotation of a circle about its centre | empty |
 | create / delete, hide / show | `added` / `removed` |
 | arrange (bring to front …) | `reordered` only — never geometry, no engine call |
 
@@ -2624,3 +2688,81 @@ assert the invariant that makes diffs safe after each step of an edit sequence: 
 `translated(mesh, …)` → `mesh.translated(…)` *within the local frame*, `normal_vs_winding`,
 `srgb_to_linear` and `item_seed` keep their names. Drift-guard tests keep the ported helpers equal
 to the spike's until L1.10 deletes it.
+
+### 8.26.6 Built-world builders and base stacking (L1.6)
+
+The production builders live in `core/scene3d/builders/` (ADR-054 addendum "builders v0"); where an
+item stands is one rule shared with the 2D shadows (ADR-037 addendum "base stacking").
+`builders.production_registry()` is what the wiring hands to `SceneSync`.
+
+**Which kind gets which builder.**
+
+| Kind | Module | Parts (`name`: material kind) | Colour |
+|---|---|---|---|
+| `HOUSE` | `buildings`, `roofs` | `walls`: vc · `roof`: roof | walls tinted (the item's fill), roof = clay tile; no usable ridge → one tinted `walls` block |
+| `GARAGE_SHED`, `TOOL_SHED` | `buildings`, `roofs` | `walls`: vc · `roof`: roof | walls tinted, roof = shingle |
+| `FENCE` | `fences` | `fence`: vc — or `core` + `leaves` (hedge style), `wall` (stone style) | tinted (the item's stroke) |
+| `WALL` | `walls` | `wall`: vc | tinted |
+| `RAISED_BED` | `beds` | `bed`: vc | baked: oak planks, soil |
+| `CONTAINER`, `WALL_PLANTER`, `CONTAINER_ROUND`, a `GARDEN_BED` with a height | `beds` | `walls`: vc · `soil`: vc | walls tinted, soil baked |
+| `HEDGE_SECTION`, `HEDGE_POLYGON` | `hedges` | `core`: vc · `leaves`: foliage | baked: the hedge texture's greens |
+| everything else | `build.default_builder` | one tinted prism, or nothing without a height | tinted |
+
+A polyline's style (`params["path_style"]`) picks the fence: picket for `WOODEN_FENCE`, for no
+style and for a path style; `METAL_FENCE`; `CHAIN_LINK`; `HEDGE_FENCE`; `STONE_WALL` (the wall). A
+fence style on a `WALL` builds that fence. A style change sets the stroke's colour and width too
+(`apply_style_preset`), so it arrives as `replace_geometry` + `update_material`.
+
+**The rules a builder obeys** (on top of §8.26.1's contract):
+
+1. **The top is the height, by construction.** Build FOR the height: the highest vertex is
+   `record.height_cm` to the float32. Give primitives a bottom and a top (`boxes(…, z0, z1)`),
+   never a size to add. Wrap the shape function in `common.BuiltBuilder`: it applies the safety
+   net (`fit_parts`), and `fit_scale(record)` must be 1.0 — a fit that does something is a bug.
+2. **No height, no shadow.** `BuiltBuilder` builds an item without a height at its kind's nominal
+   height (`object_height.DEFAULT_HEIGHTS_CM`, the container default) with
+   `casts_shadow=False`; no nominal height → no parts.
+3. **Stand on z = 0.** The lowest vertex is the item's own ground. `transform.base_cm` lifts it;
+   a builder never adds it.
+4. **Polylines from the centre line.** Use `record.path` and `record.path_width_cm`, per
+   segment. Never extrude `record.footprints` of a polyline: a closed line's stroke polygon is a
+   ring with a hole.
+5. **Stay on the footprint.** A frame's outer face is the footprint; a round container's rim is
+   the footprint's own 24-gon (`lathe` puts its ring vertices on `circle_footprint`'s). Stated
+   exceptions: a roof oversails by its overhang; a hedge leaf's tip may pass the outline by a few
+   centimetres; a linear item has a nominal thickness (the plan has none).
+6. **Flat faces from their winding.** Build flat geometry with `primitives.flat_mesh` (normals
+   are computed, never written) and pass `outward=` where you know which way a face looks — the
+   winding then follows it.
+7. **Colour.** A part that shows the item's own colour is `tinted=True` with `palette.TINT`
+   (pure white) vertices. Every other colour is a `palette` entry — mirrored from a 2D table and
+   pinned to it. A colour in no 2D table is a finding, not a new entry.
+8. **Seed** from `params["seed"]` through `build.item_seed`, nothing else.
+9. **Budget.** State triangles per metre or per corner in the module's `triangle_budget` and
+   assert it.
+
+**Primitives** (`builders/primitives.py`, numpy, no Python loop over vertices): `flat_mesh`,
+`boxes`, `bevelled_boxes`, `prism`, `polygon_cap`, `sweep` (a `(lateral, z)` profile along a plan
+polyline, mitred, open or closed, per-edge colours), `plank`, `lathe`, `tubes`, and the plan
+helpers `ccw_ring`, `offset_ring`, `polygon_triangles`, `split_triangles_by_line`.
+
+**How to add a builder.**
+
+1. Write `_shape(record, height_cm) -> tuple[MeshPart, ...]` in a module of `builders/` and wrap
+   it: `build_x = BuiltBuilder(_shape, "x")`.
+2. Register the kind in the module's `register(registry)`, add the module to
+   `builders/__init__.register`, and add the kind to `BUILT_WORLD_KINDS`.
+3. Add records to `tests/unit/scene3d_builder_cases.py` — sizes, the local geometry turned by
+   several angles, with and without a height. `tests/unit/test_scene3d_builders.py` then runs gate
+   G1 over them: `verify_builder`, exact top, base 0, fit scale 1, budget, winding, footprint,
+   colours.
+4. Add what only this archetype has (a ridge, a soil level, a seed) as its own test class.
+
+**Base stacking** (truth gate "Base"). `ui/canvas/footprints.item_base_cm(item, lookup, at_date)`
+is the one answer to "how high does this item stand": the soil of the parent named by
+`parent_bed_id` — `object_height.standing_base_cm`: `is_bed_type` parent with a resolved height →
+that height minus `SOIL_DROP_CM` (2 cm); anything else → 0. It is asked by `snapshot_records`
+(→ `transform.base_cm`) and by `collect_shadow_casters` (→ `ShadowCaster.base_cm`, §8.20), and
+`beds.soil_mesh` puts the soil at the same `soil_surface_cm`. So a plant stands on the soil in 3D
+and casts from it in 2D by construction. A bed that changes height reaches each of its plants as
+one `update_transform`; no plant mesh is rebuilt.
