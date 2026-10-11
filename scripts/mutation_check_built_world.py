@@ -56,6 +56,7 @@ I = "tests/integration/"  # noqa: E741  (a path prefix, read next to U)
 STACKING = I + "test_scene3d_base_stacking.py"
 CASTER = U + "test_shadow_caster_base.py"
 BUILDER_TESTS = U + "test_scene3d_builders.py"
+BUILT_WORLD = I + "test_scene3d_built_world.py"
 PRIMITIVES = U + "test_scene3d_builders_primitives.py"
 PALETTE = U + "test_scene3d_builders_palette.py"
 SHADOWS = U + "test_scene3d_shadow_agreement.py"
@@ -153,6 +154,11 @@ MUTANTS: tuple[Mutant, ...] = (
            "    return max(height_cm - SOIL_DROP_CM, 0.0)\n",
            (CASTER, BUILDER_TESTS, STACKING),
            "container_s_soil or soil_is_where_plants_stand or 3d_base_and_2d_caster or no_lip"),
+    Mutant("a parent taller than the scene can hold lifts its plant (it floats over nothing)",
+           SRC + "core/object_height.py",
+           "            or height_cm > MAX_PARENT_HEIGHT_CM):\n",
+           "            or height_cm > math.inf):\n",
+           (CASTER, STACKING), "taller_than_the_scene or cannot_hold"),
     # ── corners ─────────────────────────────────────────────────────────────
     Mutant("offset_ring never bevels (round 0: a 116 cm eave spike)",
            BUILDERS + "primitives.py",
@@ -215,9 +221,15 @@ MUTANTS: tuple[Mutant, ...] = (
            (BUILDER_TESTS,), "TestGroundThatIsNotOnePlainRing"),
     Mutant("footprint_of hands out the first ring whatever the ground",
            BUILDERS + "common.py",
-           "    if not has_one_plain_ring(record):\n        raise ValueError(\n",
-           "    if False:\n        raise ValueError(\n",
+           "    if not has_one_plain_ring(record):\n        resolved = ",
+           "    if False:\n        resolved = ",
            (BUILDER_TESTS,), "TestGroundThatIsNotOnePlainRing"),
+    Mutant("a resolved outline that is one ring is built as its kind (a roof on a self-crossing house)",
+           BUILDERS + "common.py",
+           "    return (len(record.footprints) == 1 and not any(record.holes)\n"
+           "            and not record.params.get(PARAM_OUTLINE_RESOLVED))\n",
+           "    return len(record.footprints) == 1 and not any(record.holes)\n",
+           (BUILDER_TESTS, BUILT_WORLD), "resolved_outline or TestAResolvedOutlineGetsNoRoof"),
     # ── seeds ───────────────────────────────────────────────────────────────
     Mutant("a hedge seeded from numpy's default generator",
            BUILDERS + "hedges.py",
@@ -236,6 +248,16 @@ MUTANTS: tuple[Mutant, ...] = (
            "    overhang_cm=60.0, pitch_deg=38.0,\n",
            (SHADOWS,)),
 )
+
+
+def verdict_of(returncode: int, a_test_failed: bool) -> str:
+    """pytest: 0 all passed, 1 tests failed, 2 interrupted (a collection error among
+    them), 3 internal error, 4 usage error (a test id that does not exist), 5 no
+    tests collected. A kill is exit 1 WITH a failed test; exit 1 without one is a
+    fixture or collection error."""
+    if returncode == 0:
+        return "SURVIVED"
+    return "KILLED" if returncode == 1 and a_test_failed else "BROKEN"
 
 
 def run(mutant: Mutant, appdata: str) -> tuple[str, str]:
@@ -258,12 +280,11 @@ def run(mutant: Mutant, appdata: str) -> tuple[str, str]:
         path.write_bytes(original)
     lines = proc.stdout.strip().splitlines()
     tail = lines[-1] if lines else proc.stderr.strip()[-200:]
-    if proc.returncode == 0:
-        return "SURVIVED", tail
     failed = next((line for line in lines if line.startswith("FAILED tests")), "")
-    if proc.returncode != 1 or not failed:
-        return "BROKEN", f"pytest exit {proc.returncode}: {tail[:140]}"
-    return "KILLED", failed[:160]
+    verdict = verdict_of(proc.returncode, bool(failed))
+    if verdict == "BROKEN":
+        return verdict, f"pytest exit {proc.returncode}: {tail[:140]}"
+    return verdict, (failed[:160] if verdict == "KILLED" else tail)
 
 
 def main(argv: list[str] | None = None) -> int:
