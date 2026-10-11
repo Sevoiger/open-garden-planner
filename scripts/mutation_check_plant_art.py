@@ -30,6 +30,7 @@ or their tests::
     venv/Scripts/python.exe scripts/mutation_check_plant_art.py --list     # names only
     venv/Scripts/python.exe scripts/mutation_check_plant_art.py --stale    # patterns only, no tests
     venv/Scripts/python.exe scripts/mutation_check_plant_art.py -k leaf    # a subset
+    venv/Scripts/python.exe scripts/mutation_check_plant_art.py --tests integration/   # by test file
 
 Exit code 0: every mutant killed. 1: a mutant survived, is stale or its run was broken.
 """
@@ -55,6 +56,7 @@ PLANTS = SRC + "core/scene3d/builders/plants.py"
 MESH = SRC + "core/scene3d/mesh.py"
 SNAPSHOT = SRC + "ui/view3d/snapshot.py"
 GENERATOR = "scripts/generate_plant_sprites.py"
+MEASURE = "scripts/measure_plant_art_3d.py"
 
 ART = ("tests/unit/test_plant_art.py", "tests/unit/test_plant_sprite_conformance.py::TestDeterminism")
 UNIT = ("tests/unit/test_scene3d_plants.py",)
@@ -117,6 +119,16 @@ MUTANTS: tuple[Mutant, ...] = (
          "_own_rule = resolve_sprite\n\n\ndef _sprite_path(sprite: SpriteRef) -> Path:")), ART),
     one("the renderer does not ask whether the sprite's file exists (review P1-1)", RENDERER,
         "        available=lambda candidate: _sprite_path(candidate).exists(),\n", "", ART),
+    # ── the measuring script stays out of the developer's stores ─────────────
+    # Both are SAFE to run: with the first the test's child process refuses to load a plan
+    # (the settings names are not a test key) and never builds a settings object; with the
+    # second the names ARE a test key and the profile is the temporary one the test hands
+    # over. A mutant that left the names half rebound is deliberately not here — it would
+    # open a key next to the developer's real one.
+    one("the measuring script does not isolate itself (its loads write the real recent files)", MEASURE,
+        "ISOLATED_PROFILE = isolate()\n", "ISOLATED_PROFILE = None\n", PIPE),
+    one("the measuring script keeps the profile it was handed", MEASURE,
+        "        os.environ[variable] = str(directory)\n", "", PIPE),
     # ── what 3D resolves from (review P1-2, ruling R14) ──────────────────────
     one("the builder resolves from the species data's name", PLANTS,
         "    species = record.params.get(PARAM_SPRITE_SPECIES)\n",
@@ -414,8 +426,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", action="store_true", help="print the mutants and exit")
     parser.add_argument("--stale", action="store_true", help="check the patterns only (no tests)")
     parser.add_argument("-k", metavar="TEXT", default="", help="only mutants whose label contains TEXT")
+    parser.add_argument("--tests", metavar="TEXT", default="",
+                        help="only mutants one of whose test targets contains TEXT (after changing a "
+                             "test file: the mutants it is there to kill)")
     args = parser.parse_args(argv)
-    chosen = [m for m in MUTANTS if args.k.lower() in m.label.lower()]
+    chosen = [m for m in MUTANTS if args.k.lower() in m.label.lower()
+              and any(args.tests in target for target in m.tests)]
     if args.list:
         for mutant in chosen:
             print(f"{mutant.label}  [{mutant.path}]")

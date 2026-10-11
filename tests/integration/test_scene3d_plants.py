@@ -18,7 +18,14 @@ flow against Qt Quick 3D).
 
 from __future__ import annotations
 
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import textwrap
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -62,6 +69,7 @@ from open_garden_planner.ui.widgets.gallery_data import (
     build_toolbar_categories,
 )
 
+REPO = Path(__file__).resolve().parents[2]
 JUNE_2026, JUNE_2027 = date(2026, 6, 21), date(2027, 6, 21)
 BEGIN, COMMIT = ("begin", None), ("commit", None)
 
@@ -428,3 +436,102 @@ def test_every_species_string_is_built_as_the_sprite_the_canvas_draws(canvas: Ca
     blanks = items[strings.index("   ")]
     drawn = plant_renderer._resolve_svg_path(blanks.object_type, blanks.plant_species, None)
     assert drawn is not None and (drawn.parent.name, drawn.stem) == ("species", "rose")
+
+
+# ── the story's measuring script, run as documented, outside pytest ───────────
+
+#: What the child process runs: the script as ``python scripts/measure_plant_art_3d.py``
+#: would execute it, then its ``scrub`` — which loads both bench plans. It REFUSES to
+#: load anything unless the settings names are a test key: were the script's isolation
+#: broken, this test must fail without writing the developer's recent files.
+_MEASURE_DRIVER = """
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("measure_script", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules["measure_script"] = module
+spec.loader.exec_module(module)
+import open_garden_planner.app.settings as settings
+if settings.ORGANIZATION_NAME != "cofade_test":
+    print("RESULT " + json.dumps({"isolated": False, "organization": settings.ORGANIZATION_NAME}))
+    raise SystemExit(0)
+sys.argv = ["measure_plant_art_3d.py", "scrub", "--days", "1"]
+module.main()
+from open_garden_planner.services.plant_library import get_app_data_dir
+store = settings.create_qsettings()
+print("RESULT " + json.dumps({
+    "isolated": True,
+    "organization": settings.ORGANIZATION_NAME, "application": settings.APPLICATION_NAME,
+    "store": [store.organizationName(), store.applicationName()],
+    "recent_files": [os.path.basename(p) for p in (store.value("recent_files") or [])],
+    "root": str(module.ISOLATED_PROFILE),
+    "environment": {name: os.environ.get(name, "") for name in module._PROFILE_VARIABLES},
+    "app_data_dir": str(get_app_data_dir()),
+}))
+"""
+
+
+def test_the_measuring_script_keeps_out_of_the_owner_s_stores(tmp_path: Path) -> None:
+    """``scripts/measure_plant_art_3d.py scrub`` loads plans, and ``ProjectManager.load``
+    ends with ``add_recent_file`` — outside pytest a write to the developer's REAL
+    settings (on Windows the registry; no environment variable redirects it). Run by
+    hand, the script put the two bench plans at the top of the owner's recent-files
+    list, every time. It isolates itself now, as ``tests/conftest.py`` does for the
+    suite; this runs it in a child process that has no conftest:
+
+    - the settings names are a per-process TEST key, and the loads' ``recent_files``
+      write landed THERE;
+    - the profile variables — and so the app-data directory — point into a temporary
+      directory of the script's own, not at what the environment handed it;
+    - nothing was written under the directories the environment handed it, and the
+      temporary profile is gone when the process has exited.
+    """
+    script = REPO / "scripts" / "measure_plant_art_3d.py"
+    handed = {name: tmp_path / "handed" / name for name in ("USERPROFILE", "APPDATA", "LOCALAPPDATA")}
+    for directory in handed.values():
+        directory.mkdir(parents=True)
+    environment = {**os.environ, **{name: str(path) for name, path in handed.items()},
+                   "PYTHONPATH": str(REPO / "src"), "QT_QPA_PLATFORM": "offscreen"}
+    done = subprocess.run([sys.executable, "-c", textwrap.dedent(_MEASURE_DRIVER), str(script)],
+                          env=environment, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=170, check=False)
+    assert done.returncode == 0, done.stdout[-1500:] + done.stderr[-1500:]
+    line = next(line for line in done.stdout.splitlines() if line.startswith("RESULT "))
+    result = json.loads(line.removeprefix("RESULT "))
+    assert result["isolated"], result
+    # ── the settings: a test key, and the loads wrote their recent files into it ──
+    assert result["organization"] == "cofade_test" == result["store"][0]
+    assert result["application"].startswith("Open Garden Planner Measure ")
+    assert result["store"][1] == result["application"]
+    assert sorted(result["recent_files"]) == ["bench_large.ogp", "bench_small.ogp"]
+    assert "settings key: cofade_test / Open Garden Planner Measure" in done.stdout
+    # ── the profile: the script's own temporary one, not the one it was handed ───
+    root = Path(result["root"])
+    for name, value in result["environment"].items():
+        assert Path(value).is_relative_to(root), (name, value)
+        assert name not in handed or Path(value) != handed[name]
+    assert Path(result["app_data_dir"]).is_relative_to(root)
+    assert [path for directory in handed.values() for path in directory.rglob("*")] == []
+    assert not root.exists()                               # removed at exit
+
+
+def test_inside_pytest_the_measuring_script_leaves_the_suite_s_isolation_alone() -> None:
+    """Loaded in a process that is isolated already (this one: ``tests/conftest.py``),
+    the script changes nothing — it must not swap the suite's test key for its own."""
+    import open_garden_planner.app.settings as settings
+
+    before = (settings.ORGANIZATION_NAME, settings.APPLICATION_NAME, os.environ.get("APPDATA"))
+    assert before[0] == "cofade_test"
+    path_before = list(sys.path)
+    spec = importlib.util.spec_from_file_location(
+        "measure_plant_art_3d_in_pytest", REPO / "scripts" / "measure_plant_art_3d.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        assert module.ISOLATED_PROFILE is None
+        assert module.isolate() is None
+        assert (settings.ORGANIZATION_NAME, settings.APPLICATION_NAME,
+                os.environ.get("APPDATA")) == before
+        assert module.TEST_ORGANIZATION == "cofade_test"
+    finally:
+        sys.path[:] = path_before                          # the script puts its checkout first

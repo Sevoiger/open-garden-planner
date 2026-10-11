@@ -40,16 +40,30 @@ sample's maxima as bounds; three of them were wrong one proportion step further 
             at, one past and far past the cap.
 
 Not part of the suite. ``scrub`` needs Qt (it loads plans into a scene); the others need numpy only.
+
+ISOLATED FROM THE OWNER'S DATA, by itself (``isolate``, run at import, before any app import).
+``scrub`` loads plans with ``ProjectManager.load``, and a load ends with ``add_recent_file`` — a
+write to the app's settings, which outside pytest are the owner's real ones (on Windows the
+registry key ``HKCU\\Software\\cofade\\Open Garden Planner``; no environment variable redirects
+it). Until this script isolated itself, every ``scrub`` run put the two bench plans at the top of
+the owner's recent-files list. It now does what ``tests/conftest.py`` does for the suite: the
+settings names are rebound to a per-process test key (``cofade_test``), and USERPROFILE / HOME /
+APPDATA / LOCALAPPDATA / XDG_* point at a temporary profile that is removed at exit. Pinned by
+``tests/integration/test_scene3d_plants.py::test_the_measuring_script_keeps_out_of_the_owner_s_stores``.
 """
 
 from __future__ import annotations
 
 import argparse
+import atexit
+import contextlib
 import dataclasses
 import importlib.util
 import os
+import shutil
 import statistics
 import sys
+import tempfile
 import time
 from collections import defaultdict
 from datetime import date, timedelta
@@ -61,6 +75,58 @@ import numpy as np
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))   # this checkout's package, whatever else is installed
 sys.path.insert(0, str(REPO))           # ... and its tests package
+
+#: The organisation of every test settings key (``tests/conftest.py`` uses the same).
+TEST_ORGANIZATION = "cofade_test"
+_SETTINGS_MODULE = "open_garden_planner.app.settings"
+_PROFILE_VARIABLES = {
+    "USERPROFILE": ("profile",),
+    "HOME": ("profile",),
+    "APPDATA": ("profile", "AppData", "Roaming"),
+    "LOCALAPPDATA": ("profile", "AppData", "Local"),
+    "XDG_DATA_HOME": ("xdg", "data"),
+    "XDG_CONFIG_HOME": ("xdg", "config"),
+    "XDG_CACHE_HOME": ("xdg", "cache"),
+}
+
+
+def isolate() -> Path | None:
+    """Keep this process out of the owner's stores; return the temporary profile's root,
+    or None when the process is isolated already (pytest's conftest, a probe helper).
+
+    Two stores, two mechanisms — as ``tests/conftest.py``:
+
+    - the SETTINGS (recent files, preferences): ``app.settings.ORGANIZATION_NAME`` /
+      ``APPLICATION_NAME`` are rebound to a per-process test key, which is cleared at exit.
+      Every settings backend of the app is built from those two names;
+    - the app-data directory and Qt's standard locations (custom plants, logs, caches):
+      the profile variables point at a temporary directory, removed at exit.
+
+    Must run before anything of the app is used; this module calls it at import.
+    """
+    loaded = sys.modules.get(_SETTINGS_MODULE)
+    if loaded is not None and loaded.ORGANIZATION_NAME == TEST_ORGANIZATION:
+        return None
+    root = Path(tempfile.mkdtemp(prefix=f"ogp-measure-{os.getpid()}-"))
+    for variable, parts in _PROFILE_VARIABLES.items():
+        directory = root.joinpath(*parts)
+        directory.mkdir(parents=True, exist_ok=True)
+        os.environ[variable] = str(directory)
+    import open_garden_planner.app.settings as settings  # after the environment
+
+    settings.ORGANIZATION_NAME = TEST_ORGANIZATION
+    settings.APPLICATION_NAME = f"Open Garden Planner Measure {os.getpid()}"
+
+    def forget() -> None:
+        with contextlib.suppress(Exception):   # best effort while the interpreter exits
+            settings.create_qsettings().clear()
+        shutil.rmtree(root, ignore_errors=True)
+
+    atexit.register(forget)
+    return root
+
+
+ISOLATED_PROFILE = isolate()
 
 FIELDS = ("built_top", "z_scale", "xy_scale", "clamped_share", "clamped_reach", "pressed_share",
           "set_down", "centre_shift", "reach", "reined_share", "stretch")
@@ -288,6 +354,13 @@ def scrub(args: argparse.Namespace) -> None:
     budget = load("tests/perf/test_scene3d_plants_budget.py", "plant_budget_instruments")
     start = date.fromisoformat(args.start)
     days = [start + timedelta(days=n) for n in range(args.days + 1)]
+    from open_garden_planner.app import settings
+
+    store = settings.create_qsettings()
+    assert store.organizationName() == TEST_ORGANIZATION, (
+        f"refusing to load a plan: the settings store is {store.organizationName()!r} / "
+        f"{store.applicationName()!r}, not a test key — a load would write the owner's recent files")
+    print(f"settings key: {store.organizationName()} / {store.applicationName()} (not the owner's)")
     print(f"{args.days} daily ticks from {start}; reference unit {budget.unit_ms():.0f} ms right now")
     for name in sorted(budget.BUDGETS):
         scene = CanvasScene()
