@@ -753,7 +753,12 @@ Added by the senior review's first round (the same story):
   `mutation_check_scene3d.py`. A mutant counts as KILLED only when pytest exits with code 1 and
   names a failed test — a collection error or a crash is reported as BROKEN, not as a kill. The
   first round quoted its count from a script that lived in a scratch folder. (28 mutants when
-  it was committed, all killed; `--list` prints the current set.)
+  it was committed, 30 since the merge of the contract's second round; all killed; `--list`
+  prints the current set.) And a mutation script rots between its runs: a mutant whose text
+  has left its file mutates nothing. `tests/unit/test_scene3d_builders_mutation_script.py`
+  checks on every suite run that each mutant still matches exactly once and that every test
+  file and `-k` word it names exists — it found a stale mutant the day it was written (the
+  line under `footprint_of`'s guard had moved).
 - **A guard that counts a construct must see every spelling of it.** "The containment test
   exists once" matched `x.contains(y.mapFromScene(p))` written as one expression; the same test
   in two statements passed. The guard now follows a mapped point through local names (and a
@@ -3035,16 +3040,23 @@ and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `upd
    loops the size of a garden. A wall or hedge reaches 19–20 cm either side of its line, so a
    closed WALL loop up to 120 cm side (a stone-wall or hedge-fence loop up to 110 cm) covers
    over half of what it encloses and is refused although it is right: verify such a loop with
-   an explicit `hole_cover_limit` and say why (the test for a 1 m loop uses 0.65).
-   **One plain ring, or the plain block**: a builder that needs ONE simple outline — a gable
+   an explicit `hole_cover_limit` and say why (the test for a 1 m loop uses 0.65). At the other
+   end the gate has a size floor (`build.HOLE_MIN_WIDTH_CM`, 10 cm): a hole narrower than that
+   is not judged, so a 12 cm loop of wall — one solid block — passes. The default refuses a
+   wall loop from 16 cm to 120 cm side.
+   **One plain outline, or the plain block**: a builder that needs ONE simple outline — a gable
    roof, a bed's frame, a pot, a hedge — checks that it has one (`common.has_one_plain_ring`;
-   `footprint_of` raises otherwise). A record with several regions or with a hole — a polygon
-   drawn crossing itself can be resolved into either — is built as `common.plain_block`: ALL
-   regions, holes cut out, up to the height (`BuiltBuilder.uses_the_plain_block` decides before
-   any shape function runs). The same function is every builder's fallback block (a house
-   without a usable ridge), so no fallback takes `footprints[0]` for the whole. The ring count is
-   NOT a detector of a self-crossing drawing — such a polygon can also resolve to one plain ring,
-   and then it is built like any other; a flag for it is the scene contract's to add.
+   `footprint_of` raises otherwise). "One plain outline" is: one outer ring, no hole, and NOT
+   `params["outline_resolved"]` — the contract's flag for a polygon drawn crossing or touching
+   itself. Any other polygon-footprint record is built as `common.plain_block`: ALL regions,
+   holes cut out, up to the height (`BuiltBuilder.uses_the_plain_block` decides before any shape
+   function runs). The same function is every builder's fallback block (a house without a
+   usable ridge), so no fallback takes `footprints[0]` for the whole. **The ring count is not a
+   detector of a self-crossing drawing — the flag is.** A resolved outline can be one plain
+   ring (a pentagram, measured), and it is still the block: a resolved ring can come within
+   0.002 cm of itself, so nothing is offset from it, and a HOUSE's ridge was drawn for another
+   outline — the snapshot hands none on, and the house builder hangs no roof even if one is
+   handed in. (Until the flag existed, such a house kept a gable roof.)
 5. **Stay on the footprint.** A frame's outer face is the footprint; a round container's rim is
    the footprint's own 24-gon (`lathe` puts its ring vertices on `circle_footprint`'s). Stated
    exceptions: a roof oversails by its overhang; a hedge leaf's tip may pass the outline by a few
@@ -3101,7 +3113,10 @@ when BOTH hold:
 
 1. its `parent_bed_id` names a visible `is_bed_type` parent with a resolved height —
    `object_height.standing_base_cm` → `soil_surface_cm(type, height)`: `SOIL_DROP_CM` (2 cm)
-   under the rim of a bed, AT the height of a container (whose height is its soil fill height);
+   under the rim of a bed, AT the height of a container (whose height is its soil fill height).
+   No base for a height that is not finite, or beyond `MAX_PARENT_HEIGHT_CM` — the scene
+   contract's 10 km bound: such a parent gets no record, and nothing stands on a parent that
+   is not there (its plant keeps its own record, on the ground);
 2. its **stable geometric centre** lies inside that parent's shape —
    `footprints.standing_point(item)` (the outline's anchor in scene coordinates: a plant
    circle's centre, the origin of its record) tested with `footprints.shape_contains`, the
@@ -3148,7 +3163,7 @@ in `tests/integration/test_scene3d_base_stacking.py::TestTheLinkAloneNeverLifts`
 | a raised bed drawn around an existing plant | no link | the plant stays at ground level: in 2D it casts from the ground, in 3D it is drawn inside the box |
 | a climber on a trellis that stands in a raised bed | linked to the trellis (the smallest parent) | the climber at 0, its neighbour in the bed at 38 |
 | a pot standing on a raised bed | the pot has no parent (only plants do) | the pot on the ground, its plant at the pot's soil (30), not at 68 |
-| a bed whose outline is not one plain ring (a self-crossing drawing) | built as the plain block, top at the rim | its plants stand 2 cm INSIDE the block: "on its soil by construction" holds for the bed builders only |
+| a bed whose outline is not one plain outline (several rings, a hole, or a self-crossing drawing: `outline_resolved`) | built as the plain block, top at the rim | its plants stand 2 cm INSIDE the block: "on its soil by construction" holds for the bed builders only |
 
 **3D shadows against the 2D model.** The truth gate "Shadows" (`ogp-lush-cinematic` §1,
 IoU ≥ 0.85) is defined on a solid box caster. The built world is not a set of boxes, and the

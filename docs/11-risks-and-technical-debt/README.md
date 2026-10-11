@@ -1365,6 +1365,23 @@ Found by the senior review's second round, again with every test green:
   plant's `boundingRect()` (a Python override) that was 6 µs of the 7.6 µs the rule cost per
   plant. `ItemLookup.shape_of` builds the shape once per parent and walk; the rule costs 2.8 µs.
 
+Found while merging the scene contract's second fix round (`9944012`):
+
+- **A bound added in one layer opens a state in the layer above.** The contract began to refuse
+  every length beyond 10 km (`MAX_LENGTH_CM`). A raised bed of 10 km + 1 cm then had no record —
+  and its plant, whose base is the bed's soil 2 cm lower, had one: floating at 9,999.99 m over
+  nothing. A taller bed took its plant out of the 3D scene with it (the plant's base was out of
+  range too). Garbage in, but the rule "a parent that has no solid is not there" was mine and
+  no longer held. Fix: `soil_surface_cm` gives no base beyond `MAX_PARENT_HEIGHT_CM`, the
+  contract's bound mirrored and pinned; the plant keeps its record, on the ground. *When an
+  upstream contract starts refusing something, probe what your own rule derives from it — the
+  refusal does not propagate by itself.*
+- **A flag beats an inference, and the builder must not lean on the producer.** Round 1 could
+  not tell a self-crossing house that resolves to one ring from an ordinary one, and gave it a
+  roof. The contract now says `outline_resolved`, and drops the ridge. The house builder reads
+  the FLAG — a test hands it a resolved ring WITH a usable ridge and still gets the block — so
+  the rule does not rest on a second module remembering to leave a param out.
+
 ### CI/release hardening: locked metadata also contains the application version
 
 A version-only edit to `pyproject.toml` makes `uv.lock` stale. The measured probe failed
