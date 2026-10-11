@@ -63,15 +63,18 @@ class MeshError(ValueError):
 
 
 def _f32(values: ArrayLike, width: int) -> NDArray[np.float32]:
-    array = np.array(values, dtype=np.float32).reshape(-1, width)  # always a private copy
-    array.setflags(write=False)
-    return array
+    # Always a private copy, and read-only FOR GOOD: its memory is an immutable ``bytes``
+    # object, so ``setflags(write=True)`` is refused on the array and on its ``base``. A
+    # read-only flag on a view of a writeable array (what this was) can be switched back on
+    # by whoever holds the array — and a builder that shares arrays between meshes (the
+    # plant builder's remembered shapes) would then hand out the damage with every later mesh.
+    data = np.ascontiguousarray(values, dtype=np.float32).tobytes()
+    return np.frombuffer(data, dtype=np.float32).reshape(-1, width)
 
 
 def _u32(values: ArrayLike) -> NDArray[np.uint32]:
-    array = np.array(values, dtype=np.uint32).reshape(-1, 3)
-    array.setflags(write=False)
-    return array
+    data = np.ascontiguousarray(values, dtype=np.uint32).tobytes()   # as ``_f32``
+    return np.frombuffer(data, dtype=np.uint32).reshape(-1, 3)
 
 
 @dataclass(frozen=True, eq=False)

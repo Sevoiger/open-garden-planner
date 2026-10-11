@@ -2,7 +2,7 @@
 
 Every plant of the two bench plans goes through the real pipeline —
 ``snapshot_records`` → ``SceneSync`` → ``RecordingSink`` with the plant builder
-registered — and four things are pinned:
+registered — and five things are pinned:
 
 - **a first build** (nothing remembered: the shape cache is cleared before each
   run) of all plants of a plan, at two dates;
@@ -14,6 +14,10 @@ registered — and four things are pinned:
   ``PROPORTION_STEP``) — and *cold* — the cache cleared before the tick, so
   every plant that grew is rebuilt from nothing (the cost before the cache
   existed, and of the first tick after an eviction);
+- **a scrub beyond the cache's cap**: with a cap that holds half the plants that
+  grow, a warm tick rebuilds about that half — the overflow — and not every
+  plant (which is what a plain least-recently-used cache does at its cap: a
+  cliff, one plant past it);
 - **triangles**: no plant over ``TRIANGLE_BUDGET``, and the plan totals;
 - **a date change regrows only what grew**: scrubbing June → December reaches
   the sink as one ``replace_geometry`` per plant whose height or canopy changed
@@ -42,9 +46,12 @@ in one process, interleaved). No quiet reading of THIS builder exists; that is
 why the budgets are stated in reference units — work done at the same moment —
 and not in milliseconds: about TWICE the units measured. A tripwire for a
 builder that starts looping in Python or a cache that stops hitting, in
-whatever hour it runs — not a frame budget. The exact counts (shapes built per
-tick) and the warm : cold ratio are asserted too, and they do not depend on the
-machine at all. Timing conventions otherwise as in
+whatever hour it runs — not a frame budget. What does not depend on the machine
+at all is asserted as well: the COUNTS — exactly where they are exact (a first
+build builds every plant once; a cold tick builds every plant that changed),
+and as a bound where they are not (warm, at most 10 % of the plants that
+changed are rebuilt: measured 1.6 % and 1.1 %) — and the warm : cold ratio.
+Timing conventions otherwise as in
 ``test_scene3d_snapshot_budget.py`` (a median; × 3 on CI runners; × 10 under a
 line tracer, where a timing measures the tracer).
 """
@@ -68,6 +75,7 @@ from open_garden_planner.core.scene3d.builders.plants import (
     TRIANGLE_BUDGET,
     clear_shape_cache,
     register,
+    resize_shape_cache,
     shape_cache_info,
 )
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
@@ -210,14 +218,59 @@ class TestPlantBuildBudget:
             if mode == "cold":
                 assert built_shapes == rebuilt            # every plant that grew was built anew
             else:
-                # the cache's whole point: most plants that grew were SCALED, not rebuilt
-                assert sum(built_shapes) <= 0.35 * sum(rebuilt), (sum(built_shapes), sum(rebuilt))
+                # the cache's whole point: nearly every plant that grew was SCALED, not
+                # rebuilt — only those whose proportion crossed a step (measured: 1.6 % and
+                # 1.1 % of the plants that changed; the bound is not exact, it is roomy)
+                assert sum(built_shapes) <= 0.10 * sum(rebuilt), (sum(built_shapes), sum(rebuilt))
             budget = (warm_budget if mode == "warm" else cold_budget) * factor()
             assert median_ms / unit <= budget, (
                 f"{name}: a {mode} daily tick took {median_ms:.1f} ms = {median_ms / unit:.3f} "
                 f"reference units (median of {SCRUB_DAYS}), budget {budget:.2f}")
         # and warm is what it is for: several times cheaper than cold
         assert results["warm"][0] <= 0.5 * results["cold"][0], results
+
+    def test_beyond_the_cap_a_tick_rebuilds_the_overflow_not_everything(
+        self, plan: tuple[CanvasScene, str]
+    ) -> None:
+        """More growing plants than the cache's cap holds: the scrub keeps as many
+        shapes as fit and rebuilds the rest, tick after tick — it degrades by the
+        overflow. A plain least-recently-used cache rebuilds EVERY growing plant on
+        every tick from one plant past its cap (the scrub asks for them in the same
+        order each time, so what it drops is what it needs next)."""
+        scene, name = plan
+        days = [SCRUB_START + timedelta(days=n) for n in range(13)]
+        snapshots = [plants_of(snapshot_records(scene, day)) for day in days]
+
+        def scrub() -> tuple[list[int], list[int]]:
+            clear_shape_cache()
+            sync = SceneSync(RecordingSink(), plant_registry())
+            sync.apply(snapshots[0])
+            changed, built = [], []
+            for records in snapshots[1:]:
+                misses, builds = shape_cache_info().misses, sync.build_count
+                sync.apply(records)
+                changed.append(sync.build_count - builds)
+                built.append(shape_cache_info().misses - misses)
+            return changed, built
+
+        try:
+            changed, built = scrub()                       # the cap far away: warm
+            assert sum(built) <= 0.10 * sum(changed)
+            info = shape_cache_info()
+            growing = statistics.median(changed)
+            cap = int(info.bytes / info.shapes * growing / 2.0)     # about half the growing plants
+            resize_shape_cache(cap)
+            changed, built = scrub()
+            settled_changed, settled_built = sum(changed[3:]), sum(built[3:])   # past the warm-up
+            print(f"\n{name}: {growing:.0f} plants grow per tick, a cap of {cap / 1e6:.1f} MB "
+                  f"(about half of them): {settled_built / len(built[3:]):.1f} rebuilt per tick, "
+                  f"{shape_cache_info().shapes} shapes held")
+            assert shape_cache_info().bytes <= cap
+            # the overflow, give or take the plants' different sizes — and not all of them
+            assert 0.2 * settled_changed <= settled_built <= 0.8 * settled_changed, (changed, built)
+        finally:
+            resize_shape_cache()
+            clear_shape_cache()
 
     def test_a_warm_tick_gives_what_a_cold_build_gives(self, plan: tuple[CanvasScene, str]) -> None:
         """Remembering changes how long a tick takes, never what the sink holds."""

@@ -5,15 +5,19 @@ cheap silhouette: the archetype and the colours come from the recipe the 2D
 sprite is drawn from, the size from the plan. The look may be stylised; the
 numbers may not lie. Gates (the story's G2 – G6):
 
-- G2 truth and budget — every recipe of both tables × six sizes (three along its
-  own proportion, the bundled species' small size, one far wider than tall, one
-  far taller than wide) × five seeds: top = the plan's height (± 3 %), widest
+- G2 truth and budget — every recipe of both tables × EVERY proportion step
+  (``SWEEP_STEPS``, a different id in every cell) and × six real sizes × five
+  seeds through the pipeline's builder: top = the plan's height (± 3 %), widest
   span = the canopy diameter (± 10 %), base at 0, a valid mesh, at most 2,000
-  triangles — and the plant is BUILT to those numbers, not scaled into them:
-  the builder's own top is the height before the fit touches it, the foliage's
-  mass reaches the top (area-weighted height quantiles), next to nothing is
-  pulled back onto the canopy circle or pressed onto the ground, and no foliage
-  triangle lies flat on the ground;
+  triangles, NO vertex further than ``REACH_MAX`` canopy radii from the axis —
+  and the plant is BUILT to those numbers, not scaled into them: the builder's
+  own top is the height before the fit touches it, the foliage's mass reaches
+  the top (area-weighted height quantiles), little is pulled back onto the
+  canopy circle, nothing is pressed onto the ground, and no foliage triangle
+  lies flat on the ground. Two kinds of statement, kept apart: what holds BY
+  CONSTRUCTION (the box, the reach — also tested on hand-made and random input
+  to the fit itself) and what is MEASURED (how little the fit repairs, where
+  the mass is — tripwires with stated headroom over the full sweep);
 - G3 colour — the foliage hue is within 10° of the foliage of the 2D sprite, as
   QSvgRenderer draws it, for all 123 sprites;
 - G4 coverage — every archetype of the tables has a builder, and a record is
@@ -92,9 +96,11 @@ from open_garden_planner.core.scene3d.builders.plants import (
     PLACEHOLDER_MAX_HEIGHT_CM,
     PLACEHOLDER_SHADE,
     PROPORTION_STEP,
-    SHAPE_CACHE_SIZE,
+    REACH_MAX,
+    SHAPE_CACHE_BYTES,
     TRIANGLE_BUDGET,
     FitReport,
+    ShapeCacheInfo,
     build_plant,
     build_silhouette,
     clear_shape_cache,
@@ -102,6 +108,7 @@ from open_garden_planner.core.scene3d.builders.plants import (
     plant_archetype,
     plant_sprite,
     register,
+    resize_shape_cache,
     shape_bytes,
     shape_cache_info,
 )
@@ -205,6 +212,32 @@ def sizes_of(sprite: SpriteRef) -> dict[str, tuple[float, float]]:
 def plant_seed(seed: str) -> int:
     """The number ``build_plant`` seeds a record's plant with."""
     return item_seed(seed, "plant")
+
+
+#: EVERY proportion a plant is swept at. A shape depends on nothing but (recipe
+#: form, id, 5 % step of height over canopy radius) — the shape cache's key — so
+#: a sweep over the steps is a sweep over every kind of shape the builders can
+#: produce, where a list of sizes is a sample of them (round 1's six sizes and
+#: nine extremes stood on 43 steps; three bounds fitted to them were wrong one
+#: step further on). Height over canopy radius from 1 : 50 to 80 : 1 — a mat
+#: 2 cm high and 2 m wide … a pole 80 m tall under a 2 m crown: 171 steps.
+SWEEP_STEPS = range(-80, 91)
+
+
+def sweep_cells(sprite: SpriteRef, ids: int = 1):
+    """(step, seed, height, canopy radius) for every proportion step × ``ids`` ids —
+    a DIFFERENT id in every cell, so one recipe's sweep is 171 × ``ids`` plants
+    that share nothing but the recipe."""
+    for step in SWEEP_STEPS:
+        for n in range(ids):
+            yield (step, plant_seed(f"sweep-{sprite.group}-{sprite.name}-{step}-{n}"),
+                   100.0 * PROPORTION_STEP ** step, 100.0)
+
+
+def mesh_reach(parts: tuple[MeshPart, ...], radius: float) -> float:
+    """The farthest vertex of a built plant from its axis, in canopy radii."""
+    return max(float(np.hypot(p.mesh.positions[:, 0], p.mesh.positions[:, 1]).max())
+               for p in parts) / radius
 
 
 def bbox(parts: tuple[MeshPart, ...]) -> tuple[np.ndarray, np.ndarray]:
@@ -312,44 +345,78 @@ def silhouette_iou(a: np.ndarray, b: np.ndarray) -> float:
 
 # ── G2: truth and budget ──────────────────────────────────────────────────────
 
-#: BUILT to the data. Tolerance of the builder's own top against the height,
-#: before the fit (the orchestrator's ruling allows ± 15 %). Measured over every
-#: recipe × six sizes × five ids (3,690 builds) and the extremes below (702):
-#: 1.0000 everywhere — each archetype places its highest point AT the height.
+#: ── MEASURED properties: tripwires, not guarantees ───────────────────────────
+#: Everything from here to ``MASS_REACHES`` is a number a MEASUREMENT gave, with
+#: headroom — what a requirement may quote only as "measured over …". The
+#: sample (``scripts/measure_plant_art_3d.py truth --ids 3``, 2026-10-11): every
+#: recipe × every proportion step × three ids = 63,099 plants, every one a
+#: different shape. Maxima of a sample are not bounds: the review's own 300,000
+#: ids found a centring shift of 0.056 where this sample's largest is 0.047, and
+#: round 1 stated the maxima of 1,912 shapes as limits (three were wrong one
+#: proportion step further on). So each tripwire stands well clear of what was
+#: measured, and what must HOLD is structural (``assert_the_box_is_the_data``).
+#:
+#: BUILT to the data: the builder's own top against the height, before the fit
+#: (the orchestrator's ruling allows ± 15 %). Measured: 1.0000 in all 63,099 —
+#: every archetype places its highest point AT the height. Nothing is pressed
+#: onto the ground and no plant is set down: both exactly 0, also asserted.
 BUILT_TOP_TOLERANCE = 0.02
-#: What the fit may still repair — measured maxima in brackets, over the same
-#: 4,392 builds, 2026-10-11 (``scripts/measure_plant_art_3d.py truth`` prints
-#: them): the share of foliage vertices pulled back onto the canopy circle
-#: [1.23 %, a mound 300 × 60; 0.57 % at the bundled sizes], how far beyond the
-#: circle the farthest of them was [1.068 radii], the xy scale [1.073, a rosette
-#: of six leaves], the centring shift [0.041 radii]. Nothing is pressed onto the
-#: ground and no plant is set down: both exactly 0.
-CLAMPED_SHARE_MAX = 0.02
-CLAMPED_REACH_MAX = 1.08
-XY_SCALE_MAX = 1.09
-CENTRE_SHIFT_MAX = 0.05
+#: What the fit repairs before its last step [largest measured]: the share of
+#: foliage vertices pulled back onto the canopy circle [2.18 %, a mound 66 times
+#: taller than wide], how far out the farthest of them was [1.085 radii], the xy
+#: scale [1.108 — a rosette of six leaves: six tips cannot all point along an
+#: axis; 1.063 without the rosettes], the centring shift [0.047; 0.056 in the
+#: review's sample], and the share of a plant's vertices the last step reined in
+#: [0.29 %, in 3 of the 63,099 plants — all rosettes].
+CLAMPED_SHARE_MAX = 0.04
+CLAMPED_REACH_MAX = 1.15
+XY_SCALE_MAX = 1.16
+CENTRE_SHIFT_MAX = 0.09
+REINED_SHARE_MAX = 0.02
 #: Where the foliage's mass is, per archetype: (z95, z99) — at least 5 % / 1 % of
-#: the foliage's surface area lies above this fraction of the height. Stated
-#: about 0.03 under the measured minima (in brackets, same 4,392 builds). They
-#: differ by nature: a hedge is a drum, a conifer a cone (95 % of a cone's
-#: surface lies below 0.78 of its height), a rosette flat leaves round a small
-#: heart. Before the builders built to the data a squash 60 × 360 measured
-#: 0.70 / 0.76 and a mound 15 × 800 measured 0.15 / 0.35.
+#: the foliage's surface area lies above this fraction of the height. In
+#: brackets the smallest measured over the 63,099 plants; the tripwire stands
+#: 0.05 or more below it. They differ by nature: a hedge is a drum, a conifer a
+#: cone (95 % of a cone's surface lies below 0.78 of its height), a rosette flat
+#: leaves round a small heart (and flattest where it is about half as tall as it
+#: is wide: the review's rhubarb 46 cm × 2 m reads 0.603). What the tripwire is
+#: for: before the builders built to the data a squash 60 × 360 measured
+#: 0.70 / 0.76 and a mound 15 × 800 measured 0.15 / 0.35 with every gate green.
 MASS_REACHES = {
-    "allium": (0.68, 0.82),     # [0.710, 0.849]
-    "canopy": (0.82, 0.90),     # [0.854, 0.931]
-    "climber": (0.83, 0.93),    # [0.863, 0.965]
-    "conifer": (0.70, 0.84),    # [0.739, 0.870]
-    "feathery": (0.75, 0.88),   # [0.784, 0.910]
-    "flower": (0.77, 0.78),     # [0.807, 0.818]
-    "grass": (0.69, 0.80),      # [0.727, 0.835]
-    "ground": (0.64, 0.80),     # [0.677, 0.832]
-    "head": (0.73, 0.80),       # [0.762, 0.833]
-    "hedge": (0.87, 0.91),      # [0.902, 0.940]
-    "mound": (0.73, 0.86),      # [0.764, 0.897]
-    "palm": (0.78, 0.79),       # [0.819, 0.828]
-    "rosette": (0.62, 0.72),    # [0.655, 0.757]
+    "allium": (0.64, 0.77),     # [0.699, 0.823]
+    "canopy": (0.76, 0.86),     # [0.818, 0.914]
+    "climber": (0.80, 0.90),    # [0.861, 0.950]
+    "conifer": (0.64, 0.79),    # [0.697, 0.840]
+    "feathery": (0.67, 0.77),   # [0.730, 0.828]
+    "flower": (0.75, 0.76),     # [0.806, 0.818]
+    "grass": (0.65, 0.76),      # [0.711, 0.813]
+    "ground": (0.52, 0.77),     # [0.580, 0.826]
+    "head": (0.66, 0.77),       # [0.720, 0.820]
+    "hedge": (0.82, 0.88),      # [0.877, 0.938]
+    "mound": (0.66, 0.83),      # [0.719, 0.884]
+    "palm": (0.75, 0.77),       # [0.805, 0.821]
+    "rosette": (0.55, 0.66),    # [0.605, 0.719]
 }
+
+
+def assert_the_box_is_the_data(parts: tuple[MeshPart, ...], height: float, radius: float,
+                               report: FitReport) -> None:
+    """What holds BY CONSTRUCTION for every plant (``_fit``), to float32: the top
+    is the height (gate ± 3 %), it stands on the ground, the widest span is the
+    canopy diameter (gate ± 10 %) and is centred on the plan position — and no
+    vertex is further than ``REACH_MAX`` canopy radii from the axis (gate: 1.10)."""
+    low, high = bbox(parts)
+    assert high[2] == pytest.approx(height, rel=1e-5)
+    assert low[2] == pytest.approx(0.0, abs=1e-4 * height)
+    spans = (float(high[0] - low[0]), float(high[1] - low[1]))
+    assert max(spans) == pytest.approx(2.0 * radius, rel=1e-5)
+    widest = 0 if spans[0] >= spans[1] else 1
+    slack = 1e-4 * radius + 1e-5
+    assert abs(high[widest] + low[widest]) <= slack
+    if report.reined_share == 0.0:          # the fit's last step moved nothing: the other axis too
+        assert abs(high[1 - widest] + low[1 - widest]) <= slack
+    assert mesh_reach(parts, radius) <= REACH_MAX * (1.0 + 1e-6) < 1.10
+    assert 1.0 - 1e-9 <= report.reach <= REACH_MAX * (1.0 + 1e-12)
 
 
 def assert_built_to_the_data(recipe: Recipe, seed: int, height: float, radius: float,
@@ -365,6 +432,7 @@ def assert_built_to_the_data(recipe: Recipe, seed: int, height: float, radius: f
     assert 1.0 <= report.clamped_reach <= CLAMPED_REACH_MAX, where
     assert 1.0 - 1e-9 <= report.xy_scale <= XY_SCALE_MAX, where
     assert report.centre_shift <= CENTRE_SHIFT_MAX, where
+    assert 0.0 <= report.reined_share <= REINED_SHARE_MAX, where
     # the remembered shape was built within half a proportion step of this plant's
     assert abs(math.log(report.stretch)) <= 0.5 * math.log(PROPORTION_STEP) + 1e-9, where
     foliage = part(parts, PART_FOLIAGE).mesh
@@ -388,23 +456,13 @@ def test_every_recipe_fits_the_plan_s_numbers(sprite: SpriteRef) -> None:
             parts = (verify_builder(build_plant, record, height_tolerance=0.03)
                      if seed == SEEDS[0] else build_plant(record))
             assert parts and {p.name for p in parts} <= {PART_WOOD, PART_FOLIAGE}
-            low, high = bbox(parts)
-            assert high[2] == pytest.approx(height, rel=1e-5)             # gate: ± 3 %
-            assert low[2] == pytest.approx(0.0, abs=1e-4 * height)        # stands on the ground
-            # ... on more than the tip of one hanging leaf (a lavender once floated 9 cm
-            # above the ground with a single vertex touching it, and min z was 0)
+            # it stands on the ground on more than the tip of one hanging leaf (a lavender
+            # once floated 9 cm above the ground with a single vertex touching it, and
+            # min z was 0)
             grounded = sum(int((p.mesh.positions[:, 2] <= 0.005 * height).sum()) for p in parts)
             assert grounded >= 6, f"only {grounded} vertices touch the ground: it floats"
-            span = max(high[0] - low[0], high[1] - low[1])
-            assert span == pytest.approx(2.0 * radius, rel=1e-5)          # gate: ± 10 %
-            # centred on the plan position, and nothing leaves the canopy circle by more
-            # than 10 % (measured over 1,000 ids per archetype: at most 9.2 % — see
-            # test_the_plant_stays_on_its_canopy_circle)
-            assert abs(high[0] + low[0]) <= 1e-4 * radius + 1e-5
-            assert abs(high[1] + low[1]) <= 1e-4 * radius + 1e-5
-            reach = max(float(np.hypot(p.mesh.positions[:, 0], p.mesh.positions[:, 1]).max())
-                        for p in parts)
-            assert reach <= 1.10 * radius
+            assert_the_box_is_the_data(parts, height, radius,
+                                       fit_report(recipe, plant_seed(seed), height, radius))
             for item in parts:
                 item.validate()
                 assert item.casts_shadow and not item.tinted
@@ -413,12 +471,15 @@ def test_every_recipe_fits_the_plan_s_numbers(sprite: SpriteRef) -> None:
             assert_built_to_the_data(recipe, plant_seed(seed), height, radius, parts)
 
 
-#: The largest plant of each archetype over the matrix above (every recipe × six
-#: sizes × five seeds), as documented in §8.26.7 — a ceiling this test holds the
-#: builders to, well under the 2,000 of the gate.
+#: The largest plant of each archetype over the tables' recipes, as documented in
+#: §8.26.7 — measured over the full sweep (63,099 plants) and held by the sweep
+#: test, well under the 2,000 of the gate. A count is a clipped function of
+#: recipe numbers; only the soles a lobe loses on the ground depend on the dice,
+#: so the mound's is its limit by construction (6 lobes × 128 + 420 leaves × 2;
+#: the most a mound in the sweep had was 1,600).
 MEASURED_MAX_TRIANGLES = {
     "allium": 470, "canopy": 1904, "climber": 1352, "conifer": 664, "feathery": 792,
-    "flower": 316, "grass": 1120, "ground": 1092, "head": 400, "hedge": 900, "mound": 1556,
+    "flower": 316, "grass": 1120, "ground": 1092, "head": 400, "hedge": 900, "mound": 1608,
     "palm": 356, "rosette": 560,
 }
 
@@ -454,34 +515,31 @@ def test_every_bundled_species_builds_at_its_mature_size(species: dict) -> None:
         assert_built_to_the_data(expected[1], plant_seed("bundled"), height, radius, parts)
 
 
-@pytest.mark.parametrize("archetype", sorted(ARCHETYPES))
-def test_the_plant_stays_on_its_canopy_circle(archetype: str) -> None:
-    """The bounding box is exact by the fit; this is the other half of the spread
-    truth: seen from above, no vertex is further than 1.10 × the canopy radius
-    from the axis, for 40 ids × three proportions × a coarse and a fine recipe.
+#: Review round 2's plants: the two that ended outside the 10 % the requirement
+#: stated (1.1006 and 1.098 canopy radii — found in 300,000 ids; the documented
+#: maximum was 1.092), and the rhubarb whose foliage reached lower than the range
+#: the requirement stated (z95 at 0.603 of its height; the range said 0.62).
+REVIEWED_REACH = [("pumpkin", 90171182801171, 61.39, 100.0), ("pumpkin", 73960543608744, 60.0, 180.0)]
+REVIEWED_MASS = ("rhubarb", 7932, 45.81, 100.0)
 
-    Measured over 1,000 ids × three proportions × three recipe forms per
-    archetype (``scripts/measure_plant_art_3d.py reach``, 2026-10-11): at most
-    1.092 (mound), 1.083 (canopy), 1.080 (hedge), 1.079 (ground), 1.075 (palm);
-    every other archetype under 1.07; the 99.9th percentile at most 1.077.
-    With outlines of any reach at any angle it was 1.39 (feathery), 1.37
-    (allium), 1.23 (flower) — and scaling the farthest vertex onto the circle
-    instead left a bounding box of 72 % of the canopy diameter.
 
-    What this test is: a tripwire on a fixed sample. The bound is by measurement,
-    not by construction — the fit scales a plant whose bounding box is a little
-    short of the canopy diameter onto it (by at most 1.09), and with it the leaf
-    tips that already stood on the circle. 1.10 is not proven for every id."""
-    worst = 0.0
-    for extra in ({"leaf_scale": 1.35, "n_out": 10, "frilly": True},
-                  {"leaf_scale": 0.55, "n_out": 22, "narrow": True, "heart": False}):
-        for height, radius in ((100.0, 50.0), (300.0, 40.0), (30.0, 120.0)):
-            for seed in range(40):
-                parts = build_silhouette({"a": archetype, **extra}, seed * 7919 + 13, height, radius)
-                reach = max(float(np.hypot(p.mesh.positions[:, 0], p.mesh.positions[:, 1]).max())
-                            for p in parts)
-                worst = max(worst, reach / radius)
-    assert worst <= 1.10, f"{archetype}: a vertex {worst:.3f} canopy radii from the axis"
+def test_the_plants_the_review_found_outside_the_circle_end_inside_it() -> None:
+    for name, seed, height, radius in REVIEWED_REACH:
+        parts = build_silhouette(SPECIES[name], seed, height, radius)
+        report = fit_report(SPECIES[name], seed, height, radius)
+        assert_the_box_is_the_data(parts, height, radius, report)
+        # the fit's last step had work to do here, and the report says so
+        assert report.reined_share > 0.0
+        assert report.reach == pytest.approx(REACH_MAX, rel=1e-12)
+        assert mesh_reach(parts, radius) == pytest.approx(REACH_MAX, rel=1e-6)
+    name, seed, height, radius = REVIEWED_MASS
+    parts = build_silhouette(SPECIES[name], seed, height, radius)
+    z95, _z99 = height_quantiles(part(parts, PART_FOLIAGE).mesh, (0.95, 0.99))
+    # a MEASURED property, stated as one: this flat rhubarb's is 0.603, and the rosette's
+    # tripwire stands below it with headroom (it stood at 0.62, above it)
+    assert z95 / height == pytest.approx(0.603, abs=0.002)
+    assert MASS_REACHES["rosette"][0] <= 0.603 - 0.03
+    assert_built_to_the_data(SPECIES[name], seed, height, radius, parts)
 
 
 EXTREMES = [(1.0, 0.5), (0.4, 3.0), (5000.0, 1500.0), (15.0, 400.0), (800.0, 10.0), (2.0, 2.0),
@@ -494,19 +552,17 @@ EXTREME_RECIPES = [{}, {"leaf_scale": 1.35, "n_out": 10, "frilly": True},
 @pytest.mark.parametrize(("height", "radius"), EXTREMES)
 def test_extreme_sizes_and_proportions(archetype: str, height: float, radius: float) -> None:
     """Sizes a plan can hold: a seedling of a centimetre, a 50 m tree, a plant
-    27 times wider than tall and one 40 times taller than wide."""
+    27 times wider than tall and one 80 times taller than wide — with recipe
+    forms no table holds (the coarsest and the finest a recipe can ask for)."""
     for extra in EXTREME_RECIPES:
         for seed in (11, 12):
             recipe = {"a": archetype, **extra}
             parts = build_silhouette(recipe, seed, height, radius)
-            low, high = bbox(parts)
-            assert high[2] == pytest.approx(height, rel=1e-5)
-            assert low[2] == pytest.approx(0.0, abs=1e-4 * height)
-            assert max(high[0] - low[0], high[1] - low[1]) == pytest.approx(2 * radius, rel=1e-5)
+            report = assert_built_to_the_data(recipe, seed, height, radius, parts)
+            assert_the_box_is_the_data(parts, height, radius, report)
             for item in parts:
                 item.validate()
             assert triangles(parts) <= TRIANGLE_BUDGET
-            assert_built_to_the_data(recipe, seed, height, radius, parts)
 
 
 @pytest.mark.parametrize("archetype", sorted(ARCHETYPES))
@@ -637,26 +693,51 @@ class TestCoverage:
 # ── G5: determinism and no clones ─────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("sprite", ALL_SPRITES[::6], ids=lambda s: s.name)
+def build_cold(record: Record) -> tuple[MeshPart, ...]:
+    """``build_plant`` with nothing remembered: the shape is BUILT, dice and all.
+
+    Two warm builds of one record are one build and one look-up — they are equal
+    whatever the builder does (with unseeded dice every determinism test here
+    passed: review round 2). Determinism is a statement about building twice."""
+    clear_shape_cache()
+    return build_plant(record)
+
+
+#: One sprite of every archetype first, then every sixth of the rest.
+DETERMINISM_SPRITES = list(dict.fromkeys(
+    [next(s for s in ALL_SPRITES if recipe_of(s)["a"] == archetype) for archetype in sorted(ARCHETYPES)]
+    + ALL_SPRITES[::6]))
+
+
+@pytest.mark.parametrize("sprite", DETERMINISM_SPRITES, ids=lambda s: f"{recipe_of(s)['a']}-{s.name}")
 def test_same_record_same_mesh(sprite: SpriteRef) -> None:
+    """Built twice from nothing, a record gives the same mesh (≤ 1e-6) — every archetype."""
     height, spread = MATURE[sprite]
     record = record_for(sprite, height, spread / 2.0, "same")
-    first, second = build_plant(record), build_plant(record)
+    first, second = build_cold(record), build_cold(record)
+    info = shape_cache_info()
+    assert (info.hits, info.misses) == (0, 1)             # the second WAS built, not looked up
     assert [p.name for p in first] == [p.name for p in second]
     for a, b in zip(first, second, strict=True):
+        assert a.mesh.colors is not b.mesh.colors         # two builds, two sets of arrays
         assert a.mesh.vertex_count == b.mesh.vertex_count
         for name in ("positions", "normals", "colors", "uvs"):
             assert float(np.abs(getattr(a.mesh, name) - getattr(b.mesh, name)).max()) <= 1e-6
         assert np.array_equal(a.mesh.indices, b.mesh.indices)
 
 
+def test_every_archetype_is_built_cold_in_the_determinism_test() -> None:
+    assert {recipe_of(sprite)["a"] for sprite in DETERMINISM_SPRITES} == ARCHETYPES
+
+
 def test_the_seed_is_the_record_s_seed_param() -> None:
     sprite = SpriteRef("species", "apple_tree")
-    a = build_plant(record_for(sprite, 400.0, 150.0, "one"))
-    again = build_plant(dataclasses.replace(record_for(sprite, 400.0, 150.0, "one"),
-                                            item_id="another-id"))
-    b = build_plant(record_for(sprite, 400.0, 150.0, "two"))
+    a = build_cold(record_for(sprite, 400.0, 150.0, "one"))
+    again = build_cold(dataclasses.replace(record_for(sprite, 400.0, 150.0, "one"),
+                                           item_id="another-id"))
+    b = build_cold(record_for(sprite, 400.0, 150.0, "two"))
     assert a == again and a != b
+    assert a[0].mesh.colors is not again[0].mesh.colors   # built anew, and still the same plant
     assert item_seed("one", "plant") != item_seed("two", "plant")
 
 
@@ -674,7 +755,7 @@ def test_the_seed_is_the_record_s_seed_param() -> None:
 #:   allium       330  0.831  0.801  0.746   0.00 %
 #:   canopy      1254  0.952  0.930  0.881   0.00 %
 #:   climber      462  0.941  0.923  0.778   0.00 %
-#:   conifer      264  0.936  0.928  0.900   0.00 %
+#:   conifer      264  0.952  0.933  0.906   0.00 %
 #:   feathery     396  0.762  0.743  0.689   0.00 %
 #:   flower        66  0.760  0.681  0.387   0.00 %
 #:   grass        462  0.916  0.890  0.839   0.00 %
@@ -977,10 +1058,13 @@ class TestConventions:
         assert float(np.median(plants._unit(level_rays)[:, 2])) < 0.20
 
     def test_a_builder_reads_only_the_geometry_part(self) -> None:
+        """``verify_builder`` builds the record several times and compares: with the
+        shape cache warm that compares a shape with itself, so the builder is handed
+        over COLD (every call builds)."""
         record = record_for(SpriteRef("species", "tomato"), 120.0, 40.0)
-        verify_builder(build_plant, record, height_tolerance=0.03)   # transform, material, ids
+        verify_builder(build_cold, record, height_tolerance=0.03)    # transform, material, ids
         with pytest.raises(BuilderContractError):                     # the instrument bites
-            verify_builder(lambda r: build_plant(dataclasses.replace(
+            verify_builder(lambda r: build_cold(dataclasses.replace(
                 r, height_cm=(r.height_cm or 0) + r.transform.base_cm)), record,
                 height_tolerance=0.03)
 
@@ -1227,17 +1311,21 @@ class TestShapeCache:
         clear_shape_cache()
         recipe = SPECIES["tomato"]
         first = build_silhouette(recipe, 9, 100.0, 40.0)[0].mesh
-        assert shape_cache_info() == (0, 1, 1)
+        assert shape_cache_info()[:3] == (0, 1, 1)                         # hits, built, held
         grown = build_silhouette(recipe, 9, 101.0, 40.0)[0].mesh          # 1 % taller: same step
-        assert shape_cache_info() == (1, 1, 1)
+        assert shape_cache_info()[:3] == (1, 1, 1)
         np.testing.assert_allclose(grown.positions, first.positions * np.float32([1.0, 1.0, 1.01]),
                                    rtol=2e-6, atol=1e-5)
         assert grown.colors is first.colors and grown.indices is first.indices
         np.testing.assert_allclose(np.linalg.norm(grown.normals, axis=1), 1.0, atol=1e-5)
         build_silhouette(recipe, 9, 120.0, 40.0)                           # 20 % taller: another step
-        assert shape_cache_info() == (1, 2, 2)
+        assert shape_cache_info()[:3] == (1, 2, 2)
         build_silhouette(recipe, 10, 100.0, 40.0)                          # another plant
-        assert shape_cache_info() == (1, 3, 3)
+        info = shape_cache_info()
+        assert info == ShapeCacheInfo(hits=1, misses=3, shapes=3, bytes=info.bytes,
+                                      max_bytes=SHAPE_CACHE_BYTES)
+        assert info.bytes == (shape_bytes(recipe, 9, 100.0, 40.0) + shape_bytes(recipe, 9, 120.0, 40.0)
+                              + shape_bytes(recipe, 10, 100.0, 40.0))
 
     def test_remembering_changes_nothing(self) -> None:
         """Cold or warm, the same arguments give the same mesh, bit for bit."""
@@ -1248,22 +1336,171 @@ class TestShapeCache:
         clear_shape_cache()
         again = build_silhouette(recipe, 3, 500.0, 200.0)
         assert cold == warm == again
-        assert shape_cache_info() == (0, 1, 1)
+        assert shape_cache_info()[:3] == (0, 1, 1)
 
-    def test_remembered_arrays_cannot_be_written(self) -> None:
-        for item in build_silhouette(SPECIES["apple_tree"], 1, 500.0, 200.0):
+    @pytest.mark.parametrize("size", [(500.0, 200.0), (505.0, 200.0)], ids=["on a step", "stretched"])
+    def test_remembered_arrays_cannot_be_written(self, size: tuple[float, float]) -> None:
+        """Read-only FOR GOOD. The arrays of a mesh are shared with the remembered
+        shape and with every later mesh scaled from it — one consumer switching the
+        write flag back on (it could: review round 2) would damage every later build
+        of that plant. Their memory is immutable; the flag cannot be set, on the
+        array or on what it is a view of."""
+        for item in build_silhouette(SPECIES["apple_tree"], 1, *size):
             for name in ("positions", "normals", "colors", "uvs", "indices"):
+                array = getattr(item.mesh, name)
                 with pytest.raises(ValueError, match="read-only"):
-                    getattr(item.mesh, name)[0] = 0
+                    array[0] = 0
+                owner = array
+                while isinstance(owner, np.ndarray):
+                    with pytest.raises(ValueError, match="cannot set WRITEABLE"):
+                        owner.setflags(write=True)
+                    assert owner.flags.writeable is False
+                    owner = owner.base
+                assert isinstance(owner, bytes)             # immutable memory under it all
 
-    def test_the_cache_is_bounded_and_an_entry_is_small(self) -> None:
-        """Measured 2026-10-11 over the 123 recipes at their mature size: an entry
-        holds 12 … 131 kB, 63 kB on average — the cache at most ~130 MB, and
-        ~65 MB when full of average plants (``SHAPE_CACHE_SIZE`` says so)."""
-        assert plants._built_shape.cache_info().maxsize == SHAPE_CACHE_SIZE == 1024
+    def test_a_mesh_from_arrays_cannot_be_made_writeable(self) -> None:
+        """The same for every mesh of the pipeline (``Mesh.from_arrays``), whoever built it."""
+        source = np.zeros((3, 3))
+        mesh = Mesh.from_arrays(source, np.tile([0.0, 0.0, 1.0], (3, 1)), np.ones((3, 4)),
+                                np.zeros((3, 2)), [0, 1, 2])
+        for name in ("positions", "normals", "colors", "uvs", "indices"):
+            array = getattr(mesh, name)
+            with pytest.raises(ValueError, match="cannot set WRITEABLE"):
+                array.setflags(write=True)
+            with pytest.raises(ValueError, match="cannot set WRITEABLE"):
+                array.base.setflags(write=True)
+            with pytest.raises(ValueError, match="read-only"):
+                array[0] = 1
+        source[0, 0] = 5.0                                   # a private copy: the source is the caller's
+        assert float(mesh.positions[0, 0]) == 0.0
+        assert mesh.indices.shape == (1, 3) and mesh.indices.dtype == np.uint32
+        assert Mesh.empty().positions.shape == (0, 3)
+
+    def test_an_entry_is_small_and_the_cap_is_in_bytes(self) -> None:
+        """Measured 2026-10-11 over the 123 recipes at their mature size
+        (``scripts/measure_plant_art_3d.py shapes``): a shape holds 17.6 … 138.7 kB,
+        76.4 kB on average — the cap of 256 MB is about 3,500 average shapes."""
+        assert shape_cache_info().max_bytes == SHAPE_CACHE_BYTES == 256 * 1024 * 1024
         held = [shape_bytes(recipe_of(sprite), 1, *_size(sprite)) for sprite in ALL_SPRITES]
         print(f"\nshape bytes: min {min(held)}, mean {sum(held) / len(held):.0f}, max {max(held)}")
         assert min(held) > 8_000 and max(held) < 150_000 and sum(held) / len(held) < 80_000
+        assert SHAPE_CACHE_BYTES // max(held) > 1_500      # shapes of the largest kind that fit
+
+    # ── at the cap ────────────────────────────────────────────────────────────
+
+    #: Plants whose shapes all have the same size in bytes (an allium is blades
+    #: only: the vertex count does not depend on the dice), so a cap of N × that
+    #: size holds exactly N of them.
+    SAME_SIZE = tuple((SPECIES["leek"], item_seed(f"cap-{n}", "plant"), 80.0, 10.0) for n in range(48))
+
+    @pytest.fixture
+    def cap_of(self):
+        """Set the cache's cap to exactly ``n`` of the ``SAME_SIZE`` shapes; restored after."""
+        sizes = {shape_bytes(*plant) for plant in self.SAME_SIZE}
+        assert len(sizes) == 1
+        one = sizes.pop()
+
+        def set_cap(shapes: float) -> int:
+            resize_shape_cache(int(shapes * one))
+            clear_shape_cache()
+            return one
+
+        yield set_cap
+        resize_shape_cache()
+        clear_shape_cache()
+
+    def ticks(self, plants_in_play: int, count: int = 4) -> list[int]:
+        """Shapes BUILT in each of ``count`` ticks; a tick asks for every plant in
+        play once, in the same order — what a date scrub does."""
+        built = []
+        for _ in range(count):
+            before = shape_cache_info().misses
+            for plant in self.SAME_SIZE[:plants_in_play]:
+                build_silhouette(*plant)
+            built.append(shape_cache_info().misses - before)
+        return built
+
+    def test_at_its_cap_the_cache_has_no_cliff(self, cap_of) -> None:
+        """AT the cap every tick is warm; ONE plant past it, one plant is rebuilt
+        per tick — not all of them, which is what least-recently-used does when a
+        scrub asks for the plants in the same order every tick (with room for 1,024
+        shapes and 1,025 growing plants all 1,025 were rebuilt every tick: 1.9 s a
+        tick against 0.1 s; review round 2). Beyond the cap the cost grows by one
+        plant per plant."""
+        one = cap_of(16)
+        assert self.ticks(15) == [15, 0, 0, 0]
+        clear_shape_cache()
+        assert self.ticks(16) == [16, 0, 0, 0]              # AT the cap
+        info = shape_cache_info()
+        assert (info.shapes, info.bytes, info.max_bytes) == (16, 16 * one, 16 * one)
+        clear_shape_cache()
+        assert self.ticks(17) == [17, 1, 1, 1]              # one past it: one rebuilt per tick
+        assert shape_cache_info().shapes == 16
+        clear_shape_cache()
+        assert self.ticks(32) == [32, 16, 16, 16]           # twice the cap: half of them
+        clear_shape_cache()
+        assert self.ticks(48) == [48, 32, 32, 32]
+        assert shape_cache_info().bytes <= shape_cache_info().max_bytes
+
+    def test_a_cap_that_is_not_a_whole_number_of_shapes(self, cap_of) -> None:
+        cap_of(16.5)
+        assert self.ticks(17) == [17, 1, 1, 1] and shape_cache_info().shapes == 16
+
+    def test_the_plan_no_longer_shown_gives_way_to_the_new_one(self, cap_of) -> None:
+        """Shapes nobody asks for any more are the least recently asked: a new plan
+        takes their place on its FIRST tick and is warm from its second."""
+        cap_of(16)
+        assert self.ticks(16, 2) == [16, 0]                  # the old plan, warm
+        new = self.SAME_SIZE[16:32]
+        for expected in (16, 0, 0):
+            before = shape_cache_info().misses
+            for plant in new:
+                build_silhouette(*plant)
+            assert shape_cache_info().misses - before == expected
+        assert shape_cache_info().shapes == 16
+
+    def test_a_plant_that_grows_a_step_at_the_cap_costs_one_build(self, cap_of) -> None:
+        """At the cap, a plant crossing a proportion step is ONE build on that tick,
+        and the next tick is warm again: its new shape takes the place of its old
+        one (the least recently asked at that moment), not of a neighbour's."""
+        cap_of(16)
+        assert self.ticks(16, 2) == [16, 0]
+        recipe, seed, height, radius = self.SAME_SIZE[4]
+        grown = (recipe, seed, height * PROPORTION_STEP ** 2, radius)
+        plan = [*self.SAME_SIZE[:4], grown, *self.SAME_SIZE[5:16]]
+        for expected in (1, 0, 0):
+            before = shape_cache_info().misses
+            for plant in plan:
+                build_silhouette(*plant)
+            assert shape_cache_info().misses - before == expected
+
+    def test_a_shape_larger_than_the_cap_is_built_and_not_held(self, cap_of) -> None:
+        cap_of(0.5)
+        first = build_silhouette(*self.SAME_SIZE[0])
+        again = build_silhouette(*self.SAME_SIZE[0])
+        assert first == again                                # still the same plant
+        info = shape_cache_info()
+        assert (info.hits, info.misses, info.shapes, info.bytes) == (0, 2, 0, 0)
+
+    def test_a_smaller_cap_drops_the_least_recently_asked(self, cap_of) -> None:
+        one = cap_of(16)
+        assert self.ticks(16, 1) == [16]
+        resize_shape_cache(8 * one)
+        assert shape_cache_info().shapes == 8
+        before = shape_cache_info().misses
+        for plant in self.SAME_SIZE[8:16]:                   # the eight asked for last: still held
+            build_silhouette(*plant)
+        assert shape_cache_info().misses == before
+        build_silhouette(*self.SAME_SIZE[0])
+        assert shape_cache_info().misses == before + 1
+
+    def test_clearing_forgets_the_counters_and_what_was_asked(self, cap_of) -> None:
+        cap_of(16)
+        self.ticks(17, 2)
+        clear_shape_cache()
+        info = shape_cache_info()
+        assert (info.hits, info.misses, info.shapes, info.bytes) == (0, 0, 0, 0)
+        assert self.ticks(16) == [16, 0, 0, 0]               # as from a fresh start
 
     def test_a_builder_reads_only_what_the_cache_is_keyed_on(self) -> None:
         """The cache's key and the recipe a builder is handed are one thing (``_form``):
@@ -1295,6 +1532,72 @@ class TestShapeCache:
             build_silhouette(SPECIES["tomato"], 1, height, radius)
 
 
+# ── a growing plant stays the plant it was ───────────────────────────────────
+
+
+@pytest.mark.parametrize("archetype", sorted(ARCHETYPES))
+def test_a_plant_one_proportion_step_on_is_still_itself(archetype: str) -> None:
+    """A growing plant changes shape only when its proportion crosses a 5 % step
+    (about twice a year per growing plant of the larger bench plan) — and then it
+    must change PROPORTION, not become another plant.
+
+    The metric: IoU of the side silhouettes in the unit box (each normalised to
+    its own height and canopy), so a pure change of proportion scores 1.0.
+    Measured 2026-10-11 over every step × 4 ids (``measure_plant_art_3d.py
+    growth``): the same id one step on, median 0.991 … 1.000 per archetype;
+    another id at the same step, median 0.71 … 0.92. So a plant is NOT re-rolled
+    at a step: its dice depend on its id alone. The smallest single step: 0.87,
+    a conifer at a proportion where it gains a whorl — the stack is re-divided;
+    while its dice were rolled per whorl built it was re-rolled there as well
+    (0.86 on the same ids) — then 0.94 (feathery, flower, palm: single leaves
+    turning to stay inside the canopy circle)."""
+    recipe = {"a": archetype}
+    adjacent, other = [], []
+    for name in ("grow-a", "grow-b"):
+        seed, twin = plant_seed(name), plant_seed(name + "-twin")
+        previous = None
+        for step in range(-40, 41):
+            height = 100.0 * PROPORTION_STEP ** step
+            grid = side_silhouette(build_silhouette(recipe, seed, height, 100.0), height, 100.0)
+            if previous is not None:
+                adjacent.append(silhouette_iou(previous, grid))
+            previous = grid
+            if step % 8 == 0:
+                other.append(silhouette_iou(grid, side_silhouette(
+                    build_silhouette(recipe, twin, height, 100.0), height, 100.0)))
+    clear_shape_cache()
+    assert float(np.median(adjacent)) >= 0.97, archetype
+    assert min(adjacent) >= 0.80, archetype
+    # ... and more like itself than like another plant of its kind
+    assert float(np.median(adjacent)) >= float(np.median(other)) + 0.04, (archetype, np.median(other))
+
+
+def test_a_conifer_that_gains_a_whorl_keeps_the_ones_it_had() -> None:
+    """How many whorls a conifer has depends on its proportions; which way each
+    whorl is turned and how deep it is cut must not. Rolled per whorl BUILT, a
+    fourth whorl moved every later number up the stream — another tree at each
+    such step (the one place a growing plant was re-rolled: review round 2)."""
+    def whorls(proportion: float) -> list[tuple[float, float]]:
+        plan = plants._Plan(100.0 * proportion, 100.0, {}, plants._Dice(77), 0.25)
+        _trunk, foliage = plants._conifer(plan)
+        tiers = int(min(max(round(2.0 + 0.8 * proportion), 3), 6))
+        seen, start = [], 0
+        for tier in range(tiers):
+            sides = 2 * max(14 - 2 * tier, 8)
+            tip, notch = foliage.pos[start, :2], foliage.pos[start + 1, :2]     # the rim ring
+            seen.append((math.atan2(tip[1], tip[0]),                             # how it is turned
+                         float(np.linalg.norm(notch) / np.linalg.norm(tip))))    # how deep it is cut
+            start += 3 * sides + (2 if tier == tiers - 1 else 1)
+        assert start == len(foliage.pos)
+        return seen
+
+    three, four, five, six = whorls(1.0), whorls(2.0), whorls(3.5), whorls(5.5)
+    assert [len(tree) for tree in (three, four, five, six)] == [3, 4, 5, 6]
+    for fewer, more in ((three, four), (four, five), (five, six), (three, six)):
+        np.testing.assert_allclose(fewer, more[:len(fewer)], rtol=0, atol=1e-9)
+    assert len({round(turn, 6) for turn, _cut in six}) == 6        # … and the six do differ
+
+
 # ── the fit's report is the instrument: it must tell the truth ────────────────
 
 
@@ -1318,6 +1621,7 @@ class TestFitReport:
         assert report.clamped_reach == pytest.approx(1.5)
         assert report.xy_scale == pytest.approx(1.0) and report.set_down == 0.0
         assert report.centre_shift == pytest.approx(0.0) and report.stretch == 1.0
+        assert (report.reach, report.reined_share) == (1.0, 0.0)   # it ends ON the circle
         low, high = foliage.pos.min(axis=0), foliage.pos.max(axis=0)       # type: ignore[attr-defined]
         np.testing.assert_allclose([low[2], high[2], high[0] - low[0]], [0.0, 100.0, 100.0], atol=1e-9)
 
@@ -1327,7 +1631,88 @@ class TestFitReport:
         report = plants._fit(None, foliage, 100.0, 50.0)
         assert report == FitReport(built_top=1.0, z_scale=1.0, xy_scale=1.0, clamped_share=0.0,
                                    clamped_reach=1.0, pressed_share=0.0, set_down=0.0,
-                                   centre_shift=0.0)
+                                   centre_shift=0.0, reach=1.0, reined_share=0.0)
+
+    # ── where a plant ENDS: the fit's last step (review round 2, P1-A) ─────────
+
+    def test_reining_in_keeps_a_vertex_s_larger_coordinate(self) -> None:
+        """Beyond the limit a vertex is put ON it by shrinking its SMALLER
+        coordinate — an extreme of the box along the widest axis stays one."""
+        pos = np.array([[50.0, 40.0, 7.0], [-30.0, -50.0, 1.0], [50.0, 50.0, 2.0],
+                        [20.0, 10.0, 3.0], [0.0, 54.5, 4.0], [-54.5, 0.0, 5.0]])
+        untouched = pos.copy()
+        assert plants._rein_in(pos, 54.5) == 3                       # 1.09 × 50
+        other = math.sqrt(54.5 ** 2 - 50.0 ** 2)                     # 21.69
+        np.testing.assert_allclose(pos[0], [50.0, other, 7.0], rtol=1e-12)
+        np.testing.assert_allclose(pos[1], [-other, -50.0, 1.0], rtol=1e-12)
+        np.testing.assert_allclose(pos[2], [50.0, other, 2.0], rtol=1e-12)   # a tie keeps x
+        assert np.array_equal(pos[3:], untouched[3:])                # inside or on it: left alone
+        np.testing.assert_allclose(np.hypot(pos[:3, 0], pos[:3, 1]), 54.5, rtol=1e-12)
+        assert plants._rein_in(pos, 54.5 * (1.0 + 1e-12)) == 0       # done once, it is done
+
+    def test_a_square_plant_in_a_round_hole(self) -> None:
+        """Four vertices on the canopy circle, on the diagonals: nothing strays, the
+        box is 71 % of the diameter, the scale that makes the box exact carries the
+        corners to 1.41 radii — and the last step puts them at ``REACH_MAX``,
+        keeping the box. Before it existed nothing bounded where a vertex ended,
+        and the report did not say."""
+        corner = 35.35                                               # 49.99 from the axis
+        foliage = self._plant([[0, 0, 0], [corner, corner, 0], [-corner, corner, 0],
+                               [-corner, -corner, 0], [corner, -corner, 0], [0, 0, 100],
+                               [10, 0, 40], [0, 10, 13]])
+        report = plants._fit(None, foliage, 100.0, 50.0)
+        assert (report.clamped_share, report.clamped_reach) == (0.0, 1.0)
+        assert report.xy_scale == pytest.approx(50.0 / corner)       # 1.414
+        assert report.reach == pytest.approx(REACH_MAX, rel=1e-12)
+        assert report.reined_share == 4 / 8
+        flat = foliage.pos[:, :2]                                    # type: ignore[attr-defined]
+        np.testing.assert_allclose(np.abs(flat[1:5, 0]), 50.0, rtol=1e-12)   # the box along x: kept
+        np.testing.assert_allclose(np.abs(flat[1:5, 1]), math.sqrt((REACH_MAX * 50.0) ** 2 - 2500.0),
+                                   rtol=1e-12)
+        assert float(np.hypot(flat[:, 0], flat[:, 1]).max()) <= REACH_MAX * 50.0 * (1.0 + 1e-12)
+
+    def test_whatever_it_is_handed_no_vertex_ends_beyond_the_bound(self) -> None:
+        """BY CONSTRUCTION, not by the builders' good behaviour: 500 hostile point
+        clouds — far too wide, lopsided, with vertices in the very corners of their
+        box, with and without wood standing off-centre — and after the fit no
+        vertex is further than ``REACH_MAX`` canopy radii from the axis, the top is
+        the height, the base is the ground and the widest half-span is the canopy
+        radius, exactly. The report's ``reach`` is where the plant ends."""
+        rng = np.random.Generator(np.random.PCG64(11))
+        tri = np.array([[0, 1, 2], [3, 4, 5]])
+        reined_plants = 0
+        for n in range(500):
+            height, radius = float(10.0 ** rng.uniform(0.0, 3.5)), float(10.0 ** rng.uniform(0.0, 3.0))
+            count = int(rng.integers(6, 60))
+            wide = radius * float(rng.choice([0.3, 1.0, 1.6, 4.0]))
+            flat = rng.uniform(-wide, wide, (count, 2)) + rng.uniform(-0.5, 0.5, 2) * radius
+            if n % 3 == 0:                                           # the box's corners ARE vertices
+                flat[:4] = np.array([[1, 1], [-1, 1], [1, -1], [-1, -1]]) * wide
+            z = rng.uniform(-0.2, 1.4, count) * height
+            foliage = plants._geo(np.column_stack([flat, z]), np.tile([0.0, 0.0, 1.0], (count, 1)),
+                                  tri, 0.5, 1.0, 0.5, 0.0)
+            wood = None
+            if n % 2 == 0:
+                stem = rng.uniform(-0.6, 0.6, (6, 2)) * wide
+                wood = plants._geo(np.column_stack([stem, rng.uniform(0.0, 1.0, 6) * height]),
+                                   np.tile([1.0, 0.0, 0.0], (6, 1)), tri, 0.0, 1.0, 0.0, 0.0)
+            report = plants._fit(wood, foliage, height, radius)
+            pos = foliage.pos if wood is None else np.concatenate([foliage.pos, wood.pos])
+            far = float(np.hypot(pos[:, 0], pos[:, 1]).max()) / radius
+            where = f"cloud {n}: {report}"
+            assert far <= REACH_MAX * (1.0 + 1e-12), where
+            assert report.reach == pytest.approx(far, rel=1e-12), where
+            assert float(pos[:, 2].max()) == pytest.approx(height, rel=1e-12), where
+            assert float(pos[:, 2].min()) == pytest.approx(0.0, abs=1e-9 * height), where
+            assert float(np.abs(pos[:, :2]).max()) == pytest.approx(radius, rel=1e-12), where
+            if wood is None:                                         # … and centred along that axis
+                low, high = foliage.pos[:, :2].min(axis=0), foliage.pos[:, :2].max(axis=0)
+                widest = int(np.argmax(high - low))
+                assert abs(float(high[widest] + low[widest])) <= 1e-9 * radius, where
+            for part_ in ([foliage] if wood is None else [foliage, wood]):
+                np.testing.assert_allclose(np.linalg.norm(part_.nrm, axis=1), 1.0, atol=1e-9)
+            reined_plants += report.reined_share > 0.0
+        assert reined_plants > 150                                   # the input WAS hostile
 
     def test_it_reports_a_plant_set_down_and_one_moved_to_its_centre(self) -> None:
         hovering = self._plant([[0, 0, 20], [50, 0, 20], [0, 50, 20], [-50, 0, 20], [0, -50, 20],
@@ -1378,3 +1763,31 @@ def test_the_tip_weights_are_measured_from_the_sprites(qtbot) -> None:
     # 0.02: the search steps by 0.005, and a rasteriser's anti-aliasing moves a hue a little
     for archetype, median in medians.items():
         assert FOLIAGE_TIP_WEIGHT[archetype] == pytest.approx(median, abs=0.02), archetype
+
+
+# ── the sweep: every recipe at every proportion step ──────────────────────────
+# Last in the file because it is the longest test here (21,033 plants): with ``-x``
+# a broken rule that a cheaper test notices is reported without waiting for it.
+
+
+@pytest.mark.parametrize("sprite", ALL_SPRITES, ids=lambda s: f"{s.group}/{s.name}")
+def test_every_recipe_at_every_proportion_step(sprite: SpriteRef) -> None:
+    """THE SWEEP: a recipe × every proportion step (``SWEEP_STEPS``), a different
+    id in every cell — over the 123 recipes 21,033 plants, each of them a shape
+    of its own (nothing here is the same shape at another size).
+
+    By construction, for every one of them: the box is the data, and no vertex
+    is further than ``REACH_MAX`` canopy radii from the axis (the fit's last
+    step — with outlines of any reach at any angle a plant left its circle by up
+    to 39 %, and for two rounds the bound on that was a sample's maximum).
+    Measured, as tripwires: built to the data, and the mass where the box says."""
+    recipe = recipe_of(sprite)
+    plants_built = 0
+    for _step, seed, height, radius in sweep_cells(sprite):
+        parts = build_silhouette(recipe, seed, height, radius)
+        report = assert_built_to_the_data(recipe, seed, height, radius, parts)
+        assert_the_box_is_the_data(parts, height, radius, report)
+        assert 0 < triangles(parts) <= MEASURED_MAX_TRIANGLES[recipe["a"]] <= TRIANGLE_BUDGET
+        plants_built += 1
+    clear_shape_cache()                     # 171 shapes: nothing of them is asked for again
+    assert plants_built == len(SWEEP_STEPS) == 171

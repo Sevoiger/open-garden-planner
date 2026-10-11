@@ -18,10 +18,13 @@ rule), and how big it is by the plan:
   height, its outline on the canopy circle, and keeps its leaves inside by
   turning them — a plant is never built too tall and squashed back. ``_fit``
   then normalises the last millimetre (the bounding box IS the data: top = the
-  height, widest span = the canopy diameter, base at z = 0) and REPORTS what it
-  had to repair (``FitReport``, ``fit_report``), so tests hold the builders to
-  it. The 2D tables' tuning numbers (``leaf_scale``, ``n_out``) are read here
-  too: retuning a sprite moves the 3D leaf count and size of that species.
+  height, widest span = the canopy diameter, base at z = 0), ends by holding
+  every vertex within ``REACH_MAX`` canopy radii of the axis — so where a plant
+  ends is bounded by construction, whatever a builder hands over — and REPORTS
+  what it had to repair (``FitReport``, ``fit_report``), so tests hold the
+  builders to it. The 2D tables' tuning numbers (``leaf_scale``, ``n_out``) are
+  read here too: retuning a sprite moves the 3D leaf count and size of that
+  species.
 
 v0 is deliberately cheap: a few soft volumes and a shell of large geometric
 leaves, at most ``TRIANGLE_BUDGET`` triangles per plant — bounded per ARCHETYPE
@@ -32,7 +35,7 @@ Species-accurate models are Package L3 ("Plant Forge", #387).
 
 A shape is built once per (recipe form, seed, proportion step) and remembered;
 a plant that grows is that shape scaled — a date scrub is a multiplication per
-plant, not a rebuild (``PROPORTION_STEP``, ``SHAPE_CACHE_SIZE``).
+plant, not a rebuild (``PROPORTION_STEP``, ``SHAPE_CACHE_BYTES``).
 
 A plant the plan gives NO height (``height_cm is None``: no species data, no
 measurement) is not guessed: it gets the placeholder — a low, smooth, neutral
@@ -51,11 +54,13 @@ Qt-free: numpy, ``core.plant_art`` and the scene3d package.
 from __future__ import annotations
 
 import math
+import threading
+from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from types import MappingProxyType
-from typing import Any, Final, TypeAlias
+from typing import Any, Final, NamedTuple, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -89,6 +94,15 @@ Ints: TypeAlias = NDArray[np.int64]
 
 #: Triangles one plant may have — every archetype, every size (the story's gate).
 TRIANGLE_BUDGET: Final = 2000
+#: No vertex of a plant is further from its axis than this many canopy radii — by
+#: construction: putting whatever is further out onto that circle is the LAST
+#: thing ``_fit`` does (``_rein_in``), for any builder and any dice. The story's
+#: gate is 1.10 ("no part more than 10 % outside the canopy circle"); the bound
+#: sits a step inside it, so float32 and the scale to the plan's size cannot
+#: carry a vertex across the gate. It is rarely needed — the builders build
+#: inside the circle and the fit's scale moves a leaf tip a few percent at most:
+#: ``FitReport.reined_share`` says when it was.
+REACH_MAX: Final = 1.09
 
 #: ``MeshPart.name`` values.
 PART_WOOD: Final = "wood"
@@ -742,23 +756,30 @@ def _conifer(p: _Plan) -> _Shape:
     seen from above; here the whorls are tiers, three to six by the tree's proportions.
     """
     h, r, d = p.height, p.radius, p.dice
-    tiers = int(min(max(round(2.0 + 1.6 * h / (2.0 * r)), 3), 6))
+    most = 6
+    tiers = int(min(max(round(2.0 + 1.6 * h / (2.0 * r)), 3), most))
     foot = 0.10 * h
     step = (h - foot) / tiers
+    # no two conifers alike: each whorl sits a little higher or lower, reaches a
+    # little less far, is cut a little deeper, hangs a little more and is turned
+    # — except the lowest, which is the outline. The dice of ALL six possible
+    # whorls are rolled, whether this tree has them or not: how many it has
+    # depends on its proportions, and a conifer that grows a fourth whorl must
+    # keep the three it had (rolled per whorl built, every later number moved up
+    # the stream and the tree became another tree at each such step).
+    sits, reaches, cuts = d.u(-0.18, 0.18, most), d.u(0.84, 1.0, most), d.u(0.52, 0.70, most)
+    hangs, turns = d.u(0.05, 0.18, most), d.u(0.0, _TAU, most)
     parts: list[_Geo] = []
     for tier in range(tiers):
         points = max(14 - 2 * tier, 8)
         sides = 2 * points
-        # no two conifers alike: each whorl sits a little higher or lower, reaches a
-        # little less far, is cut a little deeper and hangs a little more — except
-        # the lowest, which is the outline
-        z0 = foot + step * (tier + (0.0 if tier == 0 else d.uf(-0.18, 0.18)))
-        reach = r * (1.0 - 0.84 * tier / tiers) ** 0.9 * (1.0 if tier == 0 else d.uf(0.84, 1.0))
+        z0 = foot + step * (tier + (0.0 if tier == 0 else float(sits[tier])))
+        reach = r * (1.0 - 0.84 * tier / tiers) ** 0.9 * (1.0 if tier == 0 else float(reaches[tier]))
         tip = np.arange(sides) % 2 == 0
         last = tier == tiers - 1
         tier_height = (h - z0) if last else 1.55 * step
-        rim = np.where(tip, reach, d.uf(0.52, 0.70) * reach)
-        hang = d.uf(0.05, 0.18)
+        rim = np.where(tip, reach, float(cuts[tier]) * reach)
+        hang = float(hangs[tier])
         rings_r = np.stack([rim, np.where(tip, 0.60, 0.50) * reach, np.full(sides, 0.20 * reach)])
         rings_z = np.stack([
             z0 + np.where(tip, -hang, 0.10) * step,
@@ -767,8 +788,7 @@ def _conifer(p: _Plan) -> _Shape:
         ])
         pos, tri = _revolve(rings_r, rings_z, sides, apex=h if last else None,
                             underside=z0 + 0.22 * step)
-        turn = d.uf(0.0, _TAU)
-        cos, sin = math.cos(turn), math.sin(turn)
+        cos, sin = math.cos(float(turns[tier])), math.sin(float(turns[tier]))
         pos[:, :2] = pos[:, :2] @ np.array([[cos, sin], [-sin, cos]])
         flat = pos[:, :2]
         outward = np.concatenate([flat, 0.45 * np.linalg.norm(flat, axis=1, keepdims=True)], axis=1)
@@ -1228,6 +1248,10 @@ class FitReport:
       fraction of the height (a plant is never lifted);
     - ``centre_shift``: how far the foliage was moved to centre its bounding
       box on the plan position, in canopy radii;
+    - ``reach``: where the plant ENDS — its farthest vertex from the axis after
+      the fit's last step, in canopy radii. Never more than ``REACH_MAX``: that
+      is what the last step is. ``reined_share``: the share of all vertices
+      that step had to move (0.0 for nearly every plant);
     - ``stretch``: z over xy of the scale from the proportion the shape was
       built at to the plan's (``PROPORTION_STEP``) — 1.0 for the fit itself.
     """
@@ -1240,7 +1264,34 @@ class FitReport:
     pressed_share: float
     set_down: float
     centre_shift: float
+    reach: float
+    reined_share: float
     stretch: float = 1.0
+
+
+def _rein_in(pos: Floats, limit: float) -> int:
+    """Put every vertex further than ``limit`` from the axis ONTO that circle, in
+    place; return how many were moved.
+
+    A vertex is moved along the axis it is NOT farthest on: its larger
+    coordinate stays, the smaller one shrinks until the vertex is ``limit``
+    from the axis. So a vertex that is an extreme of the bounding box along the
+    plant's widest axis stays that extreme — pulling it straight toward the axis
+    would shorten the box. Needs every coordinate within ``limit`` already
+    (true after the fit's scale: none exceeds the canopy radius).
+    """
+    flat = pos[:, :2]                                             # a view: written in place
+    beyond = np.flatnonzero(np.hypot(flat[:, 0], flat[:, 1]) > limit)
+    if len(beyond):
+        far = np.abs(flat[beyond])
+        major = far.argmax(axis=1)                                # a tie keeps x
+        minor = 1 - major
+        each = np.arange(len(beyond))
+        kept = np.minimum(far[each, major], limit)
+        flat[beyond, major] = np.copysign(kept, flat[beyond, major])
+        flat[beyond, minor] = np.copysign(np.sqrt(np.maximum(limit * limit - kept * kept, 0.0)),
+                                          flat[beyond, minor])
+    return int(len(beyond))
 
 
 def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> FitReport:
@@ -1252,19 +1303,26 @@ def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> FitR
     centred on the local origin (the canopy circle's centre) — the wood stays
     where it stands: a trunk's foot is the plan position. Whatever dips below
     the plant's ground is pressed onto it; a plant whose lowest point is above
-    the ground is set down. Last, everything is scaled about the origin: xy so
+    the ground is set down. Then everything is scaled about the origin: xy so
     the widest span is the canopy diameter, z so the top is the height. Normals
     take the inverse of the scale.
+
+    Each of those steps undoes a little of the one before — centring moves a
+    vertex that was pulled onto the circle off it again, and the scale carries it
+    further — so none of them says where a vertex ENDS. The last step does:
+    whatever is further than ``REACH_MAX`` canopy radii from the axis is put
+    onto that circle (``_rein_in``). Nothing follows it, so the bound holds by
+    construction, for any builder output; and because a vertex keeps its larger
+    coordinate, the widest span is still exactly the canopy diameter and is still
+    centred. (Along the OTHER axis the box can lose a hair if the vertex reined
+    in was that axis's extreme; the report says when anything was moved.)
 
     Never lift a plant to make its lowest vertex zero: one leaf dipping 9 cm
     under a lavender's base lifted the whole cushion 9 cm into the air, and
     "min z = 0" still held (a sanity render found it, not a gate).
 
     Why not scale the farthest vertex onto the circle instead: the bounding box
-    then spans as little as 72 % of the canopy diameter for a sparse plant. With
-    the bounding box exact, the regular outlines (``_RIM_REACH``) and the pull
-    above keep every vertex within a few percent of the circle (measured per
-    archetype in ``tests/unit/test_scene3d_plants.py``).
+    then spans as little as 72 % of the canopy diameter for a sparse plant.
     """
     parts = [foliage] if wood is None else [wood, foliage]
     vertices = sum(len(part.pos) for part in parts)
@@ -1280,10 +1338,10 @@ def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> FitR
     for part in parts:
         pressed += int((part.pos[:, 2] < 0.0).sum())
         part.pos[:, 2] = np.maximum(part.pos[:, 2], 0.0)
-    reach = max(float(np.abs(part.pos[:, :2]).max()) for part in parts)
+    widest = max(float(np.abs(part.pos[:, :2]).max()) for part in parts)
     bottom = min(float(part.pos[:, 2].min()) for part in parts)   # >= 0: only ever set down
     top = max(float(part.pos[:, 2].max()) for part in parts)
-    scale = np.array([radius / max(reach, 1e-12), radius / max(reach, 1e-12),
+    scale = np.array([radius / max(widest, 1e-12), radius / max(widest, 1e-12),
                       height / max(top - bottom, 1e-12)])
     for part in parts:
         part.pos[:, 2] -= bottom
@@ -1291,11 +1349,15 @@ def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> FitR
         nrm = part.nrm / scale[None, :]
         length = np.linalg.norm(nrm, axis=1, keepdims=True)
         part.nrm = np.where(length > 1e-12, nrm / np.maximum(length, 1e-12), _UP[None, :])
+    # ── the LAST step: nothing follows it, so this is where every vertex ends ──
+    reined = sum(_rein_in(part.pos, REACH_MAX * radius) for part in parts)
+    reach = max(float(np.hypot(part.pos[:, 0], part.pos[:, 1]).max()) for part in parts) / radius
     return FitReport(
         built_top=built_top, z_scale=float(scale[2]), xy_scale=float(scale[0]),
         clamped_share=float(stray.mean()), clamped_reach=clamped_reach,
         pressed_share=pressed / vertices, set_down=bottom / height,
-        centre_shift=float(np.hypot(shift[0], shift[1])) / radius)
+        centre_shift=float(np.hypot(shift[0], shift[1])) / radius,
+        reach=reach, reined_share=reined / vertices)
 
 
 @lru_cache(maxsize=32)
@@ -1313,10 +1375,11 @@ def _foliage_colors(geo: _Geo, palette: Floats, tip_weight: float) -> Floats:
     """Linear RGBA per vertex from the palette alone.
 
     The mix between the base anchors and the tip anchors follows each vertex's
-    exposure, shifted so that the plant's area-weighted mean is ``tip_weight`` —
-    the archetype's measured share of tip tone in the 2D sprite. The mix is made
-    in sRGB, as the 2D gradients are; the shade is applied in linear light and
-    does not move the hue.
+    exposure, shifted so that the plant's mean — weighted by the surface a
+    vertex stands for × its shade^(1/2.4), i.e. by what it contributes to the
+    picture in sRGB — is ``tip_weight``, the archetype's measured share of tip
+    tone in the 2D sprite. The mix is made in sRGB, as the 2D gradients are;
+    the shade is applied in linear light and does not move the hue.
     """
     weight = _vertex_areas(geo.pos, geo.tri) * geo.shade ** (1.0 / 2.4)
     total = max(float(weight.sum()), 1e-12)
@@ -1349,12 +1412,13 @@ def _solid(pos: Floats, colour: NDArray[np.float32]) -> Floats:
 #: rounding moves no number the plan states). What it costs is form: one axis is
 #: stretched against the other by at most the square root of the step, 2.5 %.
 PROPORTION_STEP: Final = 1.05
-#: Shapes remembered (least recently used are dropped). One shape is one plant at
-#: one proportion step: measured 2026-10-11 over the 123 recipes at their mature
-#: size, 18 … 139 kB, 76 kB on average (``shape_bytes``) — so the cache holds at
-#: most about 140 MB, and about 80 MB when full of average plants. A plan with
-#: more growing plants than this still works; it rebuilds what was dropped.
-SHAPE_CACHE_SIZE: Final = 1024
+#: Bytes of remembered shapes the cache may hold — a memory cap, not a count:
+#: the number of shapes follows the plan (one per plant and proportion step it
+#: is seen at). One shape measured 18 … 139 kB, 76 kB on average over the 123
+#: recipes at their mature size (``shape_bytes``, 2026-10-11), so the cap is
+#: about 3,500 average plants and 1,900 of the largest trees; the larger bench
+#: plan (320 plants) holds 24 MB. What happens AT the cap: ``_ShapeCache``.
+SHAPE_CACHE_BYTES: Final = 256 * 1024 * 1024
 _UNIT_RADIUS: Final = 100.0
 #: The recipe keys an archetype builder may read; ``pal`` and ``a`` are read by
 #: ``_form`` itself. A builder that reads another key fails (``_ReadKeys``).
@@ -1424,19 +1488,23 @@ class _Arrays:
         return _Arrays(mesh.positions, mesh.normals, mesh.colors, mesh.uvs, mesh.indices)
 
     def scaled(self, scale: NDArray[np.float32], stretch: float) -> Mesh:
-        positions = self.positions * scale[None, :]
-        positions.setflags(write=False)
+        positions = _sealed(self.positions * scale[None, :])
         normals = self.normals
         if abs(stretch - 1.0) > 1e-9:                             # not a uniform scale
             bent = normals.astype(np.float64)
             bent[:, 2] /= stretch
-            normals = (bent / np.linalg.norm(bent, axis=1, keepdims=True)).astype(np.float32)
-            normals.setflags(write=False)
+            normals = _sealed((bent / np.linalg.norm(bent, axis=1, keepdims=True)).astype(np.float32))
         return Mesh(positions, normals, self.colors, self.uvs, self.indices)
 
     def nbytes(self) -> int:
         return int(sum(a.nbytes for a in (self.positions, self.normals, self.colors, self.uvs,
                                           self.indices)))
+
+
+def _sealed(array: NDArray[np.float32]) -> NDArray[np.float32]:
+    """``array`` on immutable memory, as ``Mesh.from_arrays`` makes its own: read-only
+    for good (``setflags(write=True)`` is refused on it and on its base)."""
+    return np.frombuffer(array.tobytes(), dtype=np.float32).reshape(array.shape)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1448,13 +1516,119 @@ class _BuiltShape:
     wood: _Arrays | None
     report: FitReport
 
+    def nbytes(self) -> int:
+        return self.foliage.nbytes() + (self.wood.nbytes() if self.wood is not None else 0)
+
+
+class ShapeCacheInfo(NamedTuple):
+    """The shape cache since it was last cleared (``shape_cache_info``)."""
+
+    hits: int        #: shapes asked for and found
+    misses: int      #: shapes asked for and BUILT
+    shapes: int      #: shapes held now
+    bytes: int       #: … and the bytes of their arrays
+    max_bytes: int   #: the cap (``SHAPE_CACHE_BYTES`` unless resized)
+
+
+_ShapeKey: TypeAlias = tuple[_Form, int, int]              # (form, seed, proportion step)
+#: How many keys the cache remembers the last request of (held or not): what lets
+#: it tell a shape of the plan in use from a shape nobody asks for any more.
+_ASKED_KEPT: Final = 1 << 16
+
+
+class _ShapeCache:
+    """Remembered shapes under a cap in BYTES — with no cliff at the cap.
+
+    The count is not capped, so the cache grows with the plan: a plan of any
+    number of growing plants is warm as long as their shapes fit the cap.
+
+    At the cap, a plain least-recently-used rule falls off a cliff: a date
+    scrub asks for every growing plant once per tick, in the same order, so the
+    shape it drops is always the one it needs next — with room for 1,024 shapes
+    and 1,025 growing plants EVERY plant was rebuilt on EVERY tick (the first
+    cache, as the review measured it: 1.9 s a tick, and none rebuilt with
+    1,024). So a new shape gets room only from shapes that nobody asked for
+    since this very shape was last asked for:
+
+    - a shape never asked for before (a new plan, a plant that grew a step)
+      takes the place of the least recently asked ones;
+    - a shape asked for before, and dropped, comes back only in place of shapes
+      not asked for since then — if everything held is in use (asked for more
+      recently), it is built, handed out and NOT held.
+
+    A scrub over more plants than fit therefore keeps as many shapes as fit and
+    rebuilds only the rest, every tick: the cost grows by one plant per plant
+    beyond the cap. Shapes of a plan no longer shown are the least recently
+    asked and give way first. A shape larger than the cap is never held.
+
+    Thread-safe: the bookkeeping is under a lock; ``build`` runs outside it, so
+    two threads asking for one new shape at once may both build it (to the same
+    result).
+    """
+
+    def __init__(self, max_bytes: int) -> None:
+        self._lock = threading.Lock()
+        self._max_bytes = int(max_bytes)
+        self._held: OrderedDict[_ShapeKey, _BuiltShape] = OrderedDict()   # least recently asked first
+        self._asked: OrderedDict[_ShapeKey, int] = OrderedDict()          # key → when last asked
+        self._clock = self._bytes = self._hits = self._misses = 0
+
+    def get(self, key: _ShapeKey, build: Callable[[], _BuiltShape]) -> _BuiltShape:
+        with self._lock:
+            self._clock += 1
+            before = self._asked.pop(key, None)
+            self._asked[key] = self._clock
+            if len(self._asked) > _ASKED_KEPT:
+                self._asked.popitem(last=False)
+            held = self._held.get(key)
+            if held is not None:
+                self._held.move_to_end(key)
+                self._hits += 1
+                return held
+            self._misses += 1
+        shape = build()
+        with self._lock:
+            self._admit(key, shape, before)
+        return shape
+
+    def _admit(self, key: _ShapeKey, shape: _BuiltShape, before: int | None) -> None:
+        size = shape.nbytes()
+        if key in self._held or size > self._max_bytes:
+            return
+        while self._bytes + size > self._max_bytes:
+            oldest = next(iter(self._held))
+            if before is not None and self._asked.get(oldest, 0) > before:
+                return                      # everything held is in use: this one is not held
+            self._bytes -= self._held.pop(oldest).nbytes()
+        self._held[key] = shape
+        self._bytes += size
+
+    def resize(self, max_bytes: int) -> None:
+        with self._lock:
+            self._max_bytes = int(max_bytes)
+            while self._held and self._bytes > self._max_bytes:
+                self._bytes -= self._held.popitem(last=False)[1].nbytes()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._held.clear()
+            self._asked.clear()
+            self._clock = self._bytes = self._hits = self._misses = 0
+
+    def info(self) -> ShapeCacheInfo:
+        with self._lock:
+            return ShapeCacheInfo(self._hits, self._misses, len(self._held), self._bytes,
+                                  self._max_bytes)
+
+
+_SHAPES: Final = _ShapeCache(SHAPE_CACHE_BYTES)
+
 
 def _proportion_step(height_cm: float, radius_cm: float) -> int:
     return round(math.log(height_cm / radius_cm) / math.log(PROPORTION_STEP))
 
 
-@lru_cache(maxsize=SHAPE_CACHE_SIZE)
-def _built_shape(form: _Form, seed: int, step: int) -> _BuiltShape:
+def _build_shape(form: _Form, seed: int, step: int) -> _BuiltShape:
     proportion = PROPORTION_STEP ** step
     height, radius = proportion * _UNIT_RADIUS, _UNIT_RADIUS
     dice = _Dice(seed)
@@ -1476,7 +1650,8 @@ def _shape_and_scale(recipe: Mapping[str, Any], seed: int, height_cm: float, rad
     if not (math.isfinite(height_cm) and math.isfinite(radius_cm) and height_cm > 0.0
             and radius_cm > 0.0):
         raise ValueError(f"a plant needs a positive height and radius, got {height_cm!r} × {radius_cm!r}")
-    shape = _built_shape(_form(recipe), int(seed), _proportion_step(height_cm, radius_cm))
+    form, own, step = _form(recipe), int(seed), _proportion_step(height_cm, radius_cm)
+    shape = _SHAPES.get((form, own, step), lambda: _build_shape(form, own, step))
     across = radius_cm / _UNIT_RADIUS
     up = height_cm / (shape.proportion * _UNIT_RADIUS)
     return shape, np.array([across, across, up], np.float32), up / across
@@ -1488,7 +1663,7 @@ def build_silhouette(recipe: Mapping[str, Any], seed: int, height_cm: float,
 
     Pure and deterministic in its arguments: the shape is built once per
     (recipe form, seed, proportion step) and remembered (``PROPORTION_STEP``,
-    ``SHAPE_CACHE_SIZE``), then scaled to the exact size — remembering changes
+    ``SHAPE_CACHE_BYTES``), then scaled to the exact size — remembering changes
     how long a call takes, never what it returns. The remembered arrays are
     read-only and shared between the meshes scaled from them. Safe to call from
     any thread (the cache guards itself; two threads asking for one new shape at
@@ -1518,21 +1693,28 @@ def fit_report(recipe: Mapping[str, Any], seed: int, height_cm: float,
 
 def shape_bytes(recipe: Mapping[str, Any], seed: int, height_cm: float, radius_cm: float) -> int:
     """Bytes the remembered shape behind ``build_silhouette(...)`` holds — what one
-    entry of the shape cache costs (for sizing ``SHAPE_CACHE_SIZE``)."""
+    entry of the shape cache costs against ``SHAPE_CACHE_BYTES``."""
     shape, _scale, _stretch = _shape_and_scale(recipe, seed, height_cm, radius_cm)
-    return shape.foliage.nbytes() + (shape.wood.nbytes() if shape.wood is not None else 0)
+    return shape.nbytes()
 
 
-def shape_cache_info() -> tuple[int, int, int]:
-    """(hits, misses, shapes held) of the shape cache since it was last cleared —
-    how the build budget's tests tell a scaled plant from a rebuilt one."""
-    info = _built_shape.cache_info()
-    return info.hits, info.misses, info.currsize
+def shape_cache_info() -> ShapeCacheInfo:
+    """Hits, misses (= shapes BUILT), shapes and bytes held, and the cap, since the
+    cache was last cleared — how a test or a scrub tells a scaled plant from a
+    rebuilt one."""
+    return _SHAPES.info()
 
 
 def clear_shape_cache() -> None:
-    """Forget every remembered shape (a cold start, for a measurement)."""
-    _built_shape.cache_clear()
+    """Forget every remembered shape and reset the counters (a cold start: for a
+    measurement, and for a test that must see a shape BUILT twice)."""
+    _SHAPES.clear()
+
+
+def resize_shape_cache(max_bytes: int = SHAPE_CACHE_BYTES) -> None:
+    """Set the cap of the shape cache in bytes (default: back to
+    ``SHAPE_CACHE_BYTES``); the least recently asked shapes beyond it are dropped."""
+    _SHAPES.resize(max_bytes)
 
 
 @lru_cache(maxsize=64)
