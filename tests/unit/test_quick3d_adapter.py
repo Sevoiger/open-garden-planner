@@ -1,0 +1,472 @@
+"""``Quick3DSink`` against a recording engine boundary (Phase 17 L1.2, #385).
+
+The sink is pure bookkeeping: it enforces the ``EngineSink`` protocol, maps
+frames once and tells an ``EngineScene`` what to create, pose, tint and
+destroy. ``Quick3DHost`` implements that boundary with Qt Quick 3D (render
+tier); here a list-backed double implements it, so every line of the adapter
+runs in the default (GPU-less) run — and nothing in this file imports the
+engine.
+
+What the double cannot show — that a created part appears on screen where it
+should — is the render tier's job (``tests/integration/test_quick3d_render.py``).
+"""
+
+from __future__ import annotations
+
+import math
+import sys
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+import pytest
+
+from open_garden_planner.core.scene3d import (
+    BuilderRegistry,
+    EngineBuffers,
+    EnginePose,
+    EngineSink,
+    GroundSpec,
+    Material,
+    Mesh,
+    MeshPart,
+    Params,
+    Record,
+    RecordingSink,
+    SceneSync,
+    SinkProtocolError,
+    SunState,
+    SyncStateError,
+    Transform,
+    engine_buffers,
+    prism_mesh,
+)
+from open_garden_planner.core.shadow_geometry import MIN_SUN_ELEVATION_DEG
+from open_garden_planner.ui.view3d.quick3d.adapter import (
+    GroundPlacement,
+    PartSpec,
+    Quick3DSink,
+)
+from open_garden_planner.ui.view3d.quick3d.materials import WHITE
+
+SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
+RED = Material("SHED", fill_rgba=(200, 30, 30, 255))
+BLUE = Material("SHED", fill_rgba=(20, 40, 220, 128))
+
+
+@dataclass
+class FakePart:
+    spec: PartSpec
+    pose: EnginePose
+    tint: tuple[int, int, int, int]
+    alive: bool = True
+
+
+@dataclass
+class FakeScene:
+    """A list-backed ``EngineScene``: records every call, holds what was created."""
+
+    calls: list[tuple[Any, ...]] = field(default_factory=list)
+    parts: list[FakePart] = field(default_factory=list)
+    sun: Any = "unset"
+    ground: Any = "unset"
+    fail_on_create: int | None = None  # raise on the n-th create_part (1-based)
+    created: int = 0
+
+    def create_part(self, spec: PartSpec, pose: EnginePose,
+                    tint_rgba: tuple[int, int, int, int]) -> FakePart:
+        self.created += 1
+        if self.fail_on_create == self.created:
+            raise RuntimeError("engine refused the part")
+        part = FakePart(spec, pose, tint_rgba)
+        self.parts.append(part)
+        self.calls.append(("create", spec.item_id, spec.kind))
+        return part
+
+    def destroy_part(self, handle: object) -> None:
+        assert isinstance(handle, FakePart) and handle.alive, "destroyed twice or unknown"
+        handle.alive = False
+        self.parts.remove(handle)
+        self.calls.append(("destroy", handle.spec.item_id))
+
+    def pose_part(self, handle: object, pose: EnginePose) -> None:
+        assert isinstance(handle, FakePart) and handle.alive
+        handle.pose = pose
+        self.calls.append(("pose", handle.spec.item_id))
+
+    def tint_part(self, handle: object, tint_rgba: tuple[int, int, int, int]) -> None:
+        assert isinstance(handle, FakePart) and handle.alive
+        handle.tint = tint_rgba
+        self.calls.append(("tint", handle.spec.item_id))
+
+    def set_sun(self, travel: tuple[float, float, float] | None) -> None:
+        self.sun = travel
+        self.calls.append(("sun",))
+
+    def set_ground(self, ground: GroundPlacement | None) -> None:
+        self.ground = ground
+        self.calls.append(("ground",))
+
+    def request_frame(self) -> None:
+        self.calls.append(("frame",))
+
+    def of(self, item_id: str) -> list[FakePart]:
+        return [p for p in self.parts if p.spec.item_id == item_id]
+
+
+def _prism(height: float = 100.0, *, tinted: bool = True, kind: str = "vc",
+           casts: bool = True, name: str = "prism") -> MeshPart:
+    return MeshPart(prism_mesh([SQUARE], height), kind, casts_shadow=casts, tinted=tinted,
+                    name=name)
+
+
+@pytest.fixture()
+def rig() -> tuple[Quick3DSink, FakeScene]:
+    scene = FakeScene()
+    return Quick3DSink(scene), scene
+
+
+class TestProtocol:
+    def test_it_is_an_engine_sink(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        assert isinstance(rig[0], EngineSink)
+
+    @pytest.mark.parametrize("call", [
+        lambda s: s.commit(),
+        lambda s: s.add("a", (), Transform(), RED),
+        lambda s: s.remove("a"),
+        lambda s: s.update_transform("a", Transform()),
+        lambda s: s.update_material("a", RED),
+        lambda s: s.replace_geometry("a", ()),
+        lambda s: s.set_sun(SunState(45.0, 180.0)),
+        lambda s: s.set_ground(GroundSpec(100.0, 100.0)),
+    ], ids=["commit", "add", "remove", "update_transform", "update_material",
+            "replace_geometry", "set_sun", "set_ground"])
+    def test_every_call_needs_an_open_transaction(self, rig: tuple[Quick3DSink, FakeScene],
+                                                  call: Any) -> None:
+        sink, scene = rig
+        with pytest.raises(SinkProtocolError, match="outside begin"):
+            call(sink)
+        assert scene.calls == []
+
+    def test_begin_does_not_nest(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, _ = rig
+        sink.begin()
+        with pytest.raises(SinkProtocolError, match="already open"):
+            sink.begin()
+
+    def test_add_refuses_a_known_id_and_the_others_an_unknown_one(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("a", (_prism(),), Transform(), RED)
+        before = list(scene.calls)
+        with pytest.raises(SinkProtocolError, match="already in the sink"):
+            sink.add("a", (), Transform(), RED)
+        for call in (lambda: sink.remove("b"), lambda: sink.update_transform("b", Transform()),
+                     lambda: sink.update_material("b", RED),
+                     lambda: sink.replace_geometry("b", ())):
+            with pytest.raises(SinkProtocolError, match="unknown item 'b'"):
+                call()
+        assert scene.calls == before  # a refused call reaches the engine with nothing
+
+    def test_parts_must_be_mesh_parts(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        with pytest.raises(SinkProtocolError, match="MeshPart"):
+            sink.add("a", (prism_mesh([SQUARE], 10.0),), Transform(), RED)  # type: ignore[arg-type]
+        assert scene.parts == [] and sink.item_ids() == ()
+
+    def test_commit_asks_for_one_frame(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        assert scene.calls == []  # opening a transaction touches nothing
+        sink.commit()
+        assert scene.calls == [("frame",)] and sink.transactions == 1 and not sink.in_transaction
+
+
+class TestAdd:
+    def test_one_engine_part_per_mesh_part_with_the_mapped_bytes(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        walls, roof = _prism(250.0, name="walls"), _prism(80.0, kind="roof", name="roof",
+                                                          tinted=False)
+        transform = Transform(east_cm=300.0, north_cm=120.0, rotation_deg=17.0, base_cm=40.0)
+        sink.begin()
+        sink.add("house", (walls, roof), transform, RED)
+        sink.commit()
+        first, second = scene.of("house")
+        assert (first.spec.kind, second.spec.kind) == ("vc", "roof")
+        assert (first.spec.part_index, second.spec.part_index) == (0, 1)
+        assert first.spec.buffers == engine_buffers(walls.mesh)   # the ONE frame mapping
+        assert second.spec.buffers == engine_buffers(roof.mesh)
+        assert first.spec.casts_shadow and first.spec.name == "walls"
+        # the pose is frame.engine_pose: (E, base, −N), yaw = +rotation
+        assert first.pose == second.pose == EnginePose((300.0, 40.0, -120.0), 17.0)
+        assert sink.geometry_uploads == 2
+
+    def test_a_tinted_part_gets_the_items_tint_an_untinted_one_white(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("a", (_prism(tinted=True), _prism(tinted=False)), Transform(), BLUE)
+        tinted, plain = scene.of("a")
+        assert tinted.tint == (20, 40, 220, 255)  # Material.tint_rgba: alpha forced opaque
+        assert plain.tint == WHITE == (255, 255, 255, 255)
+
+    def test_shadow_flag_and_kind_are_passed_through(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("pond", (_prism(2.0, kind="water", casts=False),), Transform(), RED)
+        (part,) = scene.of("pond")
+        assert part.spec.kind == "water" and part.spec.casts_shadow is False
+
+    def test_an_item_without_parts_is_still_an_item(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("lawn", (), Transform(east_cm=5.0), RED)
+        assert sink.item_ids() == ("lawn",) and scene.parts == []
+        sink.update_transform("lawn", Transform(east_cm=6.0))   # addressable, nothing to pose
+        sink.update_material("lawn", BLUE)
+        assert scene.calls == [] and sink.item("lawn").transform.east_cm == 6.0
+
+    def test_a_part_with_nothing_to_draw_creates_no_model(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        empty = MeshPart(Mesh.empty(), "vc", tinted=True)
+        sink.begin()
+        sink.add("a", (empty, _prism()), Transform(), RED)
+        assert len(scene.of("a")) == 1 and scene.of("a")[0].spec.part_index == 1
+        assert sink.geometry_uploads == 1
+        assert len(sink.item("a").parts) == 2  # the sink still holds both parts
+        sink.update_transform("a", Transform(east_cm=1.0))
+        sink.update_material("a", BLUE)
+        sink.remove("a")
+        assert scene.parts == []
+
+
+class TestUpdates:
+    def test_update_transform_reposes_every_part_and_uploads_nothing(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("a", (_prism(), _prism(30.0)), Transform(), RED)
+        uploads, parts = sink.geometry_uploads, list(scene.of("a"))
+        scene.calls.clear()
+        moved = Transform(east_cm=10.0, north_cm=-20.0, rotation_deg=90.0, base_cm=3.0)
+        sink.update_transform("a", moved)
+        assert scene.calls == [("pose", "a"), ("pose", "a")]
+        assert all(p.pose == EnginePose((10.0, 3.0, 20.0), 90.0) for p in scene.of("a"))
+        assert scene.of("a") == parts and sink.geometry_uploads == uploads  # same Models
+        assert sink.item("a").transform == moved
+
+    def test_update_material_retints_tinted_parts_only_and_uploads_nothing(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("a", (_prism(tinted=True), _prism(tinted=False)), Transform(), RED)
+        uploads = sink.geometry_uploads
+        scene.calls.clear()
+        sink.update_material("a", BLUE)
+        assert scene.calls == [("tint", "a")]  # ONE call: the untinted part is left alone
+        tinted, plain = scene.of("a")
+        assert tinted.tint == (20, 40, 220, 255) and plain.tint == WHITE
+        assert sink.geometry_uploads == uploads
+        assert sink.item("a").material == BLUE
+
+    def test_replace_geometry_swaps_the_models_and_keeps_pose_and_tint(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        transform = Transform(east_cm=7.0, north_cm=8.0, rotation_deg=45.0)
+        sink.begin()
+        sink.add("a", (_prism(100.0),), transform, RED)
+        (old,) = scene.of("a")
+        taller = (_prism(300.0), _prism(20.0, kind="roof"))
+        sink.replace_geometry("a", taller)
+        new = scene.of("a")
+        assert not old.alive and len(new) == 2 and old not in new  # fresh Models, never a reuse
+        assert new[0].spec.buffers == engine_buffers(taller[0].mesh)
+        assert all(p.pose == EnginePose((7.0, 0.0, -8.0), 45.0) for p in new)
+        assert new[0].tint == (200, 30, 30, 255)
+        assert sink.item("a").parts == taller and sink.geometry_uploads == 3
+
+    def test_remove_destroys_every_part(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("a", (_prism(), _prism(5.0)), Transform(), RED)
+        sink.add("b", (_prism(),), Transform(), RED)
+        sink.remove("a")
+        assert sink.item_ids() == ("b",) and [p.spec.item_id for p in scene.parts] == ["b"]
+
+    def test_an_item_removed_and_added_again_gets_fresh_parts(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        """The geometry rule (``ogp-3d-renderer`` §2): one geometry per Model lifetime —
+        a re-add never hands the engine a buffer object it saw before."""
+        sink, scene = rig
+        part = _prism()
+        sink.begin()
+        sink.add("a", (part,), Transform(), RED)
+        (first,) = scene.of("a")
+        sink.remove("a")
+        sink.add("a", (part,), Transform(), RED)
+        (second,) = scene.of("a")
+        assert second is not first and not first.alive and second.alive
+        assert second.spec.buffers == first.spec.buffers  # equal bytes, a new upload
+        assert sink.geometry_uploads == 2
+
+
+class TestSunAndGround:
+    def test_the_light_travels_away_from_the_sun_in_the_engine_frame(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sun = SunState(elevation_deg=35.0, azimuth_deg=225.0)  # in the south-west
+        sink.begin()
+        sink.set_sun(sun)
+        east, north, up = sun.light_travel_scene
+        assert scene.sun == pytest.approx((east, up, -north), abs=1e-12)
+        assert scene.sun[0] > 0 and scene.sun[1] < 0 and scene.sun[2] < 0  # to NE, downwards
+        assert math.hypot(*scene.sun) == pytest.approx(1.0, abs=1e-12)
+        assert sink.sun == sun
+
+    @pytest.mark.parametrize("elevation", [0.49, 0.0, -6.0, -90.0])
+    def test_a_sun_that_is_down_switches_the_light_off(
+            self, rig: tuple[Quick3DSink, FakeScene], elevation: float) -> None:
+        """No light from below: the night rig is L1.4; until then, night is dark. "Down"
+        is ``SunState.is_up`` — the 2D shadow overlay's threshold, not a second one."""
+        sink, scene = rig
+        sink.begin()
+        sink.set_sun(SunState(elevation, 10.0))
+        assert scene.sun is None and sink.sun == SunState(elevation, 10.0)
+
+    def test_a_sun_at_the_threshold_still_shines(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.set_sun(SunState(MIN_SUN_ELEVATION_DEG, 90.0))  # due east, as low as "up" gets
+        low = math.radians(MIN_SUN_ELEVATION_DEG)
+        assert scene.sun == pytest.approx((-math.cos(low), -math.sin(low), 0.0), abs=1e-12)
+
+    def test_ground_is_the_plan_rectangle_from_the_scene_origin(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.set_ground(GroundSpec(width_cm=2400.0, depth_cm=1600.0))
+        assert scene.ground == GroundPlacement(center=(1200.0, 0.0, -800.0), width_cm=2400.0,
+                                               depth_cm=1600.0)
+        assert sink.ground == GroundSpec(2400.0, 1600.0)
+
+
+class TestStateAndTeardown:
+    def test_state_reads_like_a_recording_sink(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, _ = rig
+        recording = RecordingSink()
+        for target in (sink, recording):
+            target.begin()
+            target.add("a", (_prism(),), Transform(east_cm=1.0), RED)
+            target.add("b", (), Transform(), BLUE)
+            target.update_transform("a", Transform(east_cm=2.0))
+            target.set_sun(SunState(30.0, 100.0))
+            target.set_ground(GroundSpec(10.0, 20.0))
+            target.commit()
+        assert sink.state() == recording.state()
+        assert sink.item("a") == recording.item("a")
+
+    def test_reset_leaves_the_engine_scene_empty(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.begin()
+        sink.add("a", (_prism(), _prism(5.0)), Transform(), RED)
+        sink.add("b", (_prism(),), Transform(), RED)
+        sink.set_sun(SunState(30.0, 100.0))
+        sink.set_ground(GroundSpec(10.0, 20.0))
+        # no commit: reset must work from inside a broken transaction
+        sink.reset()
+        assert scene.parts == [] and sink.item_ids() == ()
+        assert scene.sun is None and scene.ground is None
+        assert sink.sun is None and sink.ground is None and not sink.in_transaction
+        sink.begin()  # usable again
+        sink.add("a", (_prism(),), Transform(), RED)
+        sink.commit()
+        assert len(scene.parts) == 1
+
+    def test_an_engine_error_propagates_and_reset_cleans_up(self) -> None:
+        """A sink never swallows: ``SceneSync`` must see the error to poison itself, and
+        ``reset()`` must then leave nothing half-built behind."""
+        scene = FakeScene(fail_on_create=2)
+        sink = Quick3DSink(scene)
+        sink.begin()
+        with pytest.raises(RuntimeError, match="engine refused"):
+            sink.add("a", (_prism(), _prism(5.0), _prism(7.0)), Transform(), RED)
+        assert len(scene.parts) == 1  # the first part was created before the failure
+        sink.reset()
+        assert scene.parts == [] and sink.item_ids() == ()
+
+
+class TestThroughSceneSync:
+    def _record(self, item_id: str, east: float = 0.0, height: float | None = 100.0,
+                colour: tuple[int, int, int, int] = (200, 30, 30, 255)) -> Record:
+        return Record(item_id=item_id, kind="SHED", shape="rectangle", footprints=(SQUARE,),
+                      transform=Transform(east_cm=east), material=Material("SHED", fill_rgba=colour),
+                      height_cm=height, params=Params({"seed": item_id}))
+
+    def test_a_scripted_session_keeps_the_sink_equal_to_the_recording_one(self) -> None:
+        scene = FakeScene()
+        quick, recording = Quick3DSink(scene), RecordingSink()
+        syncs = (SceneSync(quick, validate=True), SceneSync(recording, validate=True))
+        steps: list[dict[str, Record]] = [
+            {"a": self._record("a"), "b": self._record("b", 300.0), "flat": self._record("flat", height=None)},
+            {"a": self._record("a", east=50.0), "b": self._record("b", 300.0), "flat": self._record("flat", height=None)},
+            {"a": self._record("a", east=50.0, colour=(1, 2, 3, 255)), "b": self._record("b", 300.0)},
+            {"a": self._record("a", east=50.0, colour=(1, 2, 3, 255), height=250.0)},
+            {},
+            {"a": self._record("a"), "b": self._record("b", 300.0)},
+        ]
+        for records in steps:
+            for sync in syncs:
+                sync.apply(records)
+            assert quick.state() == recording.state()
+            # the engine boundary holds exactly one live part per drawable mesh part
+            expected = sorted(item_id for item_id, held in recording.state().items.items()
+                              for part in held.parts if part.mesh.vertex_count)
+            assert sorted(p.spec.item_id for p in scene.parts) == expected
+        assert quick.transactions == recording.transactions
+
+    def test_a_move_reaches_the_engine_as_poses_only(self) -> None:
+        scene = FakeScene()
+        sync = SceneSync(Quick3DSink(scene))
+        sync.apply({"a": self._record("a")})
+        scene.calls.clear()
+        sync.apply({"a": self._record("a", east=10.0)})
+        assert scene.calls == [("pose", "a"), ("frame",)]
+
+    def test_a_failing_engine_poisons_the_sync_until_both_are_reset(self) -> None:
+        scene = FakeScene(fail_on_create=2)
+        sink = Quick3DSink(scene)
+        sync = SceneSync(sink)
+        with pytest.raises(RuntimeError, match="engine refused"):
+            sync.apply({"a": self._record("a"), "b": self._record("b")})
+        assert sync.poisoned
+        with pytest.raises(SyncStateError):
+            sync.apply({})
+        sink.reset()
+        sync.reset()
+        scene.fail_on_create = None
+        sync.apply({"a": self._record("a")})
+        assert [p.spec.item_id for p in scene.parts] == ["a"]
+
+    def test_the_default_registry_builds_what_the_sink_uploads(self) -> None:
+        scene = FakeScene()
+        sync = SceneSync(Quick3DSink(scene), BuilderRegistry(), validate=True)
+        record = self._record("a", height=180.0)
+        sync.apply({"a": record})
+        (part,) = scene.parts
+        packed = np.frombuffer(part.spec.buffers.vertex_data, "<f4").reshape(-1, 12)
+        assert float(packed[:, 1].max()) == 180.0 and float(packed[:, 1].min()) == 0.0  # y = up
+        assert isinstance(part.spec.buffers, EngineBuffers)
+
+
+def test_the_adapter_module_does_not_import_the_engine() -> None:
+    """The sink is testable here BECAUSE it is engine-free: importing it must not pull
+    Qt Quick in (the engine modules are ``geometry`` and ``host``). Checked in the
+    module's own namespace — ``sys.modules`` of a shared test process proves nothing."""
+    module = sys.modules["open_garden_planner.ui.view3d.quick3d.adapter"]
+    names = {name for name, value in vars(module).items()
+             if getattr(value, "__module__", "").startswith("PyQt6")}
+    assert names == set()
