@@ -50,6 +50,18 @@ class TestSelfTest:
     ``tests/integration/test_quick3d_selftest.py`` (render tier), and in the
     frozen exe before every release."""
 
+    @pytest.fixture(autouse=True)
+    def _keep_the_qt_identity(self):
+        """``_run_selftest`` names the application when none exists yet (so its log
+        lands in the app's log directory). Those names are process-global Qt statics:
+        put them back, or every later test resolves ``QStandardPaths`` under them."""
+        from PyQt6.QtCore import QCoreApplication
+
+        saved = (QCoreApplication.organizationName(), QCoreApplication.applicationName())
+        yield
+        QCoreApplication.setOrganizationName(saved[0])
+        QCoreApplication.setApplicationName(saved[1])
+
     @staticmethod
     def _stub_3d(monkeypatch, *, ok: bool = True, raises: bool = False) -> None:
         from pathlib import Path

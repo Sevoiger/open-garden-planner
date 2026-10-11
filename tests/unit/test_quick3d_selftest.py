@@ -238,8 +238,88 @@ class TestRun:
                                                         tmp_path) -> None:
         monkeypatch.setenv("OGP_SELFTEST_LOG", str(tmp_path / "from-env.log"))
         assert selftest.default_log_path() == tmp_path / "from-env.log"
-        monkeypatch.delenv("OGP_SELFTEST_LOG")
-        assert selftest.default_log_path().name == "OpenGardenPlanner-selftest-3d.log"
+
+    def test_the_default_log_lives_in_the_apps_one_log_directory(
+            self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Beside ``app.log`` and ``crash.log`` — through the ONE helper that resolves that
+        directory, not a second path computation."""
+        from open_garden_planner.core import logging_config
+
+        monkeypatch.delenv("OGP_SELFTEST_LOG", raising=False)
+        home = Path("per-user-app-data") / "cofade" / "Open Garden Planner"
+        monkeypatch.setattr(logging_config, "resolve_log_dir", lambda: home)
+        assert selftest.default_log_path() == home / "OpenGardenPlanner-selftest-3d.log"
+
+
+def test_nothing_in_the_engine_package_writes_into_the_temp_directory() -> None:
+    """CWE-377: a predictable file name in the shared temp directory can be pre-created
+    or symlinked by another local user (``/tmp`` on Linux). The self-test log first
+    went there; it now goes into the app's per-user log directory, and no module of
+    the package — nor ``main.py``, which runs the self-test — touches ``tempfile``."""
+    import ast
+
+    package = Path(selftest.__file__).resolve().parent
+    sources = [*sorted(package.glob("*.py")), package.parents[2] / "main.py"]
+    assert len(sources) >= 12
+    for path in sources:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import)
+                    for alias in node.names}
+        imported |= {node.module for node in ast.walk(tree)
+                     if isinstance(node, ast.ImportFrom) and node.module}
+        assert "tempfile" not in imported, path.name
+        names = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        assert not names & {"gettempdir", "mktemp", "tempdir"}, path.name
+
+
+_DEFAULT_LOG = textwrap.dedent("""
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    import open_garden_planner.app.settings as app_settings
+    app_settings.ORGANIZATION_NAME = "cofade_test"
+    app_settings.APPLICATION_NAME = sys.argv[1]
+
+    import open_garden_planner.main as ogp_main
+    from open_garden_planner.ui.view3d.quick3d import selftest
+
+    def no_engine(*_args, **_kwargs):
+        raise RuntimeError("stand-in: this child renders nothing")
+
+    selftest._render = no_engine
+    code = ogp_main._run_selftest()
+    log = selftest.default_log_path()
+    print("LOG", log)
+    print("EXISTS", log.is_file())
+    print("UNDER_TEMP", Path(tempfile.gettempdir()).resolve() in log.resolve().parents)
+    print("CODE", code)
+    log.unlink()
+    log.parent.rmdir()  # empty: nothing else was written under this throwaway identity
+""")
+
+
+def test_the_selftest_writes_its_log_beside_the_apps_logs_not_into_temp(tmp_path: Path) -> None:
+    """End to end, in a child with a THROWAWAY application identity (never the
+    developer's real store): ``main._run_selftest`` names the application before
+    anything resolves a path, and the log lands in ``<per-user app data>/<org>/<app>/``."""
+    identity = f"Open Garden Planner Selftest Probe {os.getpid()}"
+    src = Path(__file__).resolve().parents[2] / "src"
+    env = dict(os.environ, PYTHONPATH=str(src), QT_QPA_PLATFORM="offscreen")
+    env.pop("OGP_SELFTEST_LOG", None)
+    proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
+        [sys.executable, "-c", _DEFAULT_LOG, identity], env=env, capture_output=True, text=True,
+        timeout=170, cwd=tmp_path)
+    assert proc.returncode == 0, proc.stdout[-1500:] + proc.stderr[-2000:]
+    out = dict(line.split(" ", 1) for line in proc.stdout.splitlines()
+               if line.startswith(("LOG ", "EXISTS ", "UNDER_TEMP ", "CODE ")))
+    log = Path(out["LOG"])
+    assert log.name == "OpenGardenPlanner-selftest-3d.log"
+    assert log.parent.name == identity and log.parent.parent.name == "cofade_test"
+    assert out["EXISTS"] == "True" and out["UNDER_TEMP"] == "False"
+    assert out["CODE"] == "1"  # the stand-in render failed: the verdict is still honest
+    assert f"3D self-test log: {log}" in proc.stdout
+    assert not log.exists() and not log.parent.exists()  # the child cleaned up after itself
 
 
 _HANG = textwrap.dedent("""

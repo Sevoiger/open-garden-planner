@@ -23,14 +23,14 @@ It must pass on a machine WITHOUT a GPU: ``release.yml`` runs it on
 than one 160 x 120 frame, no sky probe, no post effects.
 
 The exit code is the only channel of a windowed exe; the log
-(``default_log_path()``) says why, and which graphics adapter rendered.
+(``default_log_path()``: the app's per-user log directory, or ``OGP_SELFTEST_LOG``)
+says why, and which graphics adapter rendered.
 """
 
 from __future__ import annotations
 
 import importlib
 import os
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -220,9 +220,22 @@ class SelftestResult:
 
 
 def default_log_path() -> Path:
-    """``OGP_SELFTEST_LOG`` if set, else ``<temp dir>/OpenGardenPlanner-selftest-3d.log``."""
+    """Where the self-test log goes: ``OGP_SELFTEST_LOG`` if set, else the app's ONE
+    per-user log directory — beside ``app.log`` and ``crash.log``
+    (``core.logging_config.resolve_log_dir``).
+
+    Never the temp directory: on Linux ``/tmp`` is shared between users, and a file
+    with a predictable name there can be pre-created or symlinked by another local
+    user (CWE-377). The directory hangs on the application's name, which the
+    caller must have given Qt first (``main._run_selftest`` does, as ``main`` does
+    for the crash log).
+    """
     override = os.environ.get("OGP_SELFTEST_LOG")
-    return Path(override) if override else Path(tempfile.gettempdir()) / LOG_NAME
+    if override:
+        return Path(override)
+    from open_garden_planner.core.logging_config import resolve_log_dir
+
+    return resolve_log_dir() / LOG_NAME
 
 
 def _render(log: RenderLog, qml_dir: Path | None) -> Rendered:

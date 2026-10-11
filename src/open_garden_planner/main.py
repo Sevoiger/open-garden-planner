@@ -171,9 +171,24 @@ def _run_selftest() -> int:
     # The engine imports stay inside ui/view3d/quick3d/ (the import rule); the
     # log path is printed because a detached windowed exe has no stdout and
     # the exit code alone cannot say WHICH check failed.
+    #
+    # The log goes into the app's ONE per-user log directory, beside app.log
+    # and crash.log -- never under a predictable name in the temp directory,
+    # which on Linux other users can write to (CWE-377). That directory hangs
+    # on the application's identity (QStandardPaths.AppDataLocation), which
+    # main() gives Qt only after it created its QApplication. The self-test
+    # runs before that, so it names the application itself, with the same pair
+    # -- unless an application already exists, whose identity is not ours to
+    # change.
     try:
+        from PyQt6.QtCore import QCoreApplication
+
+        from open_garden_planner.app.settings import APPLICATION_NAME, ORGANIZATION_NAME
         from open_garden_planner.ui.view3d.quick3d.selftest import run_selftest
 
+        if QCoreApplication.instance() is None:
+            QCoreApplication.setOrganizationName(ORGANIZATION_NAME)
+            QCoreApplication.setApplicationName(APPLICATION_NAME)
         quick3d = run_selftest()
         for line in quick3d.lines:
             print(line)
