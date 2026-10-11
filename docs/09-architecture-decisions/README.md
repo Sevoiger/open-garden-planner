@@ -1912,6 +1912,141 @@ P0/P1 row links its own issue, as decision 1 requires of every P0/P1 row (TD-037
 - **8** — the gated low and high presets pass (≥ 0.85); medium's 60° reads 0.847, a hair under the bound, on a preset outside the pre-registered low/high set. The < 0.85 policy (illustrative shadows + draped 2D analysis) covers it either way.
 - **10** — the spike's share passes (zero aborts; 100 cycles + 20 reloads, exit 0), but the D3D11 leak is open: the owner tail slope read 15.73 MB/reload, above the pre-registered < 10 gate. Accepted as open (option a); it closes in L1.3 with an A/B soak plus a dedicated-GPU-memory reading.
 
+### Addendum L1.2 — the production engine package (2026-10-11, #385 story L1.2)
+
+**Status**: Accepted with L1.2. It turns the GO into code: `ui/view3d/quick3d/`, the Qt Quick 3D
+side of ADR-054's `EngineSink`. Nothing is wired into the app yet (L1.3), and the shipped
+"3D View…" still opens the Qt 3D window.
+
+**Context.** The spike proved the engine on one long-lived script: build everything, set a model
+list, wait for frames, grab. A product needs the opposite shape — a scene that follows edits one
+call at a time, a host that is embedded and kept, a render path with no window for tests, tools
+and the frozen exe's self-test, and all of it testable on machines without a GPU, because the
+release runner has none. Three things the spike left open had to be measured first: whether
+`engine_pose`'s rotation sense is the engine's (L1.1's open proof), whether a window that is
+never shown can render at all, and what the self-test costs on WARP.
+
+**Decision.**
+
+1. **One package, two engine modules.** `ui/view3d/quick3d/` is the only importer of
+   `PyQt6.QtQuick3D` / `QtQuick` / `QtQml` in the product, and inside it only `geometry.py` and
+   `host.py` are (`offscreen.py` reaches the engine through `host`). Every decision that is not a
+   Qt call sits in an engine-free module — `adapter`, `materials`, `look`, `shots`, `qt_messages`,
+   `runlog`, the scene and the judge of `selftest` — and the byte layout sits in the Qt-free
+   `core/scene3d/interleave.py`.
+2. **`Quick3DSink` is pure bookkeeping against a narrow boundary.** It implements `EngineSink`
+   and drives `EngineScene` (create / destroy / pose / tint a part, sun, ground, request a
+   frame). `Quick3DHost` implements `EngineScene` with real Models; a list-backed double
+   implements it in the default test tier. The sink never swallows an engine error, and its one
+   teardown is `clear()`.
+3. **One Model per mesh part, one geometry and one material instance per Model.** Created through
+   a QML function (`createPart`), never a `Repeater3D` over a list; destroyed hidden-first,
+   because `destroy()` is deferred. `BufferGeometry` uploads once, at construction, and has no
+   method to upload again — the re-attach rule is structural.
+4. **One tint rule for every material kind: `albedo = vertex colour × tint`, in linear light**, the
+   tint being a property of the Model. This is what makes `update_material` a property write.
+5. **The host is a `QQuickView`; `container()` is how it is embedded** (criterion 3's policy
+   outcome, now measured for the container itself). It refuses, with `HostStateError`, every
+   call it cannot answer truthfully: a second grab of a never-shown window, a grab while hidden,
+   a pick without a rendered frame.
+6. **`grab()` is the synchronisation point.** Nothing in the package or its tests waits for a
+   frame to be presented.
+7. **Offscreen = one never-shown host per frame**, through the real `SceneSync` → sink → host
+   path, with every Qt message recorded and an error-class message raising `RenderError`.
+8. **One look, `NEUTRAL_DAY`** — the spike's noon rig, a plain sky colour, no image-based light
+   probe, a flat fill derived from the noon sky (its mean in linear light × the spike's probe
+   exposure). `set_look(Look)` takes plain data; L1.4 builds the looks.
+9. **`--selftest` renders and judges** one hidden 160 × 120 frame containing every material kind,
+   with a watchdog; its log goes into the app's per-user log directory.
+10. **A render tier in two processes**: a driver with a real Qt platform renders; the tests, in
+    the ordinary offscreen process, judge with a CPU projection of their own. CI runs it in a
+    `render3d` job that is not a required check.
+
+**Ported from the spike unchanged** (each measured there, ADR-048 evidence log): the vertex
+layout (stride 48, linear colour); the frame mapping; the sun as
+`QQuaternion.rotationTo((0, 0, −1), travel)`; the High preset's shadow settings — bias 5,
+`ShadowMapQualityVeryHigh`, PCF16, `pcfFactor` 2, `shadowMapFar` 9000, locked texels, factor 82,
+two cascades and none in the orthographic view; the material numbers (vertex-colour 0.78 / 0.35,
+roof 0.80 / 0.15, glass, the foliage and grass shaders, the water shader's lighting model and its
+`#if QSSG_ENABLE_LIGHT_PROBE` guard); the endless meadow (4 × 4 km, 1 cm under the plan, one
+albedo); the cameras (clip planes, 40° field of view, the top camera at 40 m); the pick helper
+returning a plain JS object; the Qt-message classifier; the log-plus-watchdog pattern; the noon
+rig's numbers.
+
+**Changed, and why.**
+
+| Spike | L1.2 | Why |
+|---|---|---|
+| `Repeater3D` over a JS array of models | `createPart()` per mesh part | any change of the array recreates every delegate, and a geometry does not survive its Model |
+| `NumpyGeometry.set_mesh` re-uploads into one object | `BufferGeometry`: one upload, no re-upload method | one geometry per Model lifetime, enforced by the type |
+| interleaving inside the Qt class | `core/scene3d/interleave.py` | the default test run covers the layout byte for byte |
+| shared material objects, colour baked into vertices | one material instance per Model, tint as a property | a recolour must not upload geometry |
+| the water colour as one uniform for every pond | water albedo = vertex colour × tint (`VAR_COLOR`) | the same rule as every other kind; the mesh carries its colour |
+| sky light probe, fog, glow, AO, four presets | plain sky colour, flat fill, one look | L1.4 owns looks; a probe costs 40–85 s once on WARP — nothing for a self-test |
+| the meadow hidden and a white probe ground in the orthographic view | the meadow and the plan rectangle always shown | the truth view shows the scene, not a probe rig |
+| `wait_frames` on `frameSwapped`, then grab | grab only | a visible window may present one frame and no more (§11.4.9) |
+| two hosts, `QQuickView` and `QQuickWidget` | `QQuickView` only | criterion 3; the package does not import `QtQuickWidgets` |
+| one process-wide message recorder | recorders that chain; an exact `environment` class | a render inside a recorded run, or inside the app, must not deafen the outer listener |
+| `SunState` with colour and brightness | direction (`core/scene3d.SunState`) apart from the look | where the sun stands is truth; what it looks like is art direction |
+
+**Alternatives considered — rejected.**
+
+- *Engine imports in the sink.* Then no line of the sync-to-engine logic runs without a GPU.
+- *Leaving the host to the render tier alone.* Measured: the default tier then covered 511 of the
+  package's 871 statements, which on CI's numbers for the base commit (`ui`: 18,880 of 26,500)
+  puts `ui` at 70.85 % against its floor of 71 %. The host is therefore also exercised under the
+  offscreen platform, where `Garden.qml` loads and Models are created, posed and read back
+  without a pixel (`tests/ui/test_quick3d_host.py`): 855 of 879 statements.
+- *Recolour by rewriting vertex colours.* Simple, but an upload per recolour and a second code
+  path for something the material can do.
+- *A persistent hidden render target (`QQuickRenderControl`).* Not attempted: one hidden host
+  per frame serves every consumer L1 has (0.4–1.3 s per frame). Revisit if a tool needs many
+  windowless frames per second.
+- *Waiting for presented frames.* Measured to stall with the display asleep.
+- *The self-test in a child process with the parent as its watchdog.* More moving parts in a
+  frozen exe for the same guarantee `faulthandler` gives in-process.
+- *The self-test log in the temp directory.* The first version; a predictable name in a shared
+  directory (CWE-377). Replaced in review (§8.11).
+- *`render3d` as a required check.* A software rasteriser on a shared runner proves correctness,
+  not speed, and the job could not be run before it was written.
+
+**Consequences.** New: the package (eleven modules, `Garden.qml`, four shaders),
+`core/scene3d/interleave.py`, `Quick3DSink.clear()` (the teardown the L1.1 review adds to
+`EngineSink` as its tenth method — implemented here ahead of the protocol change), a CI job, a
+third block in `--selftest`. No `.ogp` change, no `FILE_VERSION` bump, no new dependency, no
+user-visible string. Bundle +0.07 MB. The spike stays untouched and importable; it and the
+spec's spike entries retire in L1.10. Seams left for later stories: `Quick3DHost.container()` and
+`set_shot` (L1.3), `set_look(Look)` and `windTime` (L1.4), the plan rectangle in `Garden.qml`
+(L1.5), `pick()` → `PickHit` (L1.8).
+
+**Evidence** (Windows 11, RTX 4070 and WARP via `QSG_RHI_PREFER_SOFTWARE_RENDERER=1`, PyQt6
+6.11.0, Python 3.12.9, 2026-10-11; the monitor was asleep, which is how the second row was found).
+
+| Question | Measured |
+|---|---|
+| Can a never-shown window render? | Yes, once: the first hidden grab is pixel-identical to a shown grab (mean abs difference 0.0), WARP vs GPU differ by ≤ 4 of 255; the SECOND hidden grab is the bare clear colour (difference 161). Cost per hidden frame: 0.4–0.5 s with one material, 1.1–1.3 s with all six (three custom shaders), GPU and WARP alike |
+| Do frames keep coming on a visible window? | Not with the display asleep: 1 `frameSwapped`, then none in 40 update requests; with `QT_D3D_NO_VBLANK_THREAD=1` about 4 per second; on WARP they flow. A shown grab: 1–9 ms |
+| Is `eulerRotation.y = +rotation_deg` counter-clockwise from above? | Yes: mask IoU against the CPU prediction 1.000 / 0.9994 / 1.000 / 0.9895 at 0° / 17° / 90° / 213.5°; against the opposite sense 0.288 (17°) and 0.157 (213.5°) |
+| East right, north up? | Centroids of an east and a north box exact to 0.0 px, IoU 1.000; predicted under a mirrored or swapped mapping: IoU 0.000 |
+| Shadow vs the analytic 2D shadow | IoU 0.9777 / 0.9763 / 0.9770 at azimuth 225° / 135° / 45°, elevation 35°, 480 × 360 (WARP within 0.0002); direction within 0.02° |
+| Lit and shaded faces | luma 229.5 lit vs 126.6 shaded (filmic view), the lit pair following the azimuth in all three cases |
+| Radiance of a lit top face (truth view) | predicted 167.2 of 255, measured 171 |
+| Tint through `baseColor` vs a shader uniform | 171 vs 169 |
+| Picking | 10 of 10 easy targets, 6 of 6 adversarial (inside a bounding box, off the mesh), 0 of 10 false hits on bare ground; our projection vs the engine's 0.0 px; 0.01–0.2 ms per pick |
+| Uploads per edit | add 2 items: 2 · move: 0 · recolour: 0 · replace geometry: 1 · remove: 0 · re-add: 1 · clear and re-send: 2 · hide and show: 0; the re-added, the re-sent and the re-shown frame identical to the one before (difference 0.0) |
+| Open: request → first finished readback, `bench_small.ogp` (99 records, 87 Models, 640 × 400) | 1.11 s on the GPU (QML load 17 ms, first expose with device creation 935 ms, apply 31 ms, grab 21 ms); 0.17 s on WARP |
+| Edit → finished readback (30 moves, the same plan) | GPU: median 7.1 ms, p95 17.9 ms, max 26.8 ms (snapshot 2.3, apply 0.2, grab 4.5). WARP: median 23.2 ms. Against ADR-048 entries 5/6's 50 ms p95 |
+| Engine import cost in the running app | the package 1 ms; the sink with `core/scene3d` 17 ms; the Qt Quick bindings 17 ms. App start loads none of it |
+| Embedding (criterion 3) with the window container | top-level surface stays `RasterSurface`; 2D pan step median 2.56 ms with the 3D container vs 2.63 ms without (×0.97; WARP ×0.92). Control: a `QQuickWidget` makes the surface `Direct3DSurface` and the step 262 ms on this machine (its presents wait for the sleeping display) |
+| `--selftest`, the whole command, three runs each | from source: 2.2–4.3 s (GPU), 2.1–5.7 s (WARP). Frozen exe via `Start-Process -Wait -PassThru`: 3.0–4.1 s (GPU), 3.0–3.1 s (WARP), 3.0 s (WARP, every shader cache disabled). Exit 0 in all; exit 1 under the offscreen platform, on a broken shader, on a hang (watchdog) |
+| Bundle | 650,814,304 vs 650,736,554 bytes for the base commit: +77,750 bytes (+0.07 MB); smoke exit 124 |
+| The whole render tier | 51 tests, about 50 s on the GPU; the driver's eight scenarios 22 s on WARP; zero Qt warnings and errors in both |
+
+**Not measured** — stated so nobody assumes it: anything on Linux (xcb, OpenGL, llvmpipe) and on
+GitHub's runners — the `render3d` job is unproven until its first run; an integrated GPU; a
+display at a scale other than 100 % (the code and the tests carry the device pixel ratio, the
+machine did not have one); the memory curve of criterion 10, which stays with L1.3.
+
 ## ADR-049: Frost-Date Semantics - One Parser, 29 February Substituted as 1 March
 
 **Status**: Accepted (2026-10, #414 / #416, task-date correctness package)

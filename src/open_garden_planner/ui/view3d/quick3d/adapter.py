@@ -1,6 +1,6 @@
 """``Quick3DSink`` — the ``EngineSink`` of the Qt Quick 3D renderer (L1.2). Engine-free.
 
-``SceneSync`` (``core/scene3d``) calls the nine sink methods; the sink keeps the
+``SceneSync`` (``core/scene3d``) calls the sink methods; the sink keeps the
 books and tells an ``EngineScene`` what to do. ``Quick3DHost`` implements
 ``EngineScene`` with real ``Model`` objects; a list-backed double implements it
 in ``tests/unit/test_quick3d_adapter.py`` — which is why this module imports no
@@ -10,8 +10,15 @@ What the sink guarantees:
 
 - **Frame mapping exactly once.** A part's mesh becomes engine-frame bytes in
   ``core.scene3d.engine_buffers``; a record's transform becomes a Model pose in
-  ``core.scene3d.engine_pose``; the sun and the ground are mapped here. Nothing
-  downstream (host, QML) converts a coordinate again.
+  ``core.scene3d.engine_pose``; the sun and the ground are mapped here. What
+  the host is handed is in the engine frame already; the host maps only what it
+  is asked itself (a camera placement, a pick result), with the same
+  ``core/scene3d/frame.py`` functions, and the QML converts nothing.
+- **One teardown.** ``clear()`` — the tenth ``EngineSink`` method (it joins the
+  protocol with the L1.1 review) — destroys every Model with its geometry,
+  forgets the sun and the ground and closes any open transaction. It is legal
+  at any time, including inside a transaction an engine error broke.
+  ``SceneSync.reset()`` calls it and then re-sends everything.
 - **One Model per mesh part, one geometry per Model lifetime.** ``add`` creates
   the Models, ``remove`` destroys them, ``replace_geometry`` destroys and
   creates. A geometry object is never handed to a second Model: the L0 spike
@@ -21,10 +28,6 @@ What the sink guarantees:
   counts every buffer handed to the engine, and neither call changes it.
 - **Errors are loud.** A protocol breach raises ``SinkProtocolError`` before the
   engine is touched; an engine error propagates (``SceneSync`` poisons itself).
-- **One teardown.** ``clear()`` destroys every Model with its geometry, forgets
-  the sun and the ground and closes any open transaction — legal at any time,
-  including inside a transaction an engine error broke. ``SceneSync.reset()``
-  calls it and then re-sends everything.
 
 GUI thread only, like everything that touches the scene.
 """

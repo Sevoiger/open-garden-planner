@@ -9,6 +9,8 @@ description: "Measured facts and runbook for Open Garden Planner's Qt Quick 3D r
 was measured in this repo; the machine is named because software rasterisers (Mesa llvmpipe,
 Windows WARP) say nothing about absolute GPU speed — only about correctness, ratios and
 relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the engine.
+Since L1.2 the production package `ui/view3d/quick3d/` exists: its measured facts and commands
+are §12, and rows it added to the tables below say "(L1.2)".
 
 ## 1. Boundary rules (pinned by tests)
 
@@ -17,6 +19,12 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
 - **One engine module.** Only `spike_q3d/quick.py` may import `PyQt6.QtQuick3D`, `QtQuick`,
   `QtQml` or `QtQuickWidgets` (AST scan in the same test). The production package inherits the
   rule as `ui/view3d/quick3d/`.
+- **One engine package (L1.2).** In the product, only `ui/view3d/quick3d/` imports those
+  bindings — and inside it only `geometry.py` and `host.py` do; `selftest.py` names them as
+  strings to import them one by one. Pinned over the WHOLE tree, imports by name included
+  (`__import__("PyQt6.QtQuick3D")` is an import), by `tests/unit/test_quick3d_boundary.py`,
+  which also pins that app start loads neither the bindings nor the package and that the
+  package never uses a `QQuickWidget`.
 - **QML carries no user-visible strings** — `pylupdate6` does not extract `qsTr`, so any text
   goes through a QWidget overlay with `self.tr()` (§8.3).
 - `spike_q3d/meshes.py` is **Qt-free numpy** (it graduates into `core/`).
@@ -36,6 +44,12 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
 | `Repeater3D` over a JS array | fine for a fixed set | **any** change of the array destroys and recreates **every** delegate — combined with the row above, every model came back blank; use per-item creation or a list model with incremental inserts |
 | Pick result | `View3D.pick()` inside a QML helper that returns a plain JS object | the return value arrives as **`QJSValue`**: call `.toVariant()` before `dict()` |
 | Surface format | — | `QQuick3D.idealSurfaceFormat()` **before** `QGuiApplication` exists **segfaults** (Linux) |
+| Models from Python (L1.2) | a QML function (`createPart`) that calls `Component.createObject(parentNode, {...})`, invoked with `QMetaObject.invokeMethod(root, "createPart", Qt.ConnectionType.DirectConnection, Q_RETURN_ARG("QVariant"), Q_ARG("QVariant", …))` | the Model arrives as a `QQuick3DObject`; `setProperty("position" / "eulerRotation", QVector3D)` works; pass the geometry as an ARGUMENT (QML converts it), keep the Python reference as long as the Model lives |
+| Destroying a Model (L1.2) | `visible = false`, `pickable = false`, `geometry = null`, then `destroy()` | `destroy()` is deferred: a frame in between would still draw the Model |
+| Exposure (L1.2) | `ExtendedSceneEnvironment.exposure` (`QtQuick3D.Helpers`) | the plain `SceneEnvironment` has no `exposure`: a QML load error |
+| Fill light without a probe (L1.2) | a second `DirectionalLight { brightness: 0; ambientColor: … }` | — (measured: it still contributes its ambient term, so the fill stays when the sun is switched off) |
+| `baseColor` vs a shader uniform (L1.2) | `PrincipledMaterial.baseColor` takes sRGB and is linearised by the engine; a `vector3d` uniform of a `CustomMaterial` is passed as it is | the engine's sRGB curve is an approximation: the same tint read 171 through `baseColor` and 169 through an exact linear uniform |
+| Vertex colour in a fragment-only custom shader (L1.2) | `VAR_COLOR` | — (D3D11 on GPU and WARP; OpenGL unverified) |
 
 ## 3. Frame and geometry
 
@@ -45,8 +59,18 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   their inverses, exact column selection). Meshes there are in the **item-local** frame and a
   record's transform poses them: `engine_pose(transform)` gives the Model position
   `(east_cm, base_cm, −north_cm)` and a turn of `+rotation_deg` about the engine's +Y — proven
-  equal to posing in the scene and mapping the result (`tests/unit/test_scene3d_frame.py`), on
-  numpy only: against the engine itself it is still to be measured (L1.2).
+  equal to posing in the scene and mapping the result (`tests/unit/test_scene3d_frame.py`), and
+  **measured on the engine in L1.2**: `eulerRotation.y = +rotation_deg` is the
+  counter-clockwise turn seen from above — a 240 × 60 cm bar matched the CPU prediction with
+  mask IoU 0.9994 at 17° and 0.9895 at 213.5°, the opposite sense with 0.288 and 0.157
+  (`tests/integration/test_quick3d_render.py`).
+- **The byte layout is Qt-free since L1.2:** `core/scene3d/interleave.py::engine_buffers(mesh)`
+  builds the vertex and index bytes (and maps the frame, once);
+  `ui/view3d/quick3d/geometry.py::BufferGeometry` only hands them to Qt — one upload per
+  object, no re-upload method.
+- **The top-down view is linear (L1.2).** With `TonemapModeNone` a pixel is linear radiance,
+  so it can be computed: a lit horizontal face reads `255 × tint × (brightness × sin(elevation)
+  × sun colour + fill)`, all in linear light — predicted 167.2, measured 171.
 - **Vertex layout, stride 48 bytes:** position f32×3 @0, normal f32×3 @12, colour f32×4 @24
   (**linear**, not sRGB), uv f32×2 @40 (spike convention: u = wind weight, v = phase), indices
   U32; `setBounds` + `update()`.
@@ -188,6 +212,27 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   hide/show it: re-entry (show → next frame) median **7 ms** on llvmpipe, 31–53 ms on WARP
   (`--soak`; measured on a fully rendered scene — before the re-attach fix in §2, a soak that
   re-added models measured an empty garden).
+- **The window container keeps the main window a raster surface (L1.2).** With
+  `QWidget.createWindowContainer(view)` beside the 2D canvas, the top-level window's
+  `surfaceType()` stays `RasterSurface` and a 2D pan step costs the same: median 2.56 ms with
+  the container vs 2.63 ms without (×0.97; WARP ×0.92). The control — a `QQuickWidget` in the
+  same place — turns the surface into `Direct3DSurface`. The surface type is the direct test;
+  the timing only says what it would cost. A container belongs to its parent widget: when
+  that widget is destroyed Qt destroys the view too, and a Python wrapper used afterwards
+  raises "wrapped C/C++ object … has been deleted" (`Quick3DHost.is_closed` notices).
+- **A window that was never shown renders exactly ONE frame (L1.2).** `create()` +
+  `grabWindow()` on a hidden `QQuickView` gives a correct frame once (pixel-identical to a
+  shown grab); the second such grab is the bare clear colour — every Model gone, `#Rectangle`
+  included (mean abs difference 161; GPU and WARP). `pick()` finds nothing on such a window.
+  Offscreen rendering is therefore one host per frame (0.4–0.5 s with one material, 1.1–1.3 s
+  with six), and a host raises instead of returning that second frame.
+- **Do not wait for `frameSwapped` to be sure of a frame (L1.2).** On Windows, Qt 6.11
+  delivers update requests from a thread that waits for the display's vertical blank. With the
+  monitor asleep, a visible, exposed, active window presented its first frame and then none
+  (1 frame after 40 `update()` calls; `QT_D3D_NO_VBLANK_THREAD=1` → about 4 per second; on WARP
+  they flow). `grabWindow()` renders and reads back synchronously regardless (1–9 ms): it is
+  the synchronisation point. A `QQuickWidget`'s window composition waited 262 ms per 2D pan
+  step on that machine.
 
 ## 7. Picking
 
@@ -231,6 +276,18 @@ topmost triangle under a vertical ray over every pickable mesh, merged per item)
   run emits no Qt messages at all, so the gate has no false alarms there.
 - **Aim probes at the actual view size** (`SpikeRenderer.view_size()`), not the requested
   one: a window larger than the screen is clamped.
+- **Which device rendered? (L1.2)** `rendererInterface().graphicsApi()` names the API, not the
+  adapter. Switch on Qt's `qt.rhi.general` debug output
+  (`QLoggingCategory.setFilterRules("qt.rhi.general.debug=true")`) and read it from the message
+  handler: Direct3D lists every adapter and prints `using this adapter` after the chosen one;
+  OpenGL prints the context's `RENDERER`. `quick3d/qt_messages.py::graphics_adapter` does it.
+  **Force the software rasteriser on Windows with `QSG_RHI_PREFER_SOFTWARE_RENDERER=1`** — the
+  log then says `Microsoft Basic Render Driver` (WARP), which is what a GPU-less runner has.
+- **A recorder that replaces the Qt message handler must forward (L1.2).**
+  `qInstallMessageHandler` keeps ONE handler: a recorder installed for one frame hid a shader
+  error from the recorder of the whole run. `qt_messages.install` chains to the handler it
+  replaced. Warnings that belong to the machine are a class of their own, listed exactly —
+  so far one: `qt.qpa.screen: "Unable to open monitor interface to …"` (display asleep).
 
 - **Linux:** the `offscreen` QPA selects the *software* scene graph, which cannot render 3D.
   Use `xvfb-run` + `QT_QPA_PLATFORM=xcb` + `QSG_RHI_BACKEND=opengl` (+ `LIBGL_ALWAYS_SOFTWARE=1`
@@ -267,6 +324,11 @@ topmost triangle under a vertical ray over every pickable mesh, merged per item)
   this replaces: 5.8 MB.
 - Frozen Windows exe with the spike bundled: the unchanged `--selftest` gate still exits 0
   (ogp-change-control §2.8 is its home).
+- **L1.2:** the production package adds its five QML and shader files (a data loop in
+  `installer/ogp.spec`) and eleven modules: **+77,750 bytes** (650,814,304 vs 650,736,554,
+  same machine, same day). `--selftest` now also RENDERS one hidden 160 × 120 frame from the
+  bundle's QML and shaders and judges its pixels (§12); frozen exe 3.0–4.1 s on an RTX 4070
+  and 3.0–3.1 s on WARP for the whole command.
 
 ## 10. CPU-side baselines (not engine)
 
@@ -301,3 +363,56 @@ triangles (`scripts/bench_view3d.py`).
 | "Cold" open time on the second run of the day | Qt/Mesa disk caches from the first | `--cold`, and read `shader_caches.found_before_run` |
 | RSS climbs ~30 MB per project reload | append-only keep-alive list of ground textures | hold only the shown texture; judge by the tail slope |
 | Plan ground white after a probe; the second window "differs" by ~10 luma | the same `QQuick3DTextureData` re-attached after being detached | re-upload it on re-attach; assert `probe_restore_frame_diff` < 1 |
+| The second offscreen frame is an empty sky (L1.2) | a never-shown window renders one frame, then its scene is gone | one host per offscreen frame |
+| A wait for frames times out although the window is visible (L1.2) | display asleep: no vertical blank, no update requests | never wait for presented frames; `grab()` |
+| QML: Cannot assign to non-existent property "exposure" (L1.2) | plain `SceneEnvironment` | `ExtendedSceneEnvironment` |
+| A broken shader raises, but the run's summary counts 0 errors (L1.2) | a nested message recorder replaced the outer one | recorders forward to the handler they replaced |
+| `--selftest` fails with "the box is not there" and `api=Software` (L1.2) | it ran under `QT_QPA_PLATFORM=offscreen` | run it with a real platform |
+| "wrapped C/C++ object of type QQuickView has been deleted" on close (L1.2) | the widget that parented the window container was destroyed first | check `is_closed`; `close()` is a quiet release then |
+| Two identical frames around an edit (L1.2) | the edited item was hidden behind another | edit something the camera sees |
+
+## 12. The production package — `ui/view3d/quick3d/` (L1.2)
+
+Concept and module map: §8.26.2 of `docs/08-crosscutting-concepts/README.md`; the decision and
+every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
+
+- **Sink and host.** `adapter.Quick3DSink(host)` is the `EngineSink`; `host.Quick3DHost(size)`
+  is the `QQuickView` and implements the sink's `EngineScene`. `SceneSync(Quick3DSink(host))
+  .apply(records)` is the whole wiring. `host.container()` embeds it; `host.grab()` reads a
+  frame; `host.pick(x, y)` returns a `PickHit` in the SCENE frame; `host.engine_parts()` reads
+  the Models back from the QML scene (what the engine holds, not what the sink believes).
+- **One frame without a window:** `offscreen.render_records(records, shot=TopDownShot(...),
+  sun=SunState(...), ground=GroundSpec(...), size=(w, h))` → `OffscreenFrame` (`.image`,
+  `.rgba()`, `.open_ms`, `.adapter` with `graphics_info=True`). A QML or shader error raises
+  `RenderError`.
+- **The engine boundary without a GPU.** Under the offscreen platform `Garden.qml` loads and
+  Models are created, posed and read back — no pixels, but every sink call is checkable:
+  `tests/ui/test_quick3d_host.py` (default tier; a canary in a child process skips the module
+  where that is not possible). `render_records` reports `graphics_api == "Software"` there.
+- **The render tier** (opt-in, opens windows):
+
+  ```bash
+  # Windows (Git Bash) — the real GPU, then WARP
+  OGP_RENDER3D=1 venv/Scripts/python.exe -m pytest tests/integration/test_quick3d_render.py \
+      tests/integration/test_quick3d_engine.py tests/integration/test_quick3d_selftest.py
+  OGP_RENDER3D=1 QSG_RHI_PREFER_SOFTWARE_RENDERER=1 venv/Scripts/python.exe -m pytest \
+      tests/integration/test_quick3d_render.py
+  # Linux
+  OGP_RENDER3D=1 QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1 \
+    xvfb-run -a -s "-screen 0 1920x1080x24" venv/bin/python -m pytest \
+    tests/integration/test_quick3d_render.py tests/integration/test_quick3d_engine.py
+  ```
+
+  The driver alone, to look at frames (`<out>/*.png`, `result.json`, `render.log`):
+  `venv/Scripts/python.exe tests/integration/quick3d_render_driver.py --out <out> --scenarios
+  truth,materials,states,edits,pick,sun,integration,embed`. From a git worktree set
+  `PYTHONPATH` to that checkout's `src` first for anything that is not pytest.
+- **The self-test's 3D block:** `quick3d/selftest.py::run_selftest()`; its log is
+  `OpenGardenPlanner-selftest-3d.log` in the app's log directory (beside `app.log`), or
+  `OGP_SELFTEST_LOG`. Never run `--selftest` under `QT_QPA_PLATFORM=offscreen`.
+- **Numbers** (RTX 4070 / WARP, 2026-10-11): open of `bench_small.ogp` (99 records, 87 Models)
+  to the first finished readback 1.11 s / 0.17 s; edit → finished readback median 7.1 ms
+  (p95 17.9) / 23.2 ms; pick 0.01–0.2 ms; shadow IoU vs the analytic 2D shadow 0.976–0.978
+  at 35° and 480 × 360; engine import 17 ms on top of 17 ms for `core/scene3d`.
+- **Not measured:** Linux and GitHub's runners (the `render3d` CI job is unproven until its
+  first run), an integrated GPU, a display scale other than 100 %.

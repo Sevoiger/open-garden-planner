@@ -160,6 +160,26 @@ imports all six Qt3D bindings, asserts `qVersion()` matches the `PyQt6-3D-Qt6`
 wheel version, then binds an ephemeral port and starts a real `AgentApiServer`
 with poisoned providers, asserting `is_running`.
 
+Since Phase 17 L1.2 it also **renders**: the Qt Quick 3D engine package
+(`ui/view3d/quick3d/`) is lazily loaded too, and its scene is QML and shader
+*files* in the bundle. `--selftest` loads them from the bundle, draws one
+hidden 160 × 120 frame with every material kind and checks the pixels
+(`ui/view3d/quick3d/selftest.py`). It needs no GPU — Direct3D 11 on WARP will
+do, which is what the release runner has — and a watchdog ends a hung render
+after 180 s with exit code 1. Two things to know when it fails:
+
+- The exit code cannot say which check failed; the 3D block writes a log to
+  `%APPDATA%\cofade\Open Garden Planner\OpenGardenPlanner-selftest-3d.log`
+  (beside `app.log`), or to the path in `OGP_SELFTEST_LOG`. It names the
+  graphics adapter that rendered.
+- Under `QT_QPA_PLATFORM=offscreen` nothing renders 3D, so the 3D block
+  FAILS there by design. Run `--selftest` with the real platform. To check the
+  GPU-less path locally, set `QSG_RHI_PREFER_SOFTWARE_RENDERER=1` (the log
+  then says `Microsoft Basic Render Driver`).
+
+Measured 2026-10-11 (three runs each, the whole `--selftest`): frozen exe
+3.0–4.1 s on an RTX 4070 and 3.0–3.1 s on WARP.
+
 ```bash
 powershell -Command '$p = Start-Process "dist/OpenGardenPlanner/OpenGardenPlanner.exe" -ArgumentList "--selftest" -Wait -PassThru; exit $p.ExitCode'
 echo $?   # 0 = PASS, 1 = a subsystem is dead

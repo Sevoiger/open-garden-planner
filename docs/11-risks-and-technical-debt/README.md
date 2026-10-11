@@ -1044,6 +1044,75 @@ None of these was reported by a user: each was found by measuring a claim before
   a corner fixed is reported as geometry **and** transform: correct — the record's frame hangs on
   the item's centre, and that centre moved. Both are pinned as behaviour, not worked around.
 
+### 11.4.9 Six things the engine taught while the production package was built (Phase 17 L1.2, #385)
+
+Each was found by measuring before building on it (ADR-048 addendum L1.2). Machine: Windows 11,
+RTX 4070 and WARP, PyQt6 6.11.0, 2026-10-11.
+
+- **A Qt Quick window that was never shown renders exactly ONE frame.** *Symptom:* the second
+  `grabWindow()` of a hidden `QQuickView` returned the bare clear colour — every Model gone,
+  even the built-in `#Rectangle` ground (mean absolute difference 161 of 255 against the first
+  grab on a 320 × 240 frame; Direct3D 11 on the GPU and on WARP alike). The first hidden grab is
+  right: pixel-identical to a grab of the same scene in a shown window. *Root cause (inferred from
+  the behaviour, not read in Qt's source):* for a window with no live scene graph Qt builds a
+  throwaway render device for the grab and tears the scene graph down afterwards, and Qt Quick
+  3D's scene does not come back. `View3D.pick()` on such a window finds nothing for the same
+  reason. *Fix:* `offscreen.render_records` builds one host per frame; `Quick3DHost.grab()` raises
+  `HostStateError` on a second hidden grab, on a grab while hidden after having been shown, and
+  `pick()` raises without a rendered frame — a wrong frame or "no hit" must never stand in for
+  "could not look". Pinned by
+  `tests/integration/test_quick3d_render.py::test_the_host_refuses_what_it_cannot_answer_truthfully`.
+- **With the display asleep, a visible window presents its first frame and then none.**
+  *Symptom:* a shown, exposed, active `QQuickView` fired `frameSwapped` once; forty
+  `view.update()` calls later the count was still 1 (threaded and basic render loop). A wait for
+  two frames timed out after 20 s. *Root cause:* Qt 6.11 delivers update requests on Windows from
+  a thread that waits for the display's vertical blank; a monitor in power-save has none. With
+  `QT_D3D_NO_VBLANK_THREAD=1` frames flowed again, at about 4 per second (each present waited
+  ~250 ms). On WARP frames flow either way. The machine also prints
+  `qt.qpa.screen: "Unable to open monitor interface to \\.\DISPLAY1"` on every window.
+  `grabWindow()` is unaffected: it renders and reads back synchronously in 1–9 ms. *Fix:* nothing
+  in the package or its tests waits for a frame to be *presented*; `grab()` is the
+  synchronisation point. (The L0 owner run's protocol note — a `wait_frames` timeout followed by
+  an access violation in `grab()` — was this family.) The monitor warning is listed, exactly, as
+  an `environment` message in `qt_messages._ENVIRONMENT`, so "a clean run records zero Qt
+  warnings" stays assertable on that machine; an allow-list wider than what was measured would be
+  a hole, and `tests/unit/test_quick3d_pure.py::TestClassify` pins that it is not.
+- **A recorder that replaces Qt's message handler deafens the one before it.** *Symptom:* the
+  positive control "a broken shader fails the render" raised `RenderError` as it should — and
+  the run's own summary still counted 0 Qt errors. `render_records` installs a recorder for one
+  frame; the driver had one for the whole run; `qInstallMessageHandler` keeps a single handler.
+  *Fix:* `qt_messages.install` forwards every message to the handler it replaced and
+  `uninstall(previous)` puts that one back. Inside the running app this is also what keeps the
+  app's own logging intact during an offscreen render. Pinned by
+  `tests/unit/test_quick3d_pure.py::test_nested_recorders_both_hear_an_error`.
+- **`exposure` is not a property of `SceneEnvironment`.** Only `ExtendedSceneEnvironment`
+  (`QtQuick3D.Helpers`) has it; on the plain type it is a QML load error ("Cannot assign to
+  non-existent property"), reported with file and line by `Quick3DHost` — the loud path worked
+  before the scene did. `Garden.qml` uses the extended environment for that one property, with
+  every effect it offers switched off.
+- **`TonemapModeNone` leaves LINEAR radiance in the frame — which makes a pixel computable.**
+  In the top-down view a lit horizontal face reads
+  `255 × tint_linear × (brightness × sin(elevation) × sun_linear + fill_linear)`: predicted 167.2,
+  measured 171 (the difference is the material's small specular term). The frame looks dark to a
+  human; it is a measurement view, and the render tier's truth checks rest on it
+  (`test_a_lit_top_face_has_the_radiance_the_sun_predicts`). Related: a light with
+  `brightness: 0` still contributes its `ambientColor`, which is how the fill stays on when the
+  sun is switched off; and `PrincipledMaterial.baseColor` is linearised by the engine with an
+  approximation of the sRGB curve — a tint through it and the same tint through a custom
+  shader's exact uniform read 171 and 169.
+- **A log with a fixed name in the temp directory is a hole on Linux (CWE-377).** The self-test
+  first wrote `tempfile.gettempdir()/OpenGardenPlanner-selftest-3d.log`. `/tmp` is shared between
+  users; a predictable name there can be pre-created or symlinked. Found in review, before any
+  release. *Fix:* the log goes into the app's one per-user log directory
+  (`core.logging_config.resolve_log_dir`), and `main._run_selftest` names the application first,
+  because that directory hangs on Qt's application identity. Rule and tests: §8.11.
+
+Two measurements that are not traps but will be asked for: `Model.eulerRotation.y =
++rotation_deg` IS the counter-clockwise turn seen from above (mask IoU 0.9994 against the CPU
+prediction at 17°, 0.288 against the opposite sense) — the proof L1.1 left open; and the engine's
+shadow of a 100 × 100 × 200 cm box overlaps the analytic 2D shadow with IoU 0.976–0.978 at 35°
+elevation and 480 × 360 (three azimuths, GPU and WARP within 0.0002), its direction within 0.02°.
+
 ### CI/release hardening: locked metadata also contains the application version
 
 A version-only edit to `pyproject.toml` makes `uv.lock` stale. The measured probe failed

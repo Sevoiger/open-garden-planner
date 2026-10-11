@@ -221,8 +221,8 @@ Details in `ogp-build-and-run`.
 
 ### `.github/workflows/ci.yml` — the merge gate (every push, every PR to master)
 
-Seven jobs using locked Python 3.11 environments (type/dependency matrices include Windows) (`agent-context` was added
-2026-08-09; the security job also runs the secrets scan — count the jobs, don't
+Eight jobs using locked Python 3.11 environments (type/dependency matrices include Windows) (`agent-context` was added
+2026-08-09, `render3d` with Phase 17 L1.2; the security job also runs the secrets scan — count the jobs, don't
 trust this table):
 
 | Job | Command | Notes |
@@ -234,6 +234,7 @@ trust this table):
 | Dependencies | `scripts/check_dependency_lock.py` | Linux/Windows; lock freshness and PEP 751 export agreement |
 | Types | `scripts/check_mypy_baseline.py` | Linux/Windows Python 3.11; per-file allowances, strict mypy |
 | Coverage | full-suite branch coverage + `scripts/check_coverage_floors.py` | Linux; package line floors; initially not a required GitHub check |
+| Render 3D | the 3D render tier (`OGP_RENDER3D=1`): `tests/integration/test_quick3d_render.py`, `test_quick3d_engine.py`, `test_quick3d_selftest.py` | Linux under xvfb (xcb, OpenGL on llvmpipe) and Windows (Direct3D 11 on WARP); not a required GitHub check |
 
 Gate on green before merging: `gh pr checks <PR#> --watch --fail-fast` (Windows) or the
 GitHub MCP check-run tools in cloud sessions.

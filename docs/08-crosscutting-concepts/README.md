@@ -599,6 +599,83 @@ them where they fit.
   identified), and a hover test that does not check would have passed vacuously there. Assert an
   effect of the hover (the handle's highlight brush) before asserting that it changed nothing else.
 
+### 8.10.4 The 3D render tier (Phase 17 L1.2)
+
+3D cannot be rendered in the default test run: `tests/conftest.py` sets
+`QT_QPA_PLATFORM=offscreen`, and under that platform Qt Quick falls back to the software scene
+graph, which draws no 3D (`View3D` prints "not based on QRhi … is not going to display anything",
+the frame comes back white). So tests that need pixels form an opt-in tier.
+
+**Shape.** Two processes with two jobs:
+
+- a **driver** with a real Qt platform (`tests/integration/quick3d_render_driver.py`) only *does*
+  engine things — it drives `SceneSync` → `Quick3DSink` → `Quick3DHost`, saves every frame as a
+  PNG and writes raw engine answers (picks, the Models read back from the QML scene, upload
+  counters, timings, every Qt message) to `result.json`;
+- the **tests** (`test_quick3d_render.py`, `test_quick3d_engine.py`, `test_quick3d_selftest.py`)
+  only *judge*, in the ordinary offscreen test process, with a CPU projection of their own
+  (`shots.top_down_pixel` + `core.scene3d.pose_ring`) — never with the engine's.
+
+The scene definitions are plain engine-free functions in the driver module that both halves
+import, so the test predicts from the same records the driver rendered.
+
+**Running it** (it opens windows on the desktop):
+
+```bash
+# Windows (Git Bash): Direct3D 11 on the real GPU
+OGP_RENDER3D=1 venv/Scripts/python.exe -m pytest tests/integration/test_quick3d_render.py \
+    tests/integration/test_quick3d_engine.py tests/integration/test_quick3d_selftest.py
+# … and on the software rasteriser (WARP — what a GPU-less runner has)
+OGP_RENDER3D=1 QSG_RHI_PREFER_SOFTWARE_RENDERER=1 venv/Scripts/python.exe -m pytest <the same files>
+# Linux: xvfb + xcb + OpenGL (Mesa llvmpipe in a container)
+OGP_RENDER3D=1 QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1 \
+    xvfb-run -a -s "-screen 0 1920x1080x24" venv/bin/python -m pytest <the same files>
+```
+
+Without `OGP_RENDER3D=1` the tier skips with a reason; on Linux it also needs `DISPLAY`. The
+helper (`quick3d_render_support.render_env`) gives the DRIVER the real platform and this
+checkout's code — the pytest process itself stays offscreen. CI runs the tier in the `render3d`
+job (§7.4), which is not a required check. Measured 2026-10-11 on the dev box: 51 render-tier
+tests in about 50 s on an RTX 4070, the driver's eight scenarios in 22 s on WARP.
+
+**The tier below it.** Not everything about the engine needs pixels. Under the offscreen
+platform `Garden.qml` still loads and Models are still created, posed, tinted, destroyed and
+read back, so `tests/ui/test_quick3d_host.py` checks the scene file, every sink call as it
+arrives in the QML scene, the sun / ground / camera mapping and the host's state rules in the
+DEFAULT run — on every machine and in the required CI job. A canary in a child process runs
+first and skips the module where Qt Quick 3D objects cannot be created at all, instead of
+taking the test process down. This is also what keeps the `ui` coverage floor: with it the
+default run covers 855 of the engine package's 879 statements, without it 511 of 871.
+
+**Rules the tier is built on** (each one paid for):
+
+- **Meaning, never golden images.** A box is where the CPU projection puts it (mask IoU), a
+  face is lit or not (a luma ratio), a click hits what a CPU ray oracle says. The same
+  assertions hold on a GPU, on WARP and on llvmpipe; WARP and the GPU differed by at most 4 of
+  255 on a probe frame.
+- **Predict in the truth view.** The top-down orthographic shot is not tone-mapped, so a pixel
+  is linear radiance and can be *computed*: a lit horizontal face shows
+  `tint × (sun brightness × sin(elevation) × sun colour + fill)`; predicted 167.2, measured 171.
+- **Every gate has a control that makes it fire.** The mirrored and swapped mappings are
+  predicted and must NOT match (IoU 0.000); the wrong rotation sense must not match (0.288 at
+  17°); each shader file is broken once and must fail the render; a `QQuickWidget` in the
+  embedding test must turn the window into an RHI surface. Angles that cannot tell two senses
+  apart (0°, 90° for a rectangle) are not enough — the matrix has two that can.
+- **`grab()` is the only moment of certainty.** The tier never waits for a frame to be presented
+  (§11.4.9: with the display asleep a visible window presents one frame and then none); every
+  step is "change, grab, judge".
+- **The driver records, the test asserts.** A number measured and asserted in the same process
+  as the engine can confirm itself. Timings and counters are written down raw; bounds live in
+  the tests, with the measured value in the docstring.
+- **Budgets only on hardware.** A software rasteriser says nothing about a GPU: timing bounds
+  skip themselves when the adapter is WARP / llvmpipe (the adapter's name is read from Qt's
+  `qt.rhi.general` output). Structural gates (surface types, upload counts) run everywhere.
+- **Pick something you can see.** "The frame changed after the edit" is only a test if the
+  edited item is visible: the first version moved a chair standing behind a tree and got two
+  identical frames. The session edits the two largest solids.
+- **A failing run must leave its pictures.** `OGP_RENDER3D_ARTIFACTS` makes every driver run
+  copy its frames, `result.json` and log there; CI uploads the directory even when the job fails.
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
@@ -629,6 +706,30 @@ result = subprocess.run(cmd)  # nosec B603 — cmd is constructed internally, ne
 - **The `mcp>=1.23` dependency floor is a security control, not a version bump.** 1.23.0 is the first release whose FastMCP auto-enables the loopback guard. Measured: under the previous floor (`>=1.12`) a 1.22.0 wheel answered a crafted `Host: evil.example` initialize with **HTTP 200 and a full MCP result**, across all six hostile variants, where 1.30.0 answers 421/403. No shipped exe is known to be exposed — every release happened to bundle a 1.30-era wheel — but the exposure was a property of *whichever wheel resolved at build time* rather than of the product.
 - **Test-design consequence.** The black-box 421/403 tests are necessary but not sufficient: with mcp 1.30.0 installed they pass *even with the explicit settings deleted*, and so does a naive "settings object is not None and the flag is True" assertion, because the SDK auto-enable returns exactly such an object. `tests/integration/test_agent_api_dns_rebinding.py` therefore also asserts what the SDK default cannot satisfy — that `allowed_hosts` names the **bound port**, and that nothing is a wildcard. Deleting the `transport_security=` argument fails 3 of its 4 object-level tests.
 - **Reads remain unauthenticated** (loopback trust, the audit's challenged decision C2). This closes the *browser* vector; it does not re-open that one. The #355 input boundary additionally rejects non-finite/null/oversized callout offsets before Qt construction, so an authenticated caller cannot turn a write token into unbounded scene geometry. D2.6 reuses the same finite/canvas-relative reachability check for absolute positions and vertices before constructing `QPointF` geometry.
+
+
+### Temporary files: never a predictable name in the shared temp directory (CWE-377)
+
+Found in review of Phase 17 L1.2 (#385): the 3D self-test wrote its log to
+`tempfile.gettempdir() / "OpenGardenPlanner-selftest-3d.log"`. On Windows `%TEMP%` is per user;
+on Linux `/tmp` is shared, and a file with a known name there can be created or symlinked by
+another local user before the app writes it. Bandit does not flag this form (it reports
+`tempfile.mktemp`, not a fixed name joined to `gettempdir()`), so it is a review rule:
+
+- **A log or a diagnostic file goes into the app's ONE per-user log directory** —
+  `core.logging_config.resolve_log_dir()`, where `app.log` and `crash.log` live. Reuse the
+  helper; do not compute a second path. That directory hangs on Qt's application identity
+  (`QStandardPaths.AppDataLocation`), so code that runs before `main()` has named the application
+  (the `--selftest` path) must name it first — `main._run_selftest` does, and leaves an existing
+  application's identity alone.
+- **A real scratch file goes into `tempfile.mkdtemp()` / `TemporaryDirectory()`** (an
+  unpredictable name, mode 0700) and is removed afterwards.
+- **Tests never write under the real identity**: they pass an explicit path (`OGP_SELFTEST_LOG`)
+  or run under a throwaway application name.
+
+Pinned by `tests/unit/test_quick3d_selftest.py`
+(`test_nothing_in_the_engine_package_writes_into_the_temp_directory`,
+`test_the_selftest_writes_its_log_beside_the_apps_logs_not_into_temp`).
 
 ## 8.12 Constraint Solver Architecture
 
@@ -2624,3 +2725,110 @@ assert the invariant that makes diffs safe after each step of an edit sequence: 
 `translated(mesh, …)` → `mesh.translated(…)` *within the local frame*, `normal_vs_winding`,
 `srgb_to_linear` and `item_seed` keep their names. Drift-guard tests keep the ported helpers equal
 to the spike's until L1.10 deletes it.
+
+### 8.26.2 The engine package — `ui/view3d/quick3d/` (L1.2)
+
+The other side of the `EngineSink` seam: Qt Quick 3D. The decision, what was ported from the
+spike and every measurement are the **ADR-048 addendum "L1.2"**; the engine's traps are §11.4.9
+and the `ogp-3d-renderer` skill. L1.2 wires nothing into the app — the shipped "3D View…" still
+opens the Qt 3D window; L1.3 embeds this package's host.
+
+**The package.** It is the only place in the product that imports `PyQt6.QtQuick3D`, `QtQuick`,
+`QtQml` or `QtQuickWidgets` (it does not import the last one at all), and inside it only two
+modules do. Everything that is a decision rather than a Qt call lives in an engine-free module,
+which is why the GPU-less test run covers it.
+
+| Module | Engine? | What it is |
+|---|---|---|
+| `core/scene3d/interleave.py` | Qt-free | `engine_buffers(mesh)`: a `Mesh` as the bytes the engine uploads — stride 48, little-endian (position @0, normal @12, linear colour @24, uv @40), uint32 indices, bounds. THE place a mesh crosses into the engine frame |
+| `adapter.py` | no | `Quick3DSink` (the `EngineSink`) and `EngineScene`, the narrow boundary it drives |
+| `materials.py` | no | material kind → QML part component; the tint rule |
+| `look.py` | no | `Look` — a mood as plain data — and `NEUTRAL_DAY`, the one look of L1.2 |
+| `shots.py` | no | `PerspectiveShot`, `TopDownShot`; `top_down_pixel`, our own projection |
+| `qt_messages.py` | no | every Qt message recorded and classified; the graphics adapter read from Qt's log |
+| `runlog.py` | no | a line-flushed log and a watchdog |
+| `selftest.py` | lazy | the 3D part of `--selftest`: the scene, the judge, the run |
+| `geometry.py` | **yes** | `BufferGeometry`: `EngineBuffers` → `QQuick3DGeometry`, one upload per object |
+| `host.py` | **yes** | `Quick3DHost`: the `QQuickView`, the `EngineScene`, grab, pick, camera, look |
+| `offscreen.py` | **yes** | `render_records(...)`: records in, one `QImage` out, no window |
+| `qml/Garden.qml` + 4 shaders | — | the scene; one part `Component` per material kind |
+
+Importing the package itself is free (`__init__` is a docstring); the engine loads when `host` or
+`offscreen` is imported. Measured in the running app on the dev box: the package 1 ms, the sink
+with `core/scene3d` 17 ms, the engine bindings 17 ms.
+
+**One Model per mesh part, one geometry per Model lifetime.** `Quick3DSink.add` creates one
+engine `Model` per `MeshPart` (a part without triangles gets none), each with its OWN geometry
+object and its own material instance. `remove` destroys them; `replace_geometry` destroys and
+creates; `clear()` destroys everything. A geometry is never handed to a second Model and never
+re-filled — `BufferGeometry` has no method to do it — because the spike measured what reuse
+costs: a blank frame and 0 of 20 picks. There is no `Repeater3D` over a list: any change of the
+list recreates every delegate. The render tier pins the consequence: an item removed and added
+again, and the whole scene cleared and re-sent, come back pixel-identical and pickable.
+
+**A move or a recolour uploads nothing.** `update_transform` sets the Models' `position` and
+`eulerRotation.y`; `update_material` sets their tint. The upload counter (`BufferGeometry.uploads`,
+read by the render tier around each edit) does not move.
+
+**Frames, once.** A mesh is mapped to the engine frame in `engine_buffers`; a record's transform
+becomes a Model pose in `engine_pose` — position `(east, base, −north)`, `eulerRotation.y =
++rotation_deg`, measured on the engine to be the counter-clockwise turn seen from above (the
+proof L1.1 left open); the sun and the ground are mapped in the sink; camera placements and pick
+results are mapped in the host, with the same `core/scene3d/frame.py` functions. `Garden.qml`
+converts nothing.
+
+**The tint rule.** For every material kind: `albedo = vertex colour × tint`, in linear light.
+The tint is the item's `Material.tint_rgba` for a part with `tinted=True` and white otherwise;
+it is a property of the Model, never baked into the vertex buffer. `vc`, `roof` and `glass` take
+it as `PrincipledMaterial.baseColor` (the engine linearises it); `foliage`, `grass` and `water`
+take it as a linear `vec3` uniform computed in Python. Measured on one swatch per kind: 171 and
+169 of 255 for the two paths.
+
+**Light.** `set_sun` hands over the unit vector the light travels along (the negated sun vector
+from `core/solar`); the host turns it into the rotation that puts the light's local −Z onto it.
+A sun below `MIN_SUN_ELEVATION_DEG` — the 2D shadow overlay's own threshold — switches the sun
+off; a flat fill light remains, so a night is dim rather than black (the night rig is L1.4).
+L1.2 has ONE look, `NEUTRAL_DAY`: the spike's noon rig (sun `#fff1dc` × 1.9, exposure 0.85), a
+plain sky colour and no image-based light probe; the fill is the mean of the noon sky's top and
+horizon in linear light times the spike's probe exposure — derived, not chosen. L1.4 passes its
+own `Look` to `Quick3DHost.set_look`.
+
+**Two views.** The perspective view is the one people look at: filmic tone mapping, exposed by
+the look. The **top-down shot** is the truth view: orthographic, north up, NOT tone-mapped — a
+pixel is the surface's linear radiance — and its projection is plain arithmetic
+(`shots.top_down_pixel`), which is what lets a test say where a box must be.
+
+**The host and its lifecycle.** `Quick3DHost` is a `QQuickView`; `container()` wraps it for a
+QWidget layout (`QWidget.createWindowContainer` — a native window: sibling widgets do not paint
+over it). Never a `QQuickWidget`: with the container beside the 2D canvas the top-level window
+stays a raster surface and a 2D pan step costs the same (×0.97 measured); a `QQuickWidget` in
+the same place turns the window into a Direct3D surface. Create the host once, keep it, hide and
+show it. Three state rules, each enforced by a `HostStateError` instead of a wrong answer:
+
+- `grab()` renders the current state now and reads it back; it is the one moment when "the
+  engine shows what it was told" is certain. Do not wait for `frameSwapped` to be sure of a frame.
+- A host that was never shown can `grab()` exactly once — the second such grab would return the
+  bare background. A host that was shown and is hidden cannot grab.
+- `pick(x, y)` answers for the frame rendered last and returns the item id, the part index and
+  the hit point in the SCENE frame; it needs a shown host that has rendered. "No hit" never
+  means "could not look".
+
+**The offscreen path.** `offscreen.render_records(records, shot=…, sun=…, ground=…, size=…)` runs
+the real `SceneSync` → `Quick3DSink` → `Quick3DHost` on a host that is never shown, reads one
+frame back and closes the host — one host per frame, because of the rule above. The clock
+(`open_ms`) stops at the finished readback. Every Qt message of the render is recorded; a QML
+error or a shader that does not compile raises `RenderError` — the frame would have rendered
+anyway, in the wrong colours. A process that owns itself (the self-test, a script) wraps the
+call in `runlog.watchdog`: after the time is up every thread's stack is dumped into the log and
+the process exits with code 1.
+
+**The self-test.** `--selftest` (`main._run_selftest` → `quick3d/selftest.py`) renders one hidden
+160 × 120 frame from the bundle's own QML and shaders — a lit box, its shadow, one swatch per
+material kind, so every shipped shader is compiled by the real backend — and judges the pixels
+with a pure function: the box where our projection puts it, meadow beside it, shadow where
+`core/shadow_geometry` puts the 2D shadow, every swatch drawn. It needs no GPU (§7.4).
+
+**What is not here.** No input handling and no orbit camera (L1.3); no look presets, sky, fog,
+night rig or wind animation (L1.4) — `windTime` exists and stands still; no ground texture
+(L1.5: `set_ground` sizes the bare plan rectangle and the endless meadow, both in the one meadow
+albedo); no builders beyond the default prism (L1.6, L1.7); no selection (L1.8).

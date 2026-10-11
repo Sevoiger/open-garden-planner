@@ -68,6 +68,7 @@ src/open_garden_planner/
 │   │   ├── build.py              #   Builder seam, BuilderRegistry, default prism builder, verify_builder
 │   │   ├── sync.py               #   SceneSync — snapshots in, minimal sink calls out
 │   │   ├── color.py              #   sRGB → linear, the one conversion
+│   │   ├── interleave.py         #   a Mesh as the bytes an engine uploads (stride 48, engine frame) — L1.2
 │   │   └── legacy.py             #   the former scene3d.py (US-E6, ADR-038): triangulation, extrusion, sun vector — until L1.10
 │   ├── walk_camera.py            # Qt-free walkthrough rules — eye height, bounds clamp, pitch-limited look vector (US-E7)
 │   ├── growth_model.py           # Qt-free current-size→mature interpolation by planting date — one model for shadows/heatmap/3D (US-E8, ADR-037)
@@ -143,6 +144,9 @@ src/open_garden_planner/
 │   │       └── resize_handle.py
 │   ├── view3d/                   # 3D view MVP (US-E6): snapshot.py (plan→records: collect_scene3d_records for Qt 3D,
 │   │                             #   snapshot_records for contract v2 — L1.1) + qt3d_adapter.py (ONLY Qt3D importer) + view3d_window.py
+│   │   └── quick3d/              # the Qt Quick 3D engine package (Phase 17 L1.2, ADR-048) — see §5.11: the ONLY
+│   │                             #   importer of PyQt6.QtQuick3D / QtQuick / QtQml; adapter.py (Quick3DSink), host.py
+│   │                             #   (QQuickView), geometry.py, offscreen.py, selftest.py, look/shots/materials, qml/
 │   ├── panels/
 │   │   ├── drawing_tools_panel.py
 │   │   ├── properties_panel.py
@@ -444,6 +448,26 @@ AST scan that follows those siblings).
 | `core/scene3d/sink.py` | `EngineSink` (nine methods) and `RecordingSink`, its protocol-enforcing double; `SunState` (angles from `core/solar`), `GroundSpec` (minimal, L1.5 extends it). | calls → engine state / a call log |
 | `core/scene3d/sync.py` | `SceneSync`: owns the last applied snapshot; builders before the sink is touched; one transaction or none; contains a failing builder, is poisoned by a failing sink until `reset()`. | snapshots → minimal sink calls |
 | `core/scene3d/legacy.py` | The pre-L1.1 contract, moved verbatim and re-exported by the package: `Scene3DRecord`, `records_from_raw`, `triangulate_polygon`, `extrude_footprint`, `sun_direction_scene`, `to_engine_frame`. Feeds the shipped Qt 3D window and the dormant spike; contract v2 reuses its triangulation and extrusion. Removed in L1.10. | raw footprints → scene-space prisms |
+
+## 5.11 Qt Quick 3D Engine Package (Phase 17 L1.2, #385, ADR-048)
+
+Black-box view of `ui/view3d/quick3d/`, the engine side of the 3D scene pipeline (§5.10). It is
+the only place in the product that imports `PyQt6.QtQuick3D`, `QtQuick` or `QtQml` (an AST scan
+over the whole tree pins it: `tests/unit/test_quick3d_boundary.py`), it is never loaded at app
+start, and L1.2 wires it into nothing — the shipped "3D View…" still opens the Qt 3D window
+(L1.3 embeds the host). Concept: §8.26.2. Engine facts: the `ogp-3d-renderer` skill.
+
+| Building block | Responsibility | Interface (in → out) |
+|----------------|----------------|----------------------|
+| `core/scene3d/interleave.py` | Qt-free: `engine_buffers(mesh)` — the interleaved vertex buffer (stride 48: position, normal, linear colour, uv), the uint32 index buffer and the bounds, mapped to the engine frame once. | `Mesh` → `EngineBuffers` (bytes) |
+| `quick3d/adapter.py` | `Quick3DSink`, the `EngineSink` of Qt Quick 3D — the nine protocol methods plus `clear()`, the one teardown the L1.1 review adds to the protocol as its tenth: protocol checks, the books, frame mapping; one Model per mesh part, one geometry per Model lifetime; a move or a recolour uploads nothing. Drives the narrow `EngineScene` protocol — implemented by the host, and by a list-backed double in the GPU-less tests. No Qt import. | sink calls → `create_part` / `pose_part` / `tint_part` / `destroy_part` / `set_sun` / `set_ground` |
+| `quick3d/host.py` | `Quick3DHost`: the `QQuickView` showing `Garden.qml`; implements `EngineScene`; `container()` for a QWidget layout; `grab()` (synchronous render + readback), `pick()` → `PickHit` in the scene frame, `set_shot` / `set_camera` / `set_top_down`, `set_look`, `engine_parts()` (the Models read back from the QML scene). Refuses (`HostStateError`) what it cannot answer truthfully. | plain data → Models, frames, picks |
+| `quick3d/geometry.py` | `BufferGeometry`: hands `EngineBuffers` to `QQuick3DGeometry`; one upload per object, counted. | bytes → GPU geometry |
+| `quick3d/offscreen.py` | `render_records(...)`: records through the real `SceneSync` → `Quick3DSink` → host on a never-shown window; one `QImage`; Qt errors raise `RenderError`. | records, shot, sun, size → `OffscreenFrame` |
+| `quick3d/selftest.py` | The 3D part of `--selftest`: a scene with every material kind, a pure pixel judge, the run with log and watchdog. | → `SelftestResult` (OK / FAIL lines) |
+| `quick3d/look.py`, `shots.py`, `materials.py` | Plain data and rules: `Look` / `NEUTRAL_DAY`; `PerspectiveShot` / `TopDownShot` and `top_down_pixel`; material kind → QML part component and the tint rule. No Qt import. | — |
+| `quick3d/qt_messages.py`, `runlog.py` | Every Qt message recorded and classified (a shader or QML error fails a render), the graphics adapter read from Qt's log; a line-flushed log and a watchdog. | Qt messages → counts, errors |
+| `quick3d/qml/` | `Garden.qml`: lights, cameras, the ground, one part `Component` per material kind, `createPart` / `destroyPart` / `pickAt` / `listParts`; `foliage.vert`, `foliage.frag`, `grass.vert`, `water.frag`. No user-visible strings (scanned: `tests/unit/test_quick3d_qml.py`). | root properties and functions ← Python |
 
 ## Developer quality and release tooling
 

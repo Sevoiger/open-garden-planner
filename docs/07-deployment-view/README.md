@@ -197,7 +197,8 @@ Two workflow files in `.github/workflows/`:
 
 **Trigger**: every branch push and every PR to `master`. Python dependencies come from
 `uv.lock` through the shared setup-locked-env action. The PEP 751 export is checked for drift.
-Qt workflows use `QT_QPA_PLATFORM=offscreen`; xvfb is not part of this CI recipe.
+Qt workflows use `QT_QPA_PLATFORM=offscreen`; only the `render3d` job, which needs a real
+window system, runs under xvfb.
 
 | Job key | Check name | Platform | Behavior |
 |---|---|---|---|
@@ -208,6 +209,7 @@ Qt workflows use `QT_QPA_PLATFORM=offscreen`; xvfb is not part of this CI recipe
 | `dependencies` | Dependencies (ubuntu-latest/windows-latest) | Matrix | Clean locked installation, freshness and export checks |
 | `types` | Types (ubuntu-latest/windows-latest) | Matrix | Strict mypy against per-file platform allowances |
 | `coverage` | Coverage | Linux | Full-suite line/branch report and per-package line floors |
+| `render3d` | Render 3D (ubuntu-latest/windows-latest) | Matrix | The 3D render tier (`OGP_RENDER3D=1`) of the engine package: Linux under xvfb with xcb and OpenGL on Mesa llvmpipe, Windows with Direct3D 11 on WARP. Frames, results and logs are uploaded. Not required by protection |
 
 The matrix jobs each emit two concrete check names. The reviewed protection payload requires
 the existing checks plus both dependency/type matrix results and an up-to-date PR. Coverage
@@ -228,6 +230,41 @@ flowchart LR
 
 Local frozen-exe build, startup smoke and subsystem self-test remain mandatory before merge.
 The release job repeats its subsystem self-test after the installer build. See ADR-050.
+
+**The 3D render tier (`render3d`, Phase 17 L1.2).** The `test` job cannot render 3D: under the
+offscreen platform Qt Quick uses the software scene graph. The `render3d` job runs
+`tests/integration/test_quick3d_render.py`, `test_quick3d_engine.py` and
+`test_quick3d_selftest.py` with a driver process on a real Qt platform (§8.10.4). Both runners
+are GPU-less, so the job proves correctness on software rasterisers — small frames, no sky light
+probe, timing budgets skipped — and it is deliberately not a required check. Measured locally
+(2026-10-11): the tier passes on an RTX 4070 and on WARP. **The job itself was written without
+access to GitHub's runners and is unproven until its first run** — the Linux package list in
+particular.
+
+**What `--selftest` covers** (the frozen exe, locally before merge and in `release.yml`):
+
+| Block | Since | What a pass means |
+|---|---|---|
+| Qt3D bindings + Qt version match | #277 | the six Qt3D bindings load and the Qt runtime equals the Qt3D wheels' version |
+| Agent API server | #291 | a real embedded server binds a port with no inherited stdout |
+| Qt Quick 3D render | L1.2 (ADR-048) | the Qt Quick bindings load; `Garden.qml` and its four shaders load FROM THE BUNDLE; one hidden 160 × 120 frame renders with every material kind; the pixels are right — the box, the meadow, the box's shadow where the 2D shadow code puts it, every swatch |
+
+The 3D block needs no GPU: on `windows-latest` Direct3D 11 renders it on WARP. Measured on the
+dev box with `Start-Process -Wait -PassThru` (the whole `--selftest`, three runs each): frozen
+exe 3.0–4.1 s on the RTX 4070 and 3.0–3.1 s on WARP (also with every shader cache disabled);
+from source 2.2–4.3 s and 2.1–5.7 s. The 3D frame itself took 1.0–1.8 s in most runs and up
+to 6.5 s while other test suites were running on the machine. A watchdog inside the exe ends a hung render after 180 s with a stack dump and exit
+code 1. The 3D block writes a log — the exe has no stdout — into the app's per-user log
+directory beside `app.log` (never the temp directory, §8.11), or where `OGP_SELFTEST_LOG`
+says; `release.yml` sets that variable and prints the log, and the exit code alone still
+decides. Under `QT_QPA_PLATFORM=offscreen` the 3D block FAILS (nothing renders there): run
+`--selftest` with a real platform.
+
+**Bundle size (L1.2).** The Qt Quick 3D runtime already shipped; the engine package adds its
+five QML and shader files and eleven Python modules: 650,814,304 bytes against 650,736,554 for
+the base commit — **+77,750 bytes (+0.07 MB)**, both built on the same machine on 2026-10-11
+from `git archive` exports (PyInstaller 6.18, Python 3.12.9, no UPX). Spec trimming — the
+dormant spike's files and `PyQt6.QtQuickWidgets` — happens when the spike retires (L1.10).
 
 ### Release Workflow (`release.yml`)
 
