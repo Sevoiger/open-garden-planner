@@ -34,13 +34,27 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # `PRODUCTION_DATA_ENV` keeps what the variables said before, so a test can
 # prove nothing resolves there any more WITHOUT this file ever touching that
 # place (tests/integration/test_app_data_isolation.py).
+#
+# `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are redirected with them — on every
+# platform, because a LIBRARY reads them on every platform: ezdxf (the DXF
+# import and export) loads `$XDG_CONFIG_HOME/ezdxf/ezdxf.ini`, else
+# `~/.config/ezdxf/ezdxf.ini`, when it is imported, and keeps its font index in
+# `$XDG_CACHE_HOME/ezdxf/font_manager_cache.json`, else under `~/.cache` —
+# which it BUILDS AND WRITES there when the file is missing (read in ezdxf
+# 1.4.3: `_options.config_files`, `fonts.fonts._load_font_manager`). On Linux
+# the two variables also move Qt's settings and cache folders and the AI-client
+# paths that follow `XDG_CONFIG_HOME`: all of them into the test root, which is
+# where a test's files belong.
 PRODUCTION_DATA_ENV: dict[str, str | None] = {
-    name: os.environ.get(name) for name in ("APPDATA", "XDG_DATA_HOME")
+    name: os.environ.get(name)
+    for name in ("APPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME")
 }
 TEST_DATA_ROOT = Path(tempfile.mkdtemp(prefix=f"ogp-tests-{os.getpid()}-")).resolve()
 os.environ["APPDATA"] = str(TEST_DATA_ROOT / "appdata")
 os.environ["XDG_DATA_HOME"] = str(TEST_DATA_ROOT / "xdg-data")
-for _name in ("APPDATA", "XDG_DATA_HOME"):
+os.environ["XDG_CONFIG_HOME"] = str(TEST_DATA_ROOT / "xdg-config")
+os.environ["XDG_CACHE_HOME"] = str(TEST_DATA_ROOT / "xdg-cache")
+for _name in ("APPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
     Path(os.environ[_name]).mkdir()
 # Removed when the interpreter exits — later than any fixture finaliser, so a
 # widget closed during teardown still finds its directory. A killed run leaves
@@ -152,9 +166,10 @@ _qt_writable_location = _QStandardPaths.writableLocation
 
 def _test_writable_location(location: Any) -> str:
     if location in REDIRECTED_QT_LOCATIONS:
-        path = TEST_DATA_ROOT / "qt" / location.name
-        path.mkdir(parents=True, exist_ok=True)
-        return path.as_posix()  # Qt answers with forward slashes on every platform
+        # The path only — Qt does not create the folder it names, and neither does
+        # this stand-in: a writer that forgets its `mkdir` must fail here as it
+        # would on a user's first run.
+        return (TEST_DATA_ROOT / "qt" / location.name).as_posix()  # forward slashes, as Qt answers
     return str(_qt_writable_location(location))
 
 
