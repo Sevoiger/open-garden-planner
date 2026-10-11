@@ -19,9 +19,10 @@ Truth:
 
 ONE part, kind ``foliage`` — core and leaves in one mesh, as on the L0 board:
 the core is drawn with the foliage material too (a hedge's dark inside is not a
-polished box; a scratch render with the core in the plain material showed its
-flat top glare against a low sun). uv = (wind weight, phase) for the sway
-shader; the core's is (0, 0), so it stands still. Leaf count follows the shell's
+polished box: in a scratch render with the core in the plain material its flat
+top shone tan against a low sun; in the foliage material it is darker, though
+it still catches that light where leaves leave it bare). uv = (wind weight,
+phase) for the sway shader; the core's is (0, 0), so it stands still. Leaf count follows the shell's
 AREA — one leaf per 30 cm², 200 … 6,000 (the L0 board's hedge) — never a magic
 number per hedge.
 """

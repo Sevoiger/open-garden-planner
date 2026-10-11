@@ -2679,7 +2679,7 @@ only, and correct their heights with a fit after the fact.
 - `MATERIAL_KINDS` has one opaque kind, so wood, plaster, stone and soil share its roughness until
   L1.4.
 - Measured: both bench plans' built worlds build in 9.8 ms (15 items, 16,874 triangles) and
-  18.7 ms (28 items, 22,482 triangles) median; budgets 40 / 60 ms.
+  18.7 ms (28 items, 22,482 triangles) median on an idle machine; budgets 60 / 90 ms.
 
 **Validation.** `tests/unit/test_scene3d_builders_primitives.py` (outward winding, exact tops,
 mitres, the lathe's ring = the 2D circle footprint); `tests/unit/test_scene3d_builders.py` — a

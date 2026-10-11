@@ -442,7 +442,7 @@ class TestRidgeIsTheLiveRidge:
         assert len(line) == 2
         worst = max(float(np.linalg.norm(line - point, axis=1).min()) for point in expected)
         assert worst <= 0.1  # gate G2: one millimetre
-        assert worst <= 5e-3  # measured: float32 vertices a few thousand cm from the origin
+        assert worst <= 5e-3  # measured 6.1e-4: float32 vertices a few thousand cm from the origin
         if shape != "trapezoid":  # the ridge meets these walls squarely: exactly 30 cm on
             ends = [ridge.mapToScene(p) for p in (ridge.points[0], ridge.points[-1])]
             length = math.hypot(ends[1].x() - ends[0].x(), ends[1].y() - ends[0].y())
