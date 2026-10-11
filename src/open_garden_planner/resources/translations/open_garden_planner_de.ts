@@ -3655,6 +3655,14 @@ Details: {error}</translation>
             <source>Plant Lists</source>
             <translation>Pflanzenlisten</translation>
         </message>
+        <message>
+            <source>Insert guild…</source>
+            <translation>Pflanzengilde einfügen…</translation>
+        </message>
+        <message>
+            <source>Diagnostics</source>
+            <translation>Diagnosen</translation>
+        </message>
     </context>
     <context>
         <name>GridArrayDialog</name>
@@ -3788,6 +3796,14 @@ Details: {error}</translation>
             <location filename="..\..\ui\panels\layers_panel.py" line="282" />
             <source>Add Layer</source>
             <translation>Ebene hinzufügen</translation>
+        </message>
+        <message>
+            <source>Create food-forest layer set</source>
+            <translation>Waldgarten-Ebenen erstellen</translation>
+        </message>
+        <message>
+            <source>Auto-assign plants to food-forest layers</source>
+            <translation>Pflanzen automatisch Waldgarten-Ebenen zuordnen</translation>
         </message>
     </context>
     <context>
@@ -4855,6 +4871,34 @@ Verwenden Sie 'Eigene erstellen', um Pflanzen hinzuzufügen, oder das Pflanzen-M
             <source>Remove from Favorites</source>
             <translation>Aus Favoriten entfernen</translation>
         </message>
+        <message>
+            <source>Food-forest layer:</source>
+            <translation>Waldgartenschicht:</translation>
+        </message>
+        <message>
+            <source>Recorded functions:</source>
+            <translation>Erfasste Funktionen:</translation>
+        </message>
+        <message>
+            <source>Guild:</source>
+            <translation>Gilde:</translation>
+        </message>
+        <message>
+            <source>Centre</source>
+            <translation>Zentrum</translation>
+        </message>
+        <message>
+            <source>Invalid role</source>
+            <translation>Ungültige Rolle</translation>
+        </message>
+        <message>
+            <source>{name} — {role}</source>
+            <translation>{name} — {role}</translation>
+        </message>
+        <message>
+            <source>No guild</source>
+            <translation>Keine Gilde</translation>
+        </message>
     </context>
     <context>
         <name>PlantSearchDialog</name>
@@ -5119,7 +5163,7 @@ Bitte überprüfen Sie Ihre Internetverbindung und API-Zugangsdaten.</translatio
         </message>
         <message>
             <source>No plant databases are configured. Add API credentials in Preferences to search online.</source>
-            <translation>Es sind keine Pflanzendatenbanken konfiguriert. Fügen Sie in den Einstellungen API-Zugangsdaten hinzu, um online zu suchen.</translation>
+            <translation>Keine Pflanzendatenbanken konfiguriert. Für die Online-Suche API-Zugangsdaten in den Einstellungen ergänzen.</translation>
         </message>
         <message>
             <source>({sources} unavailable — check Preferences.)</source>
@@ -5132,6 +5176,22 @@ Bitte überprüfen Sie Ihre Internetverbindung und API-Zugangsdaten.</translatio
         <message>
             <source>Remove from Favorites</source>
             <translation>Aus Favoriten entfernen</translation>
+        </message>
+        <message>
+            <source>Search online</source>
+            <translation>Online suchen</translation>
+        </message>
+        <message>
+            <source>No matches with these filters.</source>
+            <translation>Keine Treffer mit diesen Filtern.</translation>
+        </message>
+        <message>
+            <source>No matches.</source>
+            <translation>Keine Treffer.</translation>
+        </message>
+        <message>
+            <source>Loading species details…</source>
+            <translation>Artinformationen werden geladen…</translation>
         </message>
     </context>
     <context>
@@ -9838,6 +9898,162 @@ Use 0.1 for DXF in mm, 100 for DXF in metres.</source>
             <source>Bird Bath</source>
             <translation>Vogeltränke</translation>
         </message>
+        <message>
+            <source>Sweet Pepper</source>
+            <translation>Paprika</translation>
+        </message>
+        <message>
+            <source>Chili Pepper</source>
+            <translation>Chili</translation>
+        </message>
+        <message>
+            <source>Winter Squash</source>
+            <translation>Winterkürbis</translation>
+        </message>
+        <message>
+            <source>Bean (Bush)</source>
+            <translation>Buschbohne</translation>
+        </message>
+        <message>
+            <source>Garden Pea</source>
+            <translation>Gartenerbse</translation>
+        </message>
+        <message>
+            <source>Beet</source>
+            <translation>Rote Bete</translation>
+        </message>
+        <message>
+            <source>Cauliflower</source>
+            <translation>Blumenkohl</translation>
+        </message>
+        <message>
+            <source>Brussels Sprouts</source>
+            <translation>Rosenkohl</translation>
+        </message>
+        <message>
+            <source>Chinese Cabbage</source>
+            <translation>Chinakohl</translation>
+        </message>
+        <message>
+            <source>Leek</source>
+            <translation>Lauch</translation>
+        </message>
+        <message>
+            <source>Sweet Potato</source>
+            <translation>Süßkartoffel</translation>
+        </message>
+        <message>
+            <source>Coriander</source>
+            <translation>Koriander</translation>
+        </message>
+        <message>
+            <source>Fennel</source>
+            <translation>Fenchel</translation>
+        </message>
+        <message>
+            <source>Spearmint</source>
+            <translation>Grüne Minze</translation>
+        </message>
+        <message>
+            <source>Chamomile</source>
+            <translation>Kamille</translation>
+        </message>
+        <message>
+            <source>Valerian</source>
+            <translation>Baldrian</translation>
+        </message>
+        <message>
+            <source>Echinacea</source>
+            <translation>Sonnenhut</translation>
+        </message>
+        <message>
+            <source>Parsnip</source>
+            <translation>Pastinake</translation>
+        </message>
+        <message>
+            <source>Celery</source>
+            <translation>Sellerie</translation>
+        </message>
+        <message>
+            <source>Asparagus</source>
+            <translation>Spargel</translation>
+        </message>
+        <message>
+            <source>Rhubarb</source>
+            <translation>Rhabarber</translation>
+        </message>
+        <message>
+            <source>Strawberry</source>
+            <translation>Erdbeere</translation>
+        </message>
+        <message>
+            <source>Sweet Corn</source>
+            <translation>Zuckermais</translation>
+        </message>
+        <message>
+            <source>Chicory</source>
+            <translation>Chicorée</translation>
+        </message>
+        <message>
+            <source>Endive</source>
+            <translation>Endivie</translation>
+        </message>
+        <message>
+            <source>Rocket (Arugula)</source>
+            <translation>Rucola</translation>
+        </message>
+        <message>
+            <source>Kohlrabi</source>
+            <translation>Kohlrabi</translation>
+        </message>
+        <message>
+            <source>Artichoke</source>
+            <translation>Artischocke</translation>
+        </message>
+        <message>
+            <source>Melon</source>
+            <translation>Melone</translation>
+        </message>
+        <message>
+            <source>Watermelon</source>
+            <translation>Wassermelone</translation>
+        </message>
+        <message>
+            <source>Runner Bean</source>
+            <translation>Feuerbohne</translation>
+        </message>
+        <message>
+            <source>Broad Bean</source>
+            <translation>Ackerbohne</translation>
+        </message>
+        <message>
+            <source>Sweet Pea</source>
+            <translation>Duftwicke</translation>
+        </message>
+        <message>
+            <source>Nasturtium</source>
+            <translation>Kapuzinerkresse</translation>
+        </message>
+        <message>
+            <source>Borage</source>
+            <translation>Borretsch</translation>
+        </message>
+        <message>
+            <source>Lemon Balm</source>
+            <translation>Zitronenmelisse</translation>
+        </message>
+        <message>
+            <source>Hyssop</source>
+            <translation>Ysop</translation>
+        </message>
+        <message>
+            <source>Flax</source>
+            <translation>Lein</translation>
+        </message>
+        <message>
+            <source>Pot Marigold</source>
+            <translation>Ringelblume</translation>
+        </message>
     </context>
     <context>
         <name>CategoryDropdown</name>
@@ -10633,6 +10849,30 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
         <message>
             <source>Send {count} item(s) to back</source>
             <translation>{count} Objekt(e) ganz nach hinten</translation>
+        </message>
+        <message>
+            <source>permaculture_layer</source>
+            <translation>Waldgartenschicht</translation>
+        </message>
+        <message>
+            <source>functions</source>
+            <translation>Pflanzenfunktionen</translation>
+        </message>
+        <message>
+            <source>Create food-forest layer set</source>
+            <translation>Waldgarten-Ebenen erstellen</translation>
+        </message>
+        <message>
+            <source>Change food-forest auto-assignment</source>
+            <translation>Automatische Waldgarten-Zuordnung ändern</translation>
+        </message>
+        <message>
+            <source>Insert guild</source>
+            <translation>Pflanzengilde einfügen</translation>
+        </message>
+        <message>
+            <source>Change guild membership</source>
+            <translation>Gildenzugehörigkeit ändern</translation>
         </message>
     </context>
     <context>
@@ -11565,6 +11805,577 @@ Details: {error}</translation>
         <message>
             <source>Fit to Page</source>
             <translation>An Seite anpassen</translation>
+        </message>
+    </context>
+    <context>
+        <name>Permaculture</name>
+        <message>
+            <source>Canopy</source>
+            <translation>Kronenschicht</translation>
+        </message>
+        <message>
+            <source>Sub-canopy</source>
+            <translation>Untere Baumschicht</translation>
+        </message>
+        <message>
+            <source>Shrubs</source>
+            <translation>Sträucher</translation>
+        </message>
+        <message>
+            <source>Herbaceous</source>
+            <translation>Krautschicht</translation>
+        </message>
+        <message>
+            <source>Ground cover</source>
+            <translation>Bodendecker</translation>
+        </message>
+        <message>
+            <source>Roots</source>
+            <translation>Wurzelschicht</translation>
+        </message>
+        <message>
+            <source>Vines</source>
+            <translation>Kletterpflanzen</translation>
+        </message>
+        <message>
+            <source>Unspecified</source>
+            <translation>Nicht angegeben</translation>
+        </message>
+        <message>
+            <source>Nitrogen fixer</source>
+            <translation>Stickstofffixierer</translation>
+        </message>
+        <message>
+            <source>Dynamic accumulator</source>
+            <translation>Dynamischer Akkumulator</translation>
+        </message>
+        <message>
+            <source>Pollinator attractor</source>
+            <translation>Bestäuberfreundlich</translation>
+        </message>
+        <message>
+            <source>Pest deterrent</source>
+            <translation>Schädlingsabwehr</translation>
+        </message>
+        <message>
+            <source>Mulch maker</source>
+            <translation>Mulchlieferant</translation>
+        </message>
+        <message>
+            <source>Windbreak</source>
+            <translation>Windschutz</translation>
+        </message>
+        <message>
+            <source>Hedgerow</source>
+            <translation>Heckenpflanze</translation>
+        </message>
+        <message>
+            <source>Animal feed</source>
+            <translation>Tierfutter</translation>
+        </message>
+        <message>
+            <source>Medicinal</source>
+            <translation>Heilpflanze</translation>
+        </message>
+        <message>
+            <source>Dye</source>
+            <translation>Färbepflanze</translation>
+        </message>
+        <message>
+            <source>Fiber</source>
+            <translation>Faserpflanze</translation>
+        </message>
+    </context>
+    <context>
+        <name>GuildActions</name>
+        <message>
+            <source>Add to guild…</source>
+            <translation>Zu Gilde hinzufügen…</translation>
+        </message>
+        <message>
+            <source>Remove from guild</source>
+            <translation>Aus Gilde entfernen</translation>
+        </message>
+        <message>
+            <source>Guild:</source>
+            <translation>Gilde:</translation>
+        </message>
+        <message>
+            <source>Intended role:</source>
+            <translation>Vorgesehene Rolle:</translation>
+        </message>
+    </context>
+    <context>
+        <name>GuildCoordinator</name>
+        <message>
+            <source>Missing guild roles: {roles}</source>
+            <translation>Fehlende Gildenfunktionen: {roles}</translation>
+        </message>
+    </context>
+    <context>
+        <name>GuildsPanel</name>
+        <message>
+            <source>Guilds</source>
+            <translation>Pflanzengilden</translation>
+        </message>
+        <message>
+            <source>Complete</source>
+            <translation>Vollständig</translation>
+        </message>
+        <message>
+            <source>{count} missing roles</source>
+            <translation>{count} fehlende Funktionen</translation>
+        </message>
+        <message>
+            <source>{name} — {count} members — {coverage}</source>
+            <translation>{name} — {count} Mitglieder — {coverage}</translation>
+        </message>
+        <message>
+            <source>{function}: {present}/{required}</source>
+            <translation>{function}: {present}/{required}</translation>
+        </message>
+    </context>
+    <context>
+        <name>DiagnosticsPanel</name>
+        <message>
+            <source>All kinds</source>
+            <translation>Alle Arten</translation>
+        </message>
+        <message>
+            <source>All severities</source>
+            <translation>Alle Schweregrade</translation>
+        </message>
+        <message>
+            <source>Warning</source>
+            <translation>Warnung</translation>
+        </message>
+        <message>
+            <source>Critical</source>
+            <translation>Kritisch</translation>
+        </message>
+        <message>
+            <source>Companion conflict</source>
+            <translation>Mischkulturkonflikt</translation>
+        </message>
+        <message>
+            <source>Spacing overlap</source>
+            <translation>Abstandsüberschneidung</translation>
+        </message>
+        <message>
+            <source>Container capacity</source>
+            <translation>Behälterkapazität</translation>
+        </message>
+        <message>
+            <source>Soil mismatch</source>
+            <translation>Bodenunverträglichkeit</translation>
+        </message>
+        <message>
+            <source>Crop rotation</source>
+            <translation>Fruchtfolge</translation>
+        </message>
+        <message>
+            <source>Outside canvas</source>
+            <translation>Außerhalb der Zeichenfläche</translation>
+        </message>
+        <message>
+            <source>Missing guild role</source>
+            <translation>Fehlende Gildenfunktion</translation>
+        </message>
+        <message>
+            <source>Guild data warning</source>
+            <translation>Gildendaten-Warnung</translation>
+        </message>
+        <message>
+            <source>{name}: {function} — {present}/{required}</source>
+            <translation>{name}: {function} — {present}/{required}</translation>
+        </message>
+        <message>
+            <source>Guild data needs repair: {reason}</source>
+            <translation>Gildendaten müssen korrigiert werden: {reason}</translation>
+        </message>
+        <message>
+            <source>{name}: antagonistic plant nearby</source>
+            <translation>{name}: unverträgliche Pflanze in der Nähe</translation>
+        </message>
+        <message>
+            <source>{name}: spacing overlap</source>
+            <translation>{name}: Abstandsüberschneidung</translation>
+        </message>
+        <message>
+            <source>{name}: container capacity exceeded</source>
+            <translation>{name}: Behälterkapazität überschritten</translation>
+        </message>
+        <message>
+            <source>{name}: soil requirements not met</source>
+            <translation>{name}: Bodenanforderungen nicht erfüllt</translation>
+        </message>
+        <message>
+            <source>{name}: crop rotation conflict</source>
+            <translation>{name}: Fruchtfolgekonflikt</translation>
+        </message>
+        <message>
+            <source>{name}: outside the canvas</source>
+            <translation>{name}: außerhalb der Zeichenfläche</translation>
+        </message>
+        <message>
+            <source>{name}: diagnostic warning</source>
+            <translation>{name}: Diagnosewarnung</translation>
+        </message>
+        <message>
+            <source>{shown} of {total} warnings</source>
+            <translation>{shown} von {total} Warnungen</translation>
+        </message>
+        <message>
+            <source>Invalid saved membership or template</source>
+            <translation>Ungültige gespeicherte Zugehörigkeit oder Vorlage</translation>
+        </message>
+    </context>
+    <context>
+        <name>GuildTemplateEditor</name>
+        <message>
+            <source>Guild template editor</source>
+            <translation>Gildenvorlagen bearbeiten</translation>
+        </message>
+        <message>
+            <source>Function: {function}</source>
+            <translation>Funktion: {function}</translation>
+        </message>
+        <message>
+            <source>Unresolved: {key}</source>
+            <translation>Nicht aufgelöst: {key}</translation>
+        </message>
+        <message>
+            <source>ID:</source>
+            <translation>ID:</translation>
+        </message>
+        <message>
+            <source>Name:</source>
+            <translation>Name:</translation>
+        </message>
+        <message>
+            <source>German name:</source>
+            <translation>Deutscher Name:</translation>
+        </message>
+        <message>
+            <source>Description:</source>
+            <translation>Beschreibung:</translation>
+        </message>
+        <message>
+            <source>German description:</source>
+            <translation>Deutsche Beschreibung:</translation>
+        </message>
+        <message>
+            <source>Centre:</source>
+            <translation>Zentrum:</translation>
+        </message>
+        <message>
+            <source>License:</source>
+            <translation>Lizenz:</translation>
+        </message>
+        <message>
+            <source>Attribution:</source>
+            <translation>Quellenangabe:</translation>
+        </message>
+        <message>
+            <source>Sources (one per line):</source>
+            <translation>Quellen (eine pro Zeile):</translation>
+        </message>
+        <message>
+            <source>Function</source>
+            <translation>Funktion</translation>
+        </message>
+        <message>
+            <source>Minimum</source>
+            <translation>Mindestanzahl</translation>
+        </message>
+        <message>
+            <source>Radius (cm or canopy_edge)</source>
+            <translation>Radius (cm oder Kronenrand)</translation>
+        </message>
+        <message>
+            <source>Suggested species (keys, ordered)</source>
+            <translation>Vorgeschlagene Arten (Schlüssel, geordnet)</translation>
+        </message>
+        <message>
+            <source>Add role</source>
+            <translation>Rolle hinzufügen</translation>
+        </message>
+        <message>
+            <source>Remove role</source>
+            <translation>Rolle entfernen</translation>
+        </message>
+        <message>
+            <source>Bundled template is read-only. Use Duplicate to create a user template.</source>
+            <translation>Mitgelieferte Vorlage ist schreibgeschützt. Mit Duplizieren eine eigene Vorlage erstellen.</translation>
+        </message>
+        <message>
+            <source>Use canonical species keys separated by commas. Suggestions must record the selected function.</source>
+            <translation>Artschlüssel durch Kommas trennen. Vorschläge müssen die gewählte Funktion aufweisen.</translation>
+        </message>
+        <message>
+            <source>Unresolved or function-ineligible species: {keys}</source>
+            <translation>Nicht aufgelöste oder funktional ungeeignete Arten: {keys}</translation>
+        </message>
+        <message>
+            <source>All suggested species are resolved and function-eligible.</source>
+            <translation>Alle vorgeschlagenen Arten sind aufgelöst und funktional geeignet.</translation>
+        </message>
+        <message>
+            <source>Template could not be saved: {error}</source>
+            <translation>Vorlage konnte nicht gespeichert werden: {error}</translation>
+        </message>
+        <message>
+            <source>Radius</source>
+            <translation>Radius</translation>
+        </message>
+        <message>
+            <source>Choose a new ID; this template already exists.</source>
+            <translation>Eine neue ID wählen; diese Vorlage ist bereits vorhanden.</translation>
+        </message>
+        <message>
+            <source>Centre species is unresolved</source>
+            <translation>Zentrale Pflanzenart ist nicht aufgelöst</translation>
+        </message>
+        <message>
+            <source>Replace unresolved or function-ineligible suggested species</source>
+            <translation>Nicht aufgelöste oder funktional ungeeignete Vorschläge ersetzen</translation>
+        </message>
+    </context>
+    <context>
+        <name>InsertGuildDialog</name>
+        <message>
+            <source>Insert guild…</source>
+            <translation>Pflanzengilde einfügen…</translation>
+        </message>
+        <message>
+            <source>New</source>
+            <translation>Neu</translation>
+        </message>
+        <message>
+            <source>Duplicate</source>
+            <translation>Duplizieren</translation>
+        </message>
+        <message>
+            <source>Edit</source>
+            <translation>Bearbeiten</translation>
+        </message>
+        <message>
+            <source>Reload</source>
+            <translation>Neu laden</translation>
+        </message>
+        <message>
+            <source>Instance name:</source>
+            <translation>Gildenname:</translation>
+        </message>
+        <message>
+            <source>Centre species:</source>
+            <translation>Zentrale Pflanzenart:</translation>
+        </message>
+        <message>
+            <source>Existing centre:</source>
+            <translation>Vorhandenes Zentrum:</translation>
+        </message>
+        <message>
+            <source> cm</source>
+            <translation> cm</translation>
+        </message>
+        <message>
+            <source>Centre X:</source>
+            <translation>Zentrum X:</translation>
+        </message>
+        <message>
+            <source>Centre Y:</source>
+            <translation>Zentrum Y:</translation>
+        </message>
+        <message>
+            <source>Preview placement</source>
+            <translation>Platzierungsvorschau</translation>
+        </message>
+        <message>
+            <source>{filename}: {reason} — repair the JSON file and Reload.</source>
+            <translation>{filename}: {reason} — JSON-Datei korrigieren und neu laden.</translation>
+        </message>
+        <message>
+            <source>Create a new centre</source>
+            <translation>Neues Zentrum erstellen</translation>
+        </message>
+        <message>
+            <source>Unresolved: {key}</source>
+            <translation>Nicht aufgelöst: {key}</translation>
+        </message>
+        <message>
+            <source>Guild cannot be placed: {error}</source>
+            <translation>Gilde kann nicht platziert werden: {error}</translation>
+        </message>
+        <message>
+            <source>Select a valid guild template</source>
+            <translation>Eine gültige Gildenvorlage auswählen</translation>
+        </message>
+    </context>
+    <context>
+        <name>RadiusEditor</name>
+        <message>
+            <source>Canopy edge</source>
+            <translation>Kronenrand</translation>
+        </message>
+        <message>
+            <source>Distance (cm)</source>
+            <translation>Abstand (cm)</translation>
+        </message>
+    </context>
+    <context>
+        <name>GuildErrors</name>
+        <message>
+            <source>Role minimum must be a positive integer</source>
+            <translation>Die Mindestanzahl muss eine positive ganze Zahl sein</translation>
+        </message>
+        <message>
+            <source>Radius must be positive and finite, or canopy_edge</source>
+            <translation>Der Radius muss positiv und endlich sein oder den Kronenrand verwenden</translation>
+        </message>
+        <message>
+            <source>Suggested species must be a list of canonical species keys</source>
+            <translation>Vorgeschlagene Arten müssen als Liste von Artschlüsseln angegeben werden</translation>
+        </message>
+        <message>
+            <source>Template must be a JSON object</source>
+            <translation>Die Vorlage muss ein JSON-Objekt sein</translation>
+        </message>
+        <message>
+            <source>ID must use letters, numbers, dots, underscores or hyphens</source>
+            <translation>Die ID darf Buchstaben, Zahlen, Punkte, Unterstriche oder Bindestriche enthalten</translation>
+        </message>
+        <message>
+            <source>Version must be a positive integer</source>
+            <translation>Die Version muss eine positive ganze Zahl sein</translation>
+        </message>
+        <message>
+            <source>{field} must be a nonempty string</source>
+            <translation>{field} darf nicht leer sein und muss Text enthalten</translation>
+        </message>
+        <message>
+            <source>{field} must be text</source>
+            <translation>{field} muss Text enthalten</translation>
+        </message>
+        <message>
+            <source>Unknown function: {function}</source>
+            <translation>Unbekannte Funktion: {function}</translation>
+        </message>
+        <message>
+            <source>Missing template field: {field}</source>
+            <translation>Fehlendes Vorlagenfeld: {field}</translation>
+        </message>
+        <message>
+            <source>Roles must be a list</source>
+            <translation>Rollen müssen als Liste angegeben werden</translation>
+        </message>
+        <message>
+            <source>Each function may appear in only one role row</source>
+            <translation>Jede Funktion darf nur in einer Rollenzeile vorkommen</translation>
+        </message>
+        <message>
+            <source>A guild stamp may contain at most 200 plants, including its centre</source>
+            <translation>Eine Gilde darf einschließlich ihres Zentrums höchstens 200 Pflanzen enthalten</translation>
+        </message>
+        <message>
+            <source>Sources must be a list of references</source>
+            <translation>Quellen müssen als Liste von Verweisen angegeben werden</translation>
+        </message>
+        <message>
+            <source>Canopy-edge layout needs mature spacing; choose an explicit radius</source>
+            <translation>Für den Kronenrand wird ein Abstand ausgewachsener Pflanzen benötigt; einen festen Radius wählen</translation>
+        </message>
+        <message>
+            <source>A guild needs an instance name</source>
+            <translation>Die Gilde benötigt einen Namen</translation>
+        </message>
+        <message>
+            <source>Choose a plant in the current plan as centre</source>
+            <translation>Eine Pflanze im aktuellen Plan als Zentrum wählen</translation>
+        </message>
+        <message>
+            <source>Remove this plant from its current guild before using it as centre</source>
+            <translation>Diese Pflanze vor der Verwendung als Zentrum aus ihrer bisherigen Gilde entfernen</translation>
+        </message>
+        <message>
+            <source>Select a resolved centre species</source>
+            <translation>Eine aufgelöste Pflanzenart für das Zentrum wählen</translation>
+        </message>
+        <message>
+            <source>Centre species does not record the required function</source>
+            <translation>Die zentrale Pflanzenart weist die benötigte Funktion nicht auf</translation>
+        </message>
+        <message>
+            <source>Centre species does not match this template</source>
+            <translation>Die zentrale Pflanzenart passt nicht zu dieser Vorlage</translation>
+        </message>
+        <message>
+            <source>Unresolved suggested species: choose a replacement</source>
+            <translation>Nicht aufgelöste vorgeschlagene Art: einen Ersatz wählen</translation>
+        </message>
+        <message>
+            <source>Selected member species does not record its required function</source>
+            <translation>Die ausgewählte Mitgliedsart weist ihre benötigte Funktion nicht auf</translation>
+        </message>
+        <message>
+            <source>Guild placement needs visible, unlocked target layers</source>
+            <translation>Die Gilde benötigt sichtbare, nicht gesperrte Zielebenen</translation>
+        </message>
+        <message>
+            <source>Guild layout extends outside the canvas; choose another position or radius</source>
+            <translation>Die Gilde reicht über die Zeichenfläche hinaus; eine andere Position oder einen anderen Radius wählen</translation>
+        </message>
+        <message>
+            <source>Guild link needs a nonempty guild_id</source>
+            <translation>Die Gildenzuordnung benötigt eine nicht leere Gilden-ID</translation>
+        </message>
+        <message>
+            <source>Guild centre needs an instance name</source>
+            <translation>Das Gildenzentrum benötigt einen Namen</translation>
+        </message>
+        <message>
+            <source>Guild must have exactly one valid centre</source>
+            <translation>Die Gilde muss genau ein gültiges Zentrum besitzen</translation>
+        </message>
+        <message>
+            <source>Invalid template or file: {reason}</source>
+            <translation>Ungültige Vorlage oder Datei: {reason}</translation>
+        </message>
+        <message>
+            <source>name</source>
+            <translation>Name</translation>
+        </message>
+        <message>
+            <source>centre</source>
+            <translation>Zentrum</translation>
+        </message>
+        <message>
+            <source>license</source>
+            <translation>Lizenz</translation>
+        </message>
+        <message>
+            <source>attribution</source>
+            <translation>Quellenangabe</translation>
+        </message>
+        <message>
+            <source>description</source>
+            <translation>Beschreibung</translation>
+        </message>
+        <message>
+            <source>name_de</source>
+            <translation>Deutscher Name</translation>
+        </message>
+        <message>
+            <source>description_de</source>
+            <translation>Deutsche Beschreibung</translation>
+        </message>
+        <message>
+            <source>The plan changed; reopen the guild picker</source>
+            <translation>Der Plan wurde gewechselt; den Gildendialog erneut öffnen</translation>
+        </message>
+        <message>
+            <source>Existing centre is no longer in the plan</source>
+            <translation>Das vorhandene Zentrum ist nicht mehr im Plan</translation>
         </message>
     </context>
 </TS>

@@ -322,3 +322,24 @@ would otherwise receive a stale change. Every listener runs even when one raises
 and `instant_changed` is delivered even when a `date_changed` listener failed; the
 first error is re-raised afterwards.
 
+## Guild insertion and computed warning refresh
+
+```mermaid
+sequenceDiagram
+    Owner->>Picker: Select template/species/centre and preview
+    Picker->>Preflight: Resolve catalog, spacing, layers and boundaries
+    Preflight-->>Picker: Valid command or actionable refusal
+    Owner->>Commands: InsertGuildCommand (one history entry)
+    Commands->>Scene: Canonical multi-plant creation and membership snapshots
+    Scene->>Coordinator: Schedule debounced refresh
+    Coordinator->>GuildService: Plain saved member snapshots
+    GuildService-->>Coordinator: Required/present/missing function counts
+    Coordinator->>Canvas: Idempotent cosmetic centre badge
+    Coordinator->>Panels: Shared status and converted warnings
+    MCP->>Scene: Read last computed warning snapshot
+    Scene-->>MCP: Shared converter, English message and details
+```
+
+Cancel/refusal never executes the command. Undo restores an existing centre snapshot and removes new plants. Template-file saves replace only user files, not placed plan snapshots or undo history. Species search resolves filtered offline records before starting a background provider request; obsolete generations and closed dialogs discard completed responses.
+
+Gallery drag/drop and gallery-click circle placement both construct plants through `ui/plant_creation.py::build_plant`. It resolves species metadata before semantic layer assignment, reads the current per-plan preference and uses the active layer when the matching layer is hidden, locked or absent. The existing creation command owns parentage and the single undo entry. Guild picker/editor/member rows translate catalog common names at display time through the shared `GalleryData` translation context; saved species keys, names and template snapshots remain language-independent. Explicit user object names take precedence over the translated catalog label.

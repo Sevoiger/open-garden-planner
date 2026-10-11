@@ -11,6 +11,11 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.permaculture_translations import TRANSLATIONS as _F1_F2_TRANSLATIONS  # noqa: E402
+
 if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -535,6 +540,46 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
     # ── GalleryData (gallery items shown in toolbar dropdowns + global search) ──
     "GalleryData": {
+        # Bundled catalog names used by guild pickers, editors and member rows.
+        "Sweet Pepper": "Paprika",
+        "Chili Pepper": "Chili",
+        "Winter Squash": "Winterkürbis",
+        "Bean (Bush)": "Buschbohne",
+        "Garden Pea": "Gartenerbse",
+        "Beet": "Rote Bete",
+        "Cauliflower": "Blumenkohl",
+        "Brussels Sprouts": "Rosenkohl",
+        "Chinese Cabbage": "Chinakohl",
+        "Leek": "Lauch",
+        "Sweet Potato": "Süßkartoffel",
+        "Coriander": "Koriander",
+        "Fennel": "Fenchel",
+        "Spearmint": "Grüne Minze",
+        "Chamomile": "Kamille",
+        "Valerian": "Baldrian",
+        "Echinacea": "Sonnenhut",
+        "Parsnip": "Pastinake",
+        "Celery": "Sellerie",
+        "Asparagus": "Spargel",
+        "Rhubarb": "Rhabarber",
+        "Strawberry": "Erdbeere",
+        "Sweet Corn": "Zuckermais",
+        "Chicory": "Chicorée",
+        "Endive": "Endivie",
+        "Rocket (Arugula)": "Rucola",
+        "Kohlrabi": "Kohlrabi",
+        "Artichoke": "Artischocke",
+        "Melon": "Melone",
+        "Watermelon": "Wassermelone",
+        "Runner Bean": "Feuerbohne",
+        "Broad Bean": "Ackerbohne",
+        "Sweet Pea": "Duftwicke",
+        "Nasturtium": "Kapuzinerkresse",
+        "Borage": "Borretsch",
+        "Lemon Balm": "Zitronenmelisse",
+        "Hyssop": "Ysop",
+        "Flax": "Lein",
+        "Pot Marigold": "Ringelblume",
         # Toolbar category names
         "Beds & Surfaces": "Beete & Flächen",
         "Basic Shapes": "Grundformen",
@@ -3135,6 +3180,10 @@ _PLANT_LISTS_TRANSLATIONS: dict[str, dict[str, str]] = {
 for _ctx, _strings in _PLANT_LISTS_TRANSLATIONS.items():
     TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
 
+
+
+for _ctx, _strings in _F1_F2_TRANSLATIONS.items():
+    TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
 
 
 def fill_translations() -> None:
