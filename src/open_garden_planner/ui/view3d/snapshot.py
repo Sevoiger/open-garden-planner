@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -348,7 +347,7 @@ _RING_VERTEX_UNITS: Final = 1_000  # … per vertex: off its grid, onto the reco
 _SQUARE_JOIN: Final = 0.7072
 
 
-def _pay_for_reading(made: Sequence[Sequence[Any]], budget: WorkBudget) -> None:
+def _pay_for_reading(made: list[Any], budget: WorkBudget) -> None:
     """Rings as the clipper returned them: counted — all of them together, which
     costs nothing — and paid for BEFORE one of them is read. More vertices than
     one item may have are refused outright."""
