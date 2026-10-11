@@ -2928,8 +2928,8 @@ with the sprite on the plan about its shape or its green, and no test would noti
   holds.
 - **`scripts/measure_plant_art_3d.py`** prints every number above (`truth`, `reach`, `growth`,
   `clones`, `shapes`, `scrub`, `cache`); **`scripts/mutation_check_plant_art.py`** breaks one
-  rule at a time on a copy of the tree: 87 mutants (73 before the second review),
-  @@MUTATION_RESULT@@. (Its first run on the reworked builder killed
+  rule at a time on a copy of the tree: 87 mutants (73 before the second review), every one
+  killed. (Its first run on the reworked builder, in the first fix round, killed
   72: the survivor — the fit no longer sets a hovering plant down — showed that no builder hovers
   any more, so that safety net was exercised by nothing; the fit-report test now asserts it. The
   run before the review, 45 mutants, had found the placeholder's round rim unpinned the same

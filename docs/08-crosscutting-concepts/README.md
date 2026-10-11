@@ -3022,7 +3022,7 @@ axis's extreme; `FitReport.reined_share` says when anything was moved.)
 **Two kinds of statement — never mix them.** A truth claim about a plant is either STRUCTURAL
 (the code makes it true for any input; tests check the mechanism, also on hand-made and random
 input to `_fit` itself) or MEASURED (a number a sample gave; a test may hold a tripwire well clear
-of it, and a requirement may quote it only as "measured over …"). The first version stated a
+of it, and a requirement may quote it only as "measured over …"). The first fix round stated a
 sample's maxima as limits twice: "at most 1.092 canopy radii" was 1.1006 for one id in 300,000,
 and "z95 at least 0.62" was 0.603 for a rhubarb half as tall as wide.
 
@@ -3048,7 +3048,7 @@ every cell: 63,099 plants, 63,099 distinct shapes (round 1's "4,392 builds" were
 | foliage vertices pulled back onto the canopy circle | 2.18 % of a plant's (a mound 66 times taller than wide) | ≤ 4 % |
 | … from at most | 1.085 canopy radii | ≤ 1.15 |
 | x and y scaled by | 1.108 (a rosette of six leaves: six tips cannot all point along an axis); 1.063 without the rosettes | ≤ 1.16 |
-| the foliage moved to its centre by | 0.047 canopy radii (0.056 in the review's 300,000 ids) | ≤ 0.09 |
+| the foliage moved to its centre by | 0.047 canopy radii (0.056 in the review's own sample) | ≤ 0.09 |
 | plants the last step had to rein in | 3 of 63,099 — and 6 of 210,330 with ten ids a cell (`reach --ids 10`) — all rosettes, at most 0.29 % of a plant's vertices | ≤ 2 % of a plant's vertices |
 | where a plant ends: the farthest vertex from the axis, over those 210,330 | median 1.017, 99.9th percentile 1.064 canopy radii; the farthest that needed no reining in, 1.086 (a canopy) | — (by construction: 1.09) |
 

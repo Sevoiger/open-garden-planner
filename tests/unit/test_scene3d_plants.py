@@ -350,9 +350,9 @@ def silhouette_iou(a: np.ndarray, b: np.ndarray) -> float:
 #: headroom — what a requirement may quote only as "measured over …". The
 #: sample (``scripts/measure_plant_art_3d.py truth --ids 3``, 2026-10-11): every
 #: recipe × every proportion step × three ids = 63,099 plants, every one a
-#: different shape. Maxima of a sample are not bounds: the review's own 300,000
-#: ids found a centring shift of 0.056 where this sample's largest is 0.047, and
-#: round 1 stated the maxima of 1,912 shapes as limits (three were wrong one
+#: different shape. Maxima of a sample are not bounds: the review's own sample
+#: found a centring shift of 0.056 where this one's largest is 0.047, and round
+#: 1 stated the maxima of 1,912 shapes as limits (three were wrong one
 #: proportion step further on). So each tripwire stands well clear of what was
 #: measured, and what must HOLD is structural (``assert_the_box_is_the_data``).
 #:
