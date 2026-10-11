@@ -33,15 +33,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .mesh import Mesh, MeshError, MeshPart
-from .polygon import (
-    Region,
-    ccw,
-    cw,
-    is_flat_ring,
-    is_simple_ring,
-    ring_area,
-    triangulate_region,
-)
+from .polygon import Region, ccw, cut_region, cw, is_flat_ring
 from .record import Material, Record, Ring, Transform
 
 Builder: TypeAlias = Callable[[Record], tuple[MeshPart, ...]]
@@ -63,6 +55,11 @@ PLAN_AREA_TOLERANCE: Final = 0.01
 #: eaves over a courtyard cover its rim, a builder that extruded the hole ring as
 #: a solid covers all of it.
 HOLE_COVER_LIMIT: Final = 0.5
+#: … unless the hole is narrower than this: one into which no circle of this
+#: diameter fits is not judged at all — the 2 cm sliver between two parallel runs
+#: of a stroke is covered by any honest panel a little wider than the stroke.
+#: A hole of this width and more is judged whole, rim included.
+HOLE_MIN_WIDTH_CM: Final = 10.0
 
 
 class BuilderContractError(Exception):
@@ -96,6 +93,30 @@ def _walls(ring: Ring, height_cm: float, positions: list[float], normals: list[f
             normals.extend((nx, ny, 0.0))
 
 
+#: A mesh is float32: a coordinate of size m is stored to about m · 2⁻²⁴, so the
+#: doubled area of a triangle moves by up to ~2.4e-7 · m · (its two edges) on the
+#: way into the mesh. A cap triangle smaller than this many times that product
+#: is nothing at the engine's precision — it could come out wound downwards — and
+#: is left out. At m = 300 cm and edges of 40 cm that is a doubled area of
+#: 0.012 cm²: a sliver 0.0003 cm high.
+_FLOAT32_SLIVER: Final = 5e-7
+
+
+_FLOAT32_MAX: Final = float(np.finfo(np.float32).max)  # 3.4e38
+
+
+def _as_ring(points: Sequence[Sequence[float]]) -> Ring:
+    """Any sequence of ``(x, y)`` pairs as an immutable ring of plain floats — what
+    the cached polygon functions need (a list of lists or numpy rows is not hashable).
+    A coordinate that is not finite in float32 raises ``MeshError``: before any
+    arithmetic on it, and so that no mesh is made of it."""
+    ring = tuple((float(x), float(y)) for x, y in points)
+    for x, y in ring:
+        if not (-_FLOAT32_MAX <= x <= _FLOAT32_MAX and -_FLOAT32_MAX <= y <= _FLOAT32_MAX):
+            raise MeshError(f"a footprint coordinate ({x!r}, {y!r}) is not finite in float32")
+    return ring
+
+
 def prism_mesh(
     footprints: Sequence[Ring], height_cm: float, holes: Sequence[Sequence[Ring]] = ()
 ) -> Mesh:
@@ -107,51 +128,51 @@ def prism_mesh(
     into the hole, and a cap that covers the outer MINUS the holes. Neutral white
     vertex colours (a tinted part), flat normals, no bottom cap.
 
-    A hole-free ring produces exactly the vertices of the Qt 3D view's
-    ``extrude_footprint`` (same ear clipper, ``polygon.triangulate_polygon``), so
-    the two views cannot disagree. A flat ring (fewer than three corners, or all
+    A hole-free ring of fewer than ``polygon.ARRAY_EAR_CLIP_FROM`` (256) vertices
+    produces exactly the vertices of the Qt 3D view's ``extrude_footprint`` (same
+    ear clipper, ``polygon.triangulate_polygon``), so the two views cannot
+    disagree — less the cap triangles that are nothing at the mesh's float32
+    precision (``_FLOAT32_SLIVER``); a larger ring gets the same cap cut into
+    other triangles. A flat ring (fewer than three corners, or all
     of them on one line) and a non-positive height give no geometry. A ring that
     is not a simple polygon (a bow-tie) raises ``ValueError``: no cap of it would
-    be the plan's shape, and an honest "no solid" beats a wrong one.
+    be the plan's shape, and an honest "no solid" beats a wrong one. So does any
+    region ``polygon.cut_region`` cannot cut and prove — the same function
+    ``polygon.is_buildable_region`` asks, so a region for which that predicate
+    holds is always built.
+
+    A ring is any sequence of ``(x, y)`` pairs — tuples, lists, numpy rows.
+
+    A height or a coordinate that is not finite in the mesh's float32 raises
+    ``MeshError`` before anything is computed from it: no such number is ever
+    emitted. A record cannot hold one (``record.MAX_LENGTH_CM``); a hand-made
+    call can.
     """
-    if holes and len(holes) != len(footprints):
+    if len(holes) and len(holes) != len(footprints):
         raise ValueError(f"{len(holes)} hole groups for {len(footprints)} footprint rings")
     if height_cm <= 0:
         return Mesh.empty()
+    if not height_cm <= _FLOAT32_MAX:  # an infinity, a NaN, 1e300
+        raise MeshError(f"a height of {height_cm!r} cm is not finite in float32")
     positions: list[float] = []
     normals: list[float] = []
     for index, raw in enumerate(footprints):
-        if is_flat_ring(tuple(raw)):
+        ring = _as_ring(raw)
+        if is_flat_ring(ring):
             continue  # fewer than three corners, or all on one line: no ground covered
-        outer = ccw(tuple(raw))
-        inner = tuple(cw(tuple(hole)) for hole in (holes[index] if holes else ()))
-        for ring in (outer, *inner):
-            if not is_simple_ring(ring):
-                raise ValueError(
-                    f"a footprint ring of {len(ring)} vertices is not a simple polygon "
-                    "(it crosses or touches itself)"
-                )
-        vertices, triangles = triangulate_region(outer, inner)
-        doubled = [
-            (vertices[b][0] - vertices[a][0]) * (vertices[c][1] - vertices[a][1])
-            - (vertices[b][1] - vertices[a][1]) * (vertices[c][0] - vertices[a][0])
-            for a, b, c in triangles
-        ]
-        expected = ring_area(outer) + sum(ring_area(hole) for hole in inner)
-        slack = 1e-9 * max(1.0, abs(expected))
-        # every cap triangle faces up and together they cover the region exactly —
-        # the two facts a wrong triangulation cannot both satisfy
-        if (doubled and min(doubled) < -slack) or abs(sum(doubled) / 2.0 - expected) > slack:
-            raise ValueError(
-                f"the cap of a footprint ring covers {sum(doubled) / 2.0!r} cm² "
-                f"(smallest triangle {min(doubled, default=0.0) / 2.0!r}); its region is {expected!r} cm²"
-            )
+        outer = ccw(ring)
+        inner = tuple(cw(_as_ring(hole)) for hole in (holes[index] if len(holes) else ()))
+        vertices, triangles = cut_region(outer, inner)  # raises ValueError: no wrong cap, ever
         _walls(outer, height_cm, positions, normals)
         for hole in inner:
             _walls(hole, height_cm, positions, normals)
         for triangle in triangles:
-            for vertex in triangle:
-                x, y = vertices[vertex]
+            (ax, ay), (bx, by), (cx, cy) = (vertices[vertex] for vertex in triangle)
+            reach = max(abs(ax), abs(ay), abs(bx), abs(by), abs(cx), abs(cy))
+            edges = abs(bx - ax) + abs(by - ay) + abs(cx - ax) + abs(cy - ay)
+            if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) <= _FLOAT32_SLIVER * reach * edges:
+                continue  # nothing at float32 precision (see _FLOAT32_SLIVER)
+            for x, y in ((ax, ay), (bx, by), (cx, cy)):
                 positions.extend((x, y, height_cm))
                 normals.extend((0.0, 0.0, 1.0))
     if not positions:
@@ -192,11 +213,27 @@ class BuilderRegistry:
     to each builder package's ``register(registry)`` — no import-order surprises.
     A ``SceneSync`` notices a builder registered or replaced after it has built:
     its next ``apply`` rebuilds the items that builder now owns.
+
+    The contract ``SceneSync`` relies on: ``builder_for(kind)`` returns the SAME
+    object for the same kind until a ``register`` changes it (items are matched to
+    the builder that built them by identity), and every change bumps ``version``.
+    A subclass that hands out a fresh callable per call, or swaps builders behind
+    ``register``'s back, breaks the first half or the second: ``SceneSync`` looks
+    for items to rebuild only when ``version`` moved, so the first costs nothing
+    worse than one full rebuild at the next registration, and the second goes
+    unnoticed until then.
     """
 
     def __init__(self, default: Builder = default_builder) -> None:
         self._default = default
         self._builders: dict[str, Builder] = {}
+        self._version = 0
+
+    @property
+    def version(self) -> int:
+        """How many registrations this registry has seen — it moves whenever the
+        answer of ``builder_for`` may have changed."""
+        return self._version
 
     def register(self, kind: str, builder: Builder, *, replace: bool = False) -> None:
         """Use ``builder`` for records of ``kind`` (an ObjectType name).
@@ -207,6 +244,7 @@ class BuilderRegistry:
         if kind in self._builders and not replace:
             raise ValueError(f"a builder for kind {kind!r} is already registered")
         self._builders[kind] = builder
+        self._version += 1
 
     def register_many(self, kinds: Iterable[str], builder: Builder, *,
                       replace: bool = False) -> None:
@@ -214,6 +252,8 @@ class BuilderRegistry:
             self.register(kind, builder, replace=replace)
 
     def builder_for(self, kind: str) -> Builder:
+        """The builder of ``kind`` — the same object on every call until a
+        ``register`` changes it (class docstring)."""
         return self._builders.get(kind, self._default)
 
     def kinds(self) -> frozenset[str]:
@@ -301,13 +341,17 @@ def _distance_to_rings(points: NDArray[np.float64], rings: Iterable[Ring]) -> ND
 def _hole_cover(triangles: Triangles2D, hole: Ring) -> float:
     """The share of a hole that upward-facing triangles cover, from a 24 x 24
     lattice of points INSIDE the hole — so a slab of two huge triangles over a
-    small hole is seen as surely as a cap of many small ones."""
+    small hole is seen as surely as a cap of many small ones. A hole narrower
+    than ``HOLE_MIN_WIDTH_CM`` — no lattice point lies half that far from its
+    edge — reads 0.0: a sliver is not judged."""
     xs = [x for x, _y in hole]
     ys = [y for _x, y in hole]
     steps = (np.arange(24) + 0.5) / 24.0
     gx, gy = np.meshgrid(min(xs) + steps * (max(xs) - min(xs)), min(ys) + steps * (max(ys) - min(ys)))
     lattice = np.column_stack([gx.ravel(), gy.ravel()])
     lattice = lattice[_inside(lattice, hole)]
+    if len(lattice) and 2.0 * float(_distance_to_rings(lattice, (hole,)).max()) < HOLE_MIN_WIDTH_CM:
+        return 0.0
     a, b, c = triangles
     if not len(lattice) or not len(a):
         return 0.0
@@ -338,9 +382,10 @@ def plan_overreach(
       the footprint (outer rings minus holes). Estimated at four points per
       triangle (its centroid and the points halfway to each corner), overlapping
       layers counted each time: a net for gross errors, not a rasteriser.
-    - ``hole_cover`` — the largest share, 0 … 1, of any hole that upward-facing
-      triangles cover, measured on a lattice of points inside the hole (0.0
-      without holes).
+    - ``hole_cover`` — the largest share, 0 … 1, of any hole that
+      upward-facing triangles cover, measured on a lattice of points inside the
+      hole (0.0 without holes; a hole narrower than ``HOLE_MIN_WIDTH_CM`` is
+      not judged and counts as 0.0).
     """
     triangles, areas = _top_triangles(parts)
     a, b, c = triangles
@@ -403,7 +448,9 @@ def verify_builder(
       * ``hole_cover_limit`` (default ``HOLE_COVER_LIMIT``): at most this share
         of any HOLE of the footprint may be covered from above (a closed fence
         extruded with its inside filled covers all of it). ``None`` switches
-        this bound off.
+        this bound off. A hole narrower than ``HOLE_MIN_WIDTH_CM`` (10 cm:
+        no circle of that diameter fits into it) is not judged at all; every
+        other hole is judged whole.
 
       Neither bound asks for coverage: a mesh that fills a fraction of its
       footprint — a flower, a tuft, pickets inside a fence's stroke — passes.

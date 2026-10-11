@@ -94,10 +94,21 @@ class Mesh:
     ) -> Mesh:
         """Build a mesh from anything array-like: dtypes are coerced, attributes
         reshaped to (n, k), indices (flat or (m, 3)) to (m, 3), all read-only.
-        Shapes that do not fit raise ``ValueError`` here; content is judged by
+        Shapes that do not fit raise ``ValueError`` here, and so does a value that
+        is not finite once it is float32 (``MeshError``) — 1e300 is a finite
+        float64 and an infinite float32, and a sink that does not validate would
+        hand it to the engine. Everything else about the content is judged by
         ``validate()``."""
-        return Mesh(_f32(positions, 3), _f32(normals, 3), _f32(colors, 4), _f32(uvs, 2),
-                    _u32(indices))
+        with np.errstate(over="ignore"):  # a float64 beyond float32 becomes inf — refused below
+            mesh = Mesh(_f32(positions, 3), _f32(normals, 3), _f32(colors, 4), _f32(uvs, 2),
+                        _u32(indices))
+        for name, _dtype, _width in _SPEC:
+            if not np.isfinite(getattr(mesh, name)).all():
+                raise MeshError(
+                    f"non-finite values in {name} once they are float32 (a NaN, an infinity, or "
+                    "a number beyond 3.4e38): a mesh never holds one"
+                )
+        return mesh
 
     @staticmethod
     def empty() -> Mesh:

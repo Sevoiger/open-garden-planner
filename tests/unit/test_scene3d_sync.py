@@ -711,6 +711,110 @@ class TestRegistryChange:
         sync.apply(scene(record("a")))
         assert sink_of(sync).ops()[-3:] == [("begin", None), ("remove", "h"), ("commit", None)]
 
+    # ── fix round 2, P2-5 / P2-6: the comparison is identity, and gated ────────
+
+    def test_a_registry_that_hands_out_a_fresh_callable_does_not_rebuild_every_apply(self) -> None:
+        """The re-review's measurement: such a registry rebuilt EVERY item on
+        EVERY idle apply — identity never matched. ``SceneSync`` now looks for
+        items to rebuild only when ``BuilderRegistry.version`` moved."""
+        import functools
+
+        class Fresh(BuilderRegistry):
+            def builder_for(self, kind: str):
+                return functools.partial(super().builder_for(kind))  # never the same object
+
+        registry = Fresh()
+        sync = SceneSync(RecordingSink(), registry)
+        records = scene(record("a"), record("h", kind="HOUSE"), record("b"))
+        sync.apply(records)
+        assert sync.build_count == 3
+        sink_of(sync).clear_calls()
+        for _ in range(5):
+            assert sync.apply(records).is_empty
+        assert sync.build_count == 3 and sink_of(sync).calls == []
+        # a registration is still seen — at the price such a registry asks for: all of them
+        registry.register("HOUSE", self.tall)
+        sync.apply(records)
+        assert sink_of(sync).item("h").parts[0].name == "tall"
+        assert sync.build_count == 6
+        sink_of(sync).clear_calls()
+        assert sync.apply(records).is_empty and sink_of(sync).calls == [] and sync.build_count == 6
+
+    def test_an_idle_apply_does_not_ask_the_registry_about_every_item(self) -> None:
+        asked: list[str] = []
+
+        class Asked(BuilderRegistry):
+            def builder_for(self, kind: str):
+                asked.append(kind)
+                return super().builder_for(kind)
+
+        registry = Asked()
+        sync = SceneSync(RecordingSink(), registry)
+        records = scene(*(record(f"i{n}") for n in range(50)))
+        sync.apply(records)
+        assert len(asked) == 50  # once per built item
+        asked.clear()
+        sync.apply(records)
+        sync.apply({**records, "i0": record("i0", transform=Transform(1.0, 2.0))})
+        assert asked == []  # nothing registered: nothing to look for
+        registry.register("HOUSE", self.tall)
+        sync.apply(records)
+        assert len(asked) == 50  # the one scan a registration costs
+        asked.clear()
+        sync.apply(records)
+        assert asked == []
+
+    def test_a_registry_without_a_version_is_compared_on_every_apply(self, builder) -> None:
+        """Anything with ``builder_for`` will do as a registry (the old behaviour):
+        without a ``version`` to go by, the items are compared each time."""
+        class Bare:
+            def __init__(self) -> None:
+                self.current = builder
+
+            def builder_for(self, _kind: str):
+                return self.current
+
+        registry = Bare()
+        sync = SceneSync(RecordingSink(), registry)  # type: ignore[arg-type]
+        records = scene(record("a"), record("b"))
+        sync.apply(records)
+        sync.apply(records)
+        assert builder.calls == ["a", "b"]
+        registry.current = self.tall
+        sync.apply(records)
+        assert [sink_of(sync).item(i).parts[0].name for i in "ab"] == ["tall", "tall"]
+        sink_of(sync).clear_calls()
+        sync.apply(records)
+        assert sink_of(sync).calls == []
+
+    def test_a_reset_forgets_which_registry_built_the_items(self, builder) -> None:
+        registry = BuilderRegistry(default=builder)
+        sync = SceneSync(RecordingSink(), registry)
+        records = scene(record("a"))
+        sync.apply(records)
+        sync.reset()
+        sync.apply(records)
+        registry.register("RAISED_BED", self.tall)
+        sync.apply(records)
+        assert sink_of(sync).item("a").parts[0].name == "tall"
+        assert sink_of(sync).state() == sync.expected_state()
+
+    def test_many_items_regrown_in_one_tick_with_a_late_builder(self, builder) -> None:
+        """P2-5: the scan asked ``item_id not in changes.geometry`` — a tuple — per
+        held item (224 of 260 ms at 8,000 items). A set now; what it decides is
+        unchanged: an item whose geometry changes anyway is built ONCE."""
+        registry = BuilderRegistry(default=builder)
+        sync = SceneSync(RecordingSink(), registry)
+        count = 400
+        records = scene(*(record(f"i{n}") for n in range(count)))
+        sync.apply(records)
+        builder.calls.clear()
+        registry.register("NOTHING HERE", self.tall)  # the version moves, no item is affected
+        grown = scene(*(record(f"i{n}", height_cm=41.0) for n in range(count)))
+        sync.apply(grown)
+        assert sorted(builder.calls) == sorted(grown)  # each once
+        assert sink_of(sync).state() == sync.expected_state()
+
 
 # ── a sink that raises ────────────────────────────────────────────────────────
 
@@ -941,6 +1045,20 @@ class TestSunAndGroundCalls:
         calls = len(sink_of(sync).calls)
         sync.expected_state()
         assert len(sink_of(sync).calls) == calls  # it never touches the real sink
+
+    def test_expected_state_between_a_registration_and_the_next_apply(self, builder) -> None:
+        """Fix round 2, P2-8 — the precondition, shown. ``expected_state`` is built
+        with the registry as it is NOW; a sink that honours the protocol still
+        holds what the old builders made until ``apply`` has run."""
+        registry = BuilderRegistry(default=builder)
+        sync = SceneSync(RecordingSink(), registry)
+        records = scene(record("h", kind="HOUSE"))
+        sync.apply(records)
+        assert sink_of(sync).state() == sync.expected_state()
+        registry.register("HOUSE", TestRegistryChange.tall)
+        assert sink_of(sync).state() != sync.expected_state()  # not a broken sink: a pending apply
+        sync.apply(records)
+        assert sink_of(sync).state() == sync.expected_state()
 
     def test_expected_state_does_not_log_old_failures_again(self, sync, builder, caplog) -> None:
         builder.fail_for = {"HOUSE"}

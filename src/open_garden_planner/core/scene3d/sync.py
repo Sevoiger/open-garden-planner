@@ -94,6 +94,7 @@ class SceneSync:
         self._poisoned = False
         self._build_count = 0
         self._quiet = False
+        self._registry_version: int | None = None  # the registry as the held items were built
 
     # ── state ───────────────────────────────────────────────────────────────
 
@@ -143,6 +144,11 @@ class SceneSync:
         a sink that ignores a call (``clear()`` above all) — compare it with the
         sink's own account of itself: ``assert sink.state() == sync.expected_state()``.
         It runs every builder again, so it belongs in tests and diagnostics.
+
+        Precondition: nothing was registered in the registry since the last
+        ``apply``. The reference is built with the registry as it is NOW; between
+        a registration and the next ``apply`` the sink still holds what the old
+        builders made, and the two differ until that ``apply`` has run.
         """
         empty_sink = RecordingSink()
         reference = SceneSync(empty_sink, self._registry, validate=self._validate)
@@ -174,11 +180,17 @@ class SceneSync:
         changes = diff(self._records, new)
         fresh = (*changes.added, *changes.geometry)
         builder_for = self._registry.builder_for
-        restyled = tuple(
-            item_id for item_id, built_with in self._built_with.items()
-            if item_id in new and item_id not in changes.geometry
-            and builder_for(new[item_id].kind) is not built_with
-        )
+        version = getattr(self._registry, "version", None)
+        restyled: tuple[str, ...] = ()
+        if version is None or version != self._registry_version:
+            # something was registered since the held items were built (or the
+            # registry cannot say): find the items whose builder is another now
+            rebuilt_anyway = set(changes.geometry)
+            restyled = tuple(
+                item_id for item_id, built_with in self._built_with.items()
+                if item_id in new and item_id not in rebuilt_anyway
+                and builder_for(new[item_id].kind) is not built_with
+            )
         built: dict[str, tuple[MeshPart, ...]] = {}
         builders: dict[str, Builder] = {}
         failed: dict[str, BuildFailure] = {}
@@ -210,6 +222,7 @@ class SceneSync:
             self._built_with.pop(item_id, None)
         self._failures.update(failed)
         self._built_with.update(builders)
+        self._registry_version = version
         self._records = new
         if send_sun:
             self._sun = sun
@@ -249,6 +262,7 @@ class SceneSync:
         """
         self._records = {}
         self._built_with = {}
+        self._registry_version = None
         self._failures = {}
         self._sun = None
         self._ground = None
