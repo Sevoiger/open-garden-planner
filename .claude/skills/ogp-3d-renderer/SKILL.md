@@ -619,7 +619,7 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   four minutes on either adapter (237 s / 251 s, the machine busy); on xcb + llvmpipe in a
   container 88 passed and 8 skipped in under two minutes. After round 3 (100 tests, the
   seeded random walk among them): 99 passed and one control reported in 321 s on the GPU;
-  97 passed, the two hardware-only budgets skipped and the control reported in 263 s on
+  97 passed, the two hardware-only budgets skipped and the control reported in 244 s on
   WARP; 92 passed and 8 skipped in 184 s in the container.
 - **Not measured:** platforms that un-expose an occluded window (macOS, Wayland) — a visible,
   covered host may read `starting` there and `wait_ready()` use its whole timeout; a change

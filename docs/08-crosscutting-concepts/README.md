@@ -283,7 +283,10 @@ engine's tests that is not left to each child. Their environments have one sourc
 a directory holding one `sitecustomize.py` first on the child's `PYTHONPATH`. Python
 imports that file at start-up; it imports nothing of the app, waits for the import of
 `app/settings.py`, and rebinds the names the moment that module's body has run —
-which is before any code can call the factory. A support script that loads a plan and
+which is before any code can call the factory. At exit it empties the key with
+`clear()` AND `sync()`: an exit handler registered before PyQt is imported runs
+after PyQt's own, when a store's destructor no longer flushes — on the file
+backends a `clear()` alone left the file as it was (measured on Linux). A support script that loads a plan and
 is also run by hand (the render driver) rebinds them itself as well, and points the
 app's data directory into its own output directory. **Outside pytest nothing does any
 of this for you**: a probe script that imports the app must rebind the names first.
@@ -758,7 +761,7 @@ skip there) — with another suite running on the machine; the lifecycle matrix,
 call order and several attempts per control, is about two minutes of it. After review round
 3 (100 tests: two window-state orders, the random walk and the control of its judge joined):
 99 passed and one control reported, not asserted, in 321 s on the RTX 4070, and 97 passed, the
-two hardware-only budgets skipped and the one control reported, in 263 s on WARP; the walk
+two hardware-only budgets skipped and the one control reported, in 244 s on WARP; the walk
 alone took 105 s on the GPU.
 
 **Linux without a Linux machine.** The CI job's stack — Ubuntu 24.04, xvfb, xcb, OpenGL on
