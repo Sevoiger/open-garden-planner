@@ -8,8 +8,11 @@ exactly one class of item: one whose parent is a soil container with a height.
 This file pins that **nothing else moved**.
 
 The fixture ``tests/fixtures/shadows/shadow_golden.json`` was generated from the
-code as it stood BEFORE the change (integration branch aaec048 + this test), with
-the exact value of every float:
+code as it stood BEFORE the change, with the exact value of every float. "Before"
+is release **v1.29.10**: ``core/shadow_geometry.py`` and
+``core/shade_aggregation.py`` had not changed since Phase 14 and are byte-identical
+to that tag (the generating commit, ``aaec048`` on the integration branch, will not
+survive a squash merge — the tag will):
 
 - ``core`` — ``compute_scene_shadows`` for five footprints (convex, concave,
   clockwise, a 24-gon, a fence strip) x two heights x four sun elevations x three
@@ -22,11 +25,40 @@ the exact value of every float:
   hand-built scene without raised plants, at a high and a low sun;
 - ``heatmap`` — ``compute_heatmap`` minutes for the campaign's wall toy case.
 
-On the platform that generated it the comparison is exact. Elsewhere the same
-structure is required and a vertex may differ by 2e-3 cm: the sweep is rounded
-onto pyclipper's 1/1000 cm grid, and ``math.sin`` / ``math.cos`` are not
-correctly rounded on every C library, so a displacement that lands within one
-ulp of a half grid step may round the other way.
+**What each platform enforces** (review round 1, P1-2 — the gate is NOT the same
+everywhere, and the CI test jobs run on Linux):
+
+=====================  =======================================================
+win32 (the platform    every float of every section equal, bit for bit; the
+that generated the     SHA-256 of the bench plans' caster lists and shadow
+fixture; the dev box)  unions equal
+anywhere else          the same structure (polygon and vertex counts, path
+(Linux CI)             element types, heatmap shape); every coordinate within
+                       2e-3 cm — two steps of the 1/1000 cm grid; every union
+                       area within 1e-6 relative; no hashes
+=====================  =======================================================
+
+Why it cannot be exact everywhere, cheaply: the numbers leave the integer grid
+only at the very end (``k / 1000``, correctly rounded on any IEEE machine), so
+comparing integer paths instead of floats would change nothing. What can differ
+is how a number gets ONTO the grid: a sweep displacement is
+``round(sin(az) * h / tan(a) * 1000)``, and ``math.sin`` / ``cos`` / ``tan`` are
+the C library's — not correctly rounded on every one — so a value within an ulp
+of a half grid step may round the other way. Removing that would mean replacing
+libm in the shipped shadow code.
+
+So the claim "nothing on the ground changed" does not rest on this file alone.
+Its platform-INDEPENDENT half is
+``tests/unit/test_shadow_caster_base.py::TestTheGroundPathIsTheReleasedCode``:
+the shadow functions of v1.29.10, copied verbatim, give the very same integer
+paths as today's for every caster on the ground — on whatever machine the test
+runs, because old and new then share its libm. That is a proof of "unchanged";
+this file adds the absolute numbers (exact where it was generated, to the grid
+elsewhere) and the walk over real plans.
+
+The tolerant comparison runs on EVERY platform (it is implied by the exact one),
+so it is exercised where the fixture was generated too, and
+``test_the_portable_comparison_can_fail`` shows it is not vacuous.
 
 Regenerating is a deliberate act (a ground-level shadow really changed): run
 
@@ -81,8 +113,13 @@ WRITE_ENV = "OGP_WRITE_SHADOW_GOLDEN"
 PLAN_NAMES = ("bench_small.ogp", "bench_large.ogp")
 JUNE = date(2026, 6, 21)
 BERLIN = {"latitude": 52.52, "longitude": 13.405}
-#: Off the generating platform a vertex may sit one grid step (1e-3 cm) away.
+#: Off the generating platform a coordinate may sit up to two steps of the 1/1000 cm
+#: grid away (module docstring: libm before the rounding onto the grid).
 PORTABLE_TOLERANCE_CM = 2e-3
+#: Where "before" is: a release tag, which survives a squash merge.
+GENERATED_FROM = ("release v1.29.10 - core/shadow_geometry.py and core/shade_aggregation.py are "
+                  "byte-identical to it - as of integration-branch commit aaec048: the shadow "
+                  "code before L1.6 (base stacking)")
 
 Pair = tuple[list[tuple[float, float]], float]
 
@@ -141,7 +178,9 @@ def _walk(scene: Any, at: date) -> tuple[list[Pair], list[Pair], int]:
     items the base rule touches: the same visibility / height / footprint rule as
     ``collect_shadow_casters`` (asserted equal below), plus the parent test —
     ``parent_bed_id`` names a visible soil container (``is_bed_type``) whose own
-    effective height is not None.
+    effective height is not None, AND the item's centre is inside that parent's
+    shape (review round 1: the link alone is bookkeeping). Spelled out with Qt's
+    own calls here, not through the helpers under test.
     """
     items = scene.items()
     by_id = {str(i.item_id): i for i in items if hasattr(i, "item_id")}
@@ -164,6 +203,8 @@ def _walk(scene: Any, at: date) -> tuple[list[Pair], list[Pair], int]:
             and parent.isVisible()
             and is_bed_type(parent.object_type)
             and effective_height_cm(parent.object_type, parent.metadata, at_date=at) is not None
+            and bool(parent.contains(parent.mapFromScene(
+                item.mapToScene(item.boundingRect().center()))))
         )
         for footprint in item_footprints(item, at):
             if len(footprint) >= 3:
@@ -266,7 +307,7 @@ def build_golden() -> dict[str, Any]:
 
     return {
         "meta": {
-            "generated_from": "integration branch aaec048 — the shadow code before L1.6",
+            "generated_from": GENERATED_FROM,
             "platform": sys.platform,
             "python": platform.python_version(),
         },
@@ -323,18 +364,59 @@ def golden(current: dict[str, Any]) -> dict[str, Any]:
     return json.loads(GOLDEN.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
 
 
+def _assert_portably_equal(current: dict[str, Any], golden: dict[str, Any]) -> None:
+    """What EVERY platform enforces: structure, coordinates to the grid, areas."""
+    _same_numbers(_portable(current), _portable(golden))
+    for plan in PLAN_NAMES:
+        for now, then in zip(current["plans"][plan]["suns"], golden["plans"][plan]["suns"],
+                             strict=True):
+            for key in ("all_from_the_ground", "ground_casters_only"):
+                assert now[key]["area_cm2"] == pytest.approx(then[key]["area_cm2"], rel=1e-6)
+
+
 def test_ground_level_shadows_match_the_golden(golden: dict[str, Any], current: dict[str, Any]) -> None:
-    """Every number of the gate, against the fixture generated before L1.6."""
+    """Every number of the gate, against the fixture generated before L1.6: to the
+    grid on any platform, and bit for bit on the one that generated it."""
+    assert golden["meta"] == {"generated_from": GENERATED_FROM, "platform": "win32",
+                              "python": "3.12.9"}
+    _assert_portably_equal(current, golden)
     if sys.platform == golden["meta"]["platform"]:
         for section in ("core", "union", "night", "plans", "overlay", "heatmap"):
             assert current[section] == golden[section], f"{section} differs from the golden"
-    else:
-        _same_numbers(_portable(current), _portable(golden))
-        for plan in PLAN_NAMES:
-            for now, then in zip(current["plans"][plan]["suns"], golden["plans"][plan]["suns"],
-                                 strict=True):
-                for key in ("all_from_the_ground", "ground_casters_only"):
-                    assert now[key]["area_cm2"] == pytest.approx(then[key]["area_cm2"], rel=1e-6)
+
+
+def test_the_portable_comparison_can_fail(golden: dict[str, Any]) -> None:
+    """The gate Linux runs is a gate: it refuses a coordinate three grid steps off, a
+    lost vertex, a lost polygon and an area off by a part in 100,000 — and lets a
+    single grid step pass (that is the libm allowance, and its whole extent)."""
+    def moved(by_cm: float) -> dict[str, Any]:
+        copy = json.loads(json.dumps(golden))
+        copy["core"][7]["polygons"][0][1][0] += by_cm
+        return copy  # type: ignore[no-any-return]
+
+    _assert_portably_equal(moved(0.001), golden)  # one grid step: allowed
+    with pytest.raises(AssertionError, match="core"):
+        _assert_portably_equal(moved(0.003), golden)
+    fewer = json.loads(json.dumps(golden))
+    fewer["core"][7]["polygons"][0].pop()
+    with pytest.raises(AssertionError, match="core"):
+        _assert_portably_equal(fewer, golden)
+    lost = json.loads(json.dumps(golden))
+    lost["union"].pop()
+    with pytest.raises(AssertionError, match="union"):
+        _assert_portably_equal(lost, golden)
+    path = json.loads(json.dumps(golden))
+    path["overlay"][0]["elements"][3][0] = 99  # a path element of another type
+    with pytest.raises(AssertionError, match="overlay"):
+        _assert_portably_equal(path, golden)
+    area = json.loads(json.dumps(golden))
+    area["plans"][PLAN_NAMES[0]]["suns"][0]["ground_casters_only"]["area_cm2"] *= 1.00001
+    with pytest.raises(AssertionError):
+        _assert_portably_equal(area, golden)
+    minutes = json.loads(json.dumps(golden))
+    minutes["heatmap"][0]["minutes"][0][0] += 15.0  # one heatmap sample
+    with pytest.raises(AssertionError, match="heatmap"):
+        _assert_portably_equal(minutes, golden)
 
 
 def test_the_matrix_is_complete(golden: dict[str, Any]) -> None:

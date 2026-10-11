@@ -235,6 +235,131 @@ class TestBaseZeroIsToday:
         assert _reach(fallback, direction) == pytest.approx(_reach(reference, direction), abs=1e-3)
 
 
+class TestTheGroundPathIsTheReleasedCode:
+    """The platform-independent half of "nothing on the ground changed" (review
+    round 1, P1-2).
+
+    ``tests/unit/shadow_geometry_v1_29_10.py`` is ``core/shadow_geometry.py`` as
+    released in v1.29.10 — the same git blob, checked below — kept as an oracle.
+    For every caster that stands on the ground the released functions and today's
+    return the very same polygons, compared exactly. Both run on the machine the
+    test runs on, so they share its C library: unlike the golden fixture, this
+    holds bit for bit on Linux, on Windows, anywhere — and it is what makes the
+    change provably confined to casters with a base.
+    """
+
+    RELEASED_BLOB = "bde1030b22428cfb4a3bc5c415a01fe3b3342baf"  # git rev-parse v1.29.10:<the file>
+
+    @staticmethod
+    def _cases() -> list[tuple[list[tuple[float, float]], float | None, float, float]]:
+        rng = np.random.default_rng(385)
+        footprints = [SQUARE, SQUARE[::-1], L_SHAPE, CIRCLE,
+                      [(0.0, 0.0), (400.0, 0.0), (400.0, 1.5), (0.0, 1.5)],   # a fence strip
+                      [(12.3455, 7.0005), (97.1235, 3.4995), (55.5555, 88.8885)]]  # half grid steps
+        for _ in range(40):  # random simple polygons: a star-shaped ring round a centre
+            count = int(rng.integers(3, 12))
+            angles = np.sort(rng.uniform(0.0, 2.0 * math.pi, count))
+            radii = rng.uniform(5.0, 400.0, count)
+            centre = rng.uniform(-2000.0, 2000.0, 2)
+            ring = [(float(centre[0] + r * math.cos(a)), float(centre[1] + r * math.sin(a)))
+                    for a, r in zip(angles, radii, strict=True)]
+            footprints.append(ring if rng.random() < 0.5 else ring[::-1])
+        cases = []
+        heights = [None, 0.0, -5.0, 0.004, 1.0, 37.5, 100.0, 450.0, 1234.567]
+        elevations = [-3.0, 0.49, 0.5, 5.0, 15.0, 35.0, 59.29, 60.0, 89.999, 90.0]
+        for index, footprint in enumerate(footprints):
+            for step in range(6):
+                cases.append((footprint, heights[(index + step) % len(heights)],
+                              elevations[(index * 3 + step) % len(elevations)],
+                              float(rng.uniform(0.0, 360.0)) if step else 203.74))
+        return cases
+
+    def test_the_oracle_is_the_released_file(self) -> None:
+        import hashlib
+        from pathlib import Path
+
+        from tests.unit import shadow_geometry_v1_29_10 as released
+
+        content = Path(released.__file__).read_bytes().replace(b"\r\n", b"\n")
+        blob = hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()  # noqa: S324 — git's id
+        assert blob == self.RELEASED_BLOB
+        assert not hasattr(released, "ShadowCaster") and not hasattr(released, "base_offset_cm")
+
+    def test_one_caster_on_the_ground(self) -> None:
+        from tests.unit import shadow_geometry_v1_29_10 as released
+
+        cases = self._cases()
+        assert len(cases) == 276
+        cast = 0
+        for footprint, height, elevation, azimuth in cases:
+            before = released.shadow_polygon(footprint, height, elevation, azimuth)
+            assert sg.shadow_polygon(footprint, height, elevation, azimuth) == before
+            assert sg.shadow_polygon(footprint, height, elevation, azimuth, base_cm=0.0) == before
+            assert sg.compute_scene_shadows([(footprint, height)], elevation, azimuth) == (
+                released.compute_scene_shadows([(footprint, height)], elevation, azimuth))
+            if height is not None and height > 0.0:
+                assert sg.compute_scene_shadows([ShadowCaster(footprint, height)], elevation, azimuth) == (
+                    released.compute_scene_shadows([(footprint, height)], elevation, azimuth))
+            cast += bool(before)
+        assert cast > 100  # most of them really cast something
+
+    def test_the_integer_paths_themselves(self) -> None:
+        """One level down: the paths handed to the union, before any float exists."""
+        from tests.unit import shadow_geometry_v1_29_10 as released
+
+        for footprint, height, elevation, azimuth in self._cases():
+            length = sg.shadow_length_cm(height, elevation)
+            if length is None:
+                continue
+            direction = sg.shadow_direction_scene(azimuth)
+            before = released._caster_paths_int(footprint, length, direction)
+            assert sg._caster_paths_int(footprint, length, direction) == before
+            assert sg._caster_paths_int(footprint, length, direction, 0.0) == before
+
+    def test_a_whole_scene_on_the_ground(self) -> None:
+        from tests.unit import shadow_geometry_v1_29_10 as released
+
+        pairs = [(footprint, height) for footprint, height, _e, _a in self._cases()[::5]]
+        grounded = [ShadowCaster(footprint, height) for footprint, height in pairs  # type: ignore[arg-type]
+                    if height is not None]
+        plain = [(c.footprint, c.height_cm) for c in grounded]
+        for elevation in (0.5, 15.0, 35.0, 60.0):
+            for azimuth in (0.0, 135.0, 203.74, 300.0):
+                before = released.compute_scene_shadows(pairs, elevation, azimuth)
+                assert sg.compute_scene_shadows(pairs, elevation, azimuth) == before
+                assert sg.compute_scene_shadows(grounded, elevation, azimuth) == (
+                    released.compute_scene_shadows(plain, elevation, azimuth))
+
+    def test_the_heatmap_of_a_scene_on_the_ground(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``compute_heatmap`` with the RELEASED shadow function in place of today's:
+        the same minutes, exactly, for casters on the ground."""
+        from datetime import date
+
+        from open_garden_planner.core import shade_aggregation
+        from tests.unit import shadow_geometry_v1_29_10 as released
+
+        casters = [(SQUARE, 100.0), (L_SHAPE, 37.5), (CIRCLE, 450.0)]
+        grid = HeatmapGrid.for_rect(-400.0, -400.0, 1000.0, 1200.0, cell_cm=25.0)
+        days = (date(2026, 6, 21), date(2026, 12, 21))
+        today = [compute_heatmap(casters, 52.52, 13.405, day, grid, point_rasterizer_reference)
+                 for day in days]
+        as_casters = [compute_heatmap([ShadowCaster(fp, h) for fp, h in casters], 52.52, 13.405, day,
+                                      grid, point_rasterizer_reference) for day in days]
+        monkeypatch.setattr(shade_aggregation, "compute_scene_shadows", released.compute_scene_shadows)
+        before = [compute_heatmap(casters, 52.52, 13.405, day, grid, point_rasterizer_reference)
+                  for day in days]
+        for now, wrapped, then in zip(today, as_casters, before, strict=True):
+            assert now is not None and wrapped is not None and then is not None
+            assert np.array_equal(now, then) and np.array_equal(wrapped, then)
+            assert float(then.min()) < float(then.max())  # a real map, not all sun
+
+    def test_and_a_base_really_is_a_different_shadow(self) -> None:
+        from tests.unit import shadow_geometry_v1_29_10 as released
+
+        before = released.compute_scene_shadows([(SQUARE, 100.0)], 35.0, 203.74)
+        assert sg.compute_scene_shadows([ShadowCaster(SQUARE, 100.0, 38.0)], 35.0, 203.74) != before
+
+
 class TestACasterIsATypeNotALength:
     """Review round 1, P2-4: a third element is a base only when a ``ShadowCaster``
     says so. Before, any 3-tuple's last element was read as a height above ground."""
