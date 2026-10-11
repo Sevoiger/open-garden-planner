@@ -10,7 +10,10 @@ pins the move:
   the package's objects;
 - ``resolve_sprite`` answers exactly what the 2D resolver answered before the
   extraction (``tests/fixtures/plant_art/sprite_resolution_golden.json``, written
-  from the unchanged code in the commit before the move);
+  from the unchanged code in the commit before the move; its generator, with
+  that resolver kept statement for statement, is
+  ``scripts/make_sprite_resolution_golden.py``) — with every sprite file present
+  and with sprite files MISSING, at the pure function and at the renderer;
 - the dormant spike's palette copy still equals the shared table (until L1.10).
 
 The sprites themselves are pinned by ``test_plant_sprite_conformance.py``, which
@@ -27,6 +30,8 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from PyQt6.QtCore import QRectF
+from PyQt6.QtGui import QImage, QPainter
 
 from open_garden_planner.core import plant_art
 from open_garden_planner.core.plant_art import recipes, resolve
@@ -44,6 +49,7 @@ from tests.unit.test_scene3d_contract import _imports
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "generate_plant_sprites.py"
+GOLDEN_SCRIPT = REPO / "scripts" / "make_sprite_resolution_golden.py"
 PLANTS = REPO / "src" / "open_garden_planner" / "resources" / "plants"
 PACKAGE = Path(plant_art.__file__).parent
 GOLDEN = REPO / "tests" / "fixtures" / "plant_art" / "sprite_resolution_golden.json"
@@ -62,6 +68,42 @@ def _load_generator() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _load_golden_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("make_sprite_resolution_golden", GOLDEN_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _MissingFiles:
+    """``Path.exists`` with some sprite files taken away, for a ``with`` block; the
+    renderer's memos (which path a plant resolves to, which renderers are loaded)
+    are emptied on the way in and on the way out."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *sprites: str) -> None:
+        self._monkeypatch = monkeypatch
+        self._gone = {PLANTS / f"{sprite}.svg" for sprite in sprites}
+
+    def __enter__(self) -> None:
+        from open_garden_planner.core import plant_renderer
+
+        assert all(path.exists() for path in self._gone)      # they ARE shipped
+        real = Path.exists
+        gone = self._gone
+        self._monkeypatch.setattr(
+            Path, "exists", lambda path, *a, **k: False if path in gone else real(path, *a, **k))
+        plant_renderer._resolve_svg_path.cache_clear()
+        plant_renderer.clear_plant_cache()
+
+    def __exit__(self, *_exc: object) -> None:
+        from open_garden_planner.core import plant_renderer
+
+        self._monkeypatch.undo()
+        plant_renderer._resolve_svg_path.cache_clear()
+        plant_renderer.clear_plant_cache()
 
 
 def _file_exists(sprite: SpriteRef) -> bool:
@@ -183,7 +225,15 @@ class TestResolution:
                 wrong.append((species, kind, category, expected, got))
         assert wrong == []
 
-    def test_the_2d_renderer_resolves_through_it(self, qtbot) -> None:
+    def test_the_golden_is_what_its_generator_writes(self) -> None:
+        """The fixture's provenance is in the repo: the resolver as it stood before the
+        extraction, kept statement for statement in the generator script, answers
+        exactly the committed rows."""
+        script = _load_golden_script()
+        assert script.golden_text() == GOLDEN.read_text(encoding="utf-8")
+        assert len(script.cases()) == len(GOLDEN_ROWS) == 1562
+
+    def test_the_2d_renderer_resolves_through_it(self, qtbot, monkeypatch) -> None:
         from open_garden_planner.core import plant_renderer
         from open_garden_planner.core.object_types import ObjectType
 
@@ -196,8 +246,139 @@ class TestResolution:
             if got != expected:
                 wrong.append((species, kind, category, expected, got))
         assert wrong == []
-        source = Path(plant_renderer.__file__).read_text(encoding="utf-8")
-        assert "resolve_sprite(" in source  # ... and not by a copy of the rules
+        # ... through the shared function, not by a copy of its rules: what the
+        # renderer returns is whatever ``resolve_sprite`` says — observed, by handing
+        # it a rule that answers something no copy would
+        asked: list[tuple[object, ...]] = []
+
+        def always_the_palm(kind, species="", category=None, *, available=None):
+            asked.append((kind, species, category, available is not None))
+            return SpriteRef("categories", "palm")
+
+        monkeypatch.setattr(plant_renderer, "resolve_sprite", always_the_palm)
+        answer = plant_renderer._resolve_svg_path.__wrapped__(
+            ObjectType.PERENNIAL, "Tomato", plant_renderer.PlantCategory.VEGETABLE)
+        assert answer == PLANTS / "categories" / "palm.svg"
+        assert asked == [("PERENNIAL", "Tomato", "VEGETABLE", True)]   # with a file test
+
+    def test_the_renderer_skips_a_sprite_whose_file_is_missing(self, qtbot, monkeypatch) -> None:
+        """The renderer's own use of the rule: a mapped sprite whose SVG is not on disk
+        is skipped, and the plant gets the next sprite in line — as it always did.
+        Dropping the renderer's ``available=`` survived 3,048 tests (review round 1):
+        with every file present, nothing ever asked."""
+        from open_garden_planner.core import plant_renderer
+        from open_garden_planner.core.object_types import ObjectType
+        from open_garden_planner.core.plant_renderer import PlantCategory
+
+        resolve_path = plant_renderer._resolve_svg_path.__wrapped__   # past the memo
+
+        def sprite(object_type, species="", category=None) -> str | None:
+            path = resolve_path(object_type, species, category)
+            return None if path is None else f"{path.parent.name}/{path.stem}"
+
+        perennial, tree = ObjectType.PERENNIAL, ObjectType.TREE
+        assert sprite(perennial, "tomato", PlantCategory.VEGETABLE) == "species/tomato"
+        with _MissingFiles(monkeypatch, "species/tomato"):
+            # exact match gone: the item's category, else its type's default category
+            assert sprite(perennial, "tomato", PlantCategory.VEGETABLE) == "categories/vegetable"
+            assert sprite(perennial, "tomato") == "categories/flowering_perennial"
+            assert sprite(tree, "Tomato ") == "categories/round_deciduous"
+            assert sprite(perennial, "lettuce") == "species/lettuce"          # others untouched
+        with _MissingFiles(monkeypatch, "species/cherry_tree"):
+            # the exact key's file is gone: the first PARTIAL match whose file exists
+            assert sprite(tree, "cherry") != "species/cherry_tree"
+            assert sprite(tree, "cherry") == _load_golden_script().reference_resolve(
+                "TREE", "cherry", None, lambda group, stem: (group, stem) != ("species", "cherry_tree"))
+        with _MissingFiles(monkeypatch, "species/tomato", "categories/vegetable"):
+            assert sprite(perennial, "tomato", PlantCategory.VEGETABLE) == "categories/flowering_perennial"
+        with _MissingFiles(monkeypatch, "species/tomato", "categories/flowering_perennial"):
+            assert sprite(perennial, "tomato") is None                        # nothing left to draw
+        assert sprite(perennial, "tomato", PlantCategory.VEGETABLE) == "species/tomato"   # restored
+
+    def test_a_plant_whose_sprite_file_is_missing_is_painted_with_the_next_one(
+        self, qtbot, monkeypatch
+    ) -> None:
+        """... and the plant is PAINTED with it. Without the fall-through the renderer
+        is handed a dead path, loads nothing, and the plant is a bare circle."""
+        from open_garden_planner.core import plant_renderer
+        from open_garden_planner.core.object_types import ObjectType
+        from open_garden_planner.core.plant_renderer import PlantCategory
+        from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+
+        def pixels(pixmap) -> bytes:
+            image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+            bits = image.constBits()
+            bits.setsize(image.sizeInBytes())
+            return bytes(bits)
+
+        def painted(item: CircleItem) -> bytes:
+            image = QImage(160, 160, QImage.Format.Format_ARGB32)
+            image.fill(0)
+            painter = QPainter(image)
+            scene.render(painter, QRectF(0, 0, 160, 160), item.sceneBoundingRect())
+            painter.end()
+            bits = image.constBits()
+            bits.setsize(image.sizeInBytes())
+            return bytes(bits)
+
+        from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene
+
+        scene = QGraphicsScene()
+        item = CircleItem(0.0, 0.0, 40.0, object_type=ObjectType.PERENNIAL)
+        item.plant_species, item.plant_category = "tomato", PlantCategory.VEGETABLE
+        # the canvas caches an unselected item's painting; here every painting must be real
+        item.setCacheMode(QGraphicsItem.CacheMode.NoCache)
+        scene.addItem(item)
+        own = painted(item)
+        own_pixmap = pixels(plant_renderer.render_plant_pixmap(
+            ObjectType.PERENNIAL, 96.0, "", "tomato", PlantCategory.VEGETABLE))
+        category_pixmap = pixels(plant_renderer.render_plant_pixmap(
+            ObjectType.PERENNIAL, 96.0, "", "", PlantCategory.VEGETABLE))
+        assert own_pixmap != category_pixmap
+        with _MissingFiles(monkeypatch, "species/tomato"):
+            fallen = plant_renderer.render_plant_pixmap(
+                ObjectType.PERENNIAL, 96.0, "", "tomato", PlantCategory.VEGETABLE)
+            assert fallen is not None                       # a sprite, not a bare circle
+            assert pixels(fallen) == category_pixmap        # ... the category's
+            without_file = painted(item)
+        item.plant_species = ""
+        plant_renderer.clear_plant_cache()
+        as_category = painted(item)
+
+        def apart(a: bytes, b: bytes) -> float:
+            """Mean difference of two paintings, in 8-bit levels per channel."""
+            return sum(abs(x - y) for x, y in zip(a, b, strict=True)) / len(a)
+
+        # the ITEM paints the category sprite (to a rounding level of the scaled
+        # pixmap), which is not the sprite it paints when its own file is there
+        assert apart(without_file, as_category) < 0.05
+        assert apart(without_file, own) > 2.0
+
+    def test_the_rule_is_the_old_one_with_files_missing(self, qtbot) -> None:
+        """The differential the golden cannot make (the shipped set is complete): the
+        old resolver against the extracted rule AND against the renderer, with every
+        sprite file taken away in turn and with larger sets gone — over every fifth
+        question (the script's ``--differential`` asks them all: 481,096 comparisons,
+        0 mismatches, 2026-10-11)."""
+        script = _load_golden_script()
+        compared, wrong = script.differential(asked=script.cases()[::5])
+        assert wrong == []
+        assert compared == 2 * len(script.missing_sets()) * len(script.cases()[::5]) > 90_000
+
+    def test_the_differential_bites(self, qtbot, monkeypatch) -> None:
+        """A renderer that forgets to ask whether the file exists is caught."""
+        from open_garden_planner.core import plant_renderer
+
+        script = _load_golden_script()
+        real = plant_renderer.resolve_sprite
+
+        def forgetful(kind, species="", category=None, **_available):
+            return real(kind, species, category)
+
+        monkeypatch.setattr(plant_renderer, "resolve_sprite", forgetful)
+        _compared, wrong = script.differential(
+            sets=[frozenset([("species", "tomato")])], asked=[("tomato", "PERENNIAL", "VEGETABLE")])
+        assert len(wrong) == 1 and wrong[0].startswith("plant_renderer(")
 
     def test_the_renderer_s_maps_are_the_package_s(self, qtbot) -> None:
         from open_garden_planner.core import plant_renderer
