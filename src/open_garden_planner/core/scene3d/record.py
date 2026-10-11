@@ -57,6 +57,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Final, TypeAlias
 
 from .color import Rgba, srgb8_to_linear
@@ -103,6 +104,33 @@ PARAM_OUTLINE_RESOLVED: Final = "outline_resolved"
 FALLBACK_RGBA: Final[Rgba] = (158, 158, 148, 255)
 
 
+#: The largest length a record may hold, in cm: 10 km. A height, a stroke width,
+#: a radius, a coordinate of the local geometry, a position, a float param —
+#: nothing in a garden plan is taller, wider or farther from its origin. The
+#: bound is decided HERE, once, for every consumer: a plan file edited by hand
+#: can hold ``"object_height_cm": 1e300`` — a finite, positive float, which the
+#: mesh's float32 turns into infinity — and no builder should have to know. At
+#: the bound a float32 coordinate still resolves 0.06 cm.
+MAX_LENGTH_CM: Final = 1e6
+
+
+class RecordRangeError(ValueError):
+    """A length of a record lies beyond ``MAX_LENGTH_CM`` (or is infinite)."""
+
+
+def _check_length(what: str, value: float) -> None:
+    if not -MAX_LENGTH_CM <= value <= MAX_LENGTH_CM:
+        raise RecordRangeError(
+            f"{what} of {value!r} cm is beyond what a plan can hold (±{MAX_LENGTH_CM:g} cm)"
+        )
+
+
+@lru_cache(maxsize=8192)
+def _ring_reach(ring: Ring) -> float:
+    """The largest absolute coordinate of a ring; cached, as ``ring_area`` is."""
+    return max((max(abs(x), abs(y)) for x, y in ring), default=0.0)
+
+
 def quantize_cm(value: float) -> float:
     """Snap a length to the record grid; ``+ 0.0`` turns ``-0.0`` into ``0.0``."""
     return round(value, LENGTH_DECIMALS) + 0.0
@@ -136,6 +164,9 @@ class Transform:
             bad = [name for name in ("east_cm", "north_cm", "rotation_deg", "base_cm")
                    if not math.isfinite(getattr(self, name))]
             raise ValueError(f"Transform has non-finite {', '.join(bad)}: {self!r}")
+        _check_length("a position east", self.east_cm)
+        _check_length("a position north", self.north_cm)
+        _check_length("a base height", self.base_cm)
 
     def with_base(self, base_cm: float) -> Transform:
         """The same pose standing on another ground height."""
@@ -193,6 +224,7 @@ def _check_param_value(key: str, value: object) -> None:
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError(f"param {key!r} holds a non-finite float")
+        _check_length(f"param {key!r}: a value", value)
         return
     if isinstance(value, tuple):
         for element in value:
@@ -303,7 +335,9 @@ class Record:
       ``()`` when no ring has a hole (the usual case); otherwise one entry per
       outer. A closed fence is the case that needs it: its stroke is one outer
       ring and one hole, and a builder that extrudes the hole as a solid turns
-      3.6 m² of fence into an 80 m² slab. Iterate ``regions`` to get both.
+      3.6 m² of fence into an 80 m² slab. A polygon drawn crossing itself can
+      enclose a pocket, so holes are not a stroke's alone. Iterate ``regions``
+      to get both.
     - ``path`` / ``path_width_cm``: a polyline's centre line (item-local) and
       stroke width — fences and walls are built from these, not from the strip.
       ``()`` / ``None`` for every other shape.
@@ -340,10 +374,22 @@ class Record:
     def __post_init__(self) -> None:
         if self.shape not in SHAPES:
             raise ValueError(f"unknown shape {self.shape!r}; expected one of {SHAPES}")
-        if self.height_cm is not None and not 0.0 < self.height_cm < math.inf:
-            raise ValueError(
-                f"height_cm is a positive finite number or None, got {self.height_cm!r}"
-            )
+        if self.height_cm is not None:
+            if not self.height_cm > 0.0:
+                raise ValueError(
+                    f"height_cm is a positive finite number or None, got {self.height_cm!r}"
+                )
+            _check_length("a height", self.height_cm)  # an infinite one too
+        if self.path_width_cm is not None:
+            if not math.isfinite(self.path_width_cm):
+                raise ValueError(f"path_width_cm is finite or None, got {self.path_width_cm!r}")
+            _check_length("a stroke width", self.path_width_cm)
+        for ring in (*self.footprints, *(hole for group in self.holes for hole in group), self.path):
+            if not _ring_reach(ring) <= MAX_LENGTH_CM:
+                raise RecordRangeError(
+                    f"a coordinate of {_ring_reach(ring)!r} cm is beyond what a plan can hold "
+                    f"(±{MAX_LENGTH_CM:g} cm)"
+                )
         for ring in self.footprints:
             if not ring_area(ring) > 0.0:
                 raise ValueError(

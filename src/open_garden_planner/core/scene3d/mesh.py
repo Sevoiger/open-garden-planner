@@ -62,8 +62,14 @@ class MeshError(ValueError):
     """A mesh that must not reach the engine; the message names the defect."""
 
 
-def _f32(values: ArrayLike, width: int) -> NDArray[np.float32]:
-    array = np.array(values, dtype=np.float32).reshape(-1, width)  # always a private copy
+def _f32(values: ArrayLike, width: int, name: str) -> NDArray[np.float32]:
+    with np.errstate(over="ignore"):  # a float64 beyond float32 becomes inf — refused below
+        array = np.array(values, dtype=np.float32).reshape(-1, width)  # always a private copy
+    if not np.isfinite(array).all():
+        raise MeshError(
+            f"non-finite values in {name} once they are float32 (a NaN, an infinity, or a "
+            "number beyond 3.4e38): a mesh never holds one"
+        )
     array.setflags(write=False)
     return array
 
@@ -91,10 +97,13 @@ class Mesh:
     ) -> Mesh:
         """Build a mesh from anything array-like: dtypes are coerced, attributes
         reshaped to (n, k), indices (flat or (m, 3)) to (m, 3), all read-only.
-        Shapes that do not fit raise ``ValueError`` here; content is judged by
+        Shapes that do not fit raise ``ValueError`` here, and so does a value that
+        is not finite once it is float32 (``MeshError``) — 1e300 is a finite
+        float64 and an infinite float32, and a sink that does not validate would
+        hand it to the engine. Everything else about the content is judged by
         ``validate()``."""
-        return Mesh(_f32(positions, 3), _f32(normals, 3), _f32(colors, 4), _f32(uvs, 2),
-                    _u32(indices))
+        return Mesh(_f32(positions, 3, "positions"), _f32(normals, 3, "normals"),
+                    _f32(colors, 4, "colors"), _f32(uvs, 2, "uvs"), _u32(indices))
 
     @staticmethod
     def empty() -> Mesh:

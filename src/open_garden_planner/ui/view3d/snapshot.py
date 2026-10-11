@@ -12,6 +12,22 @@ Two collectors live here until L1.10 removes Qt 3D:
 - ``snapshot_records`` (Phase 17 L1.1, #385, ADR-054) produces contract v2:
   one ``core.scene3d.Record`` per item, in the item-local frame with a rigid
   transform, for ``SceneSync`` and the Qt Quick 3D sink.
+
+Three things on record about the contract-v2 half (review of fix round 1):
+
+- Its caches — ``_circle_ring``, ``_polyline_regions``, ``_polygon_regions``,
+  ``_material`` — are module-global ``lru_cache``s keyed by whole rings and never
+  cleared. Bounded (1,024 to 4,096 entries each), and small at plan sizes: an
+  outline of 1,000 vertices is 16 kB per entry. A ring that is being edited
+  adds an entry per tick and pushes the oldest out.
+- This module is a second place that knows the clipper's scale
+  (``CLIPPER_SCALE``; the first is ``core/shadow_geometry``): it resolves a
+  self-crossing outline and sorts rings into regions itself. Both belong in ONE
+  ``core`` function that the 2D footprints call as well — the follow-up that
+  makes the 2D shadow of a closed stroke right should move them there.
+- Until then 2D and 3D disagree ON PURPOSE for two shapes: a closed stroke (2D:
+  every ring a solid; 3D: the stroke, with its hole) and a polygon that crosses
+  itself (2D: the ring as drawn; 3D: the resolved regions).
 """
 
 from __future__ import annotations
@@ -59,7 +75,11 @@ from open_garden_planner.core.scene3d import (
     ring_area,
 )
 from open_garden_planner.core.scene3d.polygon import is_buildable_region, regions_area
-from open_garden_planner.core.scene3d.record import PARAM_OUTLINE_RESOLVED
+from open_garden_planner.core.scene3d.record import (
+    MAX_LENGTH_CM,
+    PARAM_OUTLINE_RESOLVED,
+    RecordRangeError,
+)
 from open_garden_planner.core.shadow_geometry import (
     CLIPPER_SCALE,
     circle_footprint,
@@ -150,6 +170,9 @@ class SkipReason(StrEnum):
     #: Its outline cannot be turned into regions a builder can build
     #: (``core.scene3d.is_buildable_region``), not even after resolving it.
     OUTLINE_UNBUILDABLE = "outline_unbuildable"
+    #: One of its lengths — height, width, radius, a coordinate, its position —
+    #: is beyond ``core.scene3d.MAX_LENGTH_CM`` or infinite (a hand-edited plan).
+    OUT_OF_RANGE = "out_of_range"
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +220,7 @@ _LOG_TEXT: dict[SkipReason, str] = {
     SkipReason.RECORD_FAILED: "its record could not be built",
     SkipReason.DUPLICATE_ID: "another item already has this id",
     SkipReason.OUTLINE_UNBUILDABLE: "its outline cannot be made into regions a builder can build",
+    SkipReason.OUT_OF_RANGE: "one of its lengths is beyond what a plan can hold",
 }
 
 
@@ -221,6 +245,8 @@ def _report(skipped: SkippedItem, into: list[SkippedItem] | None,
     words = (skipped.kind, skipped.item_id, _LOG_TEXT[skipped.reason], skipped.reason.value)
     if error is not None:
         _log.error(line, *words, exc_info=error)
+    elif skipped.error_message:
+        _log.warning(line + " — %s", *words, skipped.error_message)
     else:
         _log.warning(line, *words)
 
@@ -524,8 +550,10 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
     ``_UnbuildableOutline`` for an outline no builder could build."""
     if outline.shape == OUTLINE_CIRCLE:
         radius = outline.radius_cm
-        if radius is None or not math.isfinite(radius):
+        if radius is None or math.isnan(radius):
             raise ValueError(f"a circle of radius {radius!r}")
+        if abs(radius) > MAX_LENGTH_CM:  # before a ring of that size is made
+            raise RecordRangeError(f"a radius of {radius!r} cm is beyond ±{MAX_LENGTH_CM:g} cm")
         if radius <= 0.0:
             return (), (), None, None, False
         radius = quantize_cm(radius)
@@ -533,10 +561,16 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
     ring = frame.local_ring(outline.points)
     if not _finite_ring(ring):
         raise ValueError("geometry that is not finite")
+    if any(abs(x) > MAX_LENGTH_CM or abs(y) > MAX_LENGTH_CM for x, y in ring):
+        # before the clipper sees it: its integers end at 4.6e18, and a record
+        # could not hold the result anyway
+        raise RecordRangeError(f"an outline that reaches beyond ±{MAX_LENGTH_CM:g} cm")
     if outline.shape == OUTLINE_POLYLINE:
         width = outline.width_cm
-        if width is None or not math.isfinite(width):
+        if width is None or math.isnan(width):
             raise ValueError(f"a stroke width of {width!r}")
+        if abs(width) > MAX_LENGTH_CM:
+            raise RecordRangeError(f"a stroke width of {width!r} cm is beyond ±{MAX_LENGTH_CM:g} cm")
         if len(ring) < 2:
             return (), ring, width, None, False
         stroke = _polyline_regions(ring, width)
@@ -604,8 +638,8 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     if stroke is None and shape == OUTLINE_POLYLINE:
         stroke = item.pen().color()  # the line's visible colour: a preset-less polyline
     height = effective_height_cm(object_type, metadata, at_date=at_date)
-    if height is not None and not 0.0 < height < math.inf:
-        height = None  # e.g. a hand-edited "Infinity": not a height, so no solid
+    if height is not None and height <= 0.0:
+        height = None  # no height. One that is no usable number is the Record's to refuse.
     pattern = getattr(item, "fill_pattern", None)
     parent = getattr(item, "parent_bed_id", None)
     holes = tuple(region_holes for _outer, region_holes in regions)
@@ -653,8 +687,11 @@ def snapshot_records(
     record could not be built
     (malformed metadata, geometry that is not finite — any exception is
     contained to that item), a second item carrying an id already taken (the
-    lower one wins), and an item whose outline cannot be turned into regions a
-    builder can build. One bad item never blanks the view.
+    lower one wins), an item whose outline cannot be turned into regions a
+    builder can build, and an item with a length beyond
+    ``core.scene3d.MAX_LENGTH_CM`` — a height of 1e300 from a hand-edited plan
+    is a finite number and an infinite float32; such an item gets no record
+    rather than a solid nobody can draw. One bad item never blanks the view.
 
     What a record holds, and why (``core.scene3d.record``, §8.26.1):
 
@@ -692,6 +729,10 @@ def snapshot_records(
         item_id = str(item_uuid)
         try:
             record = _record_of(item, object_type, item_id, at_date, lookup)
+        except RecordRangeError as error:  # a length beyond what a plan can hold
+            _report(SkippedItem(item_id, kind, SkipReason.OUT_OF_RANGE,
+                                type(error).__name__, str(error)), skipped)
+            continue
         except _UnbuildableOutline as error:
             _report(SkippedItem(item_id, kind, SkipReason.OUTLINE_UNBUILDABLE,
                                 type(error).__name__, str(error)), skipped)

@@ -865,16 +865,119 @@ class TestRecordContent:
         assert diff(before, after) == SceneDiff(transform=(item_id,))
         assert after[item_id].transform == Transform(-220.25, 310.5, 0.0)  # (x, y) → (−y, x)
 
-    def test_a_nonsense_height_is_no_height(self, canvas: CanvasView) -> None:
-        """``effective_height_cm`` lets an explicit ``Infinity`` through (a hand-edited
-        plan can hold one). It is not a height: the record says decoration, and the
-        engine never receives a non-finite mesh."""
+    @pytest.mark.parametrize("height", [1e300, 1.0000001e6, float("inf")],
+                             ids=["1e300", "just over the bound", "infinite"])
+    def test_a_height_no_plan_can_hold_gets_no_solid_and_is_reported(
+        self, canvas: CanvasView, height: float
+    ) -> None:
+        """A plan file edited by hand can hold ``"object_height_cm": 1e300``, and
+        ``effective_height_cm`` passes it on. It is positive and finite, so it
+        passed every check — and became infinity in the mesh's float32, which a
+        sink that does not validate hands to the engine (found at the pipeline
+        level by the plant story's review). The record layer refuses it once, for
+        every builder: the item gets no record and is reported with its own code.
+        Driven the whole way here: snapshot → ``SceneSync`` → sink, unvalidated."""
+        snapshot_module._reported.clear()
+        shed, bed = _rectangle(), RectangleItem(900.0, 100.0, 200.0, 100.0,
+                                                object_type=ObjectType.RAISED_BED)
+        scene = canvas.scene()
+        scene.addItem(shed)
+        scene.addItem(bed)
+        shed.metadata[METADATA_KEY] = height
+        assert effective_height_cm(shed.object_type, shed.metadata) == height
+        snapshot, skipped = snapshot_with_report(scene)
+        assert list(snapshot) == [str(bed.item_id)]  # the rest of the plan is untouched
+        (report,) = skipped
+        assert (report.item_id, report.kind, report.reason) == (
+            str(shed.item_id), "TOOL_SHED", SkipReason.OUT_OF_RANGE)
+        assert report.reason == "out_of_range" and report.error_type == "RecordRangeError"
+        assert "a height of" in report.error_message and "1e+06 cm" in report.error_message
+
+        sink = RecordingSink()
+        sync = SceneSync(sink, validate=False)  # as production runs
+        sync.apply(snapshot)
+        assert sync.failures == {} and set(sink.state().items) == {str(bed.item_id)}
+        for held in sink.state().items.values():
+            for part in held.parts:
+                for name in ("positions", "normals", "colors", "uvs"):
+                    assert np.isfinite(getattr(part.mesh, name)).all()
+
+        # the height the bound still allows — 10 km — is a solid like any other
+        shed.metadata[METADATA_KEY] = 1e6
+        record = snapshot_records(scene)[str(shed.item_id)]
+        (part,) = default_builder(record)
+        assert record.height_cm == 1e6 and float(part.mesh.bounds()[1][2]) == 1e6
+        assert np.isfinite(part.mesh.positions).all()
+
+    def test_a_height_of_nothing_is_no_height(self, canvas: CanvasView) -> None:
+        """Zero, a negative number or a string is not an explicit height at all
+        (``explicit_height_cm``): the kind's default stands, nothing is reported."""
         item = _rectangle()
         canvas.scene().addItem(item)
-        item.metadata[METADATA_KEY] = float("inf")
-        assert effective_height_cm(item.object_type, item.metadata) == float("inf")
-        record = snapshot_records(canvas.scene())[str(item.item_id)]
-        assert record.height_cm is None and default_builder(record) == ()
+        usual = snapshot_records(canvas.scene())[str(item.item_id)].height_cm
+        for nothing in (0.0, -5.0, "tall"):
+            item.metadata[METADATA_KEY] = nothing
+            snapshot, skipped = snapshot_with_report(canvas.scene())
+            assert snapshot[str(item.item_id)].height_cm == usual and skipped == []
+
+    @pytest.mark.parametrize(
+        ("label", "make"),
+        [("a canopy radius", lambda: CircleItem(0.0, 0.0, 2.5e6, object_type=ObjectType.TREE)),
+         ("a rectangle's side", lambda: RectangleItem(0.0, 0.0, 3.0e6, 100.0,
+                                                      object_type=ObjectType.RAISED_BED)),
+         ("a polygon's vertex", lambda: PolygonItem(
+             [QPointF(0.0, 0.0), QPointF(1e300, 0.0), QPointF(0.0, 500.0)],
+             object_type=ObjectType.HOUSE)),
+         ("a fence's vertex", lambda: PolylineItem(
+             [QPointF(0.0, 0.0), QPointF(0.0, -4.0e6)], object_type=ObjectType.FENCE)),
+         ("a position", lambda: _far_away(5.0e6))],
+    )
+    def test_every_length_that_becomes_geometry_is_held_to_the_bound(
+        self, canvas: CanvasView, label: str, make: Any
+    ) -> None:
+        snapshot_module._reported.clear()
+        item = make()
+        canvas.scene().addItem(item)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {}, label
+        assert [(s.item_id, s.reason, s.error_type) for s in skipped] == [
+            (str(item.item_id), SkipReason.OUT_OF_RANGE, "RecordRangeError")], label
+
+    def test_a_stroke_width_no_plan_can_hold(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A pen cannot carry one — Qt refuses a width from 32,768 on and keeps the
+        old — so the outline is handed one directly: the rule must not depend on
+        which layer above happens to be strict."""
+        import dataclasses
+
+        fence = PolylineItem([QPointF(0.0, 0.0), QPointF(500.0, 0.0)], object_type=ObjectType.FENCE)
+        canvas.scene().addItem(fence)
+        pen = fence.pen()
+        pen.setWidthF(3.0e6)
+        fence.setPen(pen)
+        assert fence.pen().widthF() < 32768.0  # Qt kept the old width
+        real = snapshot_module.item_outline
+        monkeypatch.setattr(snapshot_module, "item_outline", lambda item, at_date=None:
+                            dataclasses.replace(real(item, at_date), width_cm=3.0e6))
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {} and [s.reason for s in skipped] == [SkipReason.OUT_OF_RANGE]
+        assert "a stroke width of 3000000.0 cm" in skipped[0].error_message
+
+    def test_an_out_of_range_item_is_logged_once_with_what_was_wrong(
+        self, canvas: CanvasView, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        snapshot_module._reported.clear()
+        item = _rectangle()
+        canvas.scene().addItem(item)
+        item.metadata[METADATA_KEY] = 1e300
+        with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
+            caplog.clear()
+            for _ in range(3):
+                snapshot_records(canvas.scene())
+        (line,) = caplog.records
+        assert line.levelno == logging.WARNING and line.exc_info is None  # the plan's data, no defect
+        assert "[out_of_range]" in line.getMessage() and "a height of 1e+300 cm" in line.getMessage()
 
     def test_non_finite_geometry_is_skipped_not_propagated(self, canvas: CanvasView) -> None:
         """NaN != NaN: one such record would report a change on every diff, forever.
@@ -1190,6 +1293,12 @@ class TestSelfCrossingPolygon:
                                        "the outline cannot be resolved into buildable regions")]
 
 
+def _far_away(distance: float) -> Any:
+    item = RectangleItem(0.0, 0.0, 100.0, 100.0, object_type=ObjectType.TOOL_SHED)
+    item.setPos(distance, 0.0)
+    return item
+
+
 def _random_outline(rng: Any, grid: float, vertices: int, span: float = 400.0) -> tuple[Any, ...]:
     points: list[tuple[float, float]] = []
     cells = int(span / grid)
@@ -1253,6 +1362,44 @@ def test_random_self_crossing_outlines(grid: float, count: int) -> None:
         # against the raster (2 cm cells: a perimeter of ~2,000 cm is ±1.5 % of a small shape)
         wrong += abs(regions_area(regions) - truth) > 0.03 * truth + 200.0
     assert (dropped, unbuilt, wrong) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("grid", [50.0, 10.0, 0.5],
+                         ids=["a 50 cm grid", "a 10 cm grid", "a 0.5 cm grid"])
+def test_random_strokes(grid: float) -> None:
+    """The same promise for the other producer of holes. 1,500 random polylines
+    per grid — 3 to 11 vertices, three in ten closed, 4 / 10 / 25 cm wide; on the
+    coarse grid they cross and retrace themselves at will: every one gets
+    regions, every region satisfies the predicate, the default builder builds a
+    mesh that is sound in float32, and the ground covered is the area of the 2D
+    stroke rings (outers minus holes)."""
+    import random
+
+    from open_garden_planner.core.shadow_geometry import polyline_footprint
+
+    rng = random.Random(386)
+    dropped = unbuilt = wrong = holed = 0
+    for _ in range(1500):
+        path = list(_random_outline(rng, grid, rng.randrange(3, 12)))
+        if rng.random() < 0.3:
+            path.append(path[0])
+        width = rng.choice([4.0, 10.0, 25.0])
+        regions = snapshot_module._polyline_regions(tuple(path), width)
+        if regions is None:
+            dropped += 1
+            continue
+        if not all(is_buildable_region(outer, holes) for outer, holes in regions):
+            unbuilt += 1
+            continue
+        mesh = prism_mesh([outer for outer, _holes in regions], 100.0,
+                          [holes for _outer, holes in regions])
+        mesh.validate()
+        unbuilt += not mesh.vertex_count
+        holed += any(holes for _outer, holes in regions)
+        drawn = _signed_area_sum(polyline_footprint(path, width))
+        wrong += abs(regions_area(regions) - drawn) > 2e-3 * drawn + 1.0
+    assert (dropped, unbuilt, wrong) == (0, 0, 0)
+    assert holed > 100  # the sample is not made of open strokes only
 
 
 class TestWhatPyclipperGetsWrong:
@@ -1430,7 +1577,8 @@ class TestContainment:
         gc.collect()
         assert gone() is None  # the report does not pin the item
         assert [reason.value for reason in SkipReason] == [
-            "record_failed", "duplicate_id", "outline_unbuildable"]  # the codes a UI maps to texts
+            "record_failed", "duplicate_id", "outline_unbuildable", "out_of_range",
+        ]  # the codes a UI maps to texts
 
     def test_a_repaired_item_comes_back(self, canvas: CanvasView) -> None:
         scene = canvas.scene()

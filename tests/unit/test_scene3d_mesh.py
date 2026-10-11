@@ -193,6 +193,43 @@ class TestValidate:
         with pytest.raises(MeshError, match=f"non-finite.*{name}"):
             _replace(triangle(), **{name: array}).validate()
 
+    # ── fix round 2: a mesh never holds a number that is not finite ──────────
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf, 1e300, -3.5e38],
+                             ids=["nan", "inf", "-inf", "1e300", "beyond float32"])
+    @pytest.mark.parametrize("name", ["positions", "normals", "colors", "uvs"])
+    def test_from_arrays_refuses_what_is_not_finite_in_float32(self, name: str, bad: float) -> None:
+        """``1e300`` is a finite float64 and an infinite float32. ``validate()``
+        catches it — but production runs with ``validate=False``, so the one
+        constructor every builder uses refuses it."""
+        good = triangle()
+        arrays = {attribute: getattr(good, attribute).astype(np.float64)
+                  for attribute in ("positions", "normals", "colors", "uvs")}
+        arrays[name][0, 0] = bad
+        with pytest.raises(MeshError, match=f"non-finite values in {name} once they are float32"):
+            Mesh.from_arrays(**arrays, indices=good.indices)
+        arrays[name][0, 0] = 3.0e38  # the largest order of magnitude float32 holds: let through
+        assert Mesh.from_arrays(**arrays, indices=good.indices).vertex_count == 3
+
+    def test_prism_mesh_refuses_a_height_that_is_not_finite_in_float32(self) -> None:
+        for height in (1e300, 3.5e38, float("inf"), float("nan")):
+            with pytest.raises(MeshError, match="a height of .* is not finite in float32"):
+                prism_mesh((SQUARE,), height)
+        for bad in (1e300, -3.5e38, float("inf"), float("nan")):
+            with pytest.raises(MeshError, match="a footprint coordinate .* is not finite in float32"):
+                prism_mesh((((0.0, 0.0), (bad, 0.0), (5.0, 5.0)),), 40.0)
+            with pytest.raises(MeshError, match="a footprint coordinate"):
+                prism_mesh((FRAME,), 40.0, ((((0.0, 0.0), (0.0, bad), (5.0, 5.0)),),))
+        assert float(prism_mesh((SQUARE,), 1e6).bounds()[1][2]) == 1e6  # the record's bound builds
+        assert prism_mesh((SQUARE,), 0.0) == Mesh.empty() and prism_mesh((SQUARE,), -1e300) == Mesh.empty()
+
+    def test_merge_refuses_a_part_that_is_not_finite(self) -> None:
+        positions = triangle().positions.copy()
+        positions[0, 0] = np.inf
+        broken = _replace(triangle(), positions=positions)  # only reachable by hand
+        with pytest.raises(MeshError, match="non-finite"):
+            Mesh.merge([triangle(), broken])
+
     def test_index_out_of_bounds(self) -> None:
         with pytest.raises(MeshError, match="index 3 .* 3 vertices"):
             _replace(triangle(), indices=np.array([[0, 1, 3]], np.uint32)).validate()

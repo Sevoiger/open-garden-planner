@@ -7,6 +7,12 @@ question directly: it breaks ONE rule of the pipeline at a time and runs the
 tests that are supposed to notice. Every mutant must be KILLED (the tests fail);
 a SURVIVED mutant is a rule no test pins.
 
+KILLED means pytest ran the tests and at least one FAILED — exit code 1 and
+nothing else. Any other non-zero exit (2 interrupted, 3 internal error, 4 a
+usage error such as a test id that no longer exists, 5 no tests collected) is
+reported as BROKEN and counts as a failure of this script: a renamed test would
+otherwise read as a kill.
+
 How it works: each mutant is one textual replacement in one source file. The
 file is restored from an in-memory copy in a ``finally`` block, the script
 refuses to start when ``src/`` has uncommitted changes (so a crash can never be
@@ -22,7 +28,7 @@ or ``ui/view3d/snapshot.py``, or their tests::
     venv/Scripts/python.exe scripts/mutation_check_scene3d.py --list     # names only
     venv/Scripts/python.exe scripts/mutation_check_scene3d.py -k hole    # a subset
 
-Exit code 0: every mutant killed. 1: a mutant survived or is stale. 2: refused.
+Exit code 0: every mutant killed. 1: a mutant survived, is stale or broke the run. 2: refused.
 """
 
 from __future__ import annotations
@@ -159,16 +165,16 @@ MUTANTS: tuple[Mutant, ...] = (
            (MESH, SNAPSHOT, EDGE_PLAN)),
     Mutant("the cap is triangulated without its holes",
            SRC + "core/scene3d/build.py",
-           "        vertices, triangles = triangulate_region(outer, inner)\n",
-           "        vertices, triangles = triangulate_region(outer, ())\n",
+           "        vertices, triangles = cut_region(outer, inner)  # raises ValueError: no wrong cap, ever\n",
+           "        vertices, triangles = cut_region(outer, ())\n",
            (MESH,)),
     Mutant("a hole gets no walls",
            SRC + "core/scene3d/build.py",
            "        for hole in inner:\n            _walls(hole, height_cm, positions, normals)\n", "",
            (MESH,)),
     Mutant("a ring that crosses itself is extruded anyway (review P2-6)",
-           SRC + "core/scene3d/build.py",
-           "            if not is_simple_ring(ring):\n", "            if False:\n",
+           SRC + "core/scene3d/polygon.py",
+           "    if not is_simple_ring(outer) or not ring_area(outer) > 0.0:\n", "    if False:\n",
            (MESH + "::TestDefaultBuilder::test_a_bow_tie_is_refused_not_built_wrong",)),
     Mutant("verify_builder does not look at holes from above",
            SRC + "core/scene3d/build.py",
@@ -205,7 +211,7 @@ MUTANTS: tuple[Mutant, ...] = (
            (POLYGON,)),
     Mutant("the array version of the simplicity test ignores edges that only touch",
            SRC + "core/scene3d/polygon.py",
-           "        if bool(np.any(crossing | touching)):\n", "        if bool(np.any(crossing)):\n",
+           "    return np.asarray(crossing | touching)\n", "    return np.asarray(crossing)\n",
            (POLYGON,)),
     Mutant("the bounding-box prune drops edges whose boxes only touch",
            SRC + "core/scene3d/polygon.py",
@@ -255,8 +261,8 @@ MUTANTS: tuple[Mutant, ...] = (
            (SYNC, PIPELINE)),
     Mutant("a builder registered late is not noticed (review P2-1)",
            SRC + "core/scene3d/sync.py",
-           "            and builder_for(new[item_id].kind) is not built_with\n",
-           "            and False\n",
+           "                and builder_for(new[item_id].kind) is not built_with\n",
+           "                and False\n",
            (SYNC, PIPELINE)),
     Mutant("RecordingSink accepts a duplicate add",
            SRC + "core/scene3d/sink.py",
@@ -306,8 +312,8 @@ MUTANTS: tuple[Mutant, ...] = (
            (SNAPSHOT, EDGE_PLAN)),
     Mutant("a polygon that crosses itself is handed on as it was drawn",
            SRC + "ui/view3d/snapshot.py",
-           "    if is_simple_ring(ring):\n        return ((ccw(ring), ()),)\n",
-           "    if True:\n        return ((ccw(ring), ()),)\n",
+           "    if is_simple_ring(ring) and is_buildable_region(ccw(ring)):\n",
+           "    if True:\n",
            (SNAPSHOT,)),
     Mutant("one bad item raises out of the snapshot (review P2-3)",
            SRC + "ui/view3d/snapshot.py",
@@ -325,7 +331,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant("of two items with one id the upper one wins, silently (review P2-5)",
            SRC + "ui/view3d/snapshot.py",
            "        if item_id in records:\n"
-           "            _report(SkippedItem(item_id, kind, \"another item already has this id\"), skipped)\n"
+           "            _report(SkippedItem(item_id, kind, SkipReason.DUPLICATE_ID), skipped)\n"
            "            continue\n",
            "",
            (SNAPSHOT,)),
@@ -333,11 +339,158 @@ MUTANTS: tuple[Mutant, ...] = (
            SRC + "ui/view3d/snapshot.py",
            "    if into is not None:\n        into.append(skipped)\n", "",
            (SNAPSHOT,)),
+    # ── fix round 2: every region of a record can be built ───────────────────
+    Mutant("a resolved HOUSE still carries the ridge of the outline as it was drawn",
+           SRC + "ui/view3d/snapshot.py",
+           '    if kind == "HOUSE" and not resolved:', '    if kind == "HOUSE":',
+           (SNAPSHOT, EDGE_PLAN)),
+    Mutant("a resolved outline does not say so",
+           SRC + "ui/view3d/snapshot.py",
+           "        params[PARAM_OUTLINE_RESOLVED] = True\n", "        pass\n",
+           (SNAPSHOT, EDGE_PLAN)),
+    Mutant("a vertex placed twice sends an outline through the resolution",
+           SRC + "ui/view3d/snapshot.py",
+           "    ring = _without_repeats(ring)\n    if len(ring) < 3:\n", "    if len(ring) < 3:\n",
+           (SNAPSHOT,)),
+    Mutant("pyclipper's reading of an outline is taken on trust",
+           SRC + "ui/view3d/snapshot.py",
+           "            return _matches_outline(outline, regions)\n", "            return True\n",
+           (SNAPSHOT,)),
+    Mutant("a resolved region that cannot be built is handed on",
+           SRC + "ui/view3d/snapshot.py",
+           "        if not regions or not _buildable(regions):\n", "        if not regions:\n",
+           (SNAPSHOT,)),
+    Mutant("when the log's memory is full it logs on",
+           SRC + "ui/view3d/snapshot.py",
+           "    if len(_reported) >= _REPORTED_MAX:\n", "    if False:\n",
+           (SNAPSHOT,)),
+    Mutant("the one line that says the log is full is written again and again",
+           SRC + "ui/view3d/snapshot.py",
+           "        if _NO_MORE not in _reported:\n", "        if True:\n",
+           (SNAPSHOT,)),
+    Mutant("who owns a hole is decided on its first vertex (a point on a boundary)",
+           SRC + "core/scene3d/polygon.py",
+           "        x, y = _point_inside(hole)\n", "        x, y = hole[0]\n",
+           (POLYGON,)),
+    Mutant("an island inside a hole may own that hole",
+           SRC + "core/scene3d/polygon.py",
+           "            if ring_area(outer) > size and point_in_ring(x, y, outer) and (\n",
+           "            if point_in_ring(x, y, outer) and (\n",
+           (POLYGON,)),
+    Mutant("an ear without an area yields a triangle (wound either way in float32)",
+           SRC + "core/scene3d/polygon.py",
+           "            if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) > _FLAT_CORNER * reach * edges:\n",
+           "            if True:\n",
+           (POLYGON,)),
+    Mutant("a region with holes has no size bound",
+           SRC + "core/scene3d/polygon.py",
+           "    if len(points) > MAX_HOLED_REGION_VERTICES or len(holes) * len(points) > MAX_BRIDGE_WORK:\n",
+           "    if False:\n",
+           (POLYGON,)),
+    Mutant("the bound on holes x vertices is not applied",
+           SRC + "core/scene3d/polygon.py",
+           "    if len(points) > MAX_HOLED_REGION_VERTICES or len(holes) * len(points) > MAX_BRIDGE_WORK:\n",
+           "    if len(points) > MAX_HOLED_REGION_VERTICES:\n",
+           (POLYGON,)),
+    Mutant("a cut is handed out without its proof",
+           SRC + "core/scene3d/polygon.py",
+           "    if (doubled and min(doubled) < -slack) or abs(sum(doubled) / 2.0 - expected) > slack:\n",
+           "    if False:\n",
+           (POLYGON,)),
+    Mutant("the proof of a cut does not look at the triangles' winding",
+           SRC + "core/scene3d/polygon.py",
+           "    if (doubled and min(doubled) < -slack) or abs(sum(doubled) / 2.0 - expected) > slack:\n",
+           "    if abs(sum(doubled) / 2.0 - expected) > slack:\n",
+           (POLYGON,)),
+    Mutant("a cap triangle that is nothing in float32 is emitted",
+           SRC + "core/scene3d/build.py",
+           "            if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) <= _FLOAT32_SLIVER * reach * edges:\n"
+           "                continue  # nothing at float32 precision (see _FLOAT32_SLIVER)\n",
+           "",
+           (MESH,)),
+    Mutant("prism_mesh needs hashable points again",
+           SRC + "core/scene3d/build.py",
+           "    ring = tuple((float(x), float(y)) for x, y in points)\n",
+           "    ring = points  # type: ignore[assignment]\n",
+           (MESH,)),
+    Mutant("a sliver of a hole is judged (an honest panel is refused)",
+           SRC + "core/scene3d/build.py",
+           "    if len(lattice):\n"
+           "        lattice = lattice[_distance_to_rings(lattice, (hole,)) >= HOLE_MIN_WIDTH_CM / 2.0]\n",
+           "",
+           (MESH,)),
+    Mutant("a registration does not move the registry's version",
+           SRC + "core/scene3d/build.py",
+           "        self._builders[kind] = builder\n        self._version += 1\n",
+           "        self._builders[kind] = builder\n",
+           (MESH, SYNC)),
+    Mutant("every apply asks the registry about every held item",
+           SRC + "core/scene3d/sync.py",
+           "        if version is None or version != self._registry_version:\n", "        if True:\n",
+           (SYNC,)),
+    Mutant("a registry without a version is never asked again",
+           SRC + "core/scene3d/sync.py",
+           "        if version is None or version != self._registry_version:\n",
+           "        if version is not None and version != self._registry_version:\n",
+           (SYNC,)),
+    # ── fix round 2: no length beyond what a plan can hold ───────────────────
+    Mutant("a height of 1e300 is a height (an infinite float32 reaches the engine)",
+           SRC + "core/scene3d/record.py",
+           "            _check_length(\"a height\", self.height_cm)  # an infinite one too\n", "",
+           (CONTRACT, SNAPSHOT)),
+    Mutant("a coordinate beyond the bound is accepted",
+           SRC + "core/scene3d/record.py",
+           "            if not _ring_reach(ring) <= MAX_LENGTH_CM:\n", "            if False:\n",
+           (CONTRACT,)),
+    Mutant("a stroke width beyond the bound is accepted",
+           SRC + "core/scene3d/record.py",
+           "            _check_length(\"a stroke width\", self.path_width_cm)\n", "",
+           (CONTRACT,)),
+    Mutant("a position beyond the bound is accepted",
+           SRC + "core/scene3d/record.py",
+           "        _check_length(\"a position east\", self.east_cm)\n", "",
+           (CONTRACT,)),
+    Mutant("a float param beyond the bound is accepted",
+           SRC + "core/scene3d/record.py",
+           "        _check_length(f\"param {key!r}: a value\", value)\n", "",
+           (CONTRACT,)),
+    Mutant("Mesh.from_arrays emits what is not finite in float32",
+           SRC + "core/scene3d/mesh.py",
+           "    if not np.isfinite(array).all():\n", "    if False:\n",
+           (MESH,)),
+    Mutant("prism_mesh computes with a height that is not finite in float32",
+           SRC + "core/scene3d/build.py",
+           "    if not height_cm <= _FLOAT32_MAX:  # an infinity, a NaN, 1e300\n", "    if False:\n",
+           (MESH,)),
+    Mutant("an item with a length out of range is reported as a failed record",
+           SRC + "ui/view3d/snapshot.py",
+           "        except RecordRangeError as error:  # a length beyond what a plan can hold\n"
+           "            _report(SkippedItem(item_id, kind, SkipReason.OUT_OF_RANGE,\n"
+           "                                type(error).__name__, str(error)), skipped)\n"
+           "            continue\n",
+           "",
+           (SNAPSHOT,)),
+    Mutant("an infinite height is silently no height again",
+           SRC + "ui/view3d/snapshot.py",
+           "    if height is not None and height <= 0.0:\n",
+           "    if height is not None and not 0.0 < height < math.inf:\n",
+           (SNAPSHOT,)),
 )
 
 
+#: pytest's exit code for "tests were collected and run, and some failed".
+PYTEST_TESTS_FAILED = 1
+
+
+def verdict_of(returncode: int) -> str:
+    """What a pytest exit code says about a mutant."""
+    if returncode == 0:
+        return "SURVIVED"
+    return "KILLED" if returncode == PYTEST_TESTS_FAILED else "BROKEN"
+
+
 def run(mutant: Mutant) -> tuple[str, str]:
-    """``(verdict, detail)`` — KILLED, SURVIVED or STALE."""
+    """``(verdict, detail)`` — KILLED, SURVIVED, STALE or BROKEN."""
     path = REPO / mutant.path
     original = path.read_bytes()
     text = original.decode("utf-8").replace("\r\n", "\n")
@@ -354,10 +507,13 @@ def run(mutant: Mutant) -> tuple[str, str]:
         path.write_bytes(original)
     lines = proc.stdout.strip().splitlines()
     tail = lines[-1] if lines else proc.stderr.strip()[-200:]
-    if proc.returncode == 0:
-        return "SURVIVED", tail
-    failed = next((line for line in lines if line.startswith(("FAILED tests", "ERROR tests"))), tail)
-    return "KILLED", failed[:160]
+    verdict = verdict_of(proc.returncode)
+    if verdict == "SURVIVED":
+        return verdict, tail
+    if verdict == "BROKEN":
+        return verdict, f"pytest exit code {proc.returncode}: {tail[:140]}"
+    failed = next((line for line in lines if line.startswith("FAILED tests")), tail)
+    return verdict, failed[:160]
 
 
 def main(argv: list[str] | None = None) -> int:

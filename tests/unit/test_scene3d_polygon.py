@@ -269,20 +269,31 @@ class TestGroupRings:
 
     def test_a_hole_whose_every_vertex_lies_on_its_outer_ring(self) -> None:
         """A diamond cut out of a square, corner to edge: no vertex of the hole is
-        inside anything, and it is still that square's hole."""
+        inside anything, and it is still that square's hole — whichever vertex it
+        starts with. (The point test answers "inside" for a point on the square's
+        left or bottom edge and "outside" on its top or right one: the old rule,
+        "ask about ``hole[0]``", lost this hole for two of the four starts.)"""
         a = rect(0.0, 0.0, 100.0, 100.0)
         diamond = ((0.0, 50.0), (50.0, 100.0), (100.0, 50.0), (50.0, 0.0))
         assert ring_area(diamond) < 0.0
         other = rect(200.0, 0.0, 300.0, 100.0)
-        assert group_rings([other, diamond, a]) == ((other, ()), (a, (diamond,)))
+        on_the_boundary = [point_in_ring(x, y, a) for x, y in diamond]
+        assert True in on_the_boundary and False in on_the_boundary  # the premise
+        for start in range(4):
+            hole = diamond[start:] + diamond[:start]
+            assert group_rings([other, hole, a]) == ((other, ()), (a, (hole,))), start
 
     def test_the_owner_must_be_larger_than_the_hole(self) -> None:
         """An island contains points of the hole around it; it is smaller than
         that hole and so can never own it — and a hole in nothing still raises."""
         hole = rect(0.0, 0.0, 100.0, 100.0, clockwise=True)
-        island = rect(40.0, 0.0, 60.0, 20.0)  # sits where the hole's inside point is looked for
+        island = rect(25.0, 25.0, 45.0, 45.0)
+        x, y = polygon_module._point_inside(hole)
+        assert point_in_ring(x, y, island)  # it sits exactly where the hole's inside point is taken
         with pytest.raises(ValueError, match="no outer ring"):
             group_rings([hole, island])
+        around = rect(-10.0, -10.0, 110.0, 110.0)
+        assert group_rings([hole, island, around]) == ((island, ()), (around, (hole,)))
 
     @pytest.mark.parametrize("seed", range(40))
     def test_point_inside_is_strictly_inside(self, seed: int) -> None:

@@ -102,10 +102,19 @@ def _walls(ring: Ring, height_cm: float, positions: list[float], normals: list[f
 _FLOAT32_SLIVER: Final = 5e-7
 
 
+_FLOAT32_MAX: Final = float(np.finfo(np.float32).max)  # 3.4e38
+
+
 def _as_ring(points: Sequence[Sequence[float]]) -> Ring:
     """Any sequence of ``(x, y)`` pairs as an immutable ring of plain floats — what
-    the cached polygon functions need (a list of lists or numpy rows is not hashable)."""
-    return tuple((float(x), float(y)) for x, y in points)
+    the cached polygon functions need (a list of lists or numpy rows is not hashable).
+    A coordinate that is not finite in float32 raises ``MeshError``: before any
+    arithmetic on it, and so that no mesh is made of it."""
+    ring = tuple((float(x), float(y)) for x, y in points)
+    for x, y in ring:
+        if not (-_FLOAT32_MAX <= x <= _FLOAT32_MAX and -_FLOAT32_MAX <= y <= _FLOAT32_MAX):
+            raise MeshError(f"a footprint coordinate ({x!r}, {y!r}) is not finite in float32")
+    return ring
 
 
 def prism_mesh(
@@ -131,11 +140,18 @@ def prism_mesh(
     holds is always built.
 
     A ring is any sequence of ``(x, y)`` pairs — tuples, lists, numpy rows.
+
+    A height or a coordinate that is not finite in the mesh's float32 raises
+    ``MeshError`` before anything is computed from it: no such number is ever
+    emitted. A record cannot hold one (``record.MAX_LENGTH_CM``); a hand-made
+    call can.
     """
     if len(holes) and len(holes) != len(footprints):
         raise ValueError(f"{len(holes)} hole groups for {len(footprints)} footprint rings")
     if height_cm <= 0:
         return Mesh.empty()
+    if not height_cm <= _FLOAT32_MAX:  # an infinity, a NaN, 1e300
+        raise MeshError(f"a height of {height_cm!r} cm is not finite in float32")
     positions: list[float] = []
     normals: list[float] = []
     for index, raw in enumerate(footprints):
