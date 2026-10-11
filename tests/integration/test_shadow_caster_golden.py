@@ -1,0 +1,362 @@
+"""Golden gate for the 2D shadows of everything that stands on the ground
+(Phase 17 L1.6, #385, gate G4).
+
+L1.6 teaches the shared 2D caster model a ``base_cm``: a plant in a raised bed
+casts from the bed's soil, not from the ground (ADR-037 addendum). That changes
+SHIPPED 2D behaviour — the sun & shade overlay and the hours-of-sun heatmap — for
+exactly one class of item: one whose parent is a soil container with a height.
+This file pins that **nothing else moved**.
+
+The fixture ``tests/fixtures/shadows/shadow_golden.json`` was generated from the
+code as it stood BEFORE the change (integration branch aaec048 + this test), with
+the exact value of every float:
+
+- ``core`` — ``compute_scene_shadows`` for five footprints (convex, concave,
+  clockwise, a 24-gon, a fence strip) x two heights x four sun elevations x three
+  azimuths, plus a union and the night case;
+- ``plans`` — both bench plans on 21 June: the caster walk itself, the union of
+  every caster's shadow as the code computed it then, and the union of the
+  casters that stand on the ground (everything but the plants in raised beds —
+  22 and 240 of them);
+- ``overlay`` — the painter path of the real ``SunShadowController`` overlay on a
+  hand-built scene without raised plants, at a high and a low sun;
+- ``heatmap`` — ``compute_heatmap`` minutes for the campaign's wall toy case.
+
+On the platform that generated it the comparison is exact. Elsewhere the same
+structure is required and a vertex may differ by 2e-3 cm: the sweep is rounded
+onto pyclipper's 1/1000 cm grid, and ``math.sin`` / ``math.cos`` are not
+correctly rounded on every C library, so a displacement that lands within one
+ulp of a half grid step may round the other way.
+
+Regenerating is a deliberate act (a ground-level shadow really changed): run
+
+    OGP_WRITE_SHADOW_GOLDEN=1 pytest tests/integration/test_shadow_caster_golden.py
+
+which rewrites the fixture and FAILS, so the run cannot be mistaken for a pass.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import platform
+import sys
+from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+from PyQt6.QtCore import QPointF
+
+from open_garden_planner.core import ProjectManager
+from open_garden_planner.core.object_height import METADATA_KEY, effective_height_cm
+from open_garden_planner.core.object_types import ObjectType, PathFenceStyle, is_bed_type
+from open_garden_planner.core.shade_aggregation import (
+    HeatmapGrid,
+    compute_heatmap,
+    point_rasterizer_reference,
+)
+from open_garden_planner.core.shadow_geometry import (
+    circle_footprint,
+    compute_scene_shadows,
+    polyline_footprint,
+)
+from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
+from open_garden_planner.ui.canvas.footprints import item_footprints
+from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
+from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
+from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
+from open_garden_planner.ui.canvas.sun_shadow_controller import (
+    SunShadowController,
+    SunShadowOverlayItem,
+    collect_shadow_casters,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+GOLDEN = ROOT / "fixtures" / "shadows" / "shadow_golden.json"
+PLANS = ROOT / "fixtures" / "plans"
+WRITE_ENV = "OGP_WRITE_SHADOW_GOLDEN"
+PLAN_NAMES = ("bench_small.ogp", "bench_large.ogp")
+JUNE = date(2026, 6, 21)
+BERLIN = {"latitude": 52.52, "longitude": 13.405}
+#: Off the generating platform a vertex may sit one grid step (1e-3 cm) away.
+PORTABLE_TOLERANCE_CM = 2e-3
+
+Pair = tuple[list[tuple[float, float]], float]
+
+FOOTPRINTS: dict[str, list[tuple[float, float]]] = {
+    "square": [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+    "square_clockwise": [(0.0, 100.0), (100.0, 100.0), (100.0, 0.0), (0.0, 0.0)],
+    "concave_l": [(0.0, 0.0), (300.0, 0.0), (300.0, 120.0), (120.0, 120.0), (120.0, 400.0),
+                  (0.0, 400.0)],
+    "circle_24": circle_footprint(300.0, 200.0, 50.0),
+    "fence_strip": polyline_footprint([(0.0, 0.0), (400.0, 0.0), (400.0, 250.0)], 3.0)[0],
+}
+HEIGHTS = (100.0, 450.0)
+ELEVATIONS = (15.0, 35.0, 60.0, 0.5)
+AZIMUTHS = (135.0, 203.74, 300.0)
+PLAN_SUNS = ((35.0, 203.74), (15.0, 135.0), (60.0, 300.0))
+OVERLAY_INSTANTS = (datetime(2026, 6, 21, 12, 0, tzinfo=UTC), datetime(2026, 12, 21, 11, 0, tzinfo=UTC))
+HEATMAP_DAYS = (date(2026, 6, 21), date(2026, 12, 21))
+
+
+def _sha(value: Any) -> str:
+    return hashlib.sha256(repr(value).encode()).hexdigest()
+
+
+def _area(polygons: list[list[tuple[float, float]]]) -> float:
+    """Signed shoelace area of a polygon set (holes come out negative)."""
+    total = 0.0
+    for polygon in polygons:
+        count = len(polygon)
+        for index in range(count):
+            x1, y1 = polygon[index]
+            x2, y2 = polygon[(index + 1) % count]
+            total += x1 * y2 - x2 * y1
+    return total / 2.0
+
+
+def _summary(polygons: list[list[tuple[float, float]]]) -> dict[str, Any]:
+    return {
+        "polygons": len(polygons),
+        "vertices": sum(len(p) for p in polygons),
+        "area_cm2": _area(polygons),
+        "sha256": _sha(polygons),
+    }
+
+
+def _load(plan: str) -> CanvasScene:
+    scene = CanvasScene()
+    ProjectManager().load(scene, PLANS / plan)
+    return scene
+
+
+def _walk(scene: Any, at: date) -> tuple[list[Pair], list[Pair], int]:
+    """An independent caster walk: (every caster, those that stand on the ground,
+    how many stand on a raised soil parent).
+
+    Written against the pre-L1.6 API on purpose, so it is the ORACLE for which
+    items the base rule touches: the same visibility / height / footprint rule as
+    ``collect_shadow_casters`` (asserted equal below), plus the parent test —
+    ``parent_bed_id`` names a visible soil container (``is_bed_type``) whose own
+    effective height is not None.
+    """
+    items = scene.items()
+    by_id = {str(i.item_id): i for i in items if hasattr(i, "item_id")}
+    every: list[Pair] = []
+    ground: list[Pair] = []
+    raised = 0
+    for item in items:
+        if not item.isVisible():
+            continue
+        object_type = getattr(item, "object_type", None)
+        if object_type is None:
+            continue
+        height = effective_height_cm(object_type, getattr(item, "metadata", None), at_date=at)
+        if height is None:
+            continue
+        parent_id = getattr(item, "parent_bed_id", None)
+        parent = by_id.get(str(parent_id)) if parent_id is not None else None
+        on_soil = (
+            parent is not None
+            and parent.isVisible()
+            and is_bed_type(parent.object_type)
+            and effective_height_cm(parent.object_type, parent.metadata, at_date=at) is not None
+        )
+        for footprint in item_footprints(item, at):
+            if len(footprint) >= 3:
+                every.append((footprint, height))
+                if on_soil:
+                    raised += 1
+                else:
+                    ground.append((footprint, height))
+    return every, ground, raised
+
+
+def _overlay_scene() -> CanvasScene:
+    """A garden with every caster class and NO plant in a raised bed."""
+    scene = CanvasScene(3000.0, 2000.0)
+    house = PolygonItem(
+        [QPointF(400.0, 300.0), QPointF(900.0, 300.0), QPointF(900.0, 700.0), QPointF(650.0, 820.0),
+         QPointF(400.0, 700.0)], object_type=ObjectType.HOUSE)
+    fence = PolylineItem([QPointF(100.0, 100.0), QPointF(1500.0, 100.0), QPointF(1500.0, 600.0)],
+                         object_type=ObjectType.FENCE, path_fence_style=PathFenceStyle.WOODEN_FENCE)
+    wall = PolylineItem([QPointF(1800.0, 900.0), QPointF(2400.0, 1200.0)],
+                        object_type=ObjectType.WALL)
+    tree = CircleItem(1300.0, 1300.0, 150.0, object_type=ObjectType.TREE)
+    tree.metadata[METADATA_KEY] = 600.0
+    bed = RectangleItem(1900.0, 300.0, 300.0, 120.0, object_type=ObjectType.RAISED_BED)
+    bed.setTransformOriginPoint(bed.rect().center())
+    bed.setRotation(30.0)
+    perennial = CircleItem(700.0, 1300.0, 25.0, object_type=ObjectType.PERENNIAL)
+    perennial.metadata[METADATA_KEY] = 60.0
+    pot = CircleItem(2500.0, 500.0, 30.0, object_type=ObjectType.CONTAINER_ROUND)
+    lawn = RectangleItem(100.0, 1500.0, 800.0, 300.0, object_type=ObjectType.LAWN)
+    for item in (house, fence, wall, tree, bed, perennial, pot, lawn):
+        scene.addItem(item)
+    return scene
+
+
+def _overlay_paths(scene: CanvasScene) -> list[dict[str, Any]]:
+    """The real overlay's painter path at each instant, as (element type, x, y)."""
+    controller = SunShadowController(scene, lambda: BERLIN)
+    controller.set_sim_datetime(OVERLAY_INSTANTS[0])
+    controller.set_enabled(True)
+    overlay = next(i for i in scene.items() if isinstance(i, SunShadowOverlayItem))
+    paths = []
+    for instant in OVERLAY_INSTANTS:
+        controller.set_sim_datetime(instant)
+        path = overlay.path()
+        elements = []
+        for index in range(path.elementCount()):
+            element = path.elementAt(index)
+            elements.append([int(element.type.value), element.x, element.y])
+        paths.append({"instant_utc": instant.isoformat(), "elements": elements})
+    controller.set_enabled(False)
+    return paths
+
+
+def _wall_toy() -> tuple[list[Pair], HeatmapGrid]:
+    """The campaign's toy case: a 200 cm east-west wall, cells north and south of it."""
+    wall = [(-600.0, -5.0), (600.0, -5.0), (600.0, 5.0), (-600.0, 5.0)]
+    return [(wall, 200.0)], HeatmapGrid.for_rect(-150.0, -300.0, 300.0, 600.0, cell_cm=50.0)
+
+
+def build_golden() -> dict[str, Any]:
+    """Everything this gate pins, computed by the code as it stands."""
+    core = []
+    for name, footprint in FOOTPRINTS.items():
+        for height in HEIGHTS:
+            for elevation in ELEVATIONS:
+                for azimuth in AZIMUTHS:
+                    polygons = compute_scene_shadows([(footprint, height)], elevation, azimuth)
+                    core.append({"footprint": name, "height_cm": height, "elevation_deg": elevation,
+                                 "azimuth_deg": azimuth,
+                                 "polygons": [[list(p) for p in poly] for poly in polygons]})
+    union = compute_scene_shadows(
+        [(FOOTPRINTS["square"], 100.0), (FOOTPRINTS["circle_24"], 450.0),
+         (FOOTPRINTS["concave_l"], 37.5)], 35.0, 203.74)
+    night = compute_scene_shadows([(FOOTPRINTS["square"], 100.0)], -3.0, 180.0)
+
+    plans: dict[str, Any] = {}
+    for plan in PLAN_NAMES:
+        scene = _load(plan)
+        every, ground, raised = _walk(scene, JUNE)
+        suns = []
+        for elevation, azimuth in PLAN_SUNS:
+            suns.append({
+                "elevation_deg": elevation, "azimuth_deg": azimuth,
+                "all_from_the_ground": _summary(compute_scene_shadows(every, elevation, azimuth)),
+                "ground_casters_only": _summary(compute_scene_shadows(ground, elevation, azimuth)),
+            })
+        plans[plan] = {"casters": len(every), "casters_sha256": _sha(every),
+                       "on_raised_soil": raised, "suns": suns}
+
+    overlay = _overlay_paths(_overlay_scene())
+
+    casters, grid = _wall_toy()
+    heatmap = []
+    for day in HEATMAP_DAYS:
+        minutes = compute_heatmap(casters, BERLIN["latitude"], BERLIN["longitude"], day, grid,
+                                  point_rasterizer_reference)
+        assert minutes is not None
+        heatmap.append({"day": day.isoformat(), "minutes": minutes.tolist()})
+
+    return {
+        "meta": {
+            "generated_from": "integration branch aaec048 — the shadow code before L1.6",
+            "platform": sys.platform,
+            "python": platform.python_version(),
+        },
+        "core": core,
+        "union": [[list(p) for p in poly] for poly in union],
+        "night": night,
+        "plans": plans,
+        "overlay": overlay,
+        "heatmap": heatmap,
+    }
+
+
+def _same_numbers(actual: Any, expected: Any, where: str = "") -> None:
+    """Exact on the generating platform; elsewhere same structure, vertices ± 2e-3 cm."""
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict) and actual.keys() == expected.keys(), where
+        for key in expected:
+            _same_numbers(actual[key], expected[key], f"{where}/{key}")
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(actual) == len(expected), where
+        for index, (a, e) in enumerate(zip(actual, expected, strict=True)):
+            _same_numbers(a, e, f"{where}[{index}]")
+    elif isinstance(expected, float):
+        assert actual == pytest.approx(expected, abs=PORTABLE_TOLERANCE_CM), where
+    else:
+        assert actual == expected, where
+
+
+def _portable(golden: dict[str, Any]) -> dict[str, Any]:
+    """The golden without what only the generating platform can reproduce: the
+    hashes, and the union areas (compared with a relative tolerance instead)."""
+    def strip(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: strip(v) for k, v in value.items()
+                    if k not in ("sha256", "casters_sha256", "area_cm2", "meta")}
+        if isinstance(value, list):
+            return [strip(v) for v in value]
+        return value
+    return strip(golden)  # type: ignore[no-any-return]
+
+
+@pytest.fixture(scope="module")
+def current(qapp: Any) -> dict[str, Any]:  # noqa: ARG001 — Qt for the scenes
+    # through JSON, so tuples and float formatting compare like the stored file
+    return json.loads(json.dumps(build_golden()))  # type: ignore[no-any-return]
+
+
+@pytest.fixture(scope="module")
+def golden(current: dict[str, Any]) -> dict[str, Any]:
+    if os.environ.get(WRITE_ENV):
+        GOLDEN.parent.mkdir(parents=True, exist_ok=True)
+        GOLDEN.write_text(json.dumps(current, separators=(",", ":")) + "\n", encoding="utf-8")
+        pytest.fail(f"{GOLDEN.name} rewritten — review the diff, commit it, and unset {WRITE_ENV}")
+    return json.loads(GOLDEN.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+
+
+def test_ground_level_shadows_match_the_golden(golden: dict[str, Any], current: dict[str, Any]) -> None:
+    """Every number of the gate, against the fixture generated before L1.6."""
+    if sys.platform == golden["meta"]["platform"]:
+        for section in ("core", "union", "night", "plans", "overlay", "heatmap"):
+            assert current[section] == golden[section], f"{section} differs from the golden"
+    else:
+        _same_numbers(_portable(current), _portable(golden))
+        for plan in PLAN_NAMES:
+            for now, then in zip(current["plans"][plan]["suns"], golden["plans"][plan]["suns"],
+                                 strict=True):
+                for key in ("all_from_the_ground", "ground_casters_only"):
+                    assert now[key]["area_cm2"] == pytest.approx(then[key]["area_cm2"], rel=1e-6)
+
+
+def test_the_matrix_is_complete(golden: dict[str, Any]) -> None:
+    assert len(golden["core"]) == len(FOOTPRINTS) * len(HEIGHTS) * len(ELEVATIONS) * len(AZIMUTHS)
+    assert all(case["polygons"] for case in golden["core"])  # every case casts a shadow
+    assert golden["night"] == []
+    # bench_small: 45 perennials have a parent bed, 22 of them a RAISED one (the
+    # other 23 stand in in-ground GARDEN_BEDs and keep casting from the ground)
+    assert {p: golden["plans"][p]["on_raised_soil"] for p in PLAN_NAMES} == {
+        "bench_small.ogp": 22, "bench_large.ogp": 240}
+    assert all(len(entry["elements"]) > 20 for entry in golden["overlay"])
+    summer, winter = (entry["minutes"] for entry in golden["heatmap"])
+    assert max(map(max, summer)) > 600.0 and min(map(min, winter)) == 0.0
+
+
+@pytest.mark.parametrize("plan", PLAN_NAMES)
+def test_the_oracle_walk_is_the_production_walk(qtbot: Any, plan: str) -> None:  # noqa: ARG001
+    """``_walk`` is an independent re-derivation; it must see exactly the casters
+    ``collect_shadow_casters`` sees, in the same order, or the golden's two unions
+    would describe another scene."""
+    scene = _load(plan)
+    every, ground, raised = _walk(scene, JUNE)
+    production = collect_shadow_casters(scene, at_date=JUNE)
+    assert [(list(c[0]), c[1]) for c in production] == [(list(fp), h) for fp, h in every]
+    assert len(every) == len(ground) + raised and raised > 0
