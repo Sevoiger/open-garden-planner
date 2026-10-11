@@ -5,6 +5,10 @@ move is ONE ``update_transform`` and no builder call. Pinned here on hand-built
 records, and on real canvas items in ``tests/integration/test_scene3d_pipeline.py``.
 The invariant that makes diffs safe — incremental == full rebuild — is asserted
 after every step.
+
+Recovery (fix round 1) is tested THROUGH THE PROTOCOL: no test below reaches
+into a sink to repair it. ``SceneSync.reset()`` calls ``EngineSink.clear()`` and
+that is all the help a sink gets.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ import pytest
 
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
+    BuildFailure,
     EngineSink,
     GroundSpec,
     Material,
@@ -135,6 +140,64 @@ class TestRecordingSink:
         sink.commit()
         sink.clear_calls()
         assert sink.calls == [] and sink.item_ids() == ("a",)
+
+    def test_the_protocol_has_ten_methods_and_clear_is_one(self) -> None:
+        methods = sorted(name for name in vars(EngineSink)
+                         if not name.startswith("_") and callable(getattr(EngineSink, name)))
+        assert methods == ["add", "begin", "clear", "commit", "remove", "replace_geometry",
+                           "set_ground", "set_sun", "update_material", "update_transform"]
+
+        class NineMethods:  # an engine written against the first contract
+            def begin(self) -> None: ...
+            def commit(self) -> None: ...
+            def add(self, item_id, parts, transform, material) -> None: ...
+            def remove(self, item_id) -> None: ...
+            def update_transform(self, item_id, transform) -> None: ...
+            def update_material(self, item_id, material) -> None: ...
+            def replace_geometry(self, item_id, parts) -> None: ...
+            def set_sun(self, sun) -> None: ...
+            def set_ground(self, ground) -> None: ...
+
+        assert not isinstance(NineMethods(), EngineSink)
+
+    def test_clear_holds_nothing_afterwards(self) -> None:
+        sink = RecordingSink()
+        sink.begin()
+        sink.add("a", default_builder(record()), T0, M0)
+        sink.set_sun(SunState(30.0, 180.0))
+        sink.set_ground(GroundSpec(100.0, 100.0))
+        sink.commit()
+        sink.clear()
+        assert sink.state() == RecordingSink().state()
+        assert sink.item_ids() == () and sink.sun is None and sink.ground is None
+        assert sink.ops()[-1] == ("clear", None)  # recorded like any call
+        assert sink.transactions == 1  # a clear is not a transaction
+
+    def test_clear_is_legal_at_any_time(self) -> None:
+        sink = RecordingSink()
+        sink.clear()  # on an empty sink, outside a transaction
+        sink.clear()  # twice
+        sink.begin()
+        sink.add("a", (), T0, M0)
+        sink.clear()  # inside a transaction: it aborts it
+        assert not sink.in_transaction and sink.item_ids() == ()
+        with pytest.raises(SinkProtocolError, match="outside begin"):
+            sink.commit()  # the transaction is gone, not merely emptied
+        sink.begin()  # … and a new one opens cleanly
+        sink.add("a", (), T0, M0)
+        sink.commit()
+        assert sink.item_ids() == ("a",)
+
+    def test_reset_is_clear_plus_an_empty_log(self) -> None:
+        """``reset()`` is this double's convenience, kept for callers written
+        before ``clear()`` joined the protocol. It is not a protocol method."""
+        sink = RecordingSink()
+        sink.begin()
+        sink.add("a", (), T0, M0)
+        sink.reset()
+        assert sink.calls == [] and sink.transactions == 0
+        assert sink.state() == RecordingSink().state() and not sink.in_transaction
+        assert "reset" not in vars(EngineSink)
 
     @pytest.mark.parametrize(
         "call",
@@ -361,13 +424,16 @@ def test_incremental_apply_always_equals_a_full_rebuild(seed: int) -> None:
     sync = SceneSync(RecordingSink(), validate=True)
     records = scene(record("a"), record("b"), record("c"))
     counter = [0]
-    for _step in range(120):
-        sync.apply(records)
+    for step in range(120):
+        sun = SunState(float(rng.randrange(5, 60)), float(rng.randrange(360))) if step % 3 else None
+        sync.apply(records, sun=sun)
         fresh = SceneSync(RecordingSink(), validate=True)
-        fresh.apply(records)
-        assert sink_of(sync).state() == sink_of(fresh).state()
+        fresh.apply(records, sun=sync.sun)
+        assert sink_of(sync).state() == sink_of(fresh).state() == sync.expected_state()
         assert sync.records == fresh.records and list(sync.records) == list(records)
         assert not sink_of(sync).in_transaction
+        if step in (40, 80):  # recovery in the middle of a history changes nothing either
+            sync.reset()
         records = _mutate(rng, records, counter)
 
 
@@ -375,30 +441,69 @@ def test_incremental_apply_always_equals_a_full_rebuild(seed: int) -> None:
 
 
 class TestReset:
-    def test_reset_forgets_everything_the_next_apply_readds_all(self, builder) -> None:
-        registry = BuilderRegistry(default=builder)
-        first = RecordingSink()
-        sync = SceneSync(first, registry)
+    def test_reset_on_a_healthy_sync_clears_the_sink_and_the_next_apply_readds_all(
+        self, sync, builder
+    ) -> None:
         records = scene(record("a"), record("b"))
-        sync.apply(records)
-        sync.set_sun(SunState(30.0, 180.0))
-        # the engine was torn down: a new sink, and the sync must not assume anything
-        torn_down = RecordingSink()
-        sync = SceneSync(torn_down, registry)
-        assert sync.apply(records) == SceneDiff(added=("a", "b"))
-        assert torn_down.item_ids() == ("a", "b")
-
-    def test_reset_on_the_same_sync(self, sync, builder) -> None:
-        records = scene(record("a"), record("b"))
-        sync.apply(records)
-        sync.set_sun(SunState(30.0, 180.0))
-        sink_of(sync).reset()  # the double's "engine torn down"
-        sync.reset()
-        assert dict(sync.records) == {} and sync.failures == {}
+        sun, ground = SunState(30.0, 180.0), GroundSpec(2400.0, 1600.0)
+        sync.apply(records, sun=sun, ground=ground)
+        sink_of(sync).clear_calls()
         builder.calls.clear()
-        assert sync.apply(records) == SceneDiff(added=("a", "b"))
+
+        sync.reset()
+
+        assert sink_of(sync).ops() == [("clear", None)]  # the one call recovery makes
+        assert sink_of(sync).state() == RecordingSink().state()
+        assert dict(sync.records) == {} and sync.failures == {} and not sync.poisoned
+        assert sync.sun is None and sync.ground is None
+        assert sync.expected_state() == RecordingSink().state()
+
+        assert sync.apply(records, sun=sun, ground=ground) == SceneDiff(added=("a", "b"))
         assert builder.calls == ["a", "b"]
-        assert sync.set_sun(SunState(30.0, 180.0)) is True  # resent: the engine forgot it
+        assert sink_of(sync).ops() == [("clear", None), ("begin", None), ("add", "a"), ("add", "b"),
+                                       ("set_ground", None), ("set_sun", None), ("commit", None)]
+        assert sink_of(sync).state() == sync.expected_state()
+
+    def test_reset_forgets_the_sun_and_ground_it_deduplicates_against(self, sync) -> None:
+        """The engine forgot them (``clear()``), so "same as last time" must not
+        swallow the next one — the bug of a reset that only forgot the records."""
+        sun, ground = SunState(30.0, 180.0), GroundSpec(2400.0, 1600.0)
+        assert sync.set_sun(sun) is True and sync.set_ground(ground) is True
+        assert sync.set_sun(sun) is False and sync.set_ground(ground) is False
+        sync.reset()
+        assert sync.set_sun(sun) is True and sync.set_ground(ground) is True
+        assert (sink_of(sync).sun, sink_of(sync).ground) == (sun, ground)
+
+    def test_reset_forgets_build_failures(self, sync, builder) -> None:
+        builder.fail_for = {"HOUSE"}
+        sync.apply(scene(record("h", kind="HOUSE")))
+        assert "h" in sync.failures
+        sync.reset()
+        assert sync.failures == {}
+        builder.fail_for = set()
+        sync.apply(scene(record("h", kind="HOUSE")))  # same geometry: built again, now fine
+        assert sync.failures == {} and len(sink_of(sync).item("h").parts) == 1
+
+    def test_reset_on_an_empty_sync(self, sync) -> None:
+        sync.reset()
+        sync.reset()
+        assert sink_of(sync).ops() == [("clear", None), ("clear", None)]
+        assert sync.apply({}).is_empty
+
+    def test_a_new_engine_needs_a_new_sync_or_nothing_at_all(self, builder) -> None:
+        """The other way to start over — the one L1.3 uses when the 3D view is
+        rebuilt: a new sink gets a new ``SceneSync``. And a new PLAN needs neither:
+        a plain ``apply`` of its snapshot removes what is gone and adds what is new."""
+        registry = BuilderRegistry(default=builder)
+        sync = SceneSync(RecordingSink(), registry)
+        old_plan = scene(record("a"), record("b"))
+        sync.apply(old_plan)
+        new_plan = scene(record("x"), record("y"), record("z"))
+        assert sync.apply(new_plan) == SceneDiff(added=("x", "y", "z"), removed=("a", "b"))
+        assert sink_of(sync).state() == sync.expected_state()
+        rebuilt = SceneSync(RecordingSink(), registry)
+        assert rebuilt.apply(new_plan) == SceneDiff(added=("x", "y", "z"))
+        assert sink_of(rebuilt).state() == sink_of(sync).state()
 
 
 # ── a builder that raises ─────────────────────────────────────────────────────
@@ -509,67 +614,342 @@ class TestBuilderFailure:
         sync.apply(scene(record("a", height_cm=7.0), record("h", kind="HOUSE")))  # works again
         assert sink_of(sync).item_ids() == ("a", "h")
 
+    def test_a_footprint_that_crosses_itself_gets_no_solid_not_a_wrong_one(self) -> None:
+        """The default builder refuses a bow-tie instead of emitting a mesh that
+        fails ``validate()`` (review P2-6). ``validate=False`` — the production
+        setting — so nothing but the builder's own refusal stands in the way."""
+        # crosses itself, and still has a positive signed area — so the record's
+        # own orientation check cannot refuse it; the builder has to
+        lopsided = ((0.0, 200.0), (400.0, 0.0), (400.0, 300.0), (0.0, 0.0))
+        sync = SceneSync(RecordingSink())
+        sync.apply(scene(record("a"), record("h", kind="HOUSE", footprints=(lopsided,))))
+        failure = sync.failures["h"]
+        assert isinstance(failure, BuildFailure) and isinstance(failure.error, ValueError)
+        assert "not a simple polygon" in str(failure.error)
+        assert sink_of(sync).item("h").parts == ()
+        assert len(sink_of(sync).item("a").parts) == 1
+        for item in sink_of(sync).state().items.values():
+            for part in item.parts:
+                part.validate()
+
+
+# ── a registry that changes after the first apply ─────────────────────────────
+
+
+class TestRegistryChange:
+    """Review P2-1: a builder registered after the sync had built left the old
+    geometry in the engine for good — incremental != full rebuild. The rule now:
+    the next ``apply`` rebuilds every item whose builder is no longer the one
+    that built it."""
+
+    @staticmethod
+    def tall(rec: Record) -> tuple[MeshPart, ...]:
+        return (MeshPart(prism_mesh(rec.footprints, 999.0), name="tall"),)
+
+    def test_a_late_registration_rebuilds_the_items_it_now_owns(self, builder) -> None:
+        registry = BuilderRegistry(default=builder)
+        sync = SceneSync(RecordingSink(), registry)
+        records = scene(record("a"), record("h", kind="HOUSE"), record("b"))
+        sync.apply(records)
+        sink_of(sync).clear_calls()
+        builder.calls.clear()
+
+        registry.register("HOUSE", self.tall)
+        result = sync.apply(records)
+
+        assert result.is_empty  # no RECORD changed …
+        assert sink_of(sync).ops() == [("begin", None), ("replace_geometry", "h"), ("commit", None)]
+        assert builder.calls == []  # … and nobody else was rebuilt
+        assert sink_of(sync).item("h").parts[0].name == "tall"
+        assert sink_of(sync).state() == sync.expected_state()
+        sink_of(sync).clear_calls()
+        assert sync.apply(records).is_empty and sink_of(sync).calls == []  # once, not every time
+
+    def test_a_replaced_builder_rebuilds_too(self) -> None:
+        registry = BuilderRegistry()
+        registry.register("HOUSE", default_builder)
+        sync = SceneSync(RecordingSink(), registry)
+        records = scene(record("h", kind="HOUSE"), record("a"))
+        sync.apply(records)
+        registry.register("HOUSE", self.tall, replace=True)
+        sync.apply(scene(record("h", kind="HOUSE", transform=Transform(1.0, 2.0)), record("a")))
+        assert sink_of(sync).ops()[-4:] == [("begin", None), ("replace_geometry", "h"),
+                                            ("update_transform", "h"), ("commit", None)]
+        assert sink_of(sync).state() == sync.expected_state()
+
+    def test_a_geometry_change_under_a_new_builder_is_built_once(self) -> None:
+        calls: list[str] = []
+
+        def counting_tall(rec: Record) -> tuple[MeshPart, ...]:
+            calls.append(rec.item_id)
+            return self.tall(rec)
+
+        registry = BuilderRegistry()
+        sync = SceneSync(RecordingSink(), registry)
+        sync.apply(scene(record("h", kind="HOUSE")))
+        registry.register("HOUSE", counting_tall)
+        sync.apply(scene(record("h", kind="HOUSE", height_cm=77.0)))
+        assert calls == ["h"]
+        assert sink_of(sync).ops().count(("replace_geometry", "h")) == 1
+
+    def test_a_new_builder_gets_a_failing_item_another_try(self, builder) -> None:
+        builder.fail_for = {"HOUSE"}
+        registry = BuilderRegistry(default=builder)
+        sync = SceneSync(RecordingSink(), registry)
+        records = scene(record("h", kind="HOUSE"))
+        sync.apply(records)
+        assert "h" in sync.failures
+        registry.register("HOUSE", self.tall)
+        sync.apply(records)
+        assert sync.failures == {} and sink_of(sync).item("h").parts[0].name == "tall"
+
+    def test_a_removed_item_is_not_rebuilt(self, builder) -> None:
+        registry = BuilderRegistry(default=builder)
+        sync = SceneSync(RecordingSink(), registry)
+        sync.apply(scene(record("h", kind="HOUSE"), record("a")))
+        registry.register("HOUSE", self.tall)
+        sync.apply(scene(record("a")))
+        assert sink_of(sync).ops()[-3:] == [("begin", None), ("remove", "h"), ("commit", None)]
+
 
 # ── a sink that raises ────────────────────────────────────────────────────────
 
 
 class FlakySink(RecordingSink):
-    def __init__(self, fail_on: str) -> None:
+    """Fails on the named call. Nothing in it helps recovery: ``clear()`` is the
+    inherited protocol method, and no test calls anything else on it to repair it."""
+
+    def __init__(self, fail_on: str = "") -> None:
         super().__init__()
         self.fail_on = fail_on
 
-    def update_transform(self, item_id: str, transform: Transform) -> None:
-        if self.fail_on == "update_transform":
+    def _maybe_fail(self, op: str) -> None:
+        if self.fail_on == op:
             raise OSError("device lost")
+
+    def add(self, item_id, parts, transform, material) -> None:
+        self._maybe_fail("add")
+        super().add(item_id, parts, transform, material)
+
+    def update_transform(self, item_id: str, transform: Transform) -> None:
+        self._maybe_fail("update_transform")
         super().update_transform(item_id, transform)
 
+    def set_sun(self, sun: SunState) -> None:
+        self._maybe_fail("set_sun")
+        super().set_sun(sun)
+
     def commit(self) -> None:
-        if self.fail_on == "commit":
-            raise OSError("device lost")
+        self._maybe_fail("commit")
         super().commit()
+
+    def clear(self) -> None:
+        self._maybe_fail("clear")
+        super().clear()
+
+
+class DeafSink(RecordingSink):
+    """A lenient sink: it accepts ``clear()`` and does nothing."""
+
+    def clear(self) -> None:
+        return None
+
+
+def assert_recovered(sync: SceneSync, sink: RecordingSink, records: dict[str, Record]) -> None:
+    """The recovery contract, checked from outside: after ``reset()`` and one
+    ``apply``, the sink holds what a from-scratch apply puts into an empty one."""
+    from_scratch = RecordingSink()
+    SceneSync(from_scratch, sync.registry).apply(records, sun=sync.sun, ground=sync.ground)
+    assert sink.state() == from_scratch.state()
+    assert sink.state() == sync.expected_state()
+    assert not sink.in_transaction and not sync.poisoned
 
 
 class TestSinkFailure:
-    @pytest.mark.parametrize("fail_on", ["update_transform", "commit"])
-    def test_a_sink_error_poisons_the_sync_until_reset(self, fail_on: str) -> None:
-        """An engine that failed mid-transaction holds an unknown scene. The sync
-        refuses to send it diffs against a state it may not have: every later
-        ``apply`` raises until the owner tears the engine scene down and ``reset()``s."""
-        sink = FlakySink(fail_on="")
+    @pytest.mark.parametrize("fail_on", ["add", "update_transform", "set_sun", "commit"])
+    def test_recovery_goes_through_the_protocol(self, fail_on: str) -> None:
+        """An engine that failed mid-transaction holds an unknown scene and an OPEN
+        transaction. The sync refuses to send it diffs against a state it may not
+        have — and ``reset()`` alone, through ``EngineSink.clear()``, puts both
+        right. (The first contract could not say this: its ``reset()`` touched no
+        sink, and the next ``begin()`` raised "a transaction is already open".)"""
+        sink = FlakySink()
         sync = SceneSync(sink)
-        sync.apply(scene(record("a")))
+        sun, ground = SunState(30.0, 180.0), GroundSpec(2400.0, 1600.0)
+        sync.apply(scene(record("a"), record("b")), sun=sun, ground=ground)
+        after = scene(record("a", transform=Transform(5.0, 5.0)), record("c"))
         sink.fail_on = fail_on
         with pytest.raises(OSError, match="device lost"):
-            sync.apply(scene(record("a", transform=Transform(5.0, 5.0))))
+            sync.apply(after, sun=SunState(31.0, 181.0))
         assert sync.poisoned
+        if fail_on != "commit":
+            assert sink.in_transaction  # left open by the failure
         with pytest.raises(SyncStateError, match="reset"):
-            sync.apply(scene(record("a")))
+            sync.apply(after)
         with pytest.raises(SyncStateError):
             sync.set_sun(SunState(10.0, 10.0))
+        with pytest.raises(SyncStateError):
+            sync.set_ground(GroundSpec(1.0, 1.0))
+        assert sync.records == scene(record("a"), record("b"))  # the failed apply was not booked
+
+        sink.fail_on = ""  # the device is back; nothing else is done to the sink
+        sync.reset()
+
+        assert not sync.poisoned and not sink.in_transaction
+        assert sync.apply(after, sun=sun, ground=ground) == SceneDiff(added=("a", "c"))
+        assert_recovered(sync, sink, after)
+
+    def test_a_failure_in_a_sun_only_transaction_recovers_the_same_way(self) -> None:
+        sink = FlakySink()
+        sync = SceneSync(sink)
+        records = scene(record("a"))
+        sync.apply(records)
+        sink.fail_on = "set_sun"
+        with pytest.raises(OSError):
+            sync.set_sun(SunState(30.0, 180.0))
+        assert sync.poisoned and sync.sun is None
         sink.fail_on = ""
-        sink.reset()
+        sync.reset()
+        sync.apply(records, sun=SunState(30.0, 180.0))
+        assert_recovered(sync, sink, records)
+
+    def test_a_clear_that_raises_leaves_the_sync_poisoned(self) -> None:
+        sink = FlakySink()
+        sync = SceneSync(sink)
+        sync.apply(scene(record("a")))
+        sink.fail_on = "clear"
+        with pytest.raises(OSError, match="device lost"):
+            sync.reset()  # on a healthy sync: it is poisoned NOW
+        assert sync.poisoned
+        with pytest.raises(SyncStateError):
+            sync.apply(scene(record("a")))
+        with pytest.raises(OSError):
+            sync.reset()  # still failing, still poisoned
+        assert sync.poisoned
+        sink.fail_on = ""
         sync.reset()
         assert not sync.poisoned
-        assert sync.apply(scene(record("a"))) == SceneDiff(added=("a",))
+        sync.apply(scene(record("a")))
+        assert_recovered(sync, sink, scene(record("a")))
+
+    def test_a_sink_that_ignores_clear_is_caught_by_comparing_states(self) -> None:
+        """The limit of what the sync can know: ``clear()`` returns nothing, so a
+        sink that ignores it looks healthy from inside. Two things catch it — the
+        strict double refuses the re-``add`` of an id it still holds, and, for a
+        sink lenient about that too, ``sink.state() != sync.expected_state()``."""
+        sink = DeafSink()
+        sync = SceneSync(sink)
+        sync.apply(scene(record("a"), record("b")))
+        sync.reset()
+        assert sink.state() != sync.expected_state()  # caught: the sink still holds a and b
+        with pytest.raises(SinkProtocolError, match="'a' is already in the sink"):
+            sync.apply(scene(record("a")))
+        assert sync.poisoned
+
+    def test_a_sink_that_ignores_clear_and_forgives_everything(self) -> None:
+        class Forgiving(DeafSink):
+            def add(self, item_id, parts, transform, material) -> None:
+                if item_id in self._items:
+                    del self._items[item_id]
+                super().add(item_id, parts, transform, material)
+
+        sink = Forgiving()
+        sync = SceneSync(sink)
+        sync.apply(scene(record("a"), record("b")))
+        sync.reset()
+        sync.apply(scene(record("a")))  # no error anywhere …
+        assert not sync.poisoned
+        assert sink.item_ids() == ("b", "a")  # … and a ghost of the old scene in the engine
+        assert sink.state() != sync.expected_state()  # the comparison is what sees it
 
 
-# ── sun and ground pass-throughs ──────────────────────────────────────────────
+# ── sun and ground ────────────────────────────────────────────────────────────
 
 
-class TestSunGroundPassThrough:
+class TestSunAndGroundCalls:
     def test_set_sun_is_sent_once_per_change(self, sync) -> None:
+        assert sync.sun is None
         assert sync.set_sun(SunState(30.0, 180.0)) is True
         assert sync.set_sun(SunState(30.0, 180.0)) is False
         assert sync.set_sun(SunState(31.0, 180.0)) is True
         assert sink_of(sync).ops() == [("begin", None), ("set_sun", None), ("commit", None),
                                        ("begin", None), ("set_sun", None), ("commit", None)]
-        assert sink_of(sync).sun == SunState(31.0, 180.0)
+        assert sink_of(sync).sun == sync.sun == SunState(31.0, 180.0)
 
     def test_set_ground_is_sent_once_per_change(self, sync) -> None:
         assert sync.set_ground(GroundSpec(2400.0, 1600.0)) is True
         assert sync.set_ground(GroundSpec(2400.0, 1600.0)) is False
-        assert sink_of(sync).ground == GroundSpec(2400.0, 1600.0)
+        assert sink_of(sync).ground == sync.ground == GroundSpec(2400.0, 1600.0)
         assert sink_of(sync).ops() == [("begin", None), ("set_ground", None), ("commit", None)]
+
+    def test_a_clock_tick_is_one_transaction(self, sync, builder) -> None:
+        """Review P2-2: a sim-date change moves the sun AND grows the plants. Sent
+        as ``set_sun`` plus ``apply`` that was two commits — one frame with the new
+        sun over the old plants. ``apply(records, sun=…)`` is one."""
+        sync.apply(scene(record("a"), record("b")), sun=SunState(30.0, 180.0),
+                   ground=GroundSpec(2400.0, 1600.0))
+        assert sink_of(sync).transactions == 1
+        sink_of(sync).clear_calls()
+        grown = scene(record("a", height_cm=55.0), record("b"))
+        result = sync.apply(grown, sun=SunState(41.0, 195.0))
+        assert result == SceneDiff(geometry=("a",))
+        assert sink_of(sync).ops() == [("begin", None), ("replace_geometry", "a"),
+                                       ("set_sun", None), ("commit", None)]
+        assert sink_of(sync).transactions == 2
+        assert sink_of(sync).state() == sync.expected_state()
+
+    def test_first_apply_carries_ground_and_sun(self, sync) -> None:
+        sync.apply(scene(record("a")), sun=SunState(30.0, 180.0), ground=GroundSpec(10.0, 20.0))
+        assert sink_of(sync).ops() == [("begin", None), ("add", "a"), ("set_ground", None),
+                                       ("set_sun", None), ("commit", None)]
+        assert (sync.sun, sync.ground) == (SunState(30.0, 180.0), GroundSpec(10.0, 20.0))
+
+    def test_an_unchanged_sun_and_ground_send_nothing(self, sync) -> None:
+        records = scene(record("a"))
+        sun, ground = SunState(30.0, 180.0), GroundSpec(10.0, 20.0)
+        sync.apply(records, sun=sun, ground=ground)
+        sink_of(sync).clear_calls()
+        assert sync.apply(records, sun=sun, ground=ground).is_empty
+        assert sink_of(sync).calls == []
+        assert sync.apply(records).is_empty  # None = leave them as they are
+        assert sink_of(sync).calls == [] and (sync.sun, sync.ground) == (sun, ground)
+
+    def test_a_sun_alone_opens_a_transaction_for_itself(self, sync) -> None:
+        records = scene(record("a"))
+        sync.apply(records)
+        sink_of(sync).clear_calls()
+        assert sync.apply(records, sun=SunState(12.0, 90.0)).is_empty
+        assert sink_of(sync).ops() == [("begin", None), ("set_sun", None), ("commit", None)]
+
+    def test_a_failed_transaction_books_neither_records_nor_sun(self) -> None:
+        sink = FlakySink()
+        sync = SceneSync(sink)
+        sync.apply(scene(record("a")), sun=SunState(30.0, 180.0))
+        sink.fail_on = "commit"
+        with pytest.raises(OSError):
+            sync.apply(scene(record("a"), record("b")), sun=SunState(40.0, 190.0))
+        assert sync.sun == SunState(30.0, 180.0) and list(sync.records) == ["a"]
+
+    def test_expected_state_is_the_from_scratch_reference(self, sync) -> None:
+        assert sync.expected_state() == RecordingSink().state()
+        records = scene(record("a"), record("b", height_cm=None))
+        sync.apply(records, sun=SunState(30.0, 180.0), ground=GroundSpec(10.0, 20.0))
+        expected = sync.expected_state()
+        assert expected == sink_of(sync).state()
+        assert set(expected.items) == {"a", "b"} and expected.items["b"].parts == ()
+        assert (expected.sun, expected.ground) == (SunState(30.0, 180.0), GroundSpec(10.0, 20.0))
+        calls = len(sink_of(sync).calls)
+        sync.expected_state()
+        assert len(sink_of(sync).calls) == calls  # it never touches the real sink
+
+    def test_expected_state_does_not_log_old_failures_again(self, sync, builder, caplog) -> None:
+        builder.fail_for = {"HOUSE"}
+        with caplog.at_level(logging.ERROR, logger="open_garden_planner.core.scene3d.sync"):
+            sync.apply(scene(record("h", kind="HOUSE")))
+            assert len(caplog.records) == 1  # said once, when it happened
+            caplog.clear()
+            assert sync.expected_state().items["h"].parts == ()
+        assert caplog.records == []
 
 
 # ── the documented way to test a builder ──────────────────────────────────────
