@@ -753,8 +753,8 @@ Added by the senior review's first round (the same story):
   `mutation_check_scene3d.py`. A mutant counts as KILLED only when pytest exits with code 1 and
   names a failed test — a collection error or a crash is reported as BROKEN, not as a kill. The
   first round quoted its count from a script that lived in a scratch folder. (28 mutants when
-  it was committed, 30 since the merge of the contract's second round; all killed; `--list`
-  prints the current set.) And a mutation script rots between its runs: a mutant whose text
+  it was committed, 30 since the merge of the contract's second round, 32 since the third
+  review round; all killed; `--list` prints the current set.) And a mutation script rots between its runs: a mutant whose text
   has left its file mutates nothing. `tests/unit/test_scene3d_builders_mutation_script.py`
   checks on every suite run that each mutant still matches exactly once and that every test
   file and `-k` word it names exists — it found a stale mutant the day it was written (the
@@ -773,9 +773,20 @@ Added by the senior review's first round (the same story):
   that a 3D shadow ends where the 2D one ends, for every kind; the committed script, asked for
   the reach, printed −270 cm for a house. The reach is now a column of the script, and a test
   scans the docs and skills for the claim.
-- **Wait for a count, never for a duration.** `qtbot.wait(400)` after a 150 ms debounce is a
-  guess about the machine. `waitUntil(count reached)`, then `waitUntil(debounce idle)`, then
-  the exact count — and for "nothing happens", assert that nothing is scheduled.
+- **A wait on a count can still race an echo: wait for the echo.** `qtbot.wait(400)` after a
+  150 ms debounce is a guess about the machine — but its first replacement,
+  `waitUntil(count reached)` then `waitUntil(debounce idle)`, was a race of its own and turned
+  CI red (`assert 6 == 1 + 4`, one job of two on the same commit). A recompute sets the
+  overlay's path; the scene answers with `changed` one event-loop round LATER; `changed` is wired
+  to the debounce. Straight after the recompute the timer is idle and the echo is still on its
+  way — "idle" is not "nothing pending" — and an echo delivered late carried an unannounced
+  edit into a negative control. What holds: wait for the count, **then for the echo you know is
+  coming** (a `scene.changed` delivered since that recompute), then for the debounce the echo
+  starts, then assert the exact count (`OverlayWatch.settled` in
+  `tests/integration/test_scene3d_base_stacking.py`). And make the race a regression that fails
+  EVERYWHERE: run the racing step synchronously, so the event loop cannot hide it —
+  `TestTheOverlaysOwnEcho` recomputes by a direct call, then runs the control. With the old
+  helper it fails three times out of three on any machine.
 
 ## 8.11 Security Scanning (SAST)
 
@@ -3012,7 +3023,9 @@ solid the 2D shadow model casts. The five names are a mirror (`fences.FENCE_STYL
 `core/object_types.py` imports Qt) pinned against `PATH_FENCE_STYLES`' "fence" category, so a new
 fence style fails a test until a builder is chosen for it. At run time the fallback writes ONE
 warning per style name to the application's log (`lines._report_plain`), on the first build of a
-line in that style — never one per build. A style change sets the stroke's colour
+line in that style — never one per build, and for the first 64 names of a session only: then one
+line says that no more follow (starting the memory over would log every name again on every
+rebuild pass). A style change sets the stroke's colour
 and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `update_material`.
 
 **The rules a builder obeys** (on top of §8.26.1's contract):
@@ -3038,12 +3051,15 @@ and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `upd
    `record.holes` — and the outer ring alone lids the garden. Nothing may be built over that
    hole: `verify_builder` refuses a solid that covers more than half of it. That default is for
    loops the size of a garden. A wall or hedge reaches 19–20 cm either side of its line, so a
-   closed WALL loop up to 120 cm side (a stone-wall or hedge-fence loop up to 110 cm) covers
-   over half of what it encloses and is refused although it is right: verify such a loop with
-   an explicit `hole_cover_limit` and say why (the test for a 1 m loop uses 0.65). At the other
-   end the gate has a size floor (`build.HOLE_MIN_WIDTH_CM`, 10 cm): a hole narrower than that
-   is not judged, so a 12 cm loop of wall — one solid block — passes. The default refuses a
-   wall loop from 16 cm to 120 cm side.
+   small closed loop of one covers over half of what it encloses and is refused although it is
+   right: verify such a loop with an explicit `hole_cover_limit` and say why (the test for a
+   1 m loop uses 0.65). At the other end the gate has a size floor (`build.HOLE_MIN_WIDTH_CM`,
+   10 cm): a hole narrower than that is not judged, so a 12 cm loop of wall — one solid block —
+   passes. Measured for square loops at 1 cm steps of the side (6 – 200 cm), the default
+   refuses: a WALL 15 – 120 cm, a stone-wall fence 16 – 118 cm, a hedge fence 19 – 111 cm and
+   again at 114 cm (the gate samples the hole on a coarse grid; its verdict is not monotonic at
+   the edge of a range). The test pins three sides only: 12 cm passes, stroke + 12 cm and 1 m
+   are refused.
    **One plain outline, or the plain block**: a builder that needs ONE simple outline — a gable
    roof, a bed's frame, a pot, a hedge — checks that it has one (`common.has_one_plain_ring`;
    `footprint_of` raises otherwise). "One plain outline" is: one outer ring, no hole, and NOT
@@ -3114,9 +3130,9 @@ when BOTH hold:
 1. its `parent_bed_id` names a visible `is_bed_type` parent with a resolved height —
    `object_height.standing_base_cm` → `soil_surface_cm(type, height)`: `SOIL_DROP_CM` (2 cm)
    under the rim of a bed, AT the height of a container (whose height is its soil fill height).
-   No base for a height that is not finite, or beyond `MAX_PARENT_HEIGHT_CM` — the scene
-   contract's 10 km bound: such a parent gets no record, and nothing stands on a parent that
-   is not there (its plant keeps its own record, on the ground);
+   No base is derived from a height that is not finite or beyond `MAX_PARENT_HEIGHT_CM` (10 km,
+   the scene contract's bound on every length): such a base would be out of a record's range
+   itself. That is all the height module says;
 2. its **stable geometric centre** lies inside that parent's shape —
    `footprints.standing_point(item)` (the outline's anchor in scene coordinates: a plant
    circle's centre, the origin of its record) tested with `footprints.shape_contains`, the
@@ -3127,6 +3143,17 @@ evaluated when a plant is created (one by one, in bulk, or pasted — `_auto_par
 selected plant is dropped after a drag, and when the agent moves a plant (`move_object`'s
 re-link); nothing that changes a BED evaluates it, so a bed resized away from its plant keeps the
 link.
+
+**A parent the 3D scene does not hold lifts nothing — settled in the snapshot.** Whether a
+parent HAS a record is known in one place, `snapshot_records`, once every record is built: a
+parent is left out when one of its lengths is beyond the contract's range (a bed 30 km wide, a
+bed 10 km + 1 cm high), when its outline cannot be built, when its record failed. Every record
+whose `parent_id` names no record is then put on the ground (`base_cm` 0; `parent_id` stays).
+`item_base_cm` itself knows nothing of records, and the 2D casters are not touched: in 2D such a
+bed still casts, and its plant casts from its soil — except for the bed TALLER than 10 km, whose
+plant casts from the ground there too (the height bound above). Both axes are pinned
+(`TestTheOneRule::test_a_parent_the_scene_cannot_hold_is_not_there`,
+`::test_a_parent_without_a_record_lifts_nothing`).
 
 **One predicate, two points.** Every link decision and the lift ask `shape_contains`. The link
 decisions ask it with `bed_membership_point` — the centre of `boundingRect()`, kept exactly as
@@ -3147,6 +3174,12 @@ rebuilt. A bed that is resized reaches a plant it no longer contains the same wa
 **Cost**: 2.8 µs per lifted plant; the parent's shape is built once per walk
 (`ItemLookup.shape_of` — Qt's `contains` rebuilds it per call). bench_large, 240 lifted plants:
 the caster walk 3.9 ms before L1.6, 5.0 ms now; `snapshot_records` 8.6 → 10.0 ms.
+**An `ItemLookup` lives for ONE walk.** It holds each parent's shape as it was when the walk
+asked; kept across an edit it answers from the old shape (measured: a bed shrunk away from its
+plant, a kept lookup still says 38). Do not keep "the scene's lookup" on a controller or a view:
+a test reads the source and fails when an `ItemLookup` is constructed anywhere but in the two
+walks, or bound to anything but a local name there
+(`TestTheParentShapeIsBuiltOncePerWalk::test_a_lookup_lives_for_one_walk_and_is_never_kept`).
 
 **A known smell.** `ui/canvas/footprints.py` is collecting jobs: footprints, the base rule and
 the app's point-in-bed test — and `core/commands.py` imports the last one from `ui/` (lazily,
@@ -3174,7 +3207,7 @@ far, −, the 3D shadow extends along the shadow direction: where its tip is), e
 
 | Kind | 3D ÷ 2D area | IoU | Reach 3D − 2D (cm) | Why |
 |---|---|---|---|---|
-| raised bed, box, plain panel | 1.00 | 0.99–1.00 | −0.6 … 0.0 | none: the same prism (its top edge bevelled) |
+| raised bed, box, plain panel | 0.99–1.00 | 0.99–1.00 | −0.6 … 0.0 | none: the same prism (its top edge bevelled) |
 | hedge (polygon, section) | 0.94–0.98 | 0.93–0.97 | +2.7 … +4.4 | leaf shell drawn in; leaf tips |
 | round tub / terracotta pot | 0.89–0.91 / 0.81–0.83 | the same | −0.6 … −0.3 | taper |
 | house, sun square to the ridge | 0.92 / 0.81 / 0.92 | 0.85 / 0.74 / 0.82 | −270.0 / −270.0 / −108.2 | gable: the ridge is mid-house, the 2D prism's top edge at the far wall |

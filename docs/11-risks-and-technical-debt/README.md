@@ -1365,6 +1365,33 @@ Found by the senior review's second round, again with every test green:
   plant's `boundingRect()` (a Python override) that was 6 µs of the 7.6 µs the rule cost per
   plant. `ItemLookup.shape_of` builds the shape once per parent and walk; the rule costs 2.8 µs.
 
+Found by the senior review's third round — CI was red on a head whose every local run was green:
+
+- **The fix for a fixed wait was a race.** Round 2 replaced `qtbot.wait(400)` by "wait for the
+  recompute count, then for the debounce timer to be idle". CI: `assert 6 == 1 + 4` in the Test
+  job, green in the Coverage job on the same commit, green in every local run. A recompute sets
+  the overlay's path, the scene emits `changed` one event-loop round later, and `changed` is
+  wired to the debounce: straight after a recompute the timer is idle and the echo is still on
+  its way. Delivered late, it carried an edit nothing had announced into the negative control.
+  Fix: `settled` waits for the count, then for the echo (a `scene.changed` delivered since that
+  recompute), then for the debounce; and two tests hold both halves of the race still by
+  running the recompute synchronously. *A timer being idle says nothing about what is queued.
+  If a system answers its own action with a signal, that signal is the thing to wait for.*
+- **A field's description is the contract an agent reads.** `link_is_geometric: false` on a
+  LIFTED plant was pinned by a test and explained in an ADR addendum, while the tool schema
+  still told an agent that false means "the plant sits outside the bed's outline". The
+  description, the tool's docstring and FR-AGENT-16 now say what the field tests and where it
+  can disagree with the sun study.
+- **A cache with a lifetime needs more than a sentence.** `ItemLookup` holds each parent's
+  shape for one walk; kept across a bed resize it answers 38 where the truth is 0. The guard is
+  a source-reading test: constructed only in the two walks, never stored.
+- **A range read at a coarse step is not a range.** "From 16 cm to 120 cm" came from readings
+  2 cm and 10 cm apart; at 1 cm the wall starts at 15 and the hedge fence is refused again at
+  114 after passing at 112. State the step, or pin the cases a test needs and no more.
+- **A bounded memory can still be an unbounded log.** The unknown-style warning cleared its 64
+  names when full, so 65 names wrote 65 lines on every rebuild pass. When full: one line, then
+  silence — the policy the snapshot's log already had, three files away.
+
 Found while merging the scene contract's second fix round (`9944012`):
 
 - **A bound added in one layer opens a state in the layer above.** The contract began to refuse
@@ -1372,10 +1399,15 @@ Found while merging the scene contract's second fix round (`9944012`):
   and its plant, whose base is the bed's soil 2 cm lower, had one: floating at 9,999.99 m over
   nothing. A taller bed took its plant out of the 3D scene with it (the plant's base was out of
   range too). Garbage in, but the rule "a parent that has no solid is not there" was mine and
-  no longer held. Fix: `soil_surface_cm` gives no base beyond `MAX_PARENT_HEIGHT_CM`, the
-  contract's bound mirrored and pinned; the plant keeps its record, on the ground. *When an
-  upstream contract starts refusing something, probe what your own rule derives from it — the
-  refusal does not propagate by itself.*
+  no longer held. First fix: `soil_surface_cm` gives no base beyond `MAX_PARENT_HEIGHT_CM`, the
+  contract's bound mirrored and pinned. **That fixed one axis and named it a rule**: a raised
+  bed 30 km WIDE has an ordinary height, got no record all the same, and its plant stood at 38
+  over nothing (review round 3). The rule is settled where the fact is known: `snapshot_records`
+  puts every record whose parent got none on the ground, for whatever reason the parent was
+  left out; the height bound stays as what it is — no base from a height beyond the bound.
+  *When an upstream contract starts refusing something, probe what your own rule derives from
+  it — and put the consequence where the refusal is visible, not where one symptom of it was
+  first seen.*
 - **A flag beats an inference, and the builder must not lean on the producer.** Round 1 could
   not tell a self-crossing house that resolves to one ring from an ordinary one, and gave it a
   roof. The contract now says `outline_resolved`, and drops the ridge. The house builder reads

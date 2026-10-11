@@ -1739,3 +1739,52 @@ The next print failed because the code page could not encode a check mark.
 **Fix**: `scripts/sync_wiki.py` configures its CLI stdout and stderr as UTF-8 before printing. Temporary diagnostic prints were removed.
 
 **Lesson**: specify both file and CLI stream encoding for Unicode tooling. Pinned by `tests/integration/test_wiki_publication.py`, whose real subprocess comparisons exercise Unicode diffs without a UTF-8 environment override.
+
+
+## Case study: a plant's shadow that flipped with a warning badge (Phase 17 L1.6, fixed 2026-10-11)
+
+**Symptom**: a plant linked to a raised bed, its centre 1 cm inside the bed's east edge, stood on the bed's soil (base 38 cm in the 3D record and in the 2D shadow caster). When the companion check put the red antagonist badge on it, both read 0 — the plant dropped to the ground and its shadow lost 38 cm of base. Badge off: 38 again. No test failed.
+
+**Theories entertained (wrong)**:
+1. *"Every membership decision must ask the same point, then they cannot disagree."* That was the previous fix, and it was the cause: the lift had been given the link decisions' point.
+2. *"The centre of `boundingRect()` is the geometric centre plus symmetric decorations."* True for the shadow margin, the companion highlight and the spacing ring. Not for the badge.
+
+**What the instrumentation revealed** (a ten-line probe printing the point and both bases, run on the tree with the previous fix):
+
+```text
+[BASE] badge off: link point (699.0, 400.0)  3D base 38  2D caster base 38
+[BASE] badge on : link point (700.8, 401.8)  3D base 0  2D caster base 0
+[BASE] badge off: link point (699.0, 400.0)  3D base 38  2D caster base 38
+```
+
+The point moved by 1.8 cm in x AND y. Nothing about the plant's geometry had changed.
+
+**Root cause**: `CircleItem.boundingRect()` grows towards +x / +y only while the badge shows (`base.adjusted(0, 0, overflow, overflow)`, `overflow = 0.3 * min(0.45 * radius, 12)`), so its centre moves by half of that. `footprints.bed_membership_point` is `mapToScene(boundingRect().center())` — fine for the shipped link decisions, which have always used it, and wrong as the answer to "where does this plant stand".
+
+**Fix**: the lift asks `footprints.standing_point` — the item's stable geometric centre, the anchor of its outline and the origin of its 3D record. The link decisions keep their point; one predicate (`shape_contains`) serves both. `tests/integration/test_scene3d_base_stacking.py::TestWhereAPlantStandsDoesNotDependOnABadge` toggles the badge and compares the record, the caster and the real overlay's path; `::TestWhichPointEachDecisionAsks` pins the point of each decision on a probe where the two points differ.
+
+**Lesson**: a bounding rect is a PAINT rect. Before using one as geometry, list everything that changes it — here a badge, a highlight, a margin, a ring — and ask whether each is symmetric. And when a refactor claims "identical behaviour" for a value that two candidates could supply, build one probe where the candidates differ: swapping them had passed all 114 related tests.
+
+
+## Case study: a negative control that only CI could fail — the overlay's own echo (Phase 17 L1.6, fixed 2026-10-11)
+
+**Symptom**: `assert controller.recompute_count == count + 4` failed with `assert 6 == (1 + 4)` in the CI Test job. The Coverage job passed on the same commit; twenty local runs passed.
+
+**Theories entertained (wrong)**:
+1. *"CI is slow; the wait of two debounce intervals was too short."* The control waits for NOTHING to happen; a longer wait can only make it fail more often.
+2. *"The helper waits on a count, not on a duration, so it cannot race."* It waited for the count and then for the debounce timer to be idle — and the timer IS idle straight after a recompute.
+
+**What the instrumentation revealed** (a probe that runs the recompute synchronously and counts event-loop rounds):
+
+```text
+[ECHO] height 75: recompute_count 1 -> 2; debounce active False
+[ECHO]   rounds of processEvents until scene.changed: 1; debounce active True
+[ECHO] race: recompute_count 5, debounce active False, undo done
+[ECHO]   after the echo and its debounce: recompute_count 6 (the control expected 5)
+```
+
+**Root cause**: a recompute sets the shadow overlay's path. The scene emits `changed` one event-loop round later, and `changed` is wired to `SunShadowController.schedule_recompute`. That echo's recompute is a no-op while nothing changed (the key holds) — but the test's negative control makes an edit nothing announces, and an echo delivered after it carries the edit into the overlay. Locally the echo always arrived inside the helper's first 10 ms poll; in one CI job it did not.
+
+**Fix**: the helper (`OverlayWatch.settled`) waits for the recompute count, THEN for a `scene.changed` delivered since that recompute, then for the debounce the echo starts. `tests/integration/test_scene3d_base_stacking.py::TestTheOverlaysOwnEcho` holds both halves of the race still by calling `recompute_now()` directly — the echo is then certainly undelivered — once without waiting for it (exactly one extra recompute) and once through the helper (none). With the old helper the second test fails three times out of three.
+
+**Lesson**: "the timer is idle" is not "nothing is pending". When a system answers its own action with a signal, wait for that signal. And a race is turned into a regression by taking the event loop out of the step that hides it: run that step synchronously, and the bad interleaving is the only one there is.
