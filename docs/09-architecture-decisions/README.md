@@ -2774,7 +2774,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 91 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 93 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
   resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to

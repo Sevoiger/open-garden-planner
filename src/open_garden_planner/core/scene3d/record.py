@@ -118,6 +118,10 @@ class RecordRangeError(ValueError):
     """A length of a record lies beyond ``MAX_LENGTH_CM`` (or is infinite)."""
 
 
+def _beyond(reach: float) -> str:
+    return f"a coordinate of {reach!r} cm is beyond what a plan can hold (±{MAX_LENGTH_CM:g} cm)"
+
+
 def _check_length(what: str, value: float) -> None:
     if not -MAX_LENGTH_CM <= value <= MAX_LENGTH_CM:
         raise RecordRangeError(
@@ -126,9 +130,11 @@ def _check_length(what: str, value: float) -> None:
 
 
 @lru_cache(maxsize=8192)
-def _ring_reach(ring: Ring) -> float:
-    """The largest absolute coordinate of a ring; cached, as ``ring_area`` is."""
-    return max((max(abs(x), abs(y)) for x, y in ring), default=0.0)
+def _ring_facts(ring: Ring) -> tuple[float, float]:
+    """``(signed area, largest absolute coordinate)`` of a ring — the two things a
+    record checks on every ring of every snapshot, behind ONE cache lookup (a
+    tuple's hash is recomputed on each lookup, and that is most of the cost)."""
+    return ring_area(ring), max((max(abs(x), abs(y)) for x, y in ring), default=0.0)
 
 
 def quantize_cm(value: float) -> float:
@@ -384,19 +390,18 @@ class Record:
             if not math.isfinite(self.path_width_cm):
                 raise ValueError(f"path_width_cm is finite or None, got {self.path_width_cm!r}")
             _check_length("a stroke width", self.path_width_cm)
-        for ring in (*self.footprints, *(hole for group in self.holes for hole in group), self.path):
-            if not _ring_reach(ring) <= MAX_LENGTH_CM:
-                raise RecordRangeError(
-                    f"a coordinate of {_ring_reach(ring)!r} cm is beyond what a plan can hold "
-                    f"(±{MAX_LENGTH_CM:g} cm)"
-                )
         for ring in self.footprints:
-            if not ring_area(ring) > 0.0:
+            area, reach = _ring_facts(ring)
+            if not reach <= MAX_LENGTH_CM:
+                raise RecordRangeError(_beyond(reach))
+            if not area > 0.0:
                 raise ValueError(
                     "footprints holds OUTER rings: counter-clockwise with a positive area "
-                    f"(got signed area {ring_area(ring)!r} cm² for a ring of {len(ring)} vertices); "
+                    f"(got signed area {area!r} cm² for a ring of {len(ring)} vertices); "
                     "holes go into `holes`"
                 )
+        if self.path and not _ring_facts(self.path)[1] <= MAX_LENGTH_CM:
+            raise RecordRangeError(_beyond(_ring_facts(self.path)[1]))
         if self.holes:
             if len(self.holes) != len(self.footprints):
                 raise ValueError(
@@ -407,10 +412,13 @@ class Record:
                 object.__setattr__(self, "holes", ())  # one spelling of "no holes"
             for group in self.holes:
                 for ring in group:
-                    if not ring_area(ring) < 0.0:
+                    area, reach = _ring_facts(ring)
+                    if not reach <= MAX_LENGTH_CM:
+                        raise RecordRangeError(_beyond(reach))
+                    if not area < 0.0:
                         raise ValueError(
                             "a hole ring is clockwise with a negative signed area "
-                            f"(got {ring_area(ring)!r} cm²)"
+                            f"(got {area!r} cm²)"
                         )
         object.__setattr__(self, "geometry_sig", hash((
             self.kind, self.shape, self.footprints, self.path, self.path_width_cm,
