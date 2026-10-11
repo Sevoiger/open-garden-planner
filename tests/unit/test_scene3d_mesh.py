@@ -229,6 +229,24 @@ class TestValidate:
         broken = _replace(triangle(), positions=positions)  # only reachable by hand
         with pytest.raises(MeshError, match="non-finite"):
             Mesh.merge([triangle(), broken])
+        # … also when it is the ONLY part and would come out as it went in (round 2
+        # said "merge goes through it"; for one part it did not)
+        with pytest.raises(MeshError, match="non-finite values in positions"):
+            Mesh.merge([broken])
+        with pytest.raises(MeshError, match="non-finite"):
+            Mesh.merge([Mesh.empty(), broken, Mesh.empty()])
+        assert Mesh.merge([triangle()]) is not None and Mesh.merge([Mesh.empty()]) == Mesh.empty()
+        with pytest.raises(MeshError, match="non-finite values in positions"):
+            broken.require_finite()
+        assert triangle().require_finite() == triangle()
+
+    def test_a_height_that_is_zero_in_float32_gives_no_solid(self) -> None:
+        """Review round 3, P2-8. ``prism_mesh((SQUARE,), 1e-46)`` built a solid of
+        height 0.0 — walls without an area — and ``validate`` let it pass."""
+        for nothing in (1e-46, 1e-300, 5e-324):
+            assert prism_mesh((SQUARE,), nothing) == Mesh.empty()
+        low = prism_mesh((SQUARE,), 1e-3)  # the record's floor: a solid, ten micrometres high
+        assert low.triangle_count == 10 and float(low.bounds()[1][2]) == float(np.float32(1e-3))
 
     def test_index_out_of_bounds(self) -> None:
         with pytest.raises(MeshError, match="index 3 .* 3 vertices"):
@@ -787,6 +805,35 @@ class TestVerifyBuilder:
                 verify_builder(rim, fence)
         else:
             verify_builder(rim, fence)
+
+    # ── an island in a hole is ground, not hole (fix round 3, P2-2) ───────────
+
+    #: A square with a square hole, and an island standing in that hole — three
+    #: nested rings: what a self-crossing outline can resolve into.
+    OUTER = ((0.0, 0.0), (600.0, 0.0), (600.0, 600.0), (0.0, 600.0))
+    MOAT = ((40.0, 40.0), (40.0, 560.0), (560.0, 560.0), (560.0, 40.0))  # clockwise
+    ISLAND = ((80.0, 80.0), (520.0, 80.0), (520.0, 520.0), (80.0, 520.0))
+
+    def test_an_island_in_a_hole_is_not_building_over_the_hole(self) -> None:
+        """The re-review's case: a correct record, a correct default build — and
+        ``verify_builder`` refused it for "covering 69 % of a hole". The 69 % was
+        the island: a region of its own, standing where the plan says it stands."""
+        nested = record(shape="polygon", footprints=(self.OUTER, self.ISLAND), holes=((self.MOAT,), ()))
+        parts = verify_builder(default_builder, nested)
+        assert plan_overreach(parts, nested.regions, PLAN_MARGIN_CM) == (0.0, 0.0)
+        assert cap_area(parts[0].mesh) == pytest.approx(nested.plan_area_cm2)
+        # what is still caught: the moat itself built over — the open part of the hole
+        def moat_filled(rec: Record) -> tuple[MeshPart, ...]:
+            return (MeshPart(prism_mesh((self.OUTER,), 40.0)),)
+
+        assert plan_overreach(moat_filled(nested), nested.regions, PLAN_MARGIN_CM)[1] == 1.0
+        with pytest.raises(BuilderContractError, match="covers 100% of a hole"):
+            verify_builder(moat_filled, nested)
+        # … and the same hole WITHOUT an island in the record is judged whole, as before
+        hollow = record(shape="polygon", footprints=(self.OUTER,), holes=((self.MOAT,),))
+        island_only = (MeshPart(prism_mesh((self.ISLAND,), 40.0)),)
+        assert plan_overreach(island_only, hollow.regions, PLAN_MARGIN_CM)[1] == pytest.approx(
+            440.0 ** 2 / 520.0 ** 2, abs=0.03)  # 72 % of the hole: a builder that invented an island
 
     def test_half_a_hole_covered_is_half(self) -> None:
         outer = ((-100.0, -100.0), (100.0, -100.0), (100.0, 100.0), (-100.0, 100.0))

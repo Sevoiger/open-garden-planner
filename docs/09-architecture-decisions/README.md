@@ -2549,13 +2549,52 @@ it stands after that round.
      wound downwards in the mesh as often as not — measured on a ladder drawn as one stroke:
      13 of 239 cap triangles. `prism_mesh` takes any sequence of `(x, y)` pairs for a ring —
      tuples, lists, numpy rows.
-   - **Cutting a region with holes is bounded.** Each hole is joined to the boundary by a bridge
-     found in one pass over the edges (holes × vertices), then the merged ring is ear-clipped in
-     array passes. Measured (the first version in brackets): a closed fence along 400 traced
-     vertices, one hole, 1,201 ring vertices 45 ms (12.6 s); a ladder of 58 holes 43 ms (2.5 s);
-     400 holes in a mesh 0.31 s. Beyond `MAX_HOLED_REGION_VERTICES` (8,000) or `MAX_BRIDGE_WORK`
-     (holes × vertices = 500,000) — about 0.3 s — `triangulate_region` refuses instead of holding
-     the GUI thread; such a region is not buildable and its item is reported.
+   - **What an outline may cost is bounded — as work, as a sum, and before the work.** Each hole
+     is joined to the boundary by a bridge found in one pass over the edges (holes × vertices),
+     then the merged ring is ear-clipped in array passes. Measured (the first version in
+     brackets): a closed fence along 400 traced vertices, one hole, 1,201 ring vertices 45 ms
+     (12.6 s); a ladder of 58 holes 43 ms (2.5 s). The bound went through three forms, and the
+     first two are on record because each looked finished:
+     1. *Two size limits for regions with holes* (fix round 2: 8,000 vertices, holes × vertices
+        = 500,000). Judged AFTER the quadratic simplicity test, so refusing cost more than
+        building (2,700 traced points: 2.59 s to say no); rings without holes had no limit (a
+        comb of 5,004 vertices: 1.5 s per tick); and it was no bound on work at all (7,187
+        vertices and 61 holes, inside both limits: 4.0 s). The example this ADR quoted for it —
+        "400 holes in a mesh 0.31 s" — was itself beyond the second limit.
+     2. *One work bound per region, counted* (`MAX_REGION_WORK`, first half of fix round 3):
+        work units paid as the cut goes, the size judged first. Right for a region. But the
+        snapshot applied it to the LARGEST outer ring of a stroke, after the clipper had
+        inflated the path and every ring had been read — and the clipper's own work has no
+        bound: 800 points scribbled across a plan took it half a second and came back as 53,000
+        rings, 4,000 teeth standing side by side 1.6 s without one crossing, the last reading
+        of a self-crossing outline of 800 vertices ten seconds (a security review of that
+        commit found the pattern; the numbers are this round's).
+     3. *One budget per ITEM, every step paid before it runs* (now). `polygon.WorkBudget`,
+        `MAX_REGION_WORK` = 150,000,000 units: counting the pairs of a path
+        (`touching_pairs`), the clipper (priced from the points, their stack — `stack_height` —
+        and the pairs that cross or lie within a stroke's reach), reading what it returns
+        (counted first), sorting it (holes × outer rings), every region's cut out of what the
+        item has LEFT (`pay_for_region`), every union, band and comparison of a resolution.
+        Before all of it, an item's stored vertex count: more than `MAX_ITEM_VERTICES` =
+        16,384 is one comparison. What the budget does not cover is `RegionTooLargeError`
+        inside and the skip code `outline_too_large` outside. Section 8.26.1 has the table of
+        what fits and what a refusal costs; section 8.11 the two patterns.
+     The clipper cannot be counted, only priced, and a price is a measurement: each is the
+     dearest case found (`scripts/measure_region_work.py` prints units charged against time for
+     every family it knows). A family nobody has drawn yet can be dearer than its price — the
+     simplicity test was, by a factor of a hundred, for a ring whose every pair of edges lies
+     close, until its near pairs were priced. *Rejected:* a time-out (the verdict would depend on
+     the machine and the moment, and Python cannot interrupt the clipper); a cap on vertices
+     alone (it admits the scribble and refuses the long honest fence); a budget across the whole
+     plan (a record would depend on what else is on the plan).
+   - **What is remembered is bounded by vertices.** The verdict and the cut of a region, a
+     ring's area, a record's ring facts and the regions of an outline are remembered by
+     `polygon.ring_keyed` — at most 262,144 vertices per function, keys and answers together,
+     the least recently asked dropped first, and a ring of more than `MAX_ITEM_VERTICES` never
+     hashed. Before, each was an `lru_cache` of 2,048 to 8,192 ANSWERS: an outline of 4,000
+     vertices dragged for a minute was a gigabyte, and this ADR had it at "16 kB per entry" (it
+     had counted two floats per vertex; a tuple of two Python floats and its place in the ring
+     are 104 bytes).
    - **Where the cap is cut, and what that costs an outline under edit.** Because the predicate
      needs the triangulation, it is computed in the snapshot and cached; the builder reuses it.
      A ring that is being edited misses the cache on every tick, as before — only now in the
@@ -2565,7 +2604,8 @@ it stands after that round.
      with one vertex dragged takes 22 ms at 500 vertices and 41 ms at 1,000, where the first
      version took 51 ms and 250 ms. Below 256 the shared clipper stays (it is faster there, and
      the cap is the Qt 3D view's, triangle for triangle); above it the same polygon is cut into
-     other triangles. A ring the array clipper cannot finish falls back to the shared one.
+     other triangles. A ring the array clipper cannot finish is NOT handed to the shared one
+     (whose work is not counted): the region is not buildable.
    - The simplicity test is quadratic in the vertex count and misses its cache on
      every tick while a ring is being edited, so from 32 vertices on it prunes edge pairs by
      bounding box and runs on arrays (500 vertices: 72 ms in a plain loop, 2.9 ms now; 1,000:
@@ -2628,7 +2668,8 @@ it stands after that round.
     (malformed metadata, geometry that is not finite: any exception is contained to that item) is
     left out, appended, and logged once per item and kind of failure (the exception's type) — not
     once per edit. A `SkippedItem` is plain data a caller may keep: the item's id and kind, a
-    `SkipReason` CODE (`record_failed`, `duplicate_id`, `outline_unbuildable`, `out_of_range` —
+    `SkipReason` CODE (`record_failed`, `duplicate_id`, `outline_unbuildable`,
+    `outline_too_large`, `out_of_range` —
     a UI maps a code to a translated text; the value is never shown as it is), and the exception's type name and
     message as strings. It never holds the exception: a traceback keeps its frames alive, and
     they hold the scene and the item. The exception goes to the log, and the log is bounded in
@@ -2774,7 +2815,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 93 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 149 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
   resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to
@@ -2822,6 +2863,30 @@ Recorded because each of these passed every gate the story had set itself:
   reviewer drew to show a cost cliff also has vertices of five rings on one line; the cap had
   thirteen triangles of zero area, wound downwards in float32, and `Mesh.validate` refused the
   fence. No earlier test had a diagonal stroke crossed by others. (Decision 9.)
+- **(Fix round 3.) "No real stroke takes this path" was a count, not a proof.** The fallback
+  that resolves a stroke whose rings touch was reported as unreachable: 0 of 4,500 random
+  strokes took it. A fence drawn back to a point one stroke width beside its start has two
+  butt ends that meet corner to corner; pyclipper returns ONE ring that touches itself, and
+  every such fence takes the fallback (18 of 18 here, 15 of 15 the reviewer drew). With the
+  fallback replaced by "no regions", 694 tests and all 93 mutants of that round still passed.
+  It is pinned now through real items and in `scene3d_edge_cases.ogp` ("Fence that meets
+  itself": one ring of 20 vertices, 0.002 cm inside the drawn stroke, no flag — a stroke's
+  rings never were the drawn vertices, and what builds a fence reads `path`). *Random input
+  does not find a shape that needs two exact coincidences; ask what would make the branch
+  run, and draw that.*
+- **(Fix round 3.) A bound was added three times before it bounded.** See decision 9: a limit
+  judged after the work it was to prevent; a work bound on the largest element of a sum; and
+  then a budget — and inside the budget one quadratic priced by its size where its cost was
+  the pairs it had to look at. Each form passed its tests, because each test asked "is the
+  large thing refused?" and none asked "what ran before it was?". The tests that hold now
+  assert what was called, to the unit of the budget, and read no clock.
+- **(Fix round 3.) A mutant that breaks the collection is not a kill.** One mutant made the
+  test file fail while pytest collected it (the file sorts a ladder's rings in a
+  `parametrize` list): exit code 2, which the script reports as BROKEN — it was built to, since
+  round 2. Two further mutants of the first half of the round survived a run nobody had waited
+  for (the cut's own size check, shadowed by its caller's; the size check of
+  `triangulate_region`, shadowed by the budget running out twenty bridges later). All three
+  have a test now. *Run the mutation script before the report, not after it.*
 - **One malformed plant blanked the plan**, a roof ridge had a record that broke "rotate →
   transform only", a late builder registration left stale geometry, and a clock tick took two
   transactions. Decisions 3, 9, 10 and 12.

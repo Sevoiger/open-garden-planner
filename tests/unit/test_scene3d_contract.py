@@ -18,10 +18,12 @@ import pytest
 
 from open_garden_planner.core import scene3d
 from open_garden_planner.core.scene3d import (
+    DIMENSIONLESS_PARAMS,
     EMPTY_PARAMS,
     GEOMETRY_FIELDS,
     MATERIAL_FIELDS,
     MAX_LENGTH_CM,
+    MIN_HEIGHT_CM,
     SHAPES,
     SIGNATURE_FIELDS,
     TRANSFORM_FIELDS,
@@ -280,6 +282,40 @@ class TestRecord:
         with pytest.raises(RecordRangeError, match="beyond what a plan can hold"):
             record(**{key: value() if callable(value) else value for key, value in changes.items()})
 
+    # ── fix round 3: a height has a floor; which float params are lengths ────
+
+    @pytest.mark.parametrize("height", [1e-300, 1e-46, 1e-45, 9.99e-4],
+                             ids=["1e-300", "zero in float32", "the smallest float32", "just under the floor"])
+    def test_a_height_below_the_floor_is_refused(self, height: float) -> None:
+        """Review round 3, P2-8: the range rule covered overflow only. ``1e-46`` is
+        positive and finite — and ZERO in the mesh's float32: a solid without a
+        height, its walls triangles without an area, that passes ``validate``."""
+        with pytest.raises(RecordRangeError, match="a height of .* is below what a solid can have"):
+            record(height_cm=height)
+        assert MIN_HEIGHT_CM == 1e-3
+        assert record(height_cm=MIN_HEIGHT_CM).height_cm == MIN_HEIGHT_CM  # the floor itself is in
+
+    def test_a_float_param_is_a_length_unless_it_is_named_otherwise(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 3, P2-7. Every float in ``Params`` is held to the bound —
+        right for the two there are, and a surprise for a later one that is a
+        ratio or a count of days. The rule is stated where it is applied, the
+        refusal names the way out, and the way out is one line."""
+        from open_garden_planner.core.scene3d import record as record_module
+
+        assert frozenset() == DIMENSIONLESS_PARAMS  # nothing is exempt today
+        with pytest.raises(RecordRangeError, match="taken for a length in cm unless its key is "
+                                                   "listed in record.DIMENSIONLESS_PARAMS"):
+            Params({"days_since_epoch": 2e7})
+        monkeypatch.setattr(record_module, "DIMENSIONLESS_PARAMS", frozenset({"days_since_epoch"}))
+        assert Params({"days_since_epoch": 2e7, "radius_cm": 30.0})["days_since_epoch"] == 2e7
+        with pytest.raises(RecordRangeError, match="radius_cm"):
+            Params({"days_since_epoch": 2e7, "radius_cm": 2e7})  # … the others are lengths still
+        with pytest.raises(ValueError, match="non-finite"):
+            Params({"days_since_epoch": float("inf")})  # exempt from the bound, not from being a number
+        assert "A FLOAT is taken for a length" in (Params.__doc__ or "")
+
     def test_what_is_not_a_length_is_not_bounded(self) -> None:
         """An angle wraps, a string is a string, an int is not a length: only
         floats that become geometry are held to the bound."""
@@ -350,7 +386,7 @@ class TestRecord:
           ((((-2.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (10.0, -10.0)),),)),
          ("path", ((-1.0, 0.0), (10.0, 0.0)), ((-2.0, 0.0), (10.0, 0.0))),
          ("path_width_cm", 1.0, 2.0**-61),
-         ("height_cm", 1.0, 2.0**-61),
+         ("height_cm", 2.0**-9 + 2.0**-42, 2.0**19 + 2.0**-9),
          ("params", Params({"seed": "a", "radius_cm": -1.0}), Params({"seed": "a", "radius_cm": -2.0}))],
         ids=["footprints", "holes", "path", "path_width_cm", "height_cm", "params"],
     )
@@ -360,6 +396,8 @@ class TestRecord:
         special case for the hash -1, ``1.0`` and ``2.0**-61`` by the modulus (as
         ``1.0`` and ``2.0**61`` are; that one is beyond what a record may hold) —
         and a field that was hashed but not compared would lose exactly those edits.
+        A height has a floor as well as a ceiling; its pair differs by
+        ``(2**61 - 1) / 2**42``: 0.00195 cm and 5,243 m.
         (``kind`` and ``shape`` are strings: no collision can be written down.)"""
         a, b = record(**{field: one}), record(**{field: other})
         assert one != other

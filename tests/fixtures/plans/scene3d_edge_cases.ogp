@@ -1,7 +1,7 @@
 {
   "version": "1.4",
   "metadata": {
-    "modified": "2026-10-11T06:35:37.994254+00:00"
+    "modified": "2026-10-11T10:24:07.597924+00:00"
   },
   "canvas": {
     "width": 4000.0,
@@ -604,6 +604,41 @@
       "stroke_color": "#ff644826",
       "stroke_width": 2.0,
       "stack_order": 16384
+    },
+    {
+      "type": "polyline",
+      "item_id": "d4199ea4-c707-4319-9461-19f7f69a2601",
+      "points": [
+        {
+          "x": 2500.0,
+          "y": 1610.0
+        },
+        {
+          "x": 2400.0,
+          "y": 1610.0
+        },
+        {
+          "x": 2400.0,
+          "y": 1300.0
+        },
+        {
+          "x": 2600.0,
+          "y": 1300.0
+        },
+        {
+          "x": 2600.0,
+          "y": 1600.0
+        },
+        {
+          "x": 2500.0,
+          "y": 1600.0
+        }
+      ],
+      "object_type": "FENCE",
+      "name": "Fence that meets itself",
+      "stroke_color": "#ff8b4513",
+      "stroke_width": 10.0,
+      "stack_order": 17408
     }
   ],
   "location": {

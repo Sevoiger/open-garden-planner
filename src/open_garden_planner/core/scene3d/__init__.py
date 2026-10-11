@@ -84,15 +84,20 @@ from .mesh import (
 )
 from .polygon import (
     Region,
+    RegionTooLargeError,
     ccw,
     cut_region,
+    cut_work,
     cw,
+    exceeds_work_bound,
     group_rings,
     is_buildable_region,
     is_flat_ring,
+    is_region_too_large,
     is_simple_ring,
     point_in_regions,
     point_in_ring,
+    region_work,
     regions_area,
     ring_area,
     signed_area,
@@ -101,12 +106,14 @@ from .polygon import (
 )
 from .record import (
     ANGLE_DECIMALS,
+    DIMENSIONLESS_PARAMS,
     EMPTY_PARAMS,
     FALLBACK_RGBA,
     GEOMETRY_FIELDS,
     LENGTH_DECIMALS,
     MATERIAL_FIELDS,
     MAX_LENGTH_CM,
+    MIN_HEIGHT_CM,
     PARAM_CONTAINER_MATERIAL,
     PARAM_OUTLINE_RESOLVED,
     PARAM_PATH_STYLE,
@@ -261,3 +268,14 @@ __all__ = [
 # Appended, not sorted into the list above: the engine package (L1.2) inserts a name at the
 # very line this one would take, and two insertions at one line do not merge.
 __all__ += ["MAX_LENGTH_CM"]
+# … and what fix round 3 added, for the same reason. (``polygon.MAX_REGION_WORK`` is
+# deliberately not re-exported: a copy of it here would not follow the module's own.)
+__all__ += [
+    "DIMENSIONLESS_PARAMS",
+    "MIN_HEIGHT_CM",
+    "RegionTooLargeError",
+    "cut_work",
+    "exceeds_work_bound",
+    "is_region_too_large",
+    "region_work",
+]

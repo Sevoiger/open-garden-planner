@@ -408,17 +408,20 @@ Every test runs under `pytest-timeout` (`timeout = 180` in `pyproject.toml`; dev
 
 ### Test isolation: the user's data directory and the locations Qt hands out
 
-A test process must not read or write anything the user owns. Three stores are redirected, all
-three in `tests/conftest.py` at its **import time** — module scope, not a fixture. pytest imports
-the root conftest before it collects any test module, so a store that is built while a module is
-being *imported* already lands in the test location; a fixture runs after collection and cannot
-cover that. (The settings store is the first of the three; §8.8 is its specification.)
+A test process must not read or write anything the user owns — **and neither may it read
+another tool's files in the user's home**: an AI client's config holds credentials. Four things
+are redirected, all in `tests/conftest.py` at its **import time** — module scope, not a
+fixture. pytest imports the root conftest before it collects any test module, so a store that is
+built while a module is being *imported* already lands in the test location; a fixture runs
+after collection and cannot cover that. (The settings store is the first; §8.8 is its
+specification.)
 
 | What | Production location | How the suite redirects it |
 | ---- | ------------------- | -------------------------- |
 | Settings (`QSettings`) | organisation / application of `app.settings` | the two names are rebound to a per-process test key (§8.8, ADR-041) |
 | The app-data directory, `services.plant_library.get_app_data_dir()`: custom plants, plant lists, seed inventory, companion rules, smart symbols, weather cache | `%APPDATA%/OpenGardenPlanner` (Windows), `$XDG_DATA_HOME/OpenGardenPlanner` or `~/.local/share/…` (Linux), `~/Library/Application Support/…` (macOS) | `APPDATA` and `XDG_DATA_HOME` are set to a directory of this process, `TEST_DATA_ROOT` (a `tempfile.mkdtemp` named with the pid), removed by `atexit` |
-| What the app asks `QStandardPaths.writableLocation` for: `crash.log` and `app.log` (AppDataLocation), the companion, climate and thumbnail caches (AppLocalDataLocation), the default project folder under Documents — which `app.paths.get_projects_dir()` creates | the user's profile, named after the Qt application | the Python-level function is replaced for five locations (`REDIRECTED_QT_LOCATIONS`) and answers with a folder under `TEST_DATA_ROOT`; every other location is passed through |
+| What the app asks `QStandardPaths.writableLocation` for: `crash.log` and `app.log` (AppDataLocation), the companion, climate and thumbnail caches (AppLocalDataLocation), the default project folder under Documents — which `app.paths.get_projects_dir()` creates | the user's profile, named after the Qt application | the Python-level function is replaced for five locations (`REDIRECTED_QT_LOCATIONS`) and answers with a path under `TEST_DATA_ROOT` — the path only: like Qt it creates nothing, so a writer that forgot its `mkdir` fails here as it would on a first run; every other location is passed through |
+| What a LIBRARY keeps for the user. ezdxf 1.4.3 (read in the installed package): it loads `ezdxf.ini` when it is imported, and builds **and writes** a font index, `font_manager_cache.json`, when that is missing | `$XDG_CONFIG_HOME/ezdxf` or `~/.config/ezdxf`; `$XDG_CACHE_HOME/ezdxf` or `~/.cache/ezdxf` — on every platform | `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are set to folders under `TEST_DATA_ROOT`, on every platform (on Linux that also moves Qt's own settings and cache folders and the AI clients' XDG paths into the test root) |
 
 - **The environment is the whole mechanism for the app-data directory** on Windows and Linux:
   `get_app_data_dir()` reads the variable on every call, so no production override exists or is
@@ -443,11 +446,44 @@ cover that. (The settings store is the first of the three; §8.8 is its specific
 - **Per process, not per test.** Every test of one run shares the redirected directories, as the
   whole suite used to share the real ones. A test that needs an empty library builds its own
   store on `tmp_path` (`PlantListStore(storage_path=…)`) or resets the singleton.
+- **`Path.home()` is NOT redirected by the suite, so a test that makes code look there patches
+  it.** `services.ai_client_onboarding.detect_clients()` asks every client in its registry, and
+  most of their configs hang off the home directory: one test that redirected `APPDATA` for the
+  client it was about opened the developer's real `~/.claude.json`, `~/.codex/config.toml`,
+  `~/.config/opencode/opencode.jsonc` and `~/.gemini/config/mcp_config.json` (review of L1.1,
+  2026-10-11). `tests/unit/test_ai_client_onboarding.py` now gives every test of the module a
+  home of its own (an autouse fixture: `Path.home` patched, no client CLI on `PATH`), and the
+  test asserts where each config was looked up. The rule for a new test: when the code under
+  test resolves `Path.home()`, `~` or a client's config path, the test owns that path.
 
-Pinned by `tests/integration/test_app_data_isolation.py`: the two variables are assigned at
+**A script is not a test: it isolates itself.** A script under `scripts/` that imports the app
+runs outside pytest, where none of the above applies. There the settings are the user's own — on
+Windows a registry key that no environment variable moves — and `ProjectManager.save()` and
+`.load()` end with `add_recent_file`: a generator that writes a fixture through the real
+serializer, or a probe that loads one, records it in the user's Recent Files (found 2026-10-11: a
+developer's whole list had been replaced by fixture paths). `scripts/script_isolation.py` is the
+one place for it, and a script calls it in two steps: `isolate_profile()` under
+`if __name__ == "__main__":` **above the first import of the app** (the profile variables —
+`USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA`, the three `XDG_*` — to a temporary directory
+of the process), and `isolate()` as **the first statement of `main()`** (that, and the two
+settings names rebound to a key of the process, cleared at exit). Not at import: tests import
+the fixture generators into the pytest process, and a second redirection there would take its
+test key away. `scripts/make_scene3d_edge_plan.py` and `scripts/measure_region_work.py` do this;
+`scripts/mutation_check_scene3d.py` imports nothing of the app (its children are pytest).
+`tests/integration/test_script_isolation.py` runs each of them **as a script, in a child
+process**, and checks every settings store the child builds and that nothing — not a file, not a
+folder — appears in the profile it was started with; the child is handed a decoy pair in place
+of the production names, so a script that failed to isolate itself would write there and not
+into anybody's settings. A probe that is not committed has no such test: write it as a pytest
+test, or give it the same two calls.
+
+Pinned by `tests/integration/test_app_data_isolation.py`: the four variables are assigned at
 conftest module scope before the first import of the app (an AST check, the counterpart of
 `TestTheRedirectionMechanismItself` for the settings); the directory resolves under
-`TEST_DATA_ROOT` and not where it pointed before; a child process inherits it; the root is gone
+`TEST_DATA_ROOT` and not where it pointed before; a child process inherits it (not asserted on
+macOS, where no variable redirects the folder and the child would create the real one); asking
+for a Qt location creates nothing and every writer of the app makes its own folder; ezdxf's own
+answer for its two folders lies under the test root; the root is gone
 when the interpreter has exited; and — end to end — building the whole `GardenPlannerApp`,
 running the plant database panel's save path and the plant-list store opens, creates, renames
 and lists **nothing** under the place the directory used to be. That last test never touches
@@ -672,7 +708,7 @@ suite (ADR-054, "What the first version got wrong").
   turning" test turned the item *before* taking its baseline, one named for `reset()` never called
   it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
   fails if the named behaviour breaks?"
-- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 93
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 149
   single-rule mutations to the pipeline, each against the tests that must notice; its first run
   found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
@@ -820,6 +856,36 @@ result = subprocess.run(cmd)  # nosec B603 — cmd is constructed internally, ne
 ```
 
 **Scope:** `src/` only. Test files are excluded — `assert` statements and test helpers are intentional and not security-relevant.
+
+**Work on what a plan file holds — two patterns (Phase 17 L1.1, #385, §8.26.1).** A plan file
+is input: it can be edited by hand, and it can be hostile. Bandit sees none of this; it is a
+review duty wherever geometry out of a plan is processed on the GUI thread, and the 3D pipeline
+is where it was learned. A work bound had been added, a security review read the function it
+sat in, and both of the following were wrong with it.
+
+1. **Bound the input before the work.** The check stood *behind* the expensive step: the
+   clipper had inflated the path and every ring it returned had been read before anything was
+   refused. Ask what a step costs from what is known **before** it runs — a count the item
+   already holds (its stored vertices, before one is read), a count that is itself cheap and
+   itself paid for (the pairs of a path's segments that cross), the size of an answer before it
+   is read (the rings a clipper returned). A library's own work is the hardest to see: pyclipper
+   has no bound of its own, and its cost follows not the vertex count but how often the outline
+   crosses itself and how many edges a sweep line carries at once — 800 scribbled vertices, well
+   under a cap on vertices, took it ten seconds.
+2. **Bound the sum, not the largest element.** The check judged the largest outer ring of a
+   stroke; a stroke that comes back as many rings was never judged as a whole. Wherever a cost
+   is a sum or a product — regions of an item, holes × outer rings, entries × their size in a
+   cache — the bound belongs on that sum: one budget that every step pays into, not a limit
+   that each element is held against alone. The same holds for memory: a cache bounded by its
+   number of entries is not bounded when one entry can be a thousand times another.
+
+How it is pinned matters as much: **no test of these reads a clock.** Each asserts what was —
+or never was — called (`tests/integration/test_scene3d_snapshot.py::TestTheInputIsBoundedBeforeTheWork`,
+`::TestOutlinesTooLargeToCut`): for every step of a stroke the budget it needs, to the unit, and
+that with one unit less the step does not run. A time-out would have passed on a fast machine.
+And price every quadratic by what it does, not by its size alone: the last hole found here was a
+simplicity test priced at the square of its edges, which is right for an outline and a
+hundredth of the truth for a ring whose every pair of edges lies close.
 
 **Agent API exposure (US-D1.1, §8.19):** the embedded MCP server is a network listener. It is **on by default but read-only** and **bound to `127.0.0.1` only** (never `0.0.0.0`/LAN — so Bandit's B104 does not apply); a Preferences toggle disables it. Default-on is acceptable while read-only (a garden layout isn't sensitive) and removes the discovery friction for AI clients. Reads have no auth (loopback trust). **Writes (US-D2.0 through D2.6, including `undo`/`redo`) are token-gated**: the scene-mutating tools ship only when the user enables editing (off by default) AND require the token — presented in the connect URL as a `?token=` query param (the reliable route; some clients don't transmit auth headers on tool calls) or as an `Authorization: Bearer <token>` header — checked with constant-time comparison. A default-on, unauthenticated *mutate* surface reachable by any local process is exactly what this prevents (ADR-036, §8.19); delivering the token in the URL keeps that protection (a caller still needs the secret) at the cost of a URL-borne secret — mitigated by disabling the uvicorn access log and stripping the `token` param from the request scope right after extraction, so the residual exposure is the client's own config. The gate is per-tool so read-only clients are unaffected. The pre-bind port check uses a plain `socket.bind` and is not a high-severity finding.
 
@@ -2824,10 +2890,82 @@ The snapshot hands on only regions for which it holds, so for every record
 `prism_mesh(record.footprints, h, record.holes)` never raises. What it implies for a builder of
 its own: each outer ring is a simple counter-clockwise polygon, each hole a simple clockwise one
 inside it, holes do not overlap, and a triangulation exists — `cut_region(outer, holes)` returns
-it (`(vertices, triangles)`, cached). Rings may *touch* in a point; a region whose rings touch so
-that it cannot be cut never arrives. A region with holes is cut up to 8,000 vertices and
-holes × vertices = 500,000 (about 0.3 s; `MAX_HOLED_REGION_VERTICES`, `MAX_BRIDGE_WORK`); a
-stroke beyond that is not buildable and its item is reported, not built slowly.
+it (`(vertices, triangles)`, remembered). Rings may *touch* in a point; a region whose rings
+touch so that it cannot be cut never arrives. The predicate is asked of every region of every
+record — a circle's, an ellipse's and a rectangle's ring too (on the record grid a circle of
+radius 2e-7 cm is no polygon). **Regions can nest:** an island standing in a hole is a region of
+its own, inside another region's hole; a builder that fills "the hole" fills the island.
+
+**What an outline may cost — one budget, paid before the work.** An item's outline comes out of
+a plan file, anybody can write one, and the snapshot runs on the GUI thread on every edit tick.
+Two rules hold for everything between the item and its record (§8.11 has them as patterns):
+
+1. *The input is bounded before the work.* An item's STORED vertex count is asked before one
+   vertex is read: more than `polygon.MAX_ITEM_VERTICES` = 16,384 is one comparison (a polyline
+   of 200,000 points, a polygon of 100,000 vertices). The same cap holds for what the clipper
+   returns for an item, all rings together, counted before one ring is read.
+2. *The bound is on the sum.* ONE `polygon.WorkBudget` of `MAX_REGION_WORK` = 150,000,000 work
+   units pays for everything one item's outline needs, **each step before it runs**. A unit is a
+   count, priced at about a nanosecond on the development box, so the verdict is the same on
+   every machine. What is paid for, in the order a stroke pays it:
+
+   | Step | What it is priced from |
+   | ---- | ---------------------- |
+   | counting the pairs of the path's segments (`polygon.touching_pairs`) | the points, squared; then every pair whose boxes meet — all of them before one is tested |
+   | the clipper inflating the path | the points; their **stack** (`polygon.stack_height`: a sweep line carries every edge it crosses — 4,000 teeth standing side by side took the clipper 1.6 s without one crossing, lying down 4 ms); the pairs that cross (800 points scribbled across a plan: 73,000, half a second, 53,000 rings) or lie within the stroke's reach of each other |
+   | reading what came back | every ring and every vertex, counted first |
+   | sorting rings into regions (`group_rings`) | holes × outer rings, each question the outer ring's vertices (2,000 × 2,000 small rings took 3.8 s when nothing asked) |
+   | each region's cut (`polygon.pay_for_region`) | the simplicity test (the edges squared, and the pairs it has to look at), a bridge per hole, the ears — cut out of what the ITEM has left, not out of a bound per region: a thousand regions that each fit do not fit together |
+   | resolving an outline that crosses or touches itself | each union and each band from the vertices, their stack and the **crossings** (the last reading of 800 scribbled vertices took ten seconds; a bound on the vertex count did not see it); each reading's rings before they are read; each comparison with the drawn outline on its lattice |
+
+   What the budget does not cover is refused — `polygon.RegionTooLargeError` inside, the
+   skip code `outline_too_large` outside — and the refusal is remembered like any other answer,
+   so an unchanged outline costs one lookup on the next tick. The counted work of one item is at
+   most the bound, to the unit; a refusal costs at most the bound and usually far less.
+
+Measured (`scripts/measure_region_work.py`, development box, 2026-10-11, beside other test runs:
+a unit took 0.7 to 2.3 ns; on the quiet machine 0.35 to 1.15 ns — the bound is 0.05 to 0.35 s):
+
+| What fits, at most | | What it costs |
+| ---- | ---- | ---- |
+| ONE region: a plain traced outline | 3,557 vertices | 147.8 M units |
+| … a comb (the ear clipper's worst case) | 1,648 vertices | 149.9 M |
+| … a spiral | 4,334 vertices | 149.9 M |
+| a whole outline: a closed fence along a traced outline, 10 cm | 1,321 points | 144.5 M |
+| … the same fence, every segment level with every other | 933 points | 148.9 M |
+| … a ladder drawn as one stroke | 164 rungs | 148.1 M |
+| … a square mesh drawn as one stroke | 15 × 15 openings | 146.8 M |
+| … a wall 30 cm wide traced with a point every 2 cm | 919 points | 149.9 M |
+| … a drawn outline that crosses itself | 1,513 vertices | 149.5 M |
+| **what a large plan needs:** a closed fence along 400 traced points | | 24.3 M — 16 % of the bound |
+| … a line of 2 km (2 points) | | 31,340 units — 0.02 % |
+| … a line of 2 km with a point every 5 m | 401 points | 45.6 M — 30 % (its segments lie level) |
+| … a traced outline of 400 vertices | | 6.2 M — 4 % |
+| … a rectangle | | 10,200 units |
+
+| What is refused | What saying no took | What the clipper alone would have taken |
+| ---- | ---- | ---- |
+| a stroke scribbled over 800 / 1,600 points | 27 ms / 19 ms | 0.58 s / 2.4 s |
+| a stroke of 2,000 / 4,000 teeth standing side by side | 22 ms / 74 ms | 0.41 s / 1.8 s |
+| a stroke scribbled over 400 points | 111 ms — its inflation is inside the budget (the clipper is asked, once), what comes back is not | 0.12 s |
+| an outline scribbled over 400 / 800 / 1,600 vertices | 102 ms / 53 ms / 19 ms | 1.2 s for the last reading of 400 |
+| a plain outline of 10,000 vertices | 3 ms (two linear passes; its size is known from its length) | — |
+| an item of more than 16,384 vertices | one comparison; not one vertex is read | — |
+
+Not bounded, and stated: a **plan** is the sum of its items — a plan of ten thousand outlines
+at the bound costs ten thousand bounds on the first snapshot, as it costs the 2D canvas ten
+thousand paints. A budget across a plan would make a record depend on what else is on the plan.
+And the shipped Qt 3D collector (`collect_scene3d_records`, removed with L1.10) and the 2D
+shadow overlay inflate a polyline with no bound at all, as they always have.
+
+**What is remembered is bounded by vertices, not by answers.** `polygon.ring_keyed` is the one
+memory for functions of rings (`ring_area`, the verdict-and-cut of a region, a record's ring
+facts, the regions of a polygon and of a stroke): each holds at most `HELD_VERTICES` = 262,144
+vertices, keys and answers together, and drops the least recently asked quarter beyond that; a
+ring of more than `MAX_ITEM_VERTICES` is never hashed and never a key. An `lru_cache` bounds the
+number of answers — 2,048 answers about an outline of 4,000 vertices that is being dragged were
+a gigabyte. `cut_region`, `is_buildable_region` and `is_region_too_large` share one memory (a
+refusal is remembered with its words); `is_simple_ring` is not remembered.
 
 **A resolved outline says so.** A polygon that crosses or touches itself does not arrive as it
 was drawn: the snapshot resolves it by the non-zero rule — the rule the 2D shadow fills a
@@ -2851,19 +2989,22 @@ type, items that cover no ground (text, groups, a one-point polyline), and `ROOF
 a ridge is its HOUSE's `ridge` param, and the Qt 3D view's decal for the ridge line is not carried
 over. Because something is wrong, and **reported**: an item whose record cannot be built
 (malformed metadata, non-finite geometry — any exception is contained to that item), a second
-item carrying an id already taken (the lower one wins), and an outline that cannot be made into
-buildable regions, and one with a length beyond `MAX_LENGTH_CM`. The return type is the plain
+item carrying an id already taken (the lower one wins), an outline that cannot be made into
+buildable regions, one that is too large (above), and one with a length beyond `MAX_LENGTH_CM`
+or a height below `MIN_HEIGHT_CM`. The return type is the plain
 `dict[str, Record]` it always was; the report is an optional keyword-only out-parameter:
 `snapshot_records(scene, at_date, skipped=my_list)` appends one
 `SkippedItem(item_id, kind, reason, error_type, error_message)` per such item (the list is the
 caller's and is not cleared). A `SkippedItem` is plain data and safe to keep: `reason` is a
-`SkipReason` code — `record_failed`, `duplicate_id`, `outline_unbuildable`, `out_of_range` (a
-length beyond 10 km, a height of 1e300) — which the UI maps to
+`SkipReason` code — `record_failed`, `duplicate_id`, `outline_unbuildable`, `outline_too_large`
+(nothing is wrong with its shape; the 2D plan shows it as it is), `out_of_range` (a
+length beyond 10 km, a height of 1e300 or of 1e-46) — which the UI maps to
 a translated text (never show the value); `error_type` and `error_message` are the exception's
 class name and message as strings, empty when nothing was raised. It does not hold the exception
 (its traceback would keep the scene and the item alive), and two reports of one failure are
 equal. Each is also logged once per item and kind of failure (the exception's type), not once
-per edit, with the traceback; after 2,048 different failures one line says that further ones are
+per edit — `record_failed` as an error with the traceback, the other codes as a warning with
+the message; after 2,048 different failures one line says that further ones are
 not logged, and none are. The wiring (L1.3) is expected to pass a list and show it — and
 `SceneSync.failures` — where a user can find them.
 
@@ -2881,8 +3022,15 @@ with the code `out_of_range` instead of making a record. A builder may therefore
 number it reads for a finite float32 with centimetre resolution to spare — a plan edited by hand
 can hold a height of 1e300, and no builder has to know. Two things follow for builders:
 `Mesh.from_arrays` raises `MeshError` for a value that is not finite once it is float32 (build an
-invalid mesh for a test with `dataclasses.replace(mesh, positions=…)`, not through it), and
+invalid mesh for a test with `dataclasses.replace(mesh, positions=…)`, not through it; `Mesh.merge`
+holds a single part to the same rule), and
 `prism_mesh` raises for a height or coordinate beyond float32 before computing with it.
+The range has a floor as well: a height below `MIN_HEIGHT_CM` = 1e-3 cm is refused like one
+beyond the bound (1e-46 is a positive number and exactly zero in float32 — a solid without a
+height), and `prism_mesh` gives no geometry for a height that is zero in float32. **Every float
+in `params` is taken for a length** and held to the bound; a builder that needs a float that is
+none (a ratio, an angle) names its key in `record.DIMENSIONLESS_PARAMS` — empty today — and the
+refusal's message says so.
 
 **The record grid.** Lengths are snapped to 1e-7 cm, angles to 1e-9° (`quantize_cm`,
 `quantize_deg`), so the same geometry reached along two float paths is one record. This is

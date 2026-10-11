@@ -32,6 +32,22 @@ from open_garden_planner.core.scene3d import (
 )
 from open_garden_planner.core.scene3d import legacy as legacy_module
 from open_garden_planner.core.scene3d import polygon as polygon_module
+from open_garden_planner.core.scene3d.polygon import (
+    HELD_VERTICES,
+    MAX_ITEM_VERTICES,
+    RegionTooLargeError,
+    WorkBudget,
+    cut_work,
+    exceeds_work_bound,
+    is_region_too_large,
+    pay_for_region,
+    region_cost,
+    region_work,
+    ring_keyed,
+    segments_touch,
+    stack_height,
+    touching_pairs,
+)
 from open_garden_planner.core.shadow_geometry import polyline_footprint
 
 SQUARE = ((0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0))
@@ -201,7 +217,7 @@ class TestSimpleRingAtScale:
         monkeypatch.setattr(polygon_module, "_edges_touch_loop",
                             lambda ring: used.append("loop") or loop(ring))
         monkeypatch.setattr(polygon_module, "_edges_touch_numpy",
-                            lambda ring: used.append("arrays") or arrays(ring))
+                            lambda ring, work=None: used.append("arrays") or arrays(ring, work))
         threshold = polygon_module.SIMPLE_RING_NUMPY_FROM
         rng = random.Random(7)
         assert is_simple_ring(_wobbly(threshold - 1, rng, tangle=False))
@@ -492,31 +508,22 @@ class TestManyHoles:
             triangulate_region(outer, holes)
             assert len(holes) <= blocks <= 2 * len(holes), (rungs, len(holes), blocks)
 
-    def test_beyond_the_bounds_it_refuses_instead_of_freezing(
+    def test_beyond_the_bound_it_refuses_instead_of_freezing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """``triangulate_region`` on its own is bounded like ``cut_region``."""
         outer, holes = review_ladder(20)
-        vertices = len(outer) + sum(len(h) for h in holes)
-        assert (len(holes), vertices) == (20, 201)
-        monkeypatch.setattr(polygon_module, "MAX_HOLED_REGION_VERTICES", vertices - 1)
-        with pytest.raises(ValueError, match="201 vertices with 20 holes is beyond"):
-            triangulate_region(outer, holes)
-        monkeypatch.setattr(polygon_module, "MAX_HOLED_REGION_VERTICES", vertices)
-        triangulate_region(outer, holes)
-        monkeypatch.setattr(polygon_module, "MAX_BRIDGE_WORK", 20 * 201 - 1)
-        with pytest.raises(ValueError, match="beyond"):
-            triangulate_region(outer, holes)
-        monkeypatch.setattr(polygon_module, "MAX_BRIDGE_WORK", 20 * 201)
-        triangulate_region(outer, holes)
-        # a region without holes has no bound here
-        monkeypatch.setattr(polygon_module, "MAX_HOLED_REGION_VERTICES", 0)
-        monkeypatch.setattr(polygon_module, "MAX_BRIDGE_WORK", 0)
-        assert len(triangulate_region(L_SHAPE)[1]) == 4
-        assert (polygon_module.MAX_HOLED_REGION_VERTICES, polygon_module.MAX_BRIDGE_WORK) == (0, 0)
-
-    def test_the_real_bounds(self) -> None:
-        assert polygon_module.MAX_HOLED_REGION_VERTICES == 8000
-        assert polygon_module.MAX_BRIDGE_WORK == 500_000
+        assert (len(holes), len(outer) + sum(len(h) for h in holes)) == (20, 201)
+        floor = polygon_module._triangulation_floor(len(outer), [len(h) for h in holes])
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", floor - 1)
+        with monkeypatch.context() as patch:
+            # refused from the sizes, BEFORE the first bridge: without that check the work
+            # would stop only when the budget ran out, twenty bridges later
+            patch.setattr(polygon_module, "_bridge_position", never("a bridge was looked for"))
+            with pytest.raises(RegionTooLargeError, match="201 vertices with 20 holes is beyond"):
+                triangulate_region(outer, holes)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", 10 * floor)
+        assert len(triangulate_region(outer, holes)[1]) == 226
 
     def test_a_closed_fence_along_a_traced_outline(self) -> None:
         """One hole, many vertices: 400 path vertices → 1,201 ring vertices. The
@@ -545,8 +552,8 @@ class TestLargeRingsWithoutHoles:
         shared, arrays = polygon_module.triangulate_polygon, polygon_module._ear_clip
         monkeypatch.setattr(polygon_module, "triangulate_polygon",
                             lambda ring: used.append("shared") or shared(ring))
-        monkeypatch.setattr(polygon_module, "_ear_clip",
-                            lambda points, loop: used.append("arrays") or arrays(points, loop))
+        monkeypatch.setattr(polygon_module, "_ear_clip", lambda points, loop, work:
+                            used.append("arrays") or arrays(points, loop, work))
         threshold = polygon_module.ARRAY_EAR_CLIP_FROM
         assert threshold == 256
         rng = random.Random(11)
@@ -568,16 +575,23 @@ class TestLargeRingsWithoutHoles:
         assert sorted({i for t in triangles for i in t}) == list(range(n))  # every vertex is used
         assert is_buildable_region(ring)
 
-    def test_a_ring_the_array_clipper_cannot_finish_falls_back_to_the_shared_one(
+    def test_a_ring_the_array_clipper_cannot_finish_is_not_handed_to_the_plain_loop(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def gives_up(_points, _loop):
+        """Round 2 let the shared clipper try such a ring — the plain loop, which
+        needs 272 ms for 1,000 vertices and has no bound at all. A large ring is
+        cut by the counted clipper or not at all."""
+        def gives_up(_points, _loop, _work):
             raise ValueError("no ear")
 
+        def never(_ring):
+            raise AssertionError("the plain loop was asked to cut a large ring")
+
         ring = _wobbly(300, random.Random(3), tangle=False)
-        expected = polygon_module.triangulate_polygon(ring)
         monkeypatch.setattr(polygon_module, "_ear_clip", gives_up)
-        assert triangulate_region(ring)[1] == expected
+        monkeypatch.setattr(polygon_module, "triangulate_polygon", never)
+        with pytest.raises(ValueError, match="no ear"):
+            triangulate_region(ring)
 
     def test_a_large_ring_with_collinear_runs(self) -> None:
         """A rectangle with a vertex every centimetre along each side: 400 vertices,
@@ -589,6 +603,219 @@ class TestLargeRingsWithoutHoles:
         vertices, triangles = polygon_module.cut_region(ring)
         assert sum(tri_area(vertices, t) for t in triangles) == pytest.approx(10000.0, rel=1e-12)
         assert min(tri_area(vertices, t) for t in triangles) > 0.0
+
+
+def comb(teeth: int):
+    """The ear clipper's worst case: every tooth has to wait for its neighbour."""
+    points = [(0.0, 0.0)]
+    x = 0.0
+    for _ in range(teeth):
+        points += [(x, 200.0), (x + 5.0, 200.0), (x + 5.0, 10.0), (x + 10.0, 10.0)]
+        x += 10.0
+    points += [(x, 200.0), (x + 5.0, 200.0), (x + 5.0, 0.0)]
+    return ccw(tuple(points))
+
+
+def hidden_bridges(dense: int, small: int):
+    """The bridge search's worst case: small holes whose NEAREST boundary
+    vertices all look at them and cannot be reached. A long thin wall stands
+    between them and a hole whose near side is ``dense`` vertices: every one of
+    those passes the corner test, and every bridge to one crosses the wall."""
+    height = 700.0
+    outer = ((-400.0, -50.0), (400.0, -50.0), (400.0, height + 50.0), (-400.0, height + 50.0))
+    wall = ((0.5, 0.0), (0.5, height), (1.0, height), (1.0, 0.0))
+    near_side = [(2.0 + (0.3 if k % 2 else 0.0), height * k / dense) for k in range(dense + 1)]
+    crowd = (*near_side, (3.0, height), (3.0, 0.0))
+    holes = [wall, crowd]
+    for k in range(small):
+        y = height * (k + 0.5) / small
+        holes.append(((-3.0, y), (-6.0, y - 1.0), (-6.0, y + 1.0)))
+    assert all(signed_area(hole) < 0.0 for hole in holes)
+    return outer, tuple(holes)
+
+
+@pytest.fixture
+def fresh_verdicts():
+    """A test that moves the bound must not read — or leave behind — a verdict
+    reached under another one."""
+    polygon_module._examined.cache_clear()
+    yield
+    polygon_module._examined.cache_clear()
+
+
+class TestTheWorkBound:
+    """Review round 3, P2-1. Round 2 bounded the SIZE of a region with holes — and
+    judged it after the quadratic simplicity test, so saying no cost more than
+    saying yes (2,700 traced points: 2.59 s to refuse), left rings without holes
+    unbounded (a comb of 5,004 vertices: 1.5 s per tick), and was no bound on
+    work at all (7,187 vertices and 61 holes, inside both limits: 4.0 s).
+
+    Now ONE bound, on work, for every region; counted, so that it is the same on
+    every machine — and these tests can pin it without a clock."""
+
+    def test_the_size_is_judged_before_anything_that_costs(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None
+    ) -> None:
+        def never(*_args):
+            raise AssertionError("work was done on a region that is refused for its size")
+
+        outer, holes = review_ladder(20)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", region_work(outer, holes) - 1)
+        monkeypatch.setattr(polygon_module, "_is_simple", never)
+        monkeypatch.setattr(polygon_module, "_triangulate", never)
+        assert exceeds_work_bound(outer, holes)
+        with pytest.raises(RegionTooLargeError, match="201 vertices with 20 holes is beyond"):
+            polygon_module.cut_region(outer, holes)
+        assert not is_buildable_region(outer, holes) and is_region_too_large(outer, holes)
+        assert issubclass(RegionTooLargeError, ValueError)  # … like every other refusal
+        # … and the cut itself asks first, whoever calls it: its own check, not the caller's
+        # (the first mutation run of this round removed it and nothing noticed)
+        with pytest.raises(RegionTooLargeError, match="201 vertices with 20 holes is beyond"):
+            cut_work(outer, holes)
+
+    def test_region_work_reads_sizes_only(self) -> None:
+        """Asking costs nothing: no coordinate is looked at — rings of the same
+        SIZES have the same floor, whatever they hold."""
+        outer, holes = review_ladder(20)
+        blanks = tuple(((0.0, 0.0),) * len(hole) for hole in holes)
+        assert region_work(outer, holes) == region_work(((0.0, 0.0),) * len(outer), blanks)
+        # the price list, once by hand: a region, its simplicity test, its ears
+        assert region_work(SQUARE) == 3_000 + 250 * 16 + 200 * 16 == cut_work(SQUARE)
+
+    @pytest.mark.parametrize(
+        ("label", "region"),
+        [("a square", (SQUARE, ())), ("an L", (L_SHAPE, ())),
+         ("a frame", (SQUARE, (rect(40.0, 40.0, 60.0, 60.0, clockwise=True),))),
+         ("a traced ring of 255", (_wobbly(255, random.Random(1), tangle=False), ())),
+         ("a traced ring of 256", (_wobbly(256, random.Random(2), tangle=False), ())),
+         ("a traced ring of 900", (_wobbly(900, random.Random(3), tangle=False), ())),
+         ("a comb of 80 teeth", (comb(80), ())),
+         ("a ladder of 20 rungs", review_ladder(20)), ("a ladder of 60 rungs", review_ladder(60)),
+         ("hidden bridges", hidden_bridges(200, 10))],
+    )
+    def test_the_floor_is_a_floor(self, label: str, region) -> None:
+        """``region_work`` promises the LEAST a cut can cost. Were it ever more
+        than the cut, a region the cutter can cut would be refused unseen."""
+        outer, holes = region
+        floor, spent = region_work(outer, holes), cut_work(outer, holes)
+        assert 0 < floor <= spent, label
+        assert spent == cut_work(outer, holes)  # a count: the same every time
+
+    def test_what_the_awkward_shapes_cost_beyond_their_floor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Why the work is counted WHILE a region is cut and not only read off its
+        size: the shape decides what the ears and the bridges cost."""
+        teeth = comb(80)
+        easy = _wobbly(len(teeth), random.Random(5), tangle=False)
+        assert region_work(teeth) == region_work(easy)  # the same size: the same promise …
+        assert cut_work(teeth) > 3 * cut_work(easy)  # … and more than three times the work
+        outer, holes = hidden_bridges(200, 10)
+        blocks = 0
+        touch = polygon_module._touch
+
+        def counting(*args):
+            nonlocal blocks
+            blocks += 1
+            return touch(*args)
+
+        monkeypatch.setattr(polygon_module, "_touch", counting)
+        assert cut_work(outer, holes) > 1.4 * region_work(outer, holes)
+        assert blocks > 4 * len(holes)  # a bridge that is found at the first try takes one
+        assert polygon_module.is_buildable_region(outer, holes)  # awkward, and cut correctly
+
+    @pytest.mark.parametrize("which", ["ears", "bridges"])
+    def test_a_cut_that_outgrows_its_floor_is_stopped_on_the_way(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None, which: str
+    ) -> None:
+        outer, holes = (comb(80), ()) if which == "ears" else hidden_bridges(200, 10)
+        floor, spent = region_work(outer, holes), cut_work(outer, holes)
+        payments = 0
+        pay = polygon_module.WorkBudget.spend
+
+        def counting(self, units):
+            nonlocal payments
+            payments += 1
+            pay(self, units)
+
+        monkeypatch.setattr(polygon_module.WorkBudget, "spend", counting)
+        cut_work(outer, holes)
+        whole, payments = payments, 0
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", floor + (spent - floor) // 4)
+        assert not exceeds_work_bound(outer, holes)  # its size alone does not give it away
+        with pytest.raises(RegionTooLargeError):
+            polygon_module.cut_region(outer, holes)
+        assert 0 < payments < whole  # it stopped on the way: the rest of the work was never done
+        assert is_region_too_large(outer, holes) and not is_buildable_region(outer, holes)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", spent)
+        polygon_module._examined.cache_clear()
+        assert is_buildable_region(outer, holes)  # exactly at the bound it is cut
+
+    @pytest.mark.parametrize("vertices", [200, 300])
+    def test_a_ring_without_holes_is_bounded_too(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None, vertices: int
+    ) -> None:
+        """Round 2: "a region without holes has no limit here". Below
+        ``ARRAY_EAR_CLIP_FROM`` (the shared clipper) and above it (the counted one)."""
+        ring = _wobbly(vertices, random.Random(vertices), tangle=False)
+        spent = cut_work(ring)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", spent - 1)
+        with pytest.raises(RegionTooLargeError):
+            polygon_module.cut_region(ring)
+        with pytest.raises(RegionTooLargeError):
+            cut_work(ring)
+        assert is_region_too_large(ring)
+
+    def test_a_refusal_is_remembered_and_the_two_kinds_are_told_apart(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None
+    ) -> None:
+        cuts = 0
+        real = polygon_module._cut
+
+        def counting(outer, holes, work):
+            nonlocal cuts
+            cuts += 1
+            return real(outer, holes, work)
+
+        monkeypatch.setattr(polygon_module, "_cut", counting)
+        bow = LOPSIDED_BOW_TIE[::-1]
+        for _ in range(3):
+            assert not is_buildable_region(bow) and not is_region_too_large(bow)  # its SHAPE
+        assert cuts == 1
+        teeth = comb(80)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", region_work(teeth) + 1)
+        for _ in range(3):
+            assert is_region_too_large(teeth) and not is_buildable_region(teeth)
+        assert cuts == 2  # what such a refusal costs — up to the whole bound — is paid once
+
+    def test_few_and_many_vertices_near_an_ear_are_judged_alike(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ear test has two bodies — written out for a handful of vertices,
+        on arrays for many. They must cut the same triangles."""
+        regions = [review_ladder(20), (comb(70), ()), hidden_bridges(100, 6),
+                   (_wobbly(300, random.Random(9), tangle=False), ())]
+        monkeypatch.setattr(polygon_module, "_FEW_NEAR", 10**9)
+        one_by_one = [triangulate_region(outer, holes)[1] for outer, holes in regions]
+        monkeypatch.setattr(polygon_module, "_FEW_NEAR", -1)
+        on_arrays = [triangulate_region(outer, holes)[1] for outer, holes in regions]
+        assert one_by_one == on_arrays and all(len(triangles) > 60 for triangles in one_by_one)
+
+    def test_a_large_outer_ring_is_asked_on_arrays_and_answers_the_same(self) -> None:
+        """``group_rings`` asks an outer ring once per hole. From 32 vertices the
+        ring answers on arrays — the same answer, also for a point level with a
+        vertex, where the plain test's own rule decides."""
+        rng = random.Random(77)
+        for n in (5, 31, 32, 200):
+            ring = _wobbly(n, rng, tangle=False)
+            holds = polygon_module._ring_holds(ring)
+            points = [(rng.uniform(-450.0, 450.0), rng.uniform(-450.0, 450.0)) for _ in range(300)]
+            points += [(x + dx, y) for x, y in ring[:20] for dx in (-1.0, 0.0, 1.0)]  # level with a vertex
+            assert [holds(x, y) for x, y in points] == [point_in_ring(x, y, ring) for x, y in points]
+            assert any(holds(x, y) for x, y in points) and not all(holds(x, y) for x, y in points)
+        outer, holes = review_ladder(60)
+        assert len(outer) >= 32
+        assert group_rings([*holes, outer]) == ((outer, holes),)
 
 
 class TestBuildable:
@@ -643,27 +870,29 @@ class TestBuildable:
     def test_a_wrong_triangulation_does_not_get_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The proof is not decoration: a triangulation that forgets the hole, or
         winds a triangle downwards, is refused whatever produced it."""
-        polygon_module.cut_region.cache_clear()
+        polygon_module._examined.cache_clear()
         filled = (tuple(SQUARE) + tuple(self.HOLE), [(0, 1, 2), (0, 2, 3)])  # covers the hole too
-        monkeypatch.setattr(polygon_module, "triangulate_region", lambda *_a: filled)
+        monkeypatch.setattr(polygon_module, "_triangulate", lambda *_a: filled)
         with pytest.raises(ValueError, match="covers 10000.0 cm"):
             polygon_module.cut_region(SQUARE, (self.HOLE,))
         flipped = (tuple(SQUARE), [(0, 1, 2), (0, 3, 2), (0, 2, 3), (0, 2, 3)])  # the sum is right
-        monkeypatch.setattr(polygon_module, "triangulate_region", lambda *_a: flipped)
+        monkeypatch.setattr(polygon_module, "_triangulate", lambda *_a: flipped)
         with pytest.raises(ValueError, match="smallest triangle -5000.0"):
             polygon_module.cut_region(SQUARE)
-        polygon_module.cut_region.cache_clear()
+        with pytest.raises(ValueError, match="smallest triangle -5000.0"):
+            polygon_module.cut_region(SQUARE)  # a refusal is remembered WITH its words
+        polygon_module._examined.cache_clear()
 
     def test_both_answers_are_remembered(self) -> None:
         """The snapshot asks on every tick; a region that cannot be built must not
         be tried again each time."""
         outer = tuple((x + 0.125, y) for x, y in SQUARE)  # a region no other test has asked about
         reaching_out = (tuple((x + 0.125, y) for x, y in rect(50.0, 40.0, 150.0, 60.0, clockwise=True)),)
-        before = is_buildable_region.cache_info()
+        before = polygon_module._examined.cache_info()
         assert not is_buildable_region(outer, reaching_out)
         assert not is_buildable_region(outer, reaching_out)
         assert is_buildable_region(outer) and is_buildable_region(outer)
-        after = is_buildable_region.cache_info()
+        after = polygon_module._examined.cache_info()
         assert (after.misses - before.misses, after.hits - before.hits) == (2, 2)
 
     def test_the_default_builder_builds_exactly_what_the_predicate_accepts(self) -> None:
@@ -678,3 +907,427 @@ class TestBuildable:
         assert not is_buildable_region(SQUARE, overlapping)
         with pytest.raises(ValueError):
             prism_mesh((SQUARE,), 120.0, (overlapping,))
+
+
+# ── fix round 3, the security finding: bound the input before the work, and the sum ──
+
+
+def never(what: str):
+    def called(*_args, **_kwargs):
+        raise AssertionError(f"{what} — on something that is refused for its size")
+    return called
+
+
+class TestWhatIsRemembered:
+    """``lru_cache`` bounds the number of answers. An answer about a traced outline
+    is a thousand times an answer about a rectangle, so 2,048 of them were a
+    gigabyte — and a ring of a million vertices was hashed, and kept, like any
+    other. ``ring_keyed`` bounds the VERTICES held."""
+
+    @staticmethod
+    def ring(n: int, at: float = 0.0):
+        return tuple((at + float(k), float(k * k % 7)) for k in range(n))
+
+    def test_it_holds_vertices_not_answers(self) -> None:
+        calls = []
+
+        @ring_keyed(1_000)
+        def length(ring) -> int:
+            calls.append(len(ring))
+            return len(ring)
+
+        a, b, c = self.ring(300), self.ring(300, 1.0), self.ring(300, 2.0)
+        assert [length(a), length(b), length(c), length(a), length(b), length(c)] == [300] * 6
+        assert calls == [300, 300, 300]  # 924 vertices and three entries: all three are held
+        assert length.cache_info() == (3, 3, 1_000, 3 * 308, 3)
+        length(a)  # … a is now the most recently asked
+        length(self.ring(300, 3.0))  # 1,232 > 1,000: the least recently asked go, down to 750
+        info = length.cache_info()
+        assert info.vertices <= 750 and info.entries == 2
+        calls.clear()
+        length(a)
+        assert calls == []  # a was asked last before the new one came: it stayed
+        length(b)
+        assert calls == [300]  # b went
+
+    def test_many_small_answers_are_bounded_too(self) -> None:
+        @ring_keyed(1_000)
+        def length(ring) -> int:
+            return len(ring)
+
+        for k in range(5_000):
+            length(((float(k), 0.0), (1.0, 0.0), (0.0, 1.0)))
+        info = length.cache_info()
+        assert info.vertices <= 1_000 and info.entries <= 1_000 // (3 + 8)
+
+    def test_what_the_answer_holds_counts(self) -> None:
+        @ring_keyed(1_000, holds=len)
+        def doubled(ring):
+            return ring + ring
+
+        doubled(self.ring(100))
+        assert doubled.cache_info().vertices == 8 + 100 + 200
+
+    def test_a_ring_beyond_the_cap_is_answered_and_never_kept(self) -> None:
+        hashed = []
+
+        class Watched(tuple):
+            def __hash__(self) -> int:
+                hashed.append(len(self))
+                return super().__hash__()
+
+        huge = Watched(self.ring(MAX_ITEM_VERTICES + 1))
+        before = ring_area.cache_info()
+        assert ring_area(huge) == polygon_module._signed_area(huge)
+        assert ring_area.cache_info() == before and hashed == []  # not looked up, not hashed, not held
+        at_the_cap = Watched(self.ring(MAX_ITEM_VERTICES))
+        ring_area(at_the_cap)
+        assert hashed and ring_area.cache_info().entries == before.entries + 1
+        ring_area.cache_clear()
+
+    def test_an_answer_worked_out_elsewhere_can_be_kept(self) -> None:
+        @ring_keyed(1_000)
+        def length(ring) -> int:
+            raise AssertionError("it was computed")
+
+        assert length.known(SQUARE) is None
+        length.remember((SQUARE,), 4)
+        assert length.known(SQUARE) == 4 == length(SQUARE)
+        assert length.cache_info()[:2] == (2, 1) and length.cache_info().entries == 1
+        huge = self.ring(MAX_ITEM_VERTICES + 1)
+        length.remember((huge,), 0)  # too large to be a key: not kept …
+        assert length.known(huge) is None and length.cache_info().entries == 1
+
+    def test_the_real_ones_are_bounded_by_vertices(self) -> None:
+        from open_garden_planner.core.scene3d import record as record_module
+
+        assert HELD_VERTICES == 262_144 and MAX_ITEM_VERTICES == 16_384
+        for function in (ring_area, polygon_module._examined, record_module._ring_facts):
+            assert function.cache_info().max_vertices == HELD_VERTICES, function.__name__
+        assert not hasattr(is_simple_ring, "cache_info")  # its one caller is remembered; it is not
+
+    def test_an_exception_is_not_remembered_and_keywords_are_not_keys(self) -> None:
+        calls = []
+
+        @ring_keyed(1_000)
+        def picky(ring, strict=False) -> int:
+            calls.append(strict)
+            if not ring:
+                raise ValueError("empty")
+            return len(ring)
+
+        for _ in range(2):
+            with pytest.raises(ValueError):
+                picky(())
+        assert picky(SQUARE, strict=True) == 4 == picky(SQUARE, strict=True)
+        assert calls == [False, False, True, True] and picky.cache_info().entries == 0
+
+    def test_a_region_beyond_the_bound_is_never_a_key(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None
+    ) -> None:
+        """Sized up from the LENGTHS of its rings — before it is hashed."""
+        outer, holes = review_ladder(20)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", region_work(outer, holes) - 1)
+        assert is_region_too_large(outer, holes) and not is_buildable_region(outer, holes)
+        assert region_cost(outer, holes) == 0  # refused from its size alone: nothing was spent
+        assert polygon_module._examined.cache_info().entries == 0
+        huge = self.ring(100_000)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", 150_000_000)
+        monkeypatch.setattr(polygon_module, "_is_simple", never("the simplicity test ran"))
+        assert is_region_too_large(huge) and not is_buildable_region(huge)
+        assert polygon_module._examined.cache_info().entries == 0
+
+
+class TestTouchingPairs:
+    """What the clipper's work on an outline depends on, counted before the
+    clipper sees the outline."""
+
+    @staticmethod
+    def brute(points, closed: bool) -> int:
+        n = len(points) if closed else len(points) - 1
+        count = 0
+        for i in range(n):
+            for j in range(i + 2, n):
+                if closed and i == 0 and j == n - 1:
+                    continue
+                if segments_touch(points[i], points[(i + 1) % len(points)],
+                                  points[j], points[(j + 1) % len(points)]):
+                    count += 1
+        return count
+
+    @pytest.mark.parametrize(
+        ("label", "points", "closed", "touching"),
+        [("a square", SQUARE, True, 0), ("a bow-tie", BOW_TIE, True, 1), ("a pentagram", PENTAGRAM, True, 5),
+         ("an open path", ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (20.0, 10.0)), False, 0),
+         ("a path that crosses itself", ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (5.0, 10.0), (5.0, -5.0)), False, 1),
+         ("a path closed on its start", (*SQUARE, SQUARE[0]), False, 1),
+         ("a path walked there and back", ((0.0, 0.0), (10.0, 0.0), (0.0, 0.0), (10.0, 0.0)), False, 1),
+         ("two points", ((0.0, 0.0), (10.0, 0.0)), False, 0), ("nothing", (), True, 0)],
+    )
+    def test_what_touches(self, label: str, points, closed: bool, touching: int) -> None:
+        near, found = touching_pairs(points, WorkBudget(), closed=closed)
+        assert found == touching == self.brute(points, closed), label
+        assert near >= found
+
+    def test_it_counts_what_the_plain_loop_counts(self) -> None:
+        rng = random.Random(11)
+        for n in (5, 31, 64, 700):
+            for closed in (True, False):
+                points = tuple((rng.uniform(0.0, 100.0), rng.uniform(0.0, 100.0)) for _ in range(n))
+                _near, touching = touching_pairs(points, WorkBudget(budget=10**12), closed=closed)
+                assert touching == self.brute(points, closed), (n, closed)
+                assert touching > 0 or n == 5
+
+    def test_the_reach_widens_what_is_near_and_nothing_else(self) -> None:
+        rungs = tuple((float(x), float(y)) for k in range(40) for x, y in ((k * 10, 0), (k * 10, 100))[::1 if k % 2 else -1])
+        plain = touching_pairs(rungs, WorkBudget(), closed=False)
+        wide = touching_pairs(rungs, WorkBudget(), closed=False, reach=12.0)
+        assert plain == (0, 0)  # the rungs stand 10 apart and never touch
+        assert wide[1] == 0 and wide[0] > 70  # … but strokes 24 wide would overlap their neighbours
+
+    def test_the_count_is_paid_for_before_it_runs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        points = tuple((float(k), float(k * k % 13)) for k in range(200))
+        monkeypatch.setattr(polygon_module.np, "asarray", never("an array was built"))
+        with pytest.raises(RegionTooLargeError):
+            touching_pairs(points, WorkBudget(budget=3 * 200 * 200 - 1), closed=True)
+
+    def test_the_near_pairs_are_paid_for_before_they_are_tested(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        rng = random.Random(3)
+        scribble = tuple((rng.uniform(0.0, 100.0), rng.uniform(0.0, 100.0)) for _ in range(120))
+        whole = WorkBudget(budget=10**12)
+        near, touching = touching_pairs(scribble, whole, closed=False)
+        assert near > 2_000 and whole.spent == 3 * 119 * 119 + 350 * near
+        monkeypatch.setattr(polygon_module, "_touch", never("the pairs were tested"))
+        with pytest.raises(RegionTooLargeError):
+            touching_pairs(scribble, WorkBudget(budget=3 * 119 * 119 + 100), closed=False)
+
+    def test_all_of_them_before_the_first_is_tested(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A path of 1,100 segments is counted in three blocks. With one unit less
+        than ALL its near pairs cost, not one pair is tested — a path whose near
+        pairs alone are beyond the budget is refused on the count (testing them
+        block by block as they were paid took as long as the bound itself)."""
+        rng = random.Random(5)
+        scribble = tuple((rng.uniform(0.0, 100.0), rng.uniform(0.0, 100.0)) for _ in range(1_101))
+        whole = WorkBudget(budget=10**12)
+        tested = []
+        real = polygon_module._touch
+        monkeypatch.setattr(polygon_module, "_touch", lambda *args: (tested.append(len(args[0])), real(*args))[1])
+        near, _touching = touching_pairs(scribble, whole, closed=False)
+        assert len(tested) == 3 and sum(tested) == near  # three blocks, every near pair once
+        tested.clear()
+        with pytest.raises(RegionTooLargeError):
+            touching_pairs(scribble, WorkBudget(budget=whole.spent - 1), closed=False)
+        assert tested == []
+
+
+class TestStackHeight:
+    """A sweep line carries every edge it crosses: teeth that stand side by side
+    cost the clipper their number squared without crossing anything (measured:
+    4,000 points, 1.6 s standing, 4 ms lying down)."""
+
+    def test_standing_and_lying(self) -> None:
+        teeth = [(k * 30.0, 1000.0 + k if k % 2 else -float(k)) for k in range(400)]
+        assert stack_height([teeth], closed=False) == 399
+        assert stack_height([[(y, x) for x, y in teeth]], closed=False) == 2
+        assert stack_height([SQUARE], closed=True) == 3  # a line along an edge meets it and both sides
+        assert stack_height([SQUARE], closed=False) == 2
+        assert stack_height([], closed=True) == 0 == stack_height([((1.0, 1.0),)], closed=True)
+
+    def test_several_rings_and_the_reach(self) -> None:
+        low, high = rect(0.0, 0.0, 10.0, 10.0), rect(0.0, 20.0, 10.0, 30.0)
+        assert stack_height([low, high], closed=True) == 3
+        assert stack_height([low, high], closed=True, reach=5.0) == 6  # widened by 5 they meet
+        assert stack_height([[(0, 0), (5, 9), (9, 0)]], closed=True) == 3  # integers, as the clipper holds them
+
+
+class TestSortingRingsIsPaidFor:
+    """``group_rings`` asks every outer ring about every hole: holes x outers.
+    Nothing bounded that product — 2,000 small holes in 2,000 small outer rings
+    took 3.8 s."""
+
+    @staticmethod
+    def frames(count: int) -> list:
+        rings = []
+        for k in range(count):
+            x, y = (k % 100) * 100.0, (k // 100) * 100.0
+            rings += [rect(x, y, x + 80.0, y + 80.0), rect(x + 20.0, y + 20.0, x + 60.0, y + 60.0, clockwise=True)]
+        return rings
+
+    def test_the_product_is_the_price_and_it_is_paid_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        rings = self.frames(50)
+        work = WorkBudget(budget=10**12)
+        regions = group_rings(rings, work)
+        assert len(regions) == 50 and all(len(holes) == 1 for _outer, holes in regions)
+        assert work.spent == 50 * 50 * 120 * (4 + 2) + 700 * 50 * 4  # holes x outers, and a point per hole
+        monkeypatch.setattr(polygon_module, "_point_inside", never("a hole was looked at"))
+        monkeypatch.setattr(polygon_module, "_ring_holds", never("an outer ring was asked"))
+        with pytest.raises(RegionTooLargeError):
+            group_rings(rings, WorkBudget(budget=work.spent - 1))
+
+    def test_two_thousand_frames_are_refused_unasked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        rings = self.frames(2_000)
+        monkeypatch.setattr(polygon_module, "_ring_holds", never("an outer ring was asked"))
+        with pytest.raises(RegionTooLargeError):  # 2,000 x 2,000 x 720 units: twenty times the bound
+            group_rings(rings)  # … also without a budget handed in: it has one of its own
+
+    def test_rings_without_holes_cost_nothing_to_sort(self) -> None:
+        work = WorkBudget()
+        assert len(group_rings([rect(k * 10.0, 0.0, k * 10.0 + 5.0, 5.0) for k in range(3_000)], work)) == 3_000
+        assert work.spent == 0
+
+    def test_a_large_outer_ring_is_priced_as_it_is_asked(self) -> None:
+        outer, holes = review_ladder(60)
+        work = WorkBudget()
+        assert group_rings([*holes, outer], work) == ((outer, holes),)
+        assert work.spent == len(holes) * (12_000 + 3 * len(outer)) + 700 * sum(len(hole) for hole in holes)
+
+
+class TestTheSimplicityTestHasABound:
+    def test_beyond_the_bound_it_refuses_instead_of_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        ring = _wobbly(400, random.Random(8), tangle=False)
+        assert is_simple_ring(ring)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", 3 * 400 * 400 - 1)
+        monkeypatch.setattr(polygon_module, "_touch", never("the pairs were tested"))
+        with pytest.raises(RegionTooLargeError, match="simplicity test of a ring of 400 vertices"):
+            is_simple_ring(ring)
+
+    def test_a_scribbled_ring_pays_for_the_pairs_it_makes_the_test_look_at(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None
+    ) -> None:
+        """The square of the edges was the whole price of the test — right for an
+        outline, whose edges are near a few others each. Of a ring scribbled across
+        a plan half of ALL pairs are near, and each costs a hundred times a unit of
+        the square: 3,500 such vertices took half a second, three times the bound,
+        for 37 M units. Now the near pairs are paid for, all of them before one is
+        tested — and a ring that cannot pay is refused on the count."""
+        rng = random.Random(21)
+        scribble = ccw(tuple((rng.uniform(0.0, 2000.0), rng.uniform(0.0, 2000.0)) for _ in range(600)))
+        whole = WorkBudget(budget=10**12)
+        near, touching = touching_pairs(scribble, whole, closed=True)
+        assert touching > 20_000 and near > 60_000
+        assert whole.spent == 3 * 600 * 600 + 350 * near > 20 * polygon_module._simplicity_work(600)
+        assert region_cost(scribble) == 3_000 + whole.spent  # what the verdict "not simple" cost
+        assert not is_buildable_region(scribble) and not is_region_too_large(scribble)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", whole.spent // 2)
+        monkeypatch.setattr(polygon_module, "_touch", never("the pairs were tested"))
+        with pytest.raises(RegionTooLargeError):
+            is_simple_ring(scribble)
+        polygon_module._examined.cache_clear()
+        assert is_region_too_large(scribble)  # … through the cut as well
+
+    def test_with_the_real_bound_that_is_about_seven_thousand_vertices(self) -> None:
+        assert polygon_module._simplicity_work(7_071) <= polygon_module.MAX_REGION_WORK
+        assert polygon_module._simplicity_work(7_072) > polygon_module.MAX_REGION_WORK
+
+
+class TestWhatARegionCost:
+    """``region_cost``: what a caller pays per region when it judges several
+    against ONE budget — the same number whether the answer was remembered."""
+
+    def test_it_is_the_work_of_the_cut(self, fresh_verdicts: None) -> None:
+        outer, holes = review_ladder(20)
+        assert region_cost(outer, holes) == cut_work(outer, holes) >= region_work(outer, holes)
+        assert region_cost(outer, holes) == cut_work(outer, holes)  # remembered: the same again
+        assert region_cost(SQUARE) == region_work(SQUARE)
+
+    def test_a_region_that_cannot_be_built_cost_what_was_spent_finding_out(self, fresh_verdicts: None) -> None:
+        bow = LOPSIDED_BOW_TIE[::-1]
+        assert not is_buildable_region(bow)
+        assert region_cost(bow) == 3_000 + 250 * 16  # the region and its simplicity test; no ear was cut
+
+    def test_the_budget_says_what_was_spent(self) -> None:
+        work = WorkBudget("a test", budget=100)
+        work.spend(60)
+        assert (work.spent, work.left) == (60, 40)
+        with pytest.raises(RegionTooLargeError, match="a test is beyond"):
+            work.spend(41)
+        with pytest.raises(RegionTooLargeError, match="a test is beyond"):
+            WorkBudget("a test").refuse()
+
+
+class TestPayingForARegion:
+    """``pay_for_region``: the predicate, asked out of ONE budget — the caller's.
+    The bound of fix round 3 was a bound per region; an item is many regions."""
+
+    def test_it_costs_what_the_cut_costs_fresh_or_remembered(self, fresh_verdicts: None) -> None:
+        outer, holes = review_ladder(20)
+        cost = cut_work(outer, holes)
+        first, again = WorkBudget(), WorkBudget()
+        assert pay_for_region(outer, holes, first) and pay_for_region(outer, holes, again)
+        assert first.spent == again.spent == cost  # the total does not depend on what is remembered
+        assert is_buildable_region(outer, holes) and region_cost(outer, holes) == cost
+        assert polygon_module._examined.cache_info().entries == 1  # ONE memory, the predicate's own
+
+    def test_a_shape_that_cannot_be_built_is_false_and_paid_for(self, fresh_verdicts: None) -> None:
+        bow = LOPSIDED_BOW_TIE[::-1]
+        work = WorkBudget()
+        assert not pay_for_region(bow, (), work)
+        assert work.spent == 3_000 + 250 * 16 and not is_buildable_region(bow)
+
+    def test_the_least_it_can_cost_must_be_left_before_it_is_hashed_or_cut(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None
+    ) -> None:
+        outer, holes = review_ladder(20)
+        monkeypatch.setattr(polygon_module, "_cut", never("the region was cut"))
+        work = WorkBudget(budget=region_work(outer, holes) - 1)
+        with pytest.raises(RegionTooLargeError):
+            pay_for_region(outer, holes, work)
+        assert work.spent == 0
+        assert polygon_module._examined.cache_info() == (0, 0, HELD_VERTICES, 0, 0)  # not even looked up
+
+    def test_it_is_cut_out_of_what_is_left(self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None) -> None:
+        """Not out of a bound of its own: with less left than its cut takes, the
+        cut stops on the way — and "this caller could not afford it" is no fact
+        about the region, so nothing is remembered."""
+        teeth = comb(80)
+        floor, cost = region_work(teeth), cut_work(teeth)
+        payments = 0
+        pay = polygon_module.WorkBudget.spend
+
+        def counting(self, units):
+            nonlocal payments
+            payments += 1
+            pay(self, units)
+
+        monkeypatch.setattr(polygon_module.WorkBudget, "spend", counting)
+        cut_work(teeth)
+        whole, payments = payments, 0
+        work = WorkBudget(budget=(floor + cost) // 2)
+        with pytest.raises(RegionTooLargeError):
+            pay_for_region(teeth, (), work)
+        assert 0 < payments < whole  # it stopped on the way
+        assert 0 < work.spent - work.budget < 50_000  # … at the first payment beyond what was there
+        assert polygon_module._examined.cache_info().entries == 0
+        assert is_buildable_region(teeth) and not is_region_too_large(teeth)  # by itself it is cut
+        enough = WorkBudget(budget=cost)
+        assert pay_for_region(teeth, (), enough) and enough.left == 0
+
+    def test_a_region_beyond_the_bound_by_itself_is_refused_and_that_is_remembered(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_verdicts: None
+    ) -> None:
+        teeth = comb(80)
+        monkeypatch.setattr(polygon_module, "MAX_REGION_WORK", (region_work(teeth) + cut_work(teeth)) // 2)
+        cuts = 0
+        real = polygon_module._cut
+
+        def counting(outer, holes, work):
+            nonlocal cuts
+            cuts += 1
+            return real(outer, holes, work)
+
+        monkeypatch.setattr(polygon_module, "_cut", counting)
+        for _ in range(2):
+            with pytest.raises(RegionTooLargeError):
+                pay_for_region(teeth, (), WorkBudget(budget=10**12))  # however much the caller has
+        assert cuts == 1 and is_region_too_large(teeth)
+
+    def test_the_sum_is_what_is_bounded(self, fresh_verdicts: None) -> None:
+        squares = [rect(k * 10.0, 0.0, k * 10.0 + 5.0, 5.0) for k in range(10)]
+        each = region_work(squares[0])
+        work = WorkBudget(budget=5 * each + each // 2)
+        paid = 0
+        with pytest.raises(RegionTooLargeError):
+            for square in squares:
+                assert pay_for_region(square, (), work)
+                paid += 1
+        assert paid == 5 and work.spent == 5 * each  # ten squares that each fit; five and a half paid for

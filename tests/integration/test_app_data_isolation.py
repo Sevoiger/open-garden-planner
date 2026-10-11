@@ -49,6 +49,9 @@ from tests.conftest import (
     _rebind_get_app_data_dir,
 )
 
+#: The four environment variables conftest points into the test root.
+REDIRECTED_ENV = ("APPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME")
+
 REPO = Path(__file__).resolve().parents[2]
 CONFTEST = REPO / "tests" / "conftest.py"
 
@@ -135,21 +138,22 @@ class TestTheRedirectionMechanismItself:
 
     def test_the_environment_is_redirected_at_conftest_module_scope(self) -> None:
         assigned, first_app_import = self._module_scope()
-        assert set(assigned) >= {"APPDATA", "XDG_DATA_HOME"}, (
-            "tests/conftest.py must set BOTH variables at module scope — in a fixture "
+        assert set(assigned) >= set(REDIRECTED_ENV), (
+            "tests/conftest.py must set ALL FOUR variables at module scope — in a fixture "
             "they are set after collection, when a store built during an import has "
-            "already resolved the user's real directory"
+            "already resolved the user's real directory (and ezdxf has read its config)"
         )
         assert first_app_import < 10**9
-        assert max(assigned["APPDATA"], assigned["XDG_DATA_HOME"]) < first_app_import, (
+        assert max(assigned[name] for name in REDIRECTED_ENV) < first_app_import, (
             "the redirection must come before the first import of open_garden_planner"
         )
 
     def test_the_redirection_actually_took(self) -> None:
         """Behavioural counterpart: the AST check could pass with wrong values."""
-        for name in ("APPDATA", "XDG_DATA_HOME"):
+        for name in REDIRECTED_ENV:
             assert under(os.environ[name], TEST_DATA_ROOT), name
             assert os.environ[name] != PRODUCTION_DATA_ENV[name]
+            assert Path(os.environ[name]).is_dir()
         resolved = library_module.get_app_data_dir()
         assert resolved.name == "OpenGardenPlanner" and resolved.is_dir()
         assert under(resolved, TEST_DATA_ROOT)
@@ -168,6 +172,11 @@ class TestTheRedirectionMechanismItself:
         assert root.name.startswith("ogp-tests-") and root != TEST_DATA_ROOT
         assert not root.exists()  # it existed while that process ran; atexit took it away
 
+    @pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason="macOS reads no environment variable: a child that has not imported conftest "
+               "would resolve — and CREATE — the real ~/Library/Application Support/OpenGardenPlanner",
+    )
     def test_a_child_process_inherits_it(self) -> None:
         """A script or the app started by a test must land in the test root too —
         the reason the mechanism is the environment and not a patched function."""
@@ -206,10 +215,56 @@ class TestTheRedirectionMechanismItself:
                 locations.DocumentsLocation, locations.CacheLocation} <= REDIRECTED_QT_LOCATIONS
         for location in REDIRECTED_QT_LOCATIONS:
             answer = QStandardPaths.writableLocation(location)
-            assert under(answer, TEST_DATA_ROOT) and Path(answer).is_dir(), location
+            assert under(answer, TEST_DATA_ROOT), location
             assert "\\" not in answer  # as Qt writes a path
         # … and nothing else is touched: the temp directory is the machine's own
         assert not under(QStandardPaths.writableLocation(locations.TempLocation), TEST_DATA_ROOT)
+
+    def test_asking_for_a_location_creates_nothing(self) -> None:
+        """Qt names a folder; it does not make it. Neither does the stand-in — or a
+        writer that forgot its ``mkdir`` would pass every test and fail on a user's
+        first run (review round 3: the first version of the stand-in created it)."""
+        nothing_writes_here = QStandardPaths.StandardLocation.AppConfigLocation
+        assert nothing_writes_here in REDIRECTED_QT_LOCATIONS
+        for _ in range(2):
+            answer = Path(QStandardPaths.writableLocation(nothing_writes_here))
+            assert under(answer, TEST_DATA_ROOT) and not answer.exists()
+
+    def test_the_writers_make_their_own_folder(self, monkeypatch: pytest.MonkeyPatch,
+                                               tmp_path: Path) -> None:
+        """… and every writer of the app does make it: each is pointed at a folder
+        that does not exist, the way a first run finds it."""
+        from open_garden_planner.app import paths
+        from open_garden_planner.core.logging_config import resolve_log_dir
+        from open_garden_planner.services import companion_cache
+        from open_garden_planner.services.climate_service import ClimateService
+        from open_garden_planner.services.plant_api import thumbnail_loader
+
+        fresh = tmp_path / "never" / "made"
+        monkeypatch.setattr(QStandardPaths, "writableLocation", lambda _location: fresh.as_posix())
+        assert not fresh.exists()
+        made = [paths.get_projects_dir(), resolve_log_dir(), companion_cache.get_cache_dir(),
+                ClimateService._get_cache_dir(), thumbnail_loader.get_cache_dir()]
+        assert all(folder.is_dir() and under(folder, fresh) for folder in made)
+        _write_crash_log("written into a folder that did not exist")
+        assert "did not exist" in (fresh / "crash.log").read_text(encoding="utf-8")
+
+    def test_ezdxf_keeps_its_files_in_the_test_root(self) -> None:
+        """The DXF library has user files of its own (read in ezdxf 1.4.3): a config
+        ``ezdxf.ini`` it loads when it is imported, and a font index it BUILDS AND
+        WRITES when it is missing — both under ``~/.config`` / ``~/.cache`` unless
+        ``XDG_CONFIG_HOME`` / ``XDG_CACHE_HOME`` say otherwise. They do."""
+        import ezdxf
+        from ezdxf.fonts import fonts
+
+        config_home = ezdxf.options.xdg_path("XDG_CONFIG_HOME", ".config")
+        font_index = fonts._get_font_manager_path()
+        assert under(config_home, TEST_DATA_ROOT) and config_home.name == "ezdxf"
+        assert under(font_index, TEST_DATA_ROOT) and font_index.name == "font_manager_cache.json"
+        home = Path.home()
+        assert not under(config_home, home / ".config") and not under(font_index, home / ".cache")
+        # what it actually loaded when it was imported: nothing from the user's home
+        assert all(not under(loaded, home / ".config") for loaded in ezdxf.options.loaded_config_files)
 
     def test_the_writers_that_go_through_qt(self) -> None:
         from open_garden_planner.app import paths

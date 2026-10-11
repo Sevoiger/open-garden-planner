@@ -48,6 +48,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from types import MappingProxyType
 
 from .build import Builder, BuilderRegistry, checked_parts
@@ -63,13 +64,34 @@ class SyncStateError(RuntimeError):
     """The sync cannot be used until ``reset()`` (a sink call failed)."""
 
 
+@lru_cache(maxsize=64)
+def _stand_in(name: str) -> type[Exception]:
+    return type(name, (Exception,), {"__module__": __name__})
+
+
 @dataclass(frozen=True, slots=True)
 class BuildFailure:
-    """A builder raised (or broke its contract) for one item."""
+    """A builder raised (or broke its contract) for one item.
+
+    Plain data, safe to keep — like the snapshot's ``SkippedItem``: of the
+    exception it holds the type's NAME and the message, never the exception
+    itself (its traceback keeps the whole ``apply`` frame alive: the records,
+    the built meshes, the sink). The exception goes to the log.
+    """
 
     item_id: str
     kind: str
-    error: Exception
+    error_type: str  # the exception's class name
+    error_message: str  # str(exception)
+
+    @property
+    def error(self) -> Exception:
+        """A STAND-IN for the exception the builder raised — for code written
+        when this was the exception itself: an exception whose class has the same
+        NAME and whose text is the same message, with no traceback. Not the
+        original object, and not an instance of the original class: test
+        ``error_type`` instead of ``isinstance``."""
+        return _stand_in(self.error_type)(self.error_message)
 
 
 class SceneSync:
@@ -202,7 +224,7 @@ class SceneSync:
                 built[item_id] = self._build(builder, record)
             except Exception as error:  # any builder defect is contained (module docstring)
                 built[item_id] = ()
-                failed[item_id] = BuildFailure(item_id, record.kind, error)
+                failed[item_id] = BuildFailure(item_id, record.kind, type(error).__name__, str(error))
                 if not self._quiet:
                     _log.error("3D builder for %s item %r failed; it is shown without a solid",
                                record.kind, item_id, exc_info=error)
