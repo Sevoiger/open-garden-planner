@@ -717,6 +717,7 @@ _OUTLINE_CHECK_UNITS: Final = 20
 _REGION_CHECK_UNITS: Final = 5
 
 
+@lru_cache(maxsize=4096)  # of rings of 4 or 24 vertices: here a bound on entries bounds the memory
 def _convex_region(ring: Ring) -> bool:
     """THE predicate for a ring that is convex BY CONSTRUCTION — a circle's, an
     ellipse's, a rectangle's: buildable when arithmetic says it is strictly
@@ -727,13 +728,21 @@ def _convex_region(ring: Ring) -> bool:
     return is_convex_ring(ring) or is_buildable_region(ring)
 
 
+#: From this radius on a circle's 24-gon needs no look at its corners either: they
+#: turn by 15 degrees and the record grid moves a vertex by 1e-7 cm, so the ring is
+#: strictly convex with four orders of magnitude to spare (pinned against
+#: ``is_convex_ring`` from here to 10 km). The floor of "a circle is a circle".
+_ROUND_FROM_CM: Final = 1e-3
+
+
 @lru_cache(maxsize=4096)
 def _circle_regions(radius_cm: float) -> tuple[Region, ...] | _Refused:
     """A circle's footprint ring as its one region — judged like every other
     shape (a radius of 2e-7 cm leaves a ring on the record grid that is no
-    polygon at all)."""
+    polygon at all): by its radius from ``_ROUND_FROM_CM`` on, below it by its
+    corners, and by the cut when those do not say."""
     ring = _circle_ring(radius_cm)
-    return ((ring, ()),) if _convex_region(ring) else _NO_READING
+    return ((ring, ()),) if radius_cm >= _ROUND_FROM_CM or _convex_region(ring) else _NO_READING
 
 
 def _outline_regions(ring: Ring,

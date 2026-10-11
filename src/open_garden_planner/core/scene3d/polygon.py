@@ -152,8 +152,7 @@ class RingKeyed(Generic[_P, _R]):
         self._vertices, self._holds, self._max = vertices, holds, max_vertices
         self._entries: dict[tuple[Any, ...], _Entry[_R]] = {}
         self._held = self._asked = self._hits = self._misses = 0
-        # of what is held: asked for by the snapshot ``_seen``, and by the one before it
-        self._now = self._before = self._seen = 0
+        self._limit = max_vertices  # what is held is looked through for stale answers beyond this
         self._lock = threading.Lock()
         _memories.add(self)
 
@@ -183,28 +182,17 @@ class RingKeyed(Generic[_P, _R]):
             else:
                 entry.asked = self._asked
                 self._hits += 1
-                self._keep(entry)
+                if _snapshotting:
+                    entry.generation = _generation  # asked for by a snapshot: LIVE from now on
             return entry
-
-    def _keep(self, entry: _Entry[_R] | None) -> None:
-        """(Under the lock.) Inside a snapshot: the answer is LIVE from now on.
-        Then, with or without an answer: no more stale answers than the cap."""
-        if self._seen != _generation:  # a new snapshot: what the one before the last asked is stale
-            self._before = self._now if _generation == self._seen + 1 else 0
-            self._now, self._seen = 0, _generation
-        if entry is not None and _snapshotting and entry.generation != _generation:
-            if entry.generation == _generation - 1:
-                self._before -= entry.weight
-            self._now += entry.weight
-            entry.generation = _generation
-        if self._held - self._now - self._before > self._max:
-            self._forget()
 
     def settle(self) -> None:
         """Hold no more stale answers than the cap — asked of every memory when a
-        snapshot ends (``snapshot_generation``). O(1) unless there is something to drop."""
+        snapshot ends (``snapshot_generation``). Nothing to do while all it holds
+        fits the cap; beyond that one look through what it holds."""
         with self._lock:
-            self._keep(None)
+            if self._held > self._max:
+                self._forget()
 
     def known(self, *args: Any) -> _R | None:
         """The remembered answer to these arguments, or None. Nothing is computed."""
@@ -221,24 +209,34 @@ class RingKeyed(Generic[_P, _R]):
         with self._lock:
             if args not in self._entries:
                 entry = self._entries[args] = _Entry(answer, weight, self._asked)
+                if _snapshotting:
+                    entry.generation = _generation
                 self._held += weight
-                self._keep(entry)
+                if self._held > self._limit:
+                    self._forget()
 
     def _forget(self) -> None:
-        """Drop STALE answers, the least recently asked first, until they take
-        three quarters of the room. A live answer is never among them."""
+        """(Under the lock.) When the STALE answers are more than the cap, drop the
+        least recently asked of them until they take three quarters of it. A live
+        answer is never among them — whatever is held. One look through all that
+        is held; the next not before a quarter of the cap has come in again."""
         stale = [(key, entry) for key, entry in self._entries.items()
                  if entry.generation < _generation - 1]
-        for key, entry in sorted(stale, key=lambda item: item[1].asked):
-            if self._held - self._now - self._before <= self._max * 3 // 4:
-                break
-            del self._entries[key]
-            self._held -= entry.weight
+        weight = sum(entry.weight for _key, entry in stale)
+        if weight > self._max:
+            for key, entry in sorted(stale, key=lambda item: item[1].asked):
+                if weight <= self._max * 3 // 4:
+                    break
+                del self._entries[key]
+                self._held -= entry.weight
+                weight -= entry.weight
+        self._limit = max(self._max, self._held + self._max // 4)
 
     def cache_clear(self) -> None:
         with self._lock:
             self._entries.clear()
-            self._held = self._hits = self._misses = self._now = self._before = 0
+            self._held = self._hits = self._misses = 0
+            self._limit = self._max
 
     def cache_info(self) -> CacheInfo:
         return CacheInfo(self._hits, self._misses, self._max, self._held, len(self._entries))
@@ -694,12 +692,19 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 #: tables in section 8.26.1). As ONE region: a plain traced outline of 3,557
 #: vertices; a comb of 1,648; a spiral of 4,334. As a whole outline, clipper and
 #: all: a closed fence along 1,321 traced points (933 when every segment lies
-#: level with every other); a ladder of 164 rungs or a mesh of 15 x 15 openings
-#: drawn as one stroke; a drawn outline of 1,513 vertices that crosses itself.
-#: What a large plan needs is far inside it — a closed fence along 400 traced
-#: points 16 % of the bound, a line of 2 km 0.02 %, a rectangle 10,200 units. A
-#: unit took 0.35 to 1.15 ns on the development box when it was quiet and 0.7 to
-#: 2.3 ns beside three other test runs: the bound is 0.05 to 0.35 s.
+#: nearly level with every other); a straight fence of about 6,650 posts east–
+#: west or north–south (4,514 at 30 degrees, where its outline keeps a vertex
+#: per post); a ladder of 168 rungs or a mesh of 15 x 15 openings drawn as one
+#: stroke; a drawn outline of 1,513 vertices that crosses itself. What a large
+#: plan needs is far inside it — a closed fence along 400 traced points 16 % of
+#: the bound, a line of 2 km 0.02 %, a rectangle 10,200 units.
+#:
+#: In TIME the bound is a measurement, not a promise. A unit of the reference (a
+#: plain traced outline) took 0.35 to 1.15 ns on the development box when it was
+#: quiet and 0.7 to 2.3 ns beside other test runs, and a unit CHARGED for
+#: something else took 0.1 to 1.7 times that (the script prints the ratio for
+#: every row; the dearest is a wide path with close points). So one item costs
+#: at most 0.05 to 0.35 s of the reference — up to 0.6 s where both factors meet.
 MAX_REGION_WORK: Final = 150_000_000
 
 # The price list, in work units. Fitted to measurements on the development box
@@ -753,9 +758,12 @@ def _refuse(what: str) -> NoReturn:
 class WorkBudget:
     """What is left to spend — on ONE region's cut, or on everything ONE item's
     outline needs. ``spend`` raises ``RegionTooLargeError`` the moment the bound
-    is passed, so nothing runs for longer than the bound: pay for a step BEFORE
+    is passed, so no more UNITS are spent than the bound: pay for a step BEFORE
     it runs wherever its price is known beforehand, and as it goes where it is
-    not (the ears, the bridges)."""
+    not (the ears, the bridges). What a unit takes is measured, per step, by
+    ``scripts/measure_region_work.py`` — a price that is too low is a step that
+    runs longer than its units say (``StrictlySimple`` as a tree did: 3.6 s
+    inside the budget, until the review of fix round 3)."""
 
     __slots__ = ("budget", "left", "what")
 

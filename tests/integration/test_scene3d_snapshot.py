@@ -1676,7 +1676,8 @@ def fresh_outlines():
     from open_garden_planner.core.scene3d import polygon as polygon_module
 
     caches = (polygon_module._examined, snapshot_module._polyline_regions,
-              snapshot_module._polygon_regions, snapshot_module._circle_regions)
+              snapshot_module._polygon_regions, snapshot_module._circle_regions,
+              snapshot_module._convex_region)
     for cache in caches:
         cache.cache_clear()
     snapshot_module._reported.clear()
@@ -2348,7 +2349,7 @@ class TestEveryShapeIsAsked:
         monkeypatch.setattr(snapshot_module, "is_buildable_region", spy_cut)
         monkeypatch.setattr(snapshot_module, "is_convex_ring", spy_corners)
         for cache in (snapshot_module._circle_regions, snapshot_module._polygon_regions,
-                      snapshot_module._polyline_regions):
+                      snapshot_module._polyline_regions, snapshot_module._convex_region):
             cache.cache_clear()
         return seen
 
@@ -2357,11 +2358,28 @@ class TestEveryShapeIsAsked:
         item = FACTORIES[shape]()
         canvas.scene().addItem(item)
         record = snapshot_records(canvas.scene())[str(item.item_id)]
-        judged = "cut" if shape in VERTEX_BACKED else "corners"
-        assert record.regions and all(region in asked[judged] for region in record.regions), shape
-        if shape not in VERTEX_BACKED:
-            assert asked["cut"] == []  # convex by construction, and convex on the grid: no cut
+        assert record.regions
+        if shape in VERTEX_BACKED:  # a drawn outline, a stroke: the cut
+            assert all(region in asked["cut"] for region in record.regions), shape
+        elif shape in RECT_BACKED:  # convex by construction: its corners, and no cut
+            assert all(region in asked["corners"] for region in record.regions) and asked["cut"] == []
+        else:  # a circle of a centimetre and more: its radius says it all
+            assert asked == {"cut": [], "corners": []}
+            assert record.params["radius_cm"] >= snapshot_module._ROUND_FROM_CM
         assert all(is_buildable_region(outer, holes) for outer, holes in record.regions)
+
+    def test_from_the_floor_on_a_circle_is_convex_without_a_look_at_its_corners(self) -> None:
+        """``_ROUND_FROM_CM`` skips the arithmetic; the arithmetic skips the cut. So
+        the floor must imply the arithmetic: from 1e-3 cm to 10 km, 600 radii."""
+        from open_garden_planner.core.scene3d import quantize_cm
+        from open_garden_planner.core.scene3d.polygon import is_convex_ring
+
+        floor = snapshot_module._ROUND_FROM_CM
+        radii = [floor, floor * 1.0000001, 1e6] + [floor * 10.0 ** (9.0 * k / 600.0) for k in range(600)]
+        for radius in radii:
+            ring = snapshot_module._circle_ring(quantize_cm(radius))
+            assert len(ring) == 24 and is_convex_ring(ring), radius
+        assert not is_convex_ring(snapshot_module._circle_ring(2e-7))  # … and below it the corners decide
 
     def test_a_plan_of_circles_rectangles_and_ellipses_is_not_cut_at_all(
         self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch, fresh_outlines: None

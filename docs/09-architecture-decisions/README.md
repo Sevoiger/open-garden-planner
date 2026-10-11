@@ -2579,6 +2579,13 @@ it stands after that round.
         16,384 is one comparison. What the budget does not cover is `RegionTooLargeError`
         inside and the skip code `outline_too_large` outside. Section 8.26.1 has the table of
         what fits and what a refusal costs; section 8.11 the two patterns.
+        *Corrected in fix round 4:* the strict union was asked for a tree (`StrictlySimple`
+        with `Execute2`), whose cost follows the rings it makes and the splits it tries, not
+        anything this price list reads — a two-level zigzag of 340 vertices took it 3.6 s
+        inside the budget. It is asked for a flat list now and `group_rings` sorts it (19 ms).
+        And a level segment is no longer counted into a path's stack: the sweep walks along a
+        level edge, so a straight fence costs the same in either direction (it fitted 1,416
+        posts east–west and 6,645 north–south).
      The clipper cannot be counted, only priced, and a price is a measurement: each is the
      dearest case found (`scripts/measure_region_work.py` prints units charged against time for
      every family it knows). A family nobody has drawn yet can be dearer than its price — the
@@ -2587,14 +2594,29 @@ it stands after that round.
      the machine and the moment, and Python cannot interrupt the clipper); a cap on vertices
      alone (it admits the scribble and refuses the long honest fence); a budget across the whole
      plan (a record would depend on what else is on the plan).
-   - **What is remembered is bounded by vertices.** The verdict and the cut of a region, a
-     ring's area, a record's ring facts and the regions of an outline are remembered by
-     `polygon.ring_keyed` — at most 262,144 vertices per function, keys and answers together,
-     the least recently asked dropped first, and a ring of more than `MAX_ITEM_VERTICES` never
-     hashed. Before, each was an `lru_cache` of 2,048 to 8,192 ANSWERS: an outline of 4,000
-     vertices dragged for a minute was a gigabyte, and this ADR had it at "16 kB per entry" (it
-     had counted two floats per vertex; a tuple of two Python floats and its place in the ring
-     are 104 bytes).
+   - **What is remembered: what the plan asks for, and a bounded rest.** The verdict and the
+     cut of a region, a ring's area, a record's ring facts and the regions of an outline are
+     remembered by `polygon.ring_keyed`. A snapshot is one generation; an answer asked for by
+     the snapshot being taken or the one before is live and never dropped; the STALE answers
+     are bounded — 262,144 vertices per function, keys and answers together, the least recently
+     asked dropped first — and a ring of more than `MAX_ITEM_VERTICES` is never hashed. Two
+     forms came before. Each was an `lru_cache` of 2,048 to 8,192 ANSWERS: an outline of 4,000
+     vertices dragged for a minute was a gigabyte (this ADR had it at "16 kB per entry": it had
+     counted two floats per vertex; a tuple of two Python floats and its place in the ring are
+     104 bytes). Then (fix round 3) a cap on ALL vertices held, least recently asked first —
+     which bounded the memory and recomputed an unchanged plan on every tick once the plan was
+     larger than the cap, because a snapshot asks in the same order each time (160 polygons of
+     1,000 vertices: all 160 regions cut again per idle tick, 4.6 to 5.3 s). *Rejected now:* a
+     larger cap (the cliff moves, it does not go); no cap (the gigabyte); a cap per item (an
+     edit session of one item is the case to bound).
+   - **A ring that is convex by construction is judged without a cut** (fix round 4): a circle
+     from 1e-3 cm by its radius, an ellipse or a rectangle by arithmetic on its corners
+     (`is_convex_ring`), and only a ring that is not convex on the record grid by the cut — so
+     no verdict changed. The predicate had been asked of every circle since fix round 3, which
+     cut a 24-gon per new radius: scrubbing the date on `bench_large` went from 11.6 to 33 ms a
+     snapshot; 12.7 now. The arithmetic had to learn one thing from the cut before it could
+     stand in for it — a bed of 120 m by 2 µm turns left at every corner and fails the cut's
+     proof on float noise — and a sweep of 120,000 shapes found no second.
    - **Where the cap is cut, and what that costs an outline under edit.** Because the predicate
      needs the triangulation, it is computed in the snapshot and cached; the builder reuses it.
      A ring that is being edited misses the cache on every tick, as before — only now in the
@@ -2815,7 +2837,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 149 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 167 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
   resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to
@@ -2887,6 +2909,16 @@ Recorded because each of these passed every gate the story had set itself:
   for (the cut's own size check, shadowed by its caller's; the size check of
   `triangulate_region`, shadowed by the budget running out twenty bridges later). All three
   have a test now. *Run the mutation script before the report, not after it.*
+- **(Fix round 4.) The bound of round 3 had two holes, and the suite was green over both.**
+  A memory that drops the least recently asked answer recomputes the whole plan every tick
+  once the plan outgrows it; every test of round 3 used a plan far below the cap. And one call
+  of the clipper was priced by what came back while its cost followed how it was asked
+  (`StrictlySimple` as a tree). Both were found by a reviewer who built the input the
+  mechanism's own comment described as its limit. Now pinned by counting what an UNCHANGED
+  plan does on its second and third tick with the cap shrunk under it (zero cuts, zero
+  inflations), and by a clipper stand-in that records whether a strict union was ever asked
+  for a tree. *For a cache, test at the size where it is full; for a priced call, measure the
+  call, not its answer.*
 - **One malformed plant blanked the plan**, a roof ridge had a record that broke "rotate →
   transform only", a late builder registration left stale geometry, and a clock tick took two
   transactions. Decisions 3, 9, 10 and 12.
