@@ -4,9 +4,9 @@ A ``Record`` is everything the 3D pipeline knows about one canvas item, and
 everything a builder may read (ADR-054). It is produced on the GUI thread by
 ``ui/view3d/snapshot.snapshot_records`` and contains no Qt object.
 
-Geometry is ITEM-LOCAL: ``footprints`` / ``path`` are centimetres relative to
-the item's own anchor (its centre), and ``transform`` places that frame in the
-scene::
+Geometry is ITEM-LOCAL: ``footprints`` / ``holes`` / ``path`` are centimetres
+relative to the item's own anchor (its centre), and ``transform`` places that
+frame in the scene::
 
     scene = (east_cm, north_cm) + R(rotation_deg) · local        base_cm lifts it
 
@@ -60,9 +60,12 @@ from dataclasses import dataclass, field, replace
 from typing import Final, TypeAlias
 
 from .color import Rgba, srgb8_to_linear
+from .polygon import (
+    Point as Point,  # re-exported: `from .record import Point, Ring` predates polygon.py
+)
+from .polygon import Region, ring_area
+from .polygon import Ring as Ring
 
-Point: TypeAlias = tuple[float, float]
-Ring: TypeAlias = tuple[Point, ...]
 ParamValue: TypeAlias = "str | int | float | bool | None | tuple[ParamValue, ...]"
 
 #: Decimal places of a length in cm: 1e-7 cm = 1 nm (module docstring).
@@ -263,7 +266,7 @@ EMPTY_PARAMS: Final = Params()
 #: Field groups of ``Record`` — pinned by a drift-guard test: every field is in
 #: exactly one. A new field must be put into a signature or declared unsigned.
 GEOMETRY_FIELDS: Final[tuple[str, ...]] = (
-    "kind", "shape", "footprints", "path", "path_width_cm", "height_cm", "params",
+    "kind", "shape", "footprints", "path", "path_width_cm", "height_cm", "params", "holes",
 )
 TRANSFORM_FIELDS: Final[tuple[str, ...]] = ("transform",)
 MATERIAL_FIELDS: Final[tuple[str, ...]] = ("material",)
@@ -279,9 +282,20 @@ class Record:
 
     - ``kind``: the ObjectType name (``"HOUSE"``, ``"TREE"`` …) — picks the builder.
     - ``shape``: one of ``SHAPES`` — what the footprint was drawn as.
-    - ``footprints``: the ground the item covers, item-local polygon(s) in cm.
-      One ring for every shape but a polyline, whose stroke can come back as
-      several (``core.shadow_geometry.polyline_footprint``).
+    - ``footprints``: the ground the item covers, as OUTER rings only — simple
+      item-local polygons in cm, counter-clockwise seen from above (signed area
+      > 0; a clockwise or area-less ring is refused). One ring for most items;
+      several for a polyline whose stroke falls apart and for a self-crossing
+      polygon, which the snapshot resolves into simple rings. The orientation is
+      enforced here; that a ring is SIMPLE is the producer's duty (testing it is
+      quadratic) — the snapshot guarantees it, and ``build.prism_mesh`` refuses
+      a ring that is not.
+    - ``holes``: what is cut out of them. ``holes[i]`` are the hole rings of
+      ``footprints[i]`` — simple, CLOCKWISE (signed area < 0), inside that outer.
+      ``()`` when no ring has a hole (the usual case); otherwise one entry per
+      outer. A closed fence is the case that needs it: its stroke is one outer
+      ring and one hole, and a builder that extrudes the hole as a solid turns
+      3.6 m² of fence into an 80 m² slab. Iterate ``regions`` to get both.
     - ``path`` / ``path_width_cm``: a polyline's centre line (item-local) and
       stroke width — fences and walls are built from these, not from the strip.
       ``()`` / ``None`` for every other shape.
@@ -291,8 +305,11 @@ class Record:
     - ``params``: the rest (``PARAM_*`` keys).
 
     ``transform`` and ``material`` have a signature each. ``item_id``, ``name``
-    (the display name) and ``parent_id`` (the plant's bed — resolved into
-    ``transform.base_cm`` by the snapshot, never read by a builder) have none.
+    (the display name) and ``parent_id`` (the id of the bed a plant stands in —
+    the item's ``parent_bed_id``, carried as it is) have none. ``parent_id`` is
+    not resolved into anything in L1.1: ``transform.base_cm`` stays 0.0 until
+    L1.6 lifts a plant onto its bed, as a post-processing step over the snapshot.
+    A builder never reads it.
     """
 
     item_id: str
@@ -307,6 +324,7 @@ class Record:
     params: Params = EMPTY_PARAMS
     parent_id: str | None = None
     name: str = ""
+    holes: tuple[tuple[Ring, ...], ...] = ()
     geometry_sig: int = field(init=False, compare=False, repr=False)
     transform_sig: int = field(init=False, compare=False, repr=False)
     material_sig: int = field(init=False, compare=False, repr=False)
@@ -318,9 +336,31 @@ class Record:
             raise ValueError(
                 f"height_cm is a positive finite number or None, got {self.height_cm!r}"
             )
+        for ring in self.footprints:
+            if not ring_area(ring) > 0.0:
+                raise ValueError(
+                    "footprints holds OUTER rings: counter-clockwise with a positive area "
+                    f"(got signed area {ring_area(ring)!r} cm² for a ring of {len(ring)} vertices); "
+                    "holes go into `holes`"
+                )
+        if self.holes:
+            if len(self.holes) != len(self.footprints):
+                raise ValueError(
+                    f"holes has {len(self.holes)} entries for {len(self.footprints)} footprints: "
+                    "holes[i] are the holes of footprints[i]"
+                )
+            if not any(self.holes):
+                object.__setattr__(self, "holes", ())  # one spelling of "no holes"
+            for group in self.holes:
+                for ring in group:
+                    if not ring_area(ring) < 0.0:
+                        raise ValueError(
+                            "a hole ring is clockwise with a negative signed area "
+                            f"(got {ring_area(ring)!r} cm²)"
+                        )
         object.__setattr__(self, "geometry_sig", hash((
             self.kind, self.shape, self.footprints, self.path, self.path_width_cm,
-            self.height_cm, self.params,
+            self.height_cm, self.params, self.holes,
         )))
         object.__setattr__(self, "transform_sig", hash(self.transform))
         object.__setattr__(self, "material_sig", hash(self.material))
@@ -335,6 +375,20 @@ class Record:
         """True when the plan gives the item a height — the 2D shadow rule."""
         return self.height_cm is not None
 
+    @property
+    def regions(self) -> tuple[Region, ...]:
+        """``(outer, holes)`` for every footprint ring — what a builder, the ground
+        bake or a picker iterates instead of ``footprints`` alone."""
+        if not self.holes:
+            return tuple((outer, ()) for outer in self.footprints)
+        return tuple(zip(self.footprints, self.holes, strict=True))
+
+    @property
+    def plan_area_cm2(self) -> float:
+        """The ground the item covers, in cm²: the outers minus their holes."""
+        return (sum(ring_area(ring) for ring in self.footprints)
+                + sum(ring_area(ring) for group in self.holes for ring in group))
+
     def same_geometry(self, other: Record) -> bool:
         """Equal geometry part — the signature first, then the values (collisions)."""
         return (
@@ -344,6 +398,7 @@ class Record:
             and self.height_cm == other.height_cm
             and self.path_width_cm == other.path_width_cm
             and self.footprints == other.footprints
+            and self.holes == other.holes
             and self.path == other.path
             and self.params == other.params
         )

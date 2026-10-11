@@ -1,6 +1,6 @@
 """The engine boundary: ``EngineSink`` and its recording double (L1.1, ADR-054).
 
-Everything the 3D pipeline tells a renderer goes through the nine methods of
+Everything the 3D pipeline tells a renderer goes through the ten methods of
 ``EngineSink``. L1.2 implements it with Qt Quick 3D (``ui/view3d/quick3d/``);
 ``RecordingSink`` implements it with a list and a dict, so builders and the
 sync logic are tested with no GPU — and, on the NO-GO path of ADR-048, a Qt 3D
@@ -8,7 +8,13 @@ sink could be written against the same protocol.
 
 Protocol rules (``RecordingSink`` raises ``SinkProtocolError`` on each breach):
 
-- every call happens between ``begin()`` and ``commit()``; ``begin`` does not nest;
+- every call but ``clear()`` happens between ``begin()`` and ``commit()``;
+  ``begin`` does not nest;
+- ``clear()`` is legal at ANY time — inside an open transaction (it aborts it),
+  outside one, on an empty sink. After it the engine holds nothing: no items, no
+  sun, no ground, no open transaction. It is the one verb recovery needs
+  (``SceneSync.reset``): without it "tear the scene down" could not be said
+  through the protocol;
 - ``add`` takes an id the sink does not hold; ``remove``, ``update_transform``,
   ``update_material`` and ``replace_geometry`` take one it does;
 - ``parts`` is a sequence of ``MeshPart`` (possibly empty: an item without a
@@ -27,7 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from ..shadow_geometry import MIN_SUN_ELEVATION_DEG
-from .legacy import sun_direction_scene
+from .frame import sun_direction_scene
 from .mesh import MeshPart
 from .record import Material, Transform
 
@@ -124,6 +130,10 @@ class EngineSink(Protocol):
     def set_ground(self, ground: GroundSpec) -> None:
         """The plan's ground changed."""
 
+    def clear(self) -> None:
+        """Hold nothing: drop every item, the sun and the ground, and abort an
+        open transaction. Legal at any time, also on an empty sink."""
+
 
 class SinkProtocolError(RuntimeError):
     """A call the ``EngineSink`` protocol forbids."""
@@ -169,7 +179,8 @@ class RecordingSink:
 
     ``calls`` is the ordered log (``ops()`` for a compact view); ``state()`` /
     ``item()`` / ``item_ids()`` / ``sun`` / ``ground`` answer "what would the
-    engine hold now?". A refused call raises and is NOT recorded.
+    engine hold now?". A refused call raises and is NOT recorded. ``clear()`` is
+    the protocol's own "hold nothing" and is recorded like any call.
     """
 
     def __init__(self) -> None:
@@ -212,13 +223,15 @@ class RecordingSink:
         self.calls.clear()
 
     def reset(self) -> None:
-        """The engine was torn down: an empty scene, an empty log, no transaction."""
+        """``clear()`` plus an empty call log and a zeroed transaction count.
+
+        Kept for tests written before ``clear()`` was part of the protocol
+        (fix round 1); it is a convenience of this double, not a protocol method —
+        code that drives a sink calls ``clear()``.
+        """
+        self.clear()
         self.calls.clear()
         self.transactions = 0
-        self._items.clear()
-        self._sun = None
-        self._ground = None
-        self._open = False
 
     # ── EngineSink ──────────────────────────────────────────────────────────
 
@@ -273,6 +286,13 @@ class RecordingSink:
         self._require_open("set_ground")
         self._ground = ground
         self.calls.append(SinkCall("set_ground", None, (ground,)))
+
+    def clear(self) -> None:
+        self._items.clear()
+        self._sun = None
+        self._ground = None
+        self._open = False
+        self.calls.append(SinkCall("clear", None, ()))
 
     # ── protocol checks ─────────────────────────────────────────────────────
 

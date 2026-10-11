@@ -15,10 +15,17 @@ through the app's own commands (``MoveItemsCommand``, ``RotateItemCommand`` +
 - G7 — every mesh the default builder emits for these shapes validates, and a
   prism's top is exactly the resolved height.
 - G8 — an unchanged scene snapshots identically, 100 times, on both bench plans.
+
+Fix round 1 added what the first matrix did not contain and therefore could not
+catch: a stroke that closes on itself (outer ring + hole), a polygon that crosses
+itself, an item whose metadata is malformed, two items with one id, and a house
+with its ridge item — plus G4, G7 and G8 over a third committed plan made of
+exactly those cases (``scene3d_edge_cases.ogp``).
 """
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from datetime import date
@@ -41,7 +48,7 @@ from open_garden_planner.core.commands import (
     ResizeItemCommand,
     RotateItemCommand,
 )
-from open_garden_planner.core.fill_patterns import create_pattern_brush
+from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
 from open_garden_planner.core.object_height import METADATA_KEY, effective_height_cm
 from open_garden_planner.core.object_types import ObjectType, PathFenceStyle
 from open_garden_planner.core.scene3d import (
@@ -49,11 +56,16 @@ from open_garden_planner.core.scene3d import (
     Material,
     Params,
     Record,
+    RecordingSink,
     SceneDiff,
+    SceneSync,
     Transform,
     default_builder,
     diff,
+    is_simple_ring,
+    point_in_regions,
     pose_ring,
+    signed_area,
     verify_builder,
 )
 from open_garden_planner.core.stacking import ArrangeMode
@@ -79,7 +91,12 @@ from open_garden_planner.ui.canvas.items.ellipse_item import EllipseItem
 from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
-from open_garden_planner.ui.view3d.snapshot import collect_scene3d_records, snapshot_records
+from open_garden_planner.ui.view3d import snapshot as snapshot_module
+from open_garden_planner.ui.view3d.snapshot import (
+    SkippedItem,
+    collect_scene3d_records,
+    snapshot_records,
+)
 
 PLANS = Path(__file__).resolve().parents[1] / "fixtures" / "plans"
 ROTATIONS = [0.0, 17.0, 90.0, 213.5]
@@ -90,6 +107,14 @@ SPECIES = {
     "min_height_cm": 100.0, "max_height_cm": 500.0,
     "min_spread_cm": 50.0, "max_spread_cm": 400.0,
 }
+
+
+def snapshot_with_report(scene: Any, at_date: date | None = None,
+                         ) -> tuple[dict[str, Record], list[SkippedItem]]:
+    """A snapshot and what it had to leave out — ``snapshot_records``'s optional
+    ``skipped`` out-parameter, as a pair."""
+    skipped: list[SkippedItem] = []
+    return snapshot_records(scene, at_date, skipped=skipped), skipped
 
 
 # ── the six footprint shapes of the gate ──────────────────────────────────────
@@ -456,6 +481,70 @@ def _boundary_distance(a: list[tuple[float, float]], b: list[tuple[float, float]
     return max(min(to_segment(p, b[i], b[(i + 1) % len(b)]) for i in range(len(b))) for p in a)
 
 
+def _rings_of(record: Record) -> list[tuple[tuple[float, float], ...]]:
+    """Every ring of a record — outers, then the holes of each — in the scene."""
+    rings = list(record.footprints) + [hole for group in record.holes for hole in group]
+    return [pose_ring(record.transform, ring) for ring in rings]
+
+
+def _ring_deviation(posed: Any, expected: Any) -> float:
+    """Largest vertex-to-vertex distance between two rings with the same vertices.
+    A record's outer ring is counter-clockwise; ``item_footprints`` hands a ring
+    out as Qt mapped it, so a mirrored item's comes the other way round — the
+    same ring, read backwards."""
+    assert len(posed) == len(expected)
+
+    def worst(other: Any) -> float:
+        return max(math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in zip(posed, other, strict=True))
+
+    return min(worst(list(expected)), worst(list(expected)[::-1]))
+
+
+def _strip_deviation(posed: list[Any], expected: list[Any]) -> float:
+    """Largest boundary-to-boundary distance between two sets of stroke rings,
+    each ring of one matched with the nearest ring of the other."""
+    assert len(posed) == len(expected) >= 1
+    return max(
+        min(max(_boundary_distance(list(p), list(e)), _boundary_distance(list(e), list(p)))
+            for p in posed)
+        for e in expected
+    )
+
+
+def _signed_area_sum(rings: Any) -> float:
+    """The area a set of pyclipper rings encloses: outers count positive, holes
+    negative — the even-odd reading of ``item_footprints`` for a stroke."""
+    return sum(signed_area(tuple(ring)) for ring in rings)
+
+
+def _cap_area(mesh: Any) -> float:
+    """Signed plan area of a prism's cap (its horizontal triangles)."""
+    p = mesh.positions.astype(np.float64)
+    a, b, c = (p[mesh.indices[:, k]] for k in range(3))
+    flat = (a[:, 2] == b[:, 2]) & (a[:, 2] == c[:, 2])
+    twice = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+    return float(twice[flat].sum() / 2.0)
+
+
+def _assert_walls_face_away_from_the_solid(mesh: Any, record: Record) -> None:
+    """Step 0.1 mm along each wall triangle's normal from its centroid: that point
+    is OUTSIDE the footprint (in the open, or in a hole), and the same step back
+    is inside it. The inside-out wall of a hole extruded as a solid fails here.
+    (0.1 mm: far above float32 at these coordinates, far below any slit a stroke
+    leaves — a 1 cm step jumps the 5 mm gap of a nearly closed 3 cm fence.)"""
+    p = mesh.positions.astype(np.float64)
+    walls = 0
+    for i0, i1, i2 in mesh.indices:
+        normal = mesh.normals[i0].astype(np.float64) * 0.01
+        if abs(normal[2]) > 0.005:
+            continue
+        centre = (p[i0] + p[i1] + p[i2]) / 3.0
+        assert not point_in_regions(centre[0] + normal[0], centre[1] + normal[1], record.regions)
+        assert point_in_regions(centre[0] - normal[0], centre[1] - normal[1], record.regions)
+        walls += 1
+    assert walls > 0
+
+
 def _place(item: Any, shape: str, rotation: float, position: tuple[float, float], how: str) -> None:
     if how == "app":  # the rotation gesture's own pivot rule
         apply_rotation(item, rotation)
@@ -483,9 +572,10 @@ class TestTransformReproducesFootprint:
                  position: tuple[float, float], how: str) -> tuple[Record, float, float]:
         """(record, exact deviation in cm, polyline strip deviation in cm or 0.0).
 
-        The exact deviation compares vertex by vertex: every footprint ring of a
+        The exact deviation compares vertex by vertex: every ring of a
         non-polyline, the centre line of a polyline. The strip deviation is the
-        largest vertex-to-boundary distance between the two stroke polygons.
+        largest boundary-to-boundary distance between the two stroke polygons —
+        over every ring, holes included.
         """
         item = FACTORIES[shape]()
         canvas.scene().addItem(item)
@@ -493,19 +583,17 @@ class TestTransformReproducesFootprint:
         at = JUNE if shape == "plant" else None
         record = snapshot_records(canvas.scene(), at)[str(item.item_id)]
         expected = item_footprints(item, at)
-        posed = [pose_ring(record.transform, ring) for ring in record.footprints]
+        posed = _rings_of(record)
         assert len(posed) == len(expected) >= 1
         strip = 0.0
         if shape == "polyline":
             centre_line = [(p.x(), p.y()) for p in (item.mapToScene(q) for q in item.points)]
-            pairs = list(zip(pose_ring(record.transform, record.path), centre_line, strict=True))
-            strip = max(max(_boundary_distance(p, e), _boundary_distance(e, p))
-                        for p, e in zip(posed, expected, strict=True))
+            exact = max(math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in
+                        zip(pose_ring(record.transform, record.path), centre_line, strict=True))
+            strip = _strip_deviation(posed, expected)
         else:
-            pairs = []
-            for ring, scene_ring in zip(posed, expected, strict=True):
-                pairs.extend(zip(ring, scene_ring, strict=True))
-        exact = max(math.hypot(a[0] - b[0], a[1] - b[1]) for a, b in pairs)
+            exact = max(_ring_deviation(ring, scene_ring)
+                        for ring, scene_ring in zip(posed, expected, strict=True))
         canvas.scene().removeItem(item)
         return record, exact, strip
 
@@ -526,7 +614,8 @@ class TestTransformReproducesFootprint:
     def test_measured_worst_case_is_the_record_grid(self, canvas: CanvasView) -> None:
         """The numbers the report quotes, over the whole matrix: everything compared
         vertex by vertex sits at the 1e-7 cm record grid — a fifth of the 1e-6 gate;
-        only the polyline's stroke polygon is at pyclipper's grid."""
+        only the polyline's stroke polygon is at pyclipper's grid. Upper bounds
+        only: an error that turns out smaller is not a failure."""
         worst_exact, worst_strip = 0.0, 0.0
         for shape in SHAPE_NAMES:
             for rotation in ROTATIONS:
@@ -534,8 +623,8 @@ class TestTransformReproducesFootprint:
                     for how in ("app", "off-centre pivot"):
                         _record, exact, strip = self._measure(canvas, shape, rotation, position, how)
                         worst_exact, worst_strip = max(worst_exact, exact), max(worst_strip, strip)
-        assert 0.0 < worst_exact <= 2.5e-7, worst_exact
-        assert 1e-6 < worst_strip <= 3e-3, worst_strip  # the grid is real — and bounded
+        assert worst_exact <= 2.5e-7, worst_exact
+        assert worst_strip <= 3e-3, worst_strip
 
     def test_rotation_sense_is_counter_clockwise_seen_from_above(self, canvas: CanvasView) -> None:
         """A rectangle turned by +90° (Qt, on the Y-up canvas): its local +x edge
@@ -572,15 +661,18 @@ class TestNonRigidTransform:
         record = snapshot_records(canvas.scene())[str(item.item_id)]
         assert record.transform.rotation_deg == 0.0, label  # the transform stays rigid
         expected = item_footprints(item)
-        posed = [pose_ring(record.transform, ring) for ring in record.footprints]
+        posed = _rings_of(record)
+        assert all(signed_area(ring) > 0.0 for ring in record.footprints)  # outer rings, always
         if shape == "polyline":
             centre_line = [(p.x(), p.y()) for p in (item.mapToScene(q) for q in item.points)]
             for a, b in zip(pose_ring(record.transform, record.path), centre_line, strict=True):
                 assert a == pytest.approx(b, abs=1e-6)
-            assert max(_boundary_distance(p, e) for p, e in zip(posed, expected, strict=True)) <= 3e-3
+            assert _strip_deviation(posed, expected) <= 3e-3
         else:
-            for a, b in zip(posed[0], expected[0], strict=True):
-                assert a == pytest.approx(b, abs=1e-6)
+            assert _ring_deviation(posed[0], expected[0]) <= 1e-6
+            mirrored = matrix.determinant() < 0.0
+            # a mirror hands the 2D ring out clockwise; the record turns it round
+            assert (list(posed[0]) != [pytest.approx(q, abs=1e-6) for q in expected[0]]) is mirrored
 
     def test_an_item_in_a_scaled_group_moves_as_transform_only(self, canvas: CanvasView) -> None:
         item = _rectangle()
@@ -728,7 +820,11 @@ class TestRecordContent:
         zs = [items[item_id].zValue() for item_id in records]
         assert zs == sorted(zs) and len(set(zs)) > 5
         legacy = collect_scene3d_records(scene, JUNE)
-        assert len(records) == len(legacy) == 99
+        ridges = [i for i in items.values() if i.object_type is ObjectType.ROOF_RIDGE]
+        # the legacy collector draws the ridge LINE as a decal; contract v2 hands the
+        # ridge to its house as a param and gives the ridge item no record
+        assert len(ridges) == 1 and str(ridges[0].item_id) not in records
+        assert len(legacy) == 99 and len(records) == 98
 
     def test_skipped_items(self, canvas: CanvasView) -> None:
         from open_garden_planner.ui.canvas.items.text_item import TextItem
@@ -746,7 +842,9 @@ class TestRecordContent:
         scene.addItem(dot)
         assert item_outline(degenerate) is None
         assert item_footprints(dot) == [[]] and item_footprints(stub) == []  # nothing in 2D either
-        assert snapshot_records(scene) == {}
+        snapshot, skipped = snapshot_with_report(scene)
+        assert snapshot == {} and type(snapshot) is dict  # the return type never changed
+        assert skipped == []  # left out by design — nothing is wrong with them
 
     def test_a_circle_turned_about_another_pivot_moves_and_still_does_not_rotate(
         self, canvas: CanvasView
@@ -775,11 +873,393 @@ class TestRecordContent:
         assert record.height_cm is None and default_builder(record) == ()
 
     def test_non_finite_geometry_is_skipped_not_propagated(self, canvas: CanvasView) -> None:
-        """NaN != NaN: one such record would report a change on every diff, forever."""
+        """NaN != NaN: one such record would report a change on every diff, forever.
+        It is left out — and said so (see ``TestContainment``)."""
         item = _rectangle()
         canvas.scene().addItem(item)
         item.setPos(float("nan"), 0.0)
-        assert snapshot_records(canvas.scene()) == {}
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {}
+        assert [(s.item_id, s.kind) for s in skipped] == [(str(item.item_id), "TOOL_SHED")]
+        assert isinstance(skipped[0].error, ValueError)
+
+
+# ── P1-1: a stroke that closes on itself ──────────────────────────────────────
+
+
+def _fence(points: list[tuple[float, float]], width_cm: float = 10.0) -> Any:
+    item = PolylineItem([QPointF(x, y) for x, y in points], object_type=ObjectType.FENCE)
+    pen = item.pen()
+    pen.setWidthF(width_cm)
+    item.setPen(pen)
+    return item
+
+
+#: label → (centre line, outer rings, holes) — a 10 m x 8 m garden fence, 10 cm wide
+FENCES: dict[str, tuple[list[tuple[float, float]], int, int]] = {
+    "closed loop": ([(0, 0), (1000, 0), (1000, 800), (0, 800), (0, 0)], 1, 1),
+    "nearly closed (2 cm gap)": ([(0, 2), (0, 800), (1000, 800), (1000, 0), (0, 0)], 1, 1),
+    "open U": ([(0, 800), (0, 0), (1000, 0), (1000, 800)], 1, 0),
+}
+
+
+class TestClosedStrokes:
+    """Review P1-1. A closed fence's stroke is an outer ring and a HOLE. The first
+    contract put both into ``footprints``; the default builder extruded both; the
+    result was a slab at fence height over the whole garden — 81.8 m² of ground
+    where the fence stands on 3.6 m², under two caps of 160 m² together — with an
+    inside-out inner wall, and G4, G7 and ``verify_builder`` all passed, because
+    none of them asked how much ground the solid covers. These tests ask."""
+
+    @pytest.mark.parametrize("rotation", [0.0, 33.0])
+    @pytest.mark.parametrize("label", sorted(FENCES))
+    def test_the_solid_covers_the_stroke_and_nothing_else(
+        self, canvas: CanvasView, label: str, rotation: float
+    ) -> None:
+        centre_line, outers, holes = FENCES[label]
+        item = _fence(centre_line)
+        canvas.scene().addItem(item)
+        apply_rotation(item, rotation)
+        item.setPos(140.5, 60.25)
+        item.metadata[METADATA_KEY] = 120.0
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        record = snapshot[str(item.item_id)]
+        assert skipped == []
+
+        # structure: outer rings counter-clockwise, their holes clockwise
+        assert len(record.footprints) == outers
+        assert sum(len(group) for group in record.holes) == holes
+        assert all(signed_area(ring) > 0.0 and is_simple_ring(ring) for ring in record.footprints)
+        assert all(signed_area(hole) < 0.0 for group in record.holes for hole in group)
+        assert len(record.regions) == outers
+
+        # G4 over EVERY ring: the record's rings are the 2D stroke's rings
+        two_d = item_footprints(item)
+        assert len(two_d) == outers + holes
+        assert _strip_deviation(_rings_of(record), two_d) <= 3e-3
+
+        # the area. Stated tolerances: (1) the cap IS the footprint region, to
+        # float32 (1e-6); (2) the region is what the 2D stroke encloses, to
+        # pyclipper's grid — the two inflate the same line in two frames (5e-4);
+        # (3) both are the line's length times its width, to 0.5 % — square
+        # joins and butt ends are the rest. The slab of the defect was off by 4,350 %.
+        (part,) = verify_builder(default_builder, record)
+        part.validate()
+        cap = _cap_area(part.mesh)
+        length = sum(math.dist(centre_line[i], centre_line[i + 1]) for i in range(len(centre_line) - 1))
+        assert cap == pytest.approx(record.plan_area_cm2, rel=1e-6)
+        assert cap == pytest.approx(_signed_area_sum(two_d), rel=5e-4)
+        assert cap == pytest.approx(length * 10.0, rel=5e-3)
+        assert float(part.mesh.bounds()[1][2]) == 120.0
+        _assert_walls_face_away_from_the_solid(part.mesh, record)
+
+    def test_the_defect_reconstructed_is_caught_by_verify_builder(self, canvas: CanvasView) -> None:
+        """The pre-fix default builder — every ring a solid — on the real closed
+        fence. It used to pass every gate; ``verify_builder`` now refuses it."""
+        from open_garden_planner.core.scene3d import BuilderContractError, MeshPart, prism_mesh
+
+        item = _fence(FENCES["closed loop"][0])
+        canvas.scene().addItem(item)
+        item.metadata[METADATA_KEY] = 120.0
+        record = snapshot_records(canvas.scene())[str(item.item_id)]
+
+        def every_ring_a_solid(rec: Record) -> tuple[MeshPart, ...]:
+            rings = [*rec.footprints, *(hole for group in rec.holes for hole in group)]
+            assert rec.height_cm is not None
+            return (MeshPart(prism_mesh(rings, rec.height_cm)),)
+
+        (slab,) = every_ring_a_solid(record)
+        assert abs(_cap_area(slab.mesh)) > 40 * record.plan_area_cm2  # 1,600,162 vs 35,962 cm²
+        with pytest.raises(BuilderContractError, match="covers 100% of a hole"):
+            verify_builder(every_ring_a_solid, record)
+
+    def test_closing_the_gap_is_a_geometry_change_only(self, canvas: CanvasView) -> None:
+        """An open U dragged shut gains a hole — and the hole is part of the
+        geometry signature, or the engine would keep the open fence's solid."""
+        stage_item = _fence([(0, 800), (0, 0), (1000, 0), (1000, 800), (500, 800)])
+        canvas.scene().addItem(stage_item)
+        before = snapshot_records(canvas.scene())
+        item_id = str(stage_item.item_id)
+        assert before[item_id].holes == ()
+        # the last vertex, moved onto the first: inside the bounding box, so no move
+        stage_item._move_vertex_to(4, QPointF(0.0, 800.0))
+        after = snapshot_records(canvas.scene())
+        assert diff(before, after) == SceneDiff(geometry=(item_id,))
+        assert len(after[item_id].holes[0]) == 1
+
+    def test_a_stroke_that_crosses_itself(self, canvas: CanvasView) -> None:
+        """A figure of eight: one outer ring with two holes (the loops)."""
+        item = _fence([(0, 0), (400, 400), (800, 0), (800, 400), (400, 0), (0, 400), (0, 0)])
+        canvas.scene().addItem(item)
+        item.metadata[METADATA_KEY] = 100.0
+        record = snapshot_records(canvas.scene())[str(item.item_id)]
+        assert len(record.footprints) == 1 and len(record.holes[0]) >= 2
+        (part,) = verify_builder(default_builder, record)
+        assert _cap_area(part.mesh) == pytest.approx(record.plan_area_cm2, rel=1e-6)
+        assert _cap_area(part.mesh) == pytest.approx(_signed_area_sum(item_footprints(item)), rel=5e-4)
+
+
+# ── P2-6: a polygon that crosses itself ───────────────────────────────────────
+
+
+class TestSelfCrossingPolygon:
+    def test_a_bow_tie_house_becomes_its_two_lobes(self, canvas: CanvasView) -> None:
+        """The user can draw it; ``item_footprints`` hands it to the 2D shadow as
+        one self-crossing ring, whose own ground the shadow's union fills by the
+        non-zero rule (60,000 cm² at a vertical sun: both lobes). The record
+        carries what that rule fills — two simple triangles — so no builder ever
+        receives a ring it cannot triangulate, and the first contract's mesh that
+        failed ``validate()`` cannot be emitted."""
+        bow = PolygonItem([QPointF(100.0, 100.0), QPointF(500.0, 400.0), QPointF(500.0, 100.0),
+                           QPointF(100.0, 400.0)], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(bow)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        record = snapshot[str(bow.item_id)]
+        assert skipped == []
+        assert len(item_footprints(bow)) == 1  # 2D: the ring as drawn
+        assert len(record.footprints) == 2 and record.holes == ()
+        assert all(is_simple_ring(ring) and len(ring) == 3 for ring in record.footprints)
+        assert [signed_area(ring) for ring in record.footprints] == pytest.approx([30000.0, 30000.0])
+        from open_garden_planner.core.shadow_geometry import compute_scene_shadows
+
+        vertical_sun = compute_scene_shadows([(item_footprints(bow)[0], 300.0)], 89.999, 180.0)
+        assert _signed_area_sum(vertical_sun) == pytest.approx(record.plan_area_cm2, rel=1e-6)
+        (part,) = verify_builder(default_builder, record)
+        part.validate()
+        assert _cap_area(part.mesh) == pytest.approx(60000.0, rel=1e-6)
+        sync = SceneSync(RecordingSink(), validate=True)
+        sync.apply(snapshot)
+        assert sync.failures == {}
+
+    def test_a_pentagram_keeps_its_centre(self, canvas: CanvasView) -> None:
+        """The non-zero rule, the 2D shadow's: the star is one ring of ten corners,
+        centre included (the canvas paints it odd-even, centre open — ADR-054)."""
+        star = PolygonItem([QPointF(500.0 + 300.0 * math.sin(4.0 * math.pi * k / 5.0),
+                                    500.0 + 300.0 * math.cos(4.0 * math.pi * k / 5.0))
+                            for k in range(5)], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(star)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        record = snapshot[str(star.item_id)]
+        assert skipped == [] and len(record.footprints) == 1 and record.holes == ()
+        assert len(record.footprints[0]) == 10 and is_simple_ring(record.footprints[0])
+        assert point_in_regions(0.0, 0.0, record.regions)  # the centre is built on
+        from open_garden_planner.core.shadow_geometry import compute_scene_shadows
+
+        vertical_sun = compute_scene_shadows([(item_footprints(star)[0], 300.0)], 89.999, 180.0)
+        # to pyclipper's grid: the crossing points are snapped in two different frames
+        assert _signed_area_sum(vertical_sun) == pytest.approx(record.plan_area_cm2, rel=1e-5)
+        verify_builder(default_builder, record)
+
+    def test_a_polygon_with_no_area_left_gets_no_record(self, canvas: CanvasView) -> None:
+        flat = PolygonItem([QPointF(0.0, 0.0), QPointF(100.0, 100.0), QPointF(200.0, 200.0)],
+                           object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(flat)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {} and skipped == []  # it covers no ground: left out by design
+        assert snapshot_module._resolved(((0.0, 0.0), (1.0, 1.0))) == []
+
+    def test_it_still_moves_and_turns_as_transform_only(self, canvas: CanvasView) -> None:
+        bow = PolygonItem([QPointF(100.0, 100.0), QPointF(500.0, 400.0), QPointF(500.0, 100.0),
+                           QPointF(100.0, 400.0)], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(bow)
+        item_id = str(bow.item_id)
+        before = snapshot_records(canvas.scene())
+        bow.moveBy(77.25, -13.5)
+        moved = snapshot_records(canvas.scene())
+        assert diff(before, moved) == SceneDiff(transform=(item_id,))
+        apply_rotation(bow, 41.0)
+        assert diff(moved, snapshot_records(canvas.scene())) == SceneDiff(transform=(item_id,))
+
+
+# ── P2-3: one bad item must not blank the view ────────────────────────────────
+
+
+def _break_species(item: Any) -> None:
+    item.metadata["plant_species"] = {"scientific_name": None}  # the reviewer's case
+
+
+def _break_species_name(item: Any) -> None:
+    item.metadata["plant_species"] = {"common_name": 5}
+
+
+def _break_category(item: Any) -> None:
+    item.plant_category = "CONIFER"  # a string where the enum belongs
+
+
+def _break_pattern(item: Any) -> None:
+    item.fill_pattern = "GRASS"  # a string where the enum belongs
+
+
+def _break_position(item: Any) -> None:
+    item.setPos(float("nan"), 0.0)
+
+
+#: one malformed item per group of record fields: (what breaks, the exception)
+BREAKERS: dict[str, tuple[Callable[[Any], None], type[Exception]]] = {
+    "geometry: species key": (_break_species, AttributeError),
+    "geometry: species name": (_break_species_name, AttributeError),
+    "geometry: plant category": (_break_category, AttributeError),
+    "material: fill pattern": (_break_pattern, AttributeError),
+    "transform: position": (_break_position, ValueError),
+}
+
+
+class TestContainment:
+    """Review P2-3: ``plant_species = {"scientific_name": None}`` on ONE plant
+    raised ``AttributeError`` out of ``snapshot_records`` — no 3D view for the
+    whole plan. Now the item is left out, reported, and everything else is there."""
+
+    @pytest.fixture(autouse=True)
+    def _forget_what_was_logged(self) -> None:
+        snapshot_module._reported.clear()
+
+    @pytest.mark.parametrize("label", sorted(BREAKERS))
+    def test_a_malformed_item_is_left_out_reported_and_logged_once(
+        self, canvas: CanvasView, caplog: pytest.LogCaptureFixture, label: str
+    ) -> None:
+        breaker, error_type = BREAKERS[label]
+        scene = canvas.scene()
+        good = CircleItem(100.0, 100.0, 30.0, object_type=ObjectType.TREE)
+        bad = CircleItem(300.0, 100.0, 30.0, object_type=ObjectType.TREE)
+        also_good = _rectangle()
+        for item in (good, bad, also_good):
+            scene.addItem(item)
+        healthy, nothing = snapshot_with_report(scene)
+        assert len(healthy) == 3 and nothing == []
+
+        breaker(bad)
+        with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
+            snapshot, report = snapshot_with_report(scene)
+            _again, report_again = snapshot_with_report(scene)  # the pipeline snapshots on every edit
+            assert snapshot_records(scene) == snapshot  # and without a list it still does not raise
+
+        bad_id = str(bad.item_id)
+        assert set(snapshot) == {str(good.item_id), str(also_good.item_id)}  # the rest is there
+        assert diff(healthy, snapshot) == SceneDiff(removed=(bad_id,))
+        (skipped,) = report
+        assert isinstance(skipped, SkippedItem)
+        assert (skipped.item_id, skipped.kind) == (bad_id, "TREE")
+        assert skipped.reason == "its record could not be built"
+        assert isinstance(skipped.error, error_type)
+        assert [s.item_id for s in report_again] == [bad_id]  # observable every time …
+        mine = [r for r in caplog.records if bad_id in r.getMessage()]
+        assert len(mine) == 1  # … logged once
+        assert mine[0].levelno == logging.ERROR and mine[0].exc_info is not None
+        assert mine[0].exc_info[1] is skipped.error  # with the exception
+
+    def test_a_repaired_item_comes_back(self, canvas: CanvasView) -> None:
+        scene = canvas.scene()
+        tree = CircleItem(300.0, 100.0, 30.0, object_type=ObjectType.TREE)
+        scene.addItem(tree)
+        tree.metadata["plant_species"] = {"scientific_name": None}
+        assert snapshot_records(scene) == {}
+        tree.metadata["plant_species"] = {"scientific_name": "Malus domestica"}
+        snapshot, skipped = snapshot_with_report(scene)
+        assert list(snapshot) == [str(tree.item_id)] and skipped == []
+
+    def test_the_log_is_keyed_by_item_and_kind_of_failure_not_by_message(
+        self, canvas: CanvasView, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The pipeline snapshots on every edit, and an exception's message may
+        carry a value that changes with each of them. So: the same kind of
+        failure on the same item is one line however its message reads, and a
+        different kind is a new line."""
+        scene = canvas.scene()
+        tree = CircleItem(300.0, 100.0, 30.0, object_type=ObjectType.TREE)
+        scene.addItem(tree)
+        with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
+            _break_species(tree)  # AttributeError: 'NoneType' object has no attribute 'strip'
+            first = snapshot_with_report(scene)[1][0].error
+            _break_species_name(tree)  # AttributeError again, another message
+            second = snapshot_with_report(scene)[1][0].error
+            assert str(first) != str(second) and type(first) is type(second)
+            assert len(caplog.records) == 1
+            tree.metadata.pop("plant_species")
+            _break_position(tree)  # ValueError: another kind of failure
+            assert isinstance(snapshot_with_report(scene)[1][0].error, ValueError)
+        assert len(caplog.records) == 2
+
+    def test_the_memory_of_what_was_logged_is_bounded(
+        self, canvas: CanvasView, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """"Logged once" needs a memory; a session that sees many broken items must
+        not grow it without end. Past the bound it starts over — at worst a line
+        is repeated, never suppressed."""
+        monkeypatch.setattr(snapshot_module, "_REPORTED_MAX", 2)
+        scene = canvas.scene()
+        for index in range(3):
+            tree = CircleItem(100.0 + 100.0 * index, 100.0, 30.0, object_type=ObjectType.TREE)
+            scene.addItem(tree)
+            _break_species(tree)
+        with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
+            assert len(snapshot_with_report(scene)[1]) == 3
+        assert len(caplog.records) == 3 and len(snapshot_module._reported) <= 2
+
+    def test_the_report_is_an_out_parameter_and_the_return_type_is_what_it_was(
+        self, canvas: CanvasView
+    ) -> None:
+        """The signature other stories call is unchanged — ``snapshot_records(scene)``
+        and ``snapshot_records(scene, at_date)`` return a plain ``dict`` — and the
+        report is opt-in: a keyword-only list the caller owns, appended to, never
+        cleared (two scenes can report into one list)."""
+        import inspect
+
+        signature = inspect.signature(snapshot_records)
+        assert list(signature.parameters) == ["scene", "at_date", "skipped"]
+        assert signature.parameters["skipped"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert signature.parameters["skipped"].default is None
+        scene = canvas.scene()
+        shed, tree = _rectangle(), CircleItem(300.0, 100.0, 30.0, object_type=ObjectType.TREE)
+        scene.addItem(shed)
+        scene.addItem(tree)
+        _break_species(tree)
+        report: list[SkippedItem] = [SkippedItem("earlier", "X", "kept")]
+        snapshot = snapshot_records(scene, None, skipped=report)
+        assert type(snapshot) is dict and list(snapshot) == [str(shed.item_id)]
+        assert [s.item_id for s in report] == ["earlier", str(tree.item_id)]
+        sync = SceneSync(RecordingSink())
+        assert sync.apply(snapshot) == SceneDiff(added=(str(shed.item_id),))
+
+    def test_the_fill_pattern_enum_is_what_the_healthy_path_reads(self, canvas: CanvasView) -> None:
+        """The guard for the breaker above: a real ``FillPattern`` is the normal
+        case and gives the pattern's name."""
+        shed = _rectangle()
+        canvas.scene().addItem(shed)
+        shed.fill_pattern = FillPattern.GRAVEL
+        assert snapshot_records(canvas.scene())[str(shed.item_id)].material.pattern == "GRAVEL"
+
+
+# ── P2-5: two items, one id ───────────────────────────────────────────────────
+
+
+class TestDuplicateIds:
+    @pytest.fixture(autouse=True)
+    def _forget_what_was_logged(self) -> None:
+        snapshot_module._reported.clear()
+
+    def test_the_lower_item_wins_and_the_other_is_reported(
+        self, canvas: CanvasView, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A plan must not contain two items with one id (the loader dedupes,
+        #403) — but if a scene does, the snapshot says so instead of letting the
+        upper item silently overwrite the lower one's record."""
+        scene = canvas.scene()
+        low = RectangleItem(0.0, 0.0, 100.0, 100.0, object_type=ObjectType.TOOL_SHED)
+        high = RectangleItem(300.0, 0.0, 50.0, 50.0, object_type=ObjectType.RAISED_BED)
+        scene.addItem(low)
+        scene.addItem(high)
+        high._item_id = low.item_id
+        shared = str(low.item_id)
+        with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
+            snapshot, report = snapshot_with_report(scene)
+            snapshot_records(scene)
+        assert list(snapshot) == [shared] and snapshot[shared].kind == "TOOL_SHED"  # first wins
+        (skipped,) = report
+        assert (skipped.item_id, skipped.kind, skipped.error) == (shared, "RAISED_BED", None)
+        assert skipped.reason == "another item already has this id"
+        (logged,) = caplog.records  # once, though snapshotted twice
+        assert logged.levelno == logging.WARNING and shared in logged.getMessage()
+        assert "already has this id" in logged.getMessage()
 
 
 # ── a HOUSE and its ridge ─────────────────────────────────────────────────────
@@ -806,18 +1286,47 @@ class TestHouseRidge:
         assert record.transform == Transform(1450.0, 1070.0, 0.0)
         assert record.params["ridge"] == ((-450.0, 0.0), (450.0, 0.0))
 
+    def test_a_ridge_item_gets_no_record_of_its_own(self, house_stage) -> None:
+        """Review P2-4. The ridge reaches 3D as its HOUSE's ``ridge`` param. As a
+        record it changed GEOMETRY whenever the house turned (the app re-derives
+        its points: measured on 400 of 400 rotations) — a rebuild for a line the
+        house's own builder draws."""
+        canvas, house, ridge = house_stage
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert list(snapshot) == [str(house.item_id)]
+        assert skipped == []  # by design, not a fault
+        assert len(collect_scene3d_records(canvas.scene())) == 2  # the Qt 3D view still draws the line
+        ridge.setVisible(False)  # … and hiding the line does not take the ridge off the roof
+        assert "ridge" in snapshot_records(canvas.scene())[str(house.item_id)].params
+
+    @pytest.mark.parametrize("angle", [17.0, 90.0, 213.5])
+    def test_turning_the_house_is_exactly_one_transform_entry(self, house_stage, angle) -> None:
+        """The baseline is taken BEFORE the turn (the first version of this test
+        turned first and so never compared across a rotation). Through the app's
+        command, as the GUI and the Agent API do it."""
+        canvas, house, _ridge = house_stage
+        hid = str(house.item_id)
+        before = snapshot_records(canvas.scene())
+        ridge_local = before[hid].params["ridge"]
+        canvas.command_manager.execute(RotateItemCommand(house, 0.0, angle, apply_rotation))
+        turned = snapshot_records(canvas.scene())
+        assert diff(before, turned) == SceneDiff(transform=(hid,))  # one entry: the house's
+        assert turned[hid].transform.rotation_deg == angle
+        assert turned[hid].params["ridge"] == ridge_local  # ADR-046 re-derived it; locally it stands
+        assert turned[hid].same_geometry(before[hid])
+        canvas.command_manager.undo()
+        assert snapshot_records(canvas.scene()) == before
+
     @pytest.mark.parametrize("angle", [0.0, 17.0, 90.0, 213.5])
-    def test_moving_or_turning_the_house_does_not_touch_its_geometry(self, house_stage, angle) -> None:
+    def test_moving_a_turned_house_is_exactly_one_transform_entry(self, house_stage, angle) -> None:
         canvas, house, _ridge = house_stage
         hid = str(house.item_id)
         apply_rotation(house, angle)  # PolygonItem re-derives the ridge (ADR-046)
         before = snapshot_records(canvas.scene())
-        ridge_local = before[hid].params["ridge"]
         house.moveBy(321.7, -45.3)  # the app shifts the ridge item's points by the same delta
         after = snapshot_records(canvas.scene())
-        assert hid not in diff(before, after).geometry
-        assert hid in diff(before, after).transform
-        assert after[hid].params["ridge"] == ridge_local
+        assert diff(before, after) == SceneDiff(transform=(hid,))
+        assert after[hid].params["ridge"] == before[hid].params["ridge"]
 
     def test_a_thousand_moves_never_leak_float_dust_into_the_geometry(self, house_stage) -> None:
         """The app re-writes the ridge points by ``+ delta`` on every move, so their
@@ -919,8 +1428,9 @@ def test_unchanged_scene_snapshots_identically_100_times(qtbot, plan: str) -> No
     diff empty. Deterministic by construction — nothing here depends on the grid."""
     scene = CanvasScene()
     ProjectManager().load(scene, PLANS / plan)
-    first = snapshot_records(scene, JUNE)
-    assert len(first) == (99 if plan == "bench_small.ogp" else 425)
+    first, skipped = snapshot_with_report(scene, JUNE)
+    assert len(first) == (98 if plan == "bench_small.ogp" else 424)  # every item but the roof ridge
+    assert skipped == []
     for _ in range(100):
         again = snapshot_records(scene, JUNE)
         assert again == first
