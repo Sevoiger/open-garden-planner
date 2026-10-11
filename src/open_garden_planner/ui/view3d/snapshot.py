@@ -57,6 +57,7 @@ from open_garden_planner.core.scene3d import (
     PARAM_SEED,
     PARAM_SPECIES_KEY,
     PARAM_SPECIES_NAME,
+    PARAM_SPRITE_SPECIES,
     LocalFrame,
     Material,
     Params,
@@ -611,6 +612,9 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     species_name = (species_name or str(getattr(item, "plant_species", "") or "")).strip()
     if species_name:
         params[PARAM_SPECIES_NAME] = species_name
+    sprite_species = getattr(item, "plant_species", None)
+    if isinstance(sprite_species, str) and sprite_species:
+        params[PARAM_SPRITE_SPECIES] = sprite_species  # raw: what the 2D sprite is resolved from
     category = getattr(item, "plant_category", None)
     if category is not None:
         params[PARAM_PLANT_CATEGORY] = category.name

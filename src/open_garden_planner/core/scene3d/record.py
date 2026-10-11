@@ -89,7 +89,12 @@ PARAM_SEED: Final = "seed"  # str — the item id: the one seed source of a buil
 PARAM_RADIUS_CM: Final = "radius_cm"  # float — circles: the footprint radius
 PARAM_RIDGE: Final = "ridge"  # ((x, y), (x, y)) — a HOUSE's ridge ends, HOUSE-local
 PARAM_SPECIES_KEY: Final = "species_key"  # str — canonical species key (ADR-016)
-PARAM_SPECIES_NAME: Final = "species_name"  # str — common name (archetype lookup)
+PARAM_SPECIES_NAME: Final = "species_name"  # str — common name (labels; NOT the sprite key)
+#: str — the plant item's OWN species string, raw (``item.plant_species``: not stripped,
+#: not replaced by species data). It is what the 2D renderer resolves the item's sprite
+#: from, so the plant builder resolves its recipe from it too (L1.7, ruling R14); absent
+#: when the string is empty.
+PARAM_SPRITE_SPECIES: Final = "sprite_species"
 PARAM_PLANT_CATEGORY: Final = "plant_category"  # str — PlantCategory name
 PARAM_PATH_STYLE: Final = "path_style"  # str — PathFenceStyle name, when not NONE
 PARAM_CONTAINER_MATERIAL: Final = "container_material"  # str — container_model key

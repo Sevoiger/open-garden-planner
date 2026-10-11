@@ -45,6 +45,63 @@ Never tune a domain number (species height, spread, planting date) to make a sho
 | Atmosphere | Filmic/ACES tonemapping, gentle glow, depth fog whose colour equals the sky horizon (hides the meadow/sky seam) at **every** preset — low included, or the meadow meets the sky in a one-row cliff — SSAO from Medium up. **No sharpening** (`sharpnessAmount` 0): 0.08 overshot every thin lit edge into near-black dots; every board row records them (`isolated_dark_px`, §5). DOF/vignette only in photo mode. |
 | Motion | Wind sways grass and crowns via shader values (uv.x = sway weight, uv.y = phase); animation only while the 3D view is visible; reduced-motion setting stops it. |
 
+**Plant v0 (Package L1.7) — what the production plants are, and are not.** The plants the
+pipeline builds (`core/scene3d/builders/plants.py`, §8.26.7) are not the spike's: one cheap
+silhouette per 2D sprite archetype — soft volumes and a shell of large geometric leaves, at most
+2,000 triangles a plant, bounded per archetype and by construction (measured: canopy 1,904 …
+flower 316). Judge them as v0:
+
+- Archetype and palette come from the recipe of the sprite the plan shows
+  (`core/plant_art/recipes.py`, resolved by `core/plant_art/resolve.py` — the 2D rule, on the 2D
+  renderer's own inputs: the item's type, its own species string as it is, its category). A plant
+  whose 3D shape or green contradicts its sprite is a finding; a plant whose *sprite* is odd
+  (Lemon Balm drawn as a lemon tree; a plant given a species from the plant database that still
+  shows its old sprite) is a 2D finding that 3D reproduces faithfully.
+- **No fruit, no flowers, no flower heads, by decision** — the season gates need the plan's frost
+  dates, which a record does not carry (Package L3). Their absence against the L0 board is not a
+  regression. Crowns are never bare.
+- One bark for every species (the 2D BARK texture's mean, `#5d432d`), no species crown forms, no
+  support under a climber. Species-accurate plants are Package L3.
+- **The placeholder**: a plant without a height — every category plant from the gallery and
+  every tool-drawn plant until someone types or measures one, and any plant whose species string
+  names one of the twelve sprites without a bundled species record (squash, turnip, arugula,
+  chard, okra, tarragon, lemongrass, marjoram, bay laurel, stevia, sorrel, lovage) — is a low,
+  smooth, neutral grey dome over its canopy circle
+  (the 2D white × 0.5 linear, sRGB 170 / 167 / 158), at most 25 cm high, casting no shadow. It is a truth statement ("the plan does not know"), not
+  an unfinished asset — review whether it reads as a marker, never ask for a guessed tree.
+- What the builder GUARANTEES (by construction — the last steps of its fit; tested on hostile
+  input to the fit itself): top = height and widest span = canopy diameter exactly, base on the
+  ground, and no FOLIAGE vertex further than 1.09 canopy radii from the axis (`REACH_MAX`; the
+  gate is 1.10). That this bounds the whole plant rests on an invariant of the trunk builders —
+  foliage is the outermost part: wood is built within 0.32 canopy radii of the axis and is never
+  moved by the fit (a new archetype with wood must keep it; the tests hold wood inside 0.5). What is MEASURED (re-measure with `scripts/measure_plant_art_3d.py`, command `truth`;
+  do not trust; a sample of 63,099 plants — every recipe × every proportion step × three ids):
+  the plant is BUILT to those numbers, not scaled into them — the builder's own top is the
+  height before the fit touches it (`fit_report`: 1.0000 in every plant), nothing is pressed
+  onto the ground, at most 2.2 % of the foliage vertices are pulled back onto the canopy circle —
+  and the foliage's mass reaches the top (95 % / 99 % area quantiles per archetype; the smallest
+  measured: a mound 0.719 / 0.884 of its height, a rosette 0.605 / 0.719, a hedge 0.877 / 0.938). No
+  foliage triangle lies flat on the ground; at least six vertices touch it. Never quote a
+  measured number as a guarantee: "at most 1.092 radii" stood in a requirement until one id in
+  300,000 read 1.1006. Foliage hue within 10° of the rendered sprite (measured ≤ 5.0°) — of the
+  UNTINTED sprite: the canvas lays the item's fill colour over a plant's sprite at 60 / 255, 3D
+  does not (an open owner question: should a recoloured plant be tinted in 3D?).
+  Two ids: over 30 ids a recipe the most alike pair is 97.5 % alike (two hedge sections), 99 %
+  of all pairs are below 95.2 %; a clipped hedge and a flat ground cover repeat by nature.
+- A bounding box that is exact after a fit says nothing about the plant. When judging a plant's
+  size on a board, look at where its MASS ends, not where its highest leaf tip is: the first
+  version built a squash 1.6 times too tall and squashed it back — exact box, body in the lower
+  two thirds.
+- A date scrub scales remembered shapes (a daily tick of 320 plants: 15 ms on a busy box, 342 ms
+  without the cache); the form of a plant changes only when its proportion crosses a 5 % step, by
+  at most 2.5 % of stretch in one axis. At a step a plant stays itself — measured, its side
+  silhouette in the unit box is 0.99–1.00 the one before (another id: 0.71–0.92); the visible
+  steps on a slow scrub are single leaves turning to stay inside the canopy circle (0.94) and a
+  conifer gaining a whorl (0.87: the stack is re-divided). Judge those two on a board.
+- Not yet seen through the production engine. The author looked through a numpy rasteriser and
+  the dormant spike's renderer only (scratch) — enough to find a floating cushion and bald crown
+  tops, not enough to judge the look. The Beauty Board decides.
+
 ## 3. Light rigs per mood (*spike* values, `look_for` / `sun_light` / `sun_state` in `spike_q3d/runner.py`)
 
 By day the rig is three **anchors** joined by **continuous ramps** (`runner._day_ramp`):
@@ -170,6 +227,12 @@ Severity: **P0** = truth gate failed, mirrored/black/broken frame, unreadable sc
 | A blooming magnolia's leaves ×1.46 larger than uncapped (bench_large) | 140 flower centres as 32-triangle spheres: 4,480 of the 25,000 | octahedron centres, 8 triangles (`spheres(dot=True)`, every flower): ×1.25 alone, ×1.19 with the segment rule; the 2.5 cm dot reads the same at the walk distance |
 | ~25 px scallops of ~11 luma under the ridge cap (morning, low) | the low preset's High (1024-texel) shadow map | VeryHigh at low: columns darkened ≥ 7 rows under the cap 25 → 2 (high: 0), p95 reach 10 → 6 rows (high 5); low IoU 0.963 / 0.968 / 0.937 → 0.953 / 0.959 / 0.922; low fps 4.90 → 4.97 (creator) and 4.70 (3D reviewer), llvmpipe, one run each: within noise; the owner's integrated GPU decides |
 | The 6° golden anchor never rendered; golden_hour (15.2°) and december_noon (14.0°) sampled almost one point of the rig | the shot list | `sunset`: 21 June 18:38 UTC, 5.89° / 301.5° from `core/solar`, golden_hour's camera — long picket shadows streak the meadow, ground shadows are faint (a horizontal surface gets sin 5.9° ≈ 0.10 of the sun) |
+| A plant fitted to its bounding box left its 2D canopy circle by up to 39 % (feathery; allium 37 %, flower 23 %, every leaf shell ~20 %) — invisible to the spread gate, which reads the box | outlines of any reach at any angle: a sparse plant fits its box and pokes out at the diagonals; scaling the farthest vertex onto the circle instead leaves a box of 72 % of the diameter | regular outlines (`_RIM_REACH` 0.97, `_RIM_JITTER` 0.10 in `builders/plants.py`), shell leaves turned to stay inside the circle, box still exact — and the fit's LAST step puts any vertex beyond 1.09 canopy radii onto that circle (`REACH_MAX`), so the bound holds by construction (a measured "≤ 1.092 over 117,000 builds" had been stated as a limit; one id in 300,000 read 1.1006). Measure the distance from the axis, not only the box; and never state a sample's maximum as a bound |
+| A squash 60 × 360 cm was built 1.4–1.6 times too tall and squashed back: exact bounding box, its body in the lower two thirds (at 15 × 800 cm nine archetypes were 3.5–11.6 times too tall) — every gate green | shell leaves faced along the ray from the plant's heart, not along the lobe's surface normal (on a flat cushion they stood on edge); leaf length grew with the plant's width; and the fit's z-scale made the height gate true for anything | build TO the data: highest point placed at the height, leaves set by the surface normal and kept inside by turning (lie down without headroom, quarter turns at the canopy's edge), bow / ripple / fold held to the height; the fit returns a `FitReport`; tests assert it, the foliage's area quantiles and off-proportion sizes. A gate the code forces cannot fail — measure before the repair |
+| Up to 6.7 % of a mound's foliage triangles lay flat at z = 0, coplanar with the ground (z-fighting at the plant's edge) | lobes that reach below the ground were pressed onto it; their undersides became discs in the ground plane | `_lobes` leaves out the triangles within 1 % of the height above the ground; leaves keep a floor of 1.5 %; gate: no ground-flat foliage triangle |
+| A lavender cushion floated 9 cm (13 % of its height) above the ground; 59 of 123 plant recipes floated once counted — and `min z == 0` held | one shell leaf dipped below the base and the fit lifted the whole plant to put that leaf's tip at zero | `_fit` presses what dips below the ground onto it and only ever sets a plant down; gate: at least six vertices on the ground. Never make a constraint hold by translating the result |
+| Crowns and mounds bald on top, a skirt of leaves below (first look through an engine; every gate green) | shell leaves placed on an ellipsoid envelope: buried where a lobe reached it, hovering between lobes | `_on_lobes`: each leaf is cast from the crown's heart onto the lobes' outer surface |
+| Two hedge sections were the same drum (side silhouettes 99.9 % alike) | a perfect surface of revolution has no individuality; a first, under-sampled silhouette metric had reported them 26 % different | cut by hand in five ways per id — batter (0.72–0.98), shoulder height, how square the shoulder is, a bulging side, an uneven top a little out of level: over 30 ids the most alike pair is 97.5 % alike, the median 92.5 %. A metric needs a case whose answer is known, and a gate over ids needs enough ids to state a distribution (five fixed ids had said "≤ 0.95") |
 
 ## 8. Owner taste log (append-only, newest last)
 
