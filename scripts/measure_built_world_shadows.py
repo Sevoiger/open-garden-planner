@@ -18,7 +18,7 @@ What is compared, for one item at a sun elevation:
 
 and two numbers: the 3D area divided by the 2D area, and the intersection over
 union (IoU) of the two. The truth gate "Shadows" (``ogp-lush-cinematic`` §1,
-IoU >= 0.90) is defined on a solid box caster, where both models are the same
+IoU >= 0.85) is defined on a solid box caster, where both models are the same
 solid. The built world departs from the prism in four stated ways, and this table
 is what each costs:
 

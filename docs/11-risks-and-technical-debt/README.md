@@ -1108,6 +1108,58 @@ passed the tests that only looked at one number.
   third field is named from now on; the shadow functions still accept a bare pair (the spike's
   probes pass one) and treat it as standing on the ground.
 
+Found by the senior review's first round, in code whose tests were all green:
+
+- **A link is not a location.** The first cut lifted a plant onto its bed's soil whenever
+  `parent_bed_id` named a raised bed. But the app keeps that link as bookkeeping: it is evaluated
+  when a plant is created or dropped and by nothing else, and `set_parent_bed` sets it on purpose
+  without containment. Shrink a raised bed away from its plant and the link stays — the plant on
+  the lawn then cast from 38 cm, and at a 15° sun its shadow began 141.8 cm away from it, with
+  111.8 cm of lit ground in between. New wrong output in the shipped overlay and heatmap, from a
+  change whose golden proved "nothing on the ground moved" (true — and beside the point). Fix:
+  `item_base_cm` lifts only when the link holds AND the item's centre is inside the parent's
+  shape, with the app's own point-in-bed construct, extracted once
+  (`footprints.centre_is_inside`). Pinned by
+  `tests/integration/test_scene3d_base_stacking.py::TestTheLinkAloneNeverLifts`. *Before keying
+  geometry on a relation, find out when the relation is re-evaluated — here: when a plant is
+  created and when one is dropped, never when a bed changes.*
+- **"Bit-identical" has to say on which machine.** The golden compares exactly only on win32;
+  the CI test jobs run on Linux, where the gate is structure plus 2e-3 cm. The ADR said
+  "bit-identical, by construction and by proof". The proof that holds everywhere is a different
+  test: the released module kept as an oracle next to today's (§8.10.4). *A claim about
+  exactness names the platform, or it is the weakest platform's claim.*
+- **"The body is wider" was reasoning; the measurement said the opposite for three of five fence
+  styles.** The ADR compared a 3 cm stroke with 9 cm posts and concluded that 3D shadows are
+  wider. Projecting the meshes onto the ground: a picket fence casts 0.67–0.70 of the 2D strip's
+  shadow, a metal fence 0.19–0.24, a chain-link fence 0.13–0.19 — fences are mostly air, and the
+  2D model casts a solid strip. Walls, stone-wall and hedge fences ARE wider (1.04–1.37). The
+  table is now produced by a committed script and held by a test.
+- **A mitre limit is not a bevel.** `MITER_LIMIT = 4` cut a hairpin's mitre at four offsets: a
+  116 cm eave spike on an acute-triangle house, 76 cm of coping on a hairpin wall — and the
+  footprint test's √2 bound only ever saw right angles. Fix: bevel beyond 2 offsets on the side
+  where the edges run apart (`BEVEL_BEYOND`); keep the true intersection where they meet.
+  Acute triangles and hairpins are in the matrix now. *A containment bound proven for the
+  corners in the test matrix says nothing about the corners that are not in it.*
+- **A mirrored name set without a guard chooses for the names it does not know.** The fence
+  builder's own list of five fence styles sent every other value to the picket fence — a path
+  style, and any fence style added to the 2D table later. Fix: one dispatch (`builders/lines.py`),
+  a plain panel for what no builder knows, and the mirror pinned against the 2D table. The
+  container material names are imported instead of retyped, and the nominal height asks the 2D
+  resolver instead of keeping a third copy of the container set.
+- **A lip the plan does not hold lowered the plan's soil by 2 cm.** The 2 cm soil drop under a
+  rim suits a raised bed, whose height is a rim. A container's height is its soil FILL height —
+  the resolver says so in a comment marked "known simplification". Applying the drop there put
+  the plant under the plan's own soil level. Fix: `soil_surface_cm(type, height)` — at the
+  height for a container, 2 cm under the rim for a bed — and the drop is documented as the
+  assumption it is, with its effect on shadows (7.5 cm at a 15° sun).
+- **A tuple's third element is whatever its maker meant.** `compute_scene_shadows` read
+  `caster[2]` as a base for any sequence longer than two. Nothing passed one — yet. Fix:
+  `caster_fields` unpacks by type and refuses everything but a `ShadowCaster` and an exact pair.
+- **A budget raised to make a loaded machine pass stops being a budget.** The build budgets went
+  from 40 / 60 to 60 / 90 ms in the last commit of the first cut, although the loaded medians it
+  quoted were under the old ones. With the ×3 CI factor a per-vertex Python loop would have
+  passed. They are back, and a clock-free call count stands next to them (§8.10.4).
+
 ### CI/release hardening: locked metadata also contains the application version
 
 A version-only edit to `pyproject.toml` makes `uv.lock` stale. The measured probe failed

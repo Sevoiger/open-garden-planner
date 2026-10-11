@@ -107,15 +107,36 @@ def test_a_nominal_section_casts_a_wider_shadow_the_higher_the_sun(name: str) ->
     row = _rows()[name]
     assert row.ratio[0] < row.ratio[1] < row.ratio[2]  # type: ignore[attr-defined]
     assert min(row.ratio) > 1.0  # type: ignore[attr-defined]
-    assert row.iou[0] >= 0.9 > row.iou[2]  # type: ignore[attr-defined]  # fine at 15°, not at 60°
+    # over the box gate at a low sun, under it at a high one
+    assert row.iou[0] >= BOX_GATE_IOU > row.iou[2]  # type: ignore[attr-defined]
 
 
-def test_no_built_world_kind_but_the_prisms_meets_the_box_gate_everywhere() -> None:
-    """The truth gate's IoU >= 0.90 is defined on a solid box caster. Which kinds meet
-    it at all three elevations is a fact the 3D reviewer needs before measuring:
-    the prisms and the two hedges; no building, no pot, no styled line."""
-    meets = {name for name, row in _rows().items() if min(row.iou) >= 0.9}  # type: ignore[attr-defined]
-    assert meets == {*PRISMS, "hedge (polygon)", "hedge (section)"}
+#: The truth gate "Shadows" of ``ogp-lush-cinematic`` §1: IoU of a BOX caster's engine
+#: shadow against the analytic 2D shadow.
+BOX_GATE_IOU = 0.85
+
+
+def test_which_kinds_meet_the_box_gate_at_every_elevation() -> None:
+    """The truth gate (IoU >= 0.85) is defined on a solid box caster. Which built-world
+    kinds would meet it at all three elevations is a fact the 3D reviewer needs before
+    measuring: the prisms, the two hedges and the round tub — no building, no terracotta
+    pot, no wall and no styled fence."""
+    meets = {name for name, row in _rows().items() if min(row.iou) >= BOX_GATE_IOU}  # type: ignore[attr-defined]
+    assert meets == {*PRISMS, "hedge (polygon)", "hedge (section)", "round tub"}
+    below = {name: min(row.iou) for name, row in _rows().items() if name not in meets}  # type: ignore[attr-defined]
+    assert max(below.values()) < BOX_GATE_IOU - 0.01  # none of the others is a borderline case
+
+
+def test_the_gate_s_number_is_the_skill_s() -> None:
+    """Both skill trees state the gate and now list the built-world kinds next to it."""
+    root = SCRIPT.parents[1]
+    for tree in (".claude", ".agents"):
+        text = (root / tree / "skills" / "ogp-lush-cinematic" / "SKILL.md").read_text(encoding="utf-8")
+        row = next(line for line in text.splitlines() if line.startswith("| Shadows |"))
+        assert "IoU ≥ 0.85" in row and "box caster" in row
+        assert "scripts/measure_built_world_shadows.py" in row
+        for kind in ("picket", "chain-link", "wall", "house", "pot"):
+            assert kind in row, (tree, kind)
 
 
 def test_the_stroke_widths_are_the_2d_presets() -> None:

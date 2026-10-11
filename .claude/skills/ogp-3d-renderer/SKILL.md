@@ -26,9 +26,13 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   driven by `SceneSync`; builders are tested against `RecordingSink` with no GPU.
 - **The production builders are `core/scene3d/builders/`** (L1.6, ADR-054 addendum):
   `production_registry()` returns the `BuilderRegistry` the wiring hands to `SceneSync`. Their
-  rules (the top is the height by construction, polylines from the centre line, tinted parts,
-  the mirrored palette) and the how-to are §8.26.6; a record's `transform.base_cm` — where a
-  plant stands on its bed — reaches the engine through `engine_pose`, never through a mesh.
+  rules (the top is the height by construction, polylines from the centre line — `lines.py`
+  decides what a fence or wall line becomes, an unknown style is a plain panel — corners
+  bevelled beyond a mitre of two offsets, tinted parts, the mirrored palette) and the how-to
+  are §8.26.6; a record's `transform.base_cm` — where a plant stands on its bed — reaches the
+  engine through `engine_pose`, never through a mesh. Their shadows are NOT the 2D model's:
+  the measured table (`scripts/measure_built_world_shadows.py`) is in §8.26.6 and next to the
+  Shadows gate of `ogp-lush-cinematic` §1.
 
 ## 2. PyQt6 6.11 binding facts
 

@@ -50,13 +50,20 @@ description: >
 >
 > **A caster has a base since Phase 17 L1.6 (ADR-037 addendum "base stacking").**
 > The shared caster is `core/shadow_geometry.ShadowCaster(footprint, height_cm, base_cm)`:
-> a plant on the soil of a raised bed or container casts from that soil
-> (`core/object_height.standing_base_cm` — the parent's height minus the 2 cm soil drop),
-> so its shadow starts, and its tip lies, `base / tan α` further from the sun. Where the
-> text below says `(polygon, height)`, read `ShadowCaster`. A caster on the ground is
-> bit-identical to the Phase 14 shadows — pinned by
-> `tests/integration/test_shadow_caster_golden.py`; the definition and its proofs are in
-> `tests/unit/test_shadow_caster_base.py`; §8.20 has the worked example.
+> a plant that is LINKED to a raised bed or container (`parent_bed_id`) AND whose centre
+> lies inside it casts from that parent's soil (`ui/canvas/footprints.item_base_cm` →
+> `core/object_height.standing_base_cm`: 2 cm under a bed's rim — an assumption — and AT a
+> container's height, which is its soil fill height), so its shadow starts, and its tip
+> lies, `base / tan α` further from the sun. The link alone never lifts: the app does not
+> keep it geometric (a bed resized away from its plant keeps the link). Where the text
+> below says `(polygon, height)`, read `ShadowCaster`; the shadow functions take a
+> `ShadowCaster` or an exact `(footprint, height)` pair and raise `TypeError` for anything
+> else. A caster on the ground runs the Phase 14 code unchanged — proven on every platform
+> against the released v1.29.10 module kept as an oracle
+> (`tests/unit/test_shadow_caster_base.py::TestTheGroundPathIsTheReleasedCode`); the golden
+> `tests/integration/test_shadow_caster_golden.py` pins the absolute numbers, bit for bit
+> on win32 only, to 2e-3 cm on Linux. §8.20 has the worked example, the ADR the known
+> limits (a bed drawn round a plant, a trellis in a raised bed, a pot on a bed).
 
 **Status of the inventory below (2026-07-04):** Everything under "EXISTS (verified)"
 was read from the repo at v1.23.0 (post-US-D1.3). Items marked **TO BUILD** were
