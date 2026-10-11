@@ -899,7 +899,8 @@ FENCES: dict[str, tuple[list[tuple[float, float]], int, int]] = {
 class TestClosedStrokes:
     """Review P1-1. A closed fence's stroke is an outer ring and a HOLE. The first
     contract put both into ``footprints``; the default builder extruded both; the
-    result was an 80 m² slab at fence height — 44 times the fence — with an
+    result was a slab at fence height over the whole garden — 81.8 m² of ground
+    where the fence stands on 3.6 m², under two caps of 160 m² together — with an
     inside-out inner wall, and G4, G7 and ``verify_builder`` all passed, because
     none of them asked how much ground the solid covers. These tests ask."""
 
