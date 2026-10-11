@@ -310,8 +310,10 @@ def test_a_late_qt_message_cannot_abort_the_process(tmp_path: Path, mode: str) -
     assert "survived" in proc.stdout
 
 
-def test_installing_hands_back_the_previous_handler(qtbot) -> None:  # noqa: ARG001
-    """A render inside the running app must put the app's own message handling back."""
+def test_a_recorder_listens_in_and_then_steps_aside(qtbot) -> None:  # noqa: ARG001
+    """A render inside the running app (or inside a test driver's own recorder) must not
+    steal messages: whoever listened before still hears every one, and gets its
+    handler back afterwards."""
     from PyQt6.QtCore import qInstallMessageHandler, qWarning
 
     from open_garden_planner.ui.view3d.quick3d.qt_messages import install, uninstall
@@ -331,4 +333,24 @@ def test_installing_hands_back_the_previous_handler(qtbot) -> None:  # noqa: ARG
     finally:
         qInstallMessageHandler(before)
     assert recorder.warnings == ["warning: inside the render"]
-    assert seen == ["after the render"]
+    assert seen == ["inside the render", "after the render"]
+
+
+def test_nested_recorders_both_hear_an_error(qtbot) -> None:  # noqa: ARG001
+    """The render driver records a whole run while ``render_records`` records one frame:
+    a shader error inside the frame must reach both."""
+    from PyQt6.QtCore import qInstallMessageHandler, qWarning
+
+    from open_garden_planner.ui.view3d.quick3d.qt_messages import install, uninstall
+
+    quiet = qInstallMessageHandler(lambda *_args: None)  # keep the test's stderr clean
+    try:
+        whole_run, one_frame = QtMessages(), QtMessages()
+        first = install(whole_run)
+        second = install(one_frame)
+        qWarning(SHADER_PARSE)
+        uninstall(second)
+        uninstall(first)
+    finally:
+        qInstallMessageHandler(quiet)
+    assert len(one_frame.errors) == 1 and len(whole_run.errors) == 1

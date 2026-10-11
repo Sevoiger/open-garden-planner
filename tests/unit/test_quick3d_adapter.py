@@ -369,34 +369,66 @@ class TestStateAndTeardown:
         assert sink.state() == recording.state()
         assert sink.item("a") == recording.item("a")
 
-    def test_reset_leaves_the_engine_scene_empty(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+    def test_clear_leaves_the_engine_holding_nothing(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
         sink, scene = rig
         sink.begin()
         sink.add("a", (_prism(), _prism(5.0)), Transform(), RED)
         sink.add("b", (_prism(),), Transform(), RED)
         sink.set_sun(SunState(30.0, 100.0))
         sink.set_ground(GroundSpec(10.0, 20.0))
-        # no commit: reset must work from inside a broken transaction
-        sink.reset()
+        sink.clear()  # inside the open transaction: it aborts it
         assert scene.parts == [] and sink.item_ids() == ()
         assert scene.sun is None and scene.ground is None
         assert sink.sun is None and sink.ground is None and not sink.in_transaction
-        sink.begin()  # usable again
+        assert sink.state() == RecordingSink().state()
+
+    def test_clear_is_legal_at_any_time(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        sink.clear()                      # on a sink that never held anything
+        sink.clear()                      # twice
+        sink.begin()
+        sink.clear()                      # inside an empty transaction
+        assert not sink.in_transaction
+        sink.begin()
         sink.add("a", (_prism(),), Transform(), RED)
         sink.commit()
-        assert len(scene.parts) == 1
+        sink.clear()                      # outside a transaction, with content
+        assert scene.parts == [] and sink.item_ids() == ()
 
-    def test_an_engine_error_propagates_and_reset_cleans_up(self) -> None:
+    def test_clear_then_the_same_items_again_gives_fresh_models(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        """What ``SceneSync.reset()`` does: clear, then re-send everything. No Model and
+        no buffer object of the first round may come back (the re-attach trap)."""
+        sink, scene = rig
+        part = _prism()
+
+        def send() -> None:
+            sink.begin()
+            sink.add("a", (part,), Transform(east_cm=3.0), RED)
+            sink.set_sun(SunState(30.0, 100.0))
+            sink.set_ground(GroundSpec(10.0, 20.0))
+            sink.commit()
+
+        send()
+        first, state = scene.of("a")[0], sink.state()
+        sink.clear()
+        send()
+        (second,) = scene.of("a")
+        assert second is not first and not first.alive and second.alive
+        assert sink.state() == state and sink.geometry_uploads == 2
+        assert scene.sun is not None and scene.ground is not None
+
+    def test_an_engine_error_propagates_and_clear_cleans_up(self) -> None:
         """A sink never swallows: ``SceneSync`` must see the error to poison itself, and
-        ``reset()`` must then leave nothing half-built behind."""
+        ``clear()`` must then leave nothing half-built behind."""
         scene = FakeScene(fail_on_create=2)
         sink = Quick3DSink(scene)
         sink.begin()
         with pytest.raises(RuntimeError, match="engine refused"):
             sink.add("a", (_prism(), _prism(5.0), _prism(7.0)), Transform(), RED)
         assert len(scene.parts) == 1  # the first part was created before the failure
-        sink.reset()
-        assert scene.parts == [] and sink.item_ids() == ()
+        sink.clear()
+        assert scene.parts == [] and sink.item_ids() == () and not sink.in_transaction
 
 
 class TestThroughSceneSync:
@@ -436,7 +468,7 @@ class TestThroughSceneSync:
         sync.apply({"a": self._record("a", east=10.0)})
         assert scene.calls == [("pose", "a"), ("frame",)]
 
-    def test_a_failing_engine_poisons_the_sync_until_both_are_reset(self) -> None:
+    def test_a_failing_engine_poisons_the_sync_until_it_is_cleared_and_reset(self) -> None:
         scene = FakeScene(fail_on_create=2)
         sink = Quick3DSink(scene)
         sync = SceneSync(sink)
@@ -445,7 +477,9 @@ class TestThroughSceneSync:
         assert sync.poisoned
         with pytest.raises(SyncStateError):
             sync.apply({})
-        sink.reset()
+        # SceneSync.reset() calls sink.clear() once the L1.1 fix round lands; until then
+        # the owner tears both down — clear() twice is legal either way
+        sink.clear()
         sync.reset()
         scene.fail_on_create = None
         sync.apply({"a": self._record("a")})

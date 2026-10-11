@@ -163,13 +163,15 @@ def enable_graphics_info() -> None:
 
 
 def install(messages: QtMessages) -> Any:
-    """Route every Qt message through ``messages`` (and on to stderr when there is
-    one). Returns the handler that was installed before — give it to ``uninstall``."""
+    """Route every Qt message through ``messages``, then on to whoever listened
+    before (a recorder further out, the app's own handler) — or to stderr when
+    nobody did. Returns that previous handler: give it to ``uninstall``."""
     from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
 
     names = {QtMsgType.QtDebugMsg: "debug", QtMsgType.QtInfoMsg: "info",
              QtMsgType.QtWarningMsg: "warning", QtMsgType.QtCriticalMsg: "critical",
              QtMsgType.QtFatalMsg: "fatal"}
+    outer: list[Any] = [None]
 
     def handler(mode: Any, context: Any, text: str | None) -> None:
         category = getattr(context, "category", None) or ""
@@ -179,11 +181,15 @@ def install(messages: QtMessages) -> Any:
             category = ""
         kind = names.get(mode, "warning")
         messages.add(kind, text or "", category)
-        if sys.stderr is not None and kind != "debug":  # never raise in here: PyQt turns it into qFatal
-            with contextlib.suppress(Exception):
+        # never raise in here: PyQt turns an exception in a message handler into qFatal
+        with contextlib.suppress(Exception):
+            if outer[0] is not None:
+                outer[0](mode, context, text)
+            elif sys.stderr is not None and kind != "debug":
                 print(text, file=sys.stderr, flush=True)
 
-    return qInstallMessageHandler(handler)
+    outer[0] = qInstallMessageHandler(handler)
+    return outer[0]
 
 
 def uninstall(previous: Any = None) -> None:

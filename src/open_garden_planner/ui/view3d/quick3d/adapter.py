@@ -21,8 +21,10 @@ What the sink guarantees:
   counts every buffer handed to the engine, and neither call changes it.
 - **Errors are loud.** A protocol breach raises ``SinkProtocolError`` before the
   engine is touched; an engine error propagates (``SceneSync`` poisons itself).
-  After either, ``reset()`` destroys whatever exists and leaves the engine scene
-  empty.
+- **One teardown.** ``clear()`` destroys every Model with its geometry, forgets
+  the sun and the ground and closes any open transaction — legal at any time,
+  including inside a transaction an engine error broke. ``SceneSync.reset()``
+  calls it and then re-sends everything.
 
 GUI thread only, like everything that touches the scene.
 """
@@ -159,12 +161,15 @@ class Quick3DSink:
         """Engine Models the item has (parts without triangles have none)."""
         return sum(handle is not None for handle in self._items[item_id].handles)
 
-    def reset(self) -> None:
+    def clear(self) -> None:
         """Tear the engine scene down: no item, no sun, no ground, no transaction.
 
-        Call it together with ``SceneSync.reset()`` — on a document change and
-        after a ``SyncStateError``. Safe from any state, including the middle of
-        a transaction an engine error broke.
+        The tenth ``EngineSink`` method. Legal at any time: inside an open
+        ``begin``/``commit`` (it aborts the transaction — also one an engine
+        error broke), outside one, and on a sink that is empty already.
+        ``SceneSync.reset()`` calls it, then re-sends items, sun and ground. Every
+        Model is destroyed together with its geometry, so the items added
+        afterwards get fresh ones (the re-attach rule, ``ogp-3d-renderer`` §2).
         """
         for held in self._items.values():
             self._destroy(held)
@@ -194,7 +199,7 @@ class Quick3DSink:
         if item_id in self._items:
             raise SinkProtocolError(f"add(): item {item_id!r} is already in the sink")
         held = _Held(_checked(parts), transform, material, [])
-        self._items[item_id] = held  # before the engine is touched: reset() can clean up
+        self._items[item_id] = held  # before the engine is touched: clear() can clean up
         self._create(item_id, held)
 
     def remove(self, item_id: str) -> None:

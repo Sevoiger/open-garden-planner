@@ -21,6 +21,17 @@ from typing import Final
 _HEX: Final = re.compile(r"#[0-9a-fA-F]{6}")
 
 
+def linear_to_srgb_hex(rgb: tuple[float, float, float]) -> str:
+    """Linear rgb (clamped to 0..1) → ``#rrggbb`` — the inverse of
+    ``core.scene3d.srgb_to_linear`` (IEC 61966-2-1), to 8 bits."""
+    channels = []
+    for value in rgb:
+        clamped = min(max(value, 0.0), 1.0)
+        encoded = 12.92 * clamped if clamped <= 0.0031308 else 1.055 * clamped ** (1 / 2.4) - 0.055
+        channels.append(round(encoded * 255.0))
+    return "#{:02x}{:02x}{:02x}".format(*channels)
+
+
 @dataclass(frozen=True, slots=True)
 class Look:
     """One mood. Colours are ``#rrggbb`` sRGB unless the name says ``_linear``."""
@@ -58,6 +69,12 @@ class Look:
         if len(fill) != 3 or not all(math.isfinite(v) and v >= 0.0 for v in fill):
             raise ValueError(
                 f"Look.fill_linear must be three finite, non-negative numbers, got {self.fill_linear!r}")
+
+    @property
+    def fill_color(self) -> str:
+        """``fill_linear`` as the ``#rrggbb`` the engine's light takes (it linearises
+        colour properties itself)."""
+        return linear_to_srgb_hex(self.fill_linear)
 
 
 #: The L0 spike's noon anchor (``spike_q3d/runner.py``: ``SUN_NOON``,
