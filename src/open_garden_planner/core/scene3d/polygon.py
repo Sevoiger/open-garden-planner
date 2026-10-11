@@ -63,11 +63,6 @@ def cw(ring: Ring) -> Ring:
     return ring if ring_area(ring) <= 0.0 else ring[::-1]
 
 
-def perimeter(ring: Sequence[Sequence[float]]) -> float:
-    n = len(ring)
-    return sum(math.dist(ring[i], ring[(i + 1) % n]) for i in range(n))
-
-
 # ── predicates ────────────────────────────────────────────────────────────────
 
 

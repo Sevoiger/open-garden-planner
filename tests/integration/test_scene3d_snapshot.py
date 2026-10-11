@@ -1144,6 +1144,22 @@ class TestContainment:
             assert isinstance(snapshot_records(scene).skipped[0].error, ValueError)
         assert len(caplog.records) == 2
 
+    def test_the_memory_of_what_was_logged_is_bounded(
+        self, canvas: CanvasView, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """"Logged once" needs a memory; a session that sees many broken items must
+        not grow it without end. Past the bound it starts over — at worst a line
+        is repeated, never suppressed."""
+        monkeypatch.setattr(snapshot_module, "_REPORTED_MAX", 2)
+        scene = canvas.scene()
+        for index in range(3):
+            tree = CircleItem(100.0 + 100.0 * index, 100.0, 30.0, object_type=ObjectType.TREE)
+            scene.addItem(tree)
+            _break_species(tree)
+        with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
+            assert len(snapshot_records(scene).skipped) == 3
+        assert len(caplog.records) == 3 and len(snapshot_module._reported) <= 2
+
     def test_the_snapshot_is_a_dict_to_every_consumer(self, canvas: CanvasView) -> None:
         scene = canvas.scene()
         shed = _rectangle()

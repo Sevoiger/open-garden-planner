@@ -412,6 +412,37 @@ class TestDefaultBuilder:
         with pytest.raises(ValueError, match="not a simple polygon"):
             default_builder(record(shape="polygon", footprints=(lopsided,)))
 
+    @pytest.mark.parametrize(
+        "ring",
+        [((0.0, 0.0), (50.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)),
+         ((0.0, 0.0), (50.0, 0.0), (100.0, 0.0), (100.0, 50.0), (100.0, 100.0), (50.0, 100.0),
+          (0.0, 100.0), (0.0, 50.0)),
+         ((0.0, 0.0), (300.0, 0.0), (300.0, 100.0), (200.0, 100.0), (200.0, 300.0), (100.0, 300.0),
+          (100.0, 100.0), (0.0, 100.0)),
+         ((0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (30.0, 0.0), (15.0, 40.0)),
+         ((0.0, 0.0), (1000.0, 0.0), (1000.0, 0.001), (0.0, 0.001)),
+         ((0.0, 0.0), (0.01, 0.0), (0.01, 0.01), (0.0, 0.01))],
+        ids=["a vertex on an edge", "a vertex on every edge", "a T with a collinear run",
+             "three collinear and an apex", "a sliver", "a hundredth of a centimetre"],
+    )
+    def test_awkward_but_simple_rings_still_build_the_right_solid(self, ring) -> None:
+        """Refusing a ring that crosses itself must not cost the rings that are
+        merely awkward: vertices in a row along an edge (a vertex-edited polygon
+        has them), a sliver, a speck. Each builds, validates, and its cap is the
+        ring's area — ``plan_margin_cm=0.0``: nothing outside the footprint at all."""
+        rec = record(shape="polygon", footprints=(ring,))
+        (part,) = verify_builder(default_builder, rec, plan_margin_cm=0.0)
+        assert cap_area(part.mesh) == pytest.approx(rec.plan_area_cm2, rel=1e-6)
+
+    def test_a_frame_whose_rings_have_collinear_vertices(self) -> None:
+        outer = ((0.0, 0.0), (100.0, 0.0), (200.0, 0.0), (200.0, 200.0), (0.0, 200.0))
+        hole = ((50.0, 50.0), (50.0, 150.0), (100.0, 150.0), (150.0, 150.0), (150.0, 50.0),
+                (100.0, 50.0))
+        rec = record(shape="polygon", footprints=(outer,), holes=((hole,),))
+        (part,) = verify_builder(default_builder, rec, plan_margin_cm=0.0)
+        assert cap_area(part.mesh) == pytest.approx(200.0 * 200.0 - 100.0 * 100.0, rel=1e-6)
+        assert_walls_face_away_from_the_solid(part.mesh, rec.regions)
+
     def test_output_does_not_depend_on_pose_material_or_name(self) -> None:
         verify_builder(default_builder, record())
         verify_builder(default_builder, record(height_cm=None))
