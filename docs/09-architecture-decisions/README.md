@@ -2530,9 +2530,10 @@ it stands after that round.
     `snapshot_records` returns a `Snapshot` — a `dict`, as before, with one attribute: `skipped`.
     An item whose record cannot be built (malformed metadata, geometry that is not finite: any
     exception is contained to that item) is left out, listed in `skipped` with its exception, and
-    logged once per item and kind of failure (the exception's type) — not once per edit. A second item carrying an id already
-    taken is skipped the same way, with a warning; the lower one wins. Items left out by design
-    (invisible, without an object type, covering no ground, a roof ridge) are not in `skipped`.
+    logged once per item and kind of failure (the exception's type) — not once per edit. A
+    second item carrying an id already taken is skipped the same way, with a warning; the lower
+    one wins. Items left out by design (invisible, without an object type, covering no ground,
+    a roof ridge) are not in `skipped`.
 13. **The truth principle: a beautiful wrong frame is a P0.** The contract is the gate table of
     `ogp-lush-cinematic` §1, and from this story on each gate that does not need pixels is a test
     a builder cannot pass by looking good:
@@ -2541,7 +2542,7 @@ it stands after that round.
     |---|---|
     | Height: mesh top = resolved height | `verify_builder` (±1 % built, ±3 % plants, or absolute cm); default prism exact |
     | Faces: the sun lights the face that faces it | `Mesh.validate` winding rule |
-    | Footprint / spread: the 2D footprint | golden fixture + `transform ∘ local == item_footprints`, over every ring |
+    | Footprint / spread: the 2D footprint | golden fixture + `transform ∘ local == item_footprints` over every ring: ≤ 1e-6 cm vertex for vertex — except a polyline's stroke polygon, which matches to pyclipper's grid (≤ 3e-3 cm; its centre line to 1e-6) |
     | Ground covered: the solid stands where the plan has something | `verify_builder` plan view (holes, overreach); default prism's cap area = footprint area |
     | North / nothing mirrored | `frame.SCENE_TO_ENGINE` has determinant +1; one mapping |
     | Sun: only `core/solar` | `SunState` carries angles, nothing art-directed |
