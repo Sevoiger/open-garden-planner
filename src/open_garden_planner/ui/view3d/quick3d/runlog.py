@@ -333,7 +333,7 @@ def parse_supervisor_arguments(arguments: list[str]) -> SupervisorOrder:
     except ValueError:
         raise ValueError("the deadline is not a number") from None
     if not (math.isfinite(seconds) and MIN_SUPERVISED_S <= seconds <= MAX_SUPERVISED_S):
-        raise ValueError(f"the deadline is not within {MIN_SUPERVISED_S:g} … {MAX_SUPERVISED_S:g} s")
+        raise ValueError(f"the deadline is not within {MIN_SUPERVISED_S:g} to {MAX_SUPERVISED_S:g} s")
     if not what.startswith("what:"):
         raise ValueError("the last argument does not name what is supervised")
     if log_path != "-":
@@ -351,10 +351,16 @@ def parse_supervisor_arguments(arguments: list[str]) -> SupervisorOrder:
 
 
 def _say(line: str) -> None:
-    """One line for whoever started the supervisor by hand; a windowed exe has no stderr."""
+    """One line for whoever started the supervisor by hand; a windowed exe has no stderr.
+
+    In ASCII, whatever the line holds: a console's code page need not have the
+    character, the print would raise, and the one line would be gone (a refusal once
+    contained an ellipsis; the frozen exe printed it as a byte no UTF-8 reader took).
+    """
     if sys.stderr is not None:
         with contextlib.suppress(Exception):
-            print(f"{SUPERVISOR_FLAG}: {line}", file=sys.stderr, flush=True)
+            text = f"{SUPERVISOR_FLAG}: {line}".encode("ascii", "backslashreplace").decode("ascii")
+            print(text, file=sys.stderr, flush=True)
 
 
 def supervisor_main(arguments: list[str]) -> int:
@@ -437,7 +443,7 @@ if sys.platform == "win32":
         called first. Raises (``ValueError`` for a deadline out of range, ``OSError`` when
         the event or the process cannot be created) — ``watchdog`` says so in its log."""
         if not (math.isfinite(seconds) and MIN_SUPERVISED_S <= seconds <= MAX_SUPERVISED_S):
-            raise ValueError(f"a supervisor's deadline is {MIN_SUPERVISED_S:g} … {MAX_SUPERVISED_S:g} s, "
+            raise ValueError(f"a supervisor's deadline is {MIN_SUPERVISED_S:g} to {MAX_SUPERVISED_S:g} s, "
                              f"not {seconds!r}")
         k32 = _kernel32()
         pid = os.getpid()

@@ -704,6 +704,26 @@ def test_a_supervisor_refuses_arguments_it_may_not_act_on(
     (line,) = capsys.readouterr().err.strip().splitlines()
     assert line.startswith("--selftest-supervisor: refused: ") and words in line
     assert "internal" in line and "Traceback" not in line
+    assert line.isascii(), "the one line must be printable on any console"
+
+
+def test_the_supervisors_one_line_survives_a_console_that_lacks_a_character(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Found with the frozen exe in round 3: a refusal held an ellipsis. Where the console's
+    code page has no such character the print raises — and the line, suppressed with the
+    exception, is gone. The line is written in ASCII, whatever it holds."""
+    import io
+
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    raw = io.BytesIO()
+    console = io.TextIOWrapper(raw, encoding="cp437", errors="strict", newline="\n")
+    monkeypatch.setattr(sys, "stderr", console)
+    runlog._say("refused: 0.5 \u2026 86400 s \u2014 \u00e4")  # noqa: SLF001
+    console.flush()
+    assert raw.getvalue() == b"--selftest-supervisor: refused: 0.5 \\u2026 86400 s \\u2014 \\xe4\n"
+    monkeypatch.setattr(sys, "stderr", None)  # a windowed exe: nothing to write to, nothing raised
+    runlog._say("refused: nobody listens")  # noqa: SLF001
 
 
 def test_a_supervisor_refuses_the_wrong_number_of_arguments_and_a_log_it_would_have_to_create(
