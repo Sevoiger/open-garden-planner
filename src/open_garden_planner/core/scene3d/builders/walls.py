@@ -3,10 +3,11 @@
 Geometry only: which polyline becomes a wall is decided in ``lines.py`` (a WALL
 without a style, and any line in the ``STONE_WALL`` style).
 
-Built from the polyline's centre line, never from the stroke polygon in
-``record.footprints``: a wall round a garden is a closed loop whose stroke
-polygon is an outer ring plus a hole, and extruding it would fill the garden
-with stone. A closed centre line is swept as a loop (mitred all round, no ends);
+Built from the polyline's centre line, never from the stroke outline in
+``record.footprints``: a wall round a garden is a closed loop whose stroke is an
+outer ring with the garden as its hole (``record.holes``). Extruding the outer
+ring alone would fill the garden with stone, and even the ring minus its hole
+is only the drawn line weight, not a wall. A closed centre line is swept as a loop (mitred all round, no ends);
 an open one gets two flat ends. A hairpin is bevelled on its outside
 (``primitives.BEVEL_BEYOND``), so the coping grows no spike.
 

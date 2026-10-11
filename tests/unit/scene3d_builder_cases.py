@@ -16,7 +16,16 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from open_garden_planner.core.scene3d import Material, Mesh, MeshPart, Params, Record, Transform
+from open_garden_planner.core.scene3d import (
+    Material,
+    Mesh,
+    MeshPart,
+    Params,
+    Record,
+    Transform,
+    ccw,
+    group_rings,
+)
 from open_garden_planner.core.shadow_geometry import circle_footprint, polyline_footprint
 
 Point = tuple[float, float]
@@ -58,7 +67,10 @@ SLIVER_RIDGE: tuple[Point, Point] = ((-400.0, 45.59), (0.0, 45.59))
 def polygon_record(kind: str, ring: Sequence[Point], height: float | None, *,
                    shape: str = "polygon", params: dict | None = None,
                    item_id: str = "item-1") -> Record:
-    return Record(item_id, kind, shape, (tuple(ring),), Transform(), Material(kind, (200, 180, 140, 255)),
+    """A polygon record as the snapshot makes it: ONE outer ring, counter-clockwise
+    whichever way the polygon was drawn."""
+    return Record(item_id, kind, shape, (ccw(tuple(ring)),), Transform(),
+                  Material(kind, (200, 180, 140, 255)),
                   height_cm=height, params=Params({"seed": item_id, **(params or {})}))
 
 
@@ -72,17 +84,21 @@ def circle_record(kind: str, radius: float, height: float | None, *, params: dic
 
 def line_record(kind: str, path: Sequence[Point], height: float | None, *, width: float = 3.0,
                 style: str | None = None, item_id: str = "item-1") -> Record:
-    """A polyline record as the snapshot makes it: the centre line in ``path`` and the
-    stroke polygon(s) in ``footprints`` — which, for a closed line, is an outer ring
-    AND a hole, the trap a builder must not step into."""
+    """A polyline record as the snapshot makes it (``snapshot._polyline_regions``): the
+    centre line in ``path``, and its stroke sorted into OUTER rings (``footprints``) and
+    the holes cut out of them (``holes``) — a closed line is one outer ring and one
+    hole, the garden it encloses. A builder builds from ``path``; nothing may be built
+    over the hole (``verify_builder`` checks it)."""
     line = tuple(path)
-    strips = tuple(tuple(ring) for ring in polyline_footprint(list(line), width))
+    regions = group_rings([tuple(ring) for ring in polyline_footprint(list(line), width)])
+    holes = tuple(region_holes for _outer, region_holes in regions)
     params: dict = {"seed": item_id}
     if style is not None:
         params["path_style"] = style
-    return Record(item_id, kind, "polyline", strips, Transform(),
+    return Record(item_id, kind, "polyline", tuple(outer for outer, _holes in regions), Transform(),
                   Material(kind, None, (139, 69, 19, 255)), height_cm=height, path=line,
-                  path_width_cm=width, params=Params(params))
+                  path_width_cm=width, params=Params(params),
+                  holes=holes if any(holes) else ())
 
 
 BENT_PATH: tuple[Point, ...] = ((-600.0, -200.0), (200.0, -200.0), (200.0, 300.0), (-100.0, 450.0))

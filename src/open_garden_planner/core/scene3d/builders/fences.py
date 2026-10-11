@@ -15,8 +15,9 @@ Geometry only: which polyline becomes which fence is decided in ``lines.py``.
 (The fifth fence style, ``STONE_WALL``, is the wall of ``walls.py``.)
 
 Everything is built from the polyline's centre line, segment by segment, never
-from the stroke polygon in ``record.footprints``: a fence round a garden is a
-closed loop, and its stroke polygon is a ring with a hole.
+from the stroke outline in ``record.footprints``: a fence round a garden is a
+closed loop — one outer ring with the garden as its hole (``record.holes``) —
+and nothing may stand over that hole (``build.verify_builder`` refuses it).
 
 Colour: in 2D every style paints from the item's own stroke colour (the style
 table only pre-sets it), so every part is ``tinted`` — pure white vertices the

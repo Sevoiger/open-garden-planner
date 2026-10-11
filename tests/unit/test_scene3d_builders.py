@@ -31,15 +31,20 @@ from open_garden_planner.core.object_height import (
     standing_base_cm,
 )
 from open_garden_planner.core.scene3d import (
+    BuilderContractError,
     BuilderRegistry,
+    Material,
     MeshPart,
     Params,
     Record,
     RecordingSink,
     SceneSync,
     SunState,
+    Transform,
     default_builder,
     normal_vs_winding,
+    plan_overreach,
+    prism_mesh,
     verify_builder,
 )
 from open_garden_planner.core.scene3d.builders import (
@@ -198,7 +203,9 @@ class TestGateG1:
     def test_contract_height_base_fit_budget(self, case: Case) -> None:
         record = case.record
         builder = builder_of(record)
-        parts = verify_builder(builder, record)  # deterministic, geometry-only, valid, top = height
+        # deterministic, geometry-only, valid, top = height to gate G1's 0.5 cm, and — the
+        # plan view — nothing over a closed line's hole, nothing far outside the footprint
+        parts = verify_builder(builder, record, height_tolerance_cm=HEIGHT_TOLERANCE_CM)
         height = record.height_cm if record.height_cm is not None else nominal_height_cm(record.kind)
         if height is None:
             assert parts == ()  # an in-ground bed: ground, no solid
@@ -580,14 +587,62 @@ FENCE_STYLES = ["WOODEN_FENCE", "METAL_FENCE", "CHAIN_LINK", "HEDGE_FENCE", "STO
 
 
 class TestPolylinesAreBuiltFromTheCentreLine:
-    def test_the_trap_is_real(self) -> None:
-        """A closed fence's stroke polygon is an outer ring and a hole; extruding
-        every ring of ``footprints`` (the default builder) fills the garden."""
+    def test_a_closed_line_s_record_is_an_outer_ring_and_a_hole(self) -> None:
+        """What the contract hands a builder for a fence round a garden (L1.1's fix):
+        ``footprints`` is the stroke's OUTER ring, the garden is its hole in ``holes``.
+        The outer ring alone would lid the garden — so no builder may read it as the
+        fence's shape — and the record's own region is the 3 cm line weight, not a
+        fence. (Before the fix the hole ring sat in ``footprints`` as if it were a
+        solid, and the default builder laid a slab over all 48 m².)"""
         record = line_record("FENCE", CLOSED_PATH, 120.0)
-        assert len(record.footprints) == 2
-        slab = [part.mesh for part in default_builder(record)]
-        assert covers(slab, 37.0, 11.0)  # the garden is under a lid …
-        assert plan_area(slab) == pytest.approx(803.0 * 603.0, rel=1e-3)  # … all 48 m² of it
+        assert len(record.footprints) == 1 and len(record.holes) == 1 and len(record.holes[0]) == 1
+        lid = prism_mesh(record.footprints, 120.0)  # the trap: the outer ring taken for the shape
+        assert covers([lid], 37.0, 11.0) and plan_area([lid]) == pytest.approx(803.0 * 603.0, rel=1e-3)
+        strip = [part.mesh for part in default_builder(record)]  # the honest default: outer minus hole
+        assert not covers(strip, 37.0, 11.0)
+        assert plan_area(strip) == pytest.approx(record.plan_area_cm2, rel=1e-6)
+        assert record.plan_area_cm2 == pytest.approx(path_length(CLOSED_PATH) * 3.0, rel=1e-3)
+
+    @pytest.mark.parametrize("kind", ["FENCE", "WALL"])
+    @pytest.mark.parametrize("style", [None, *("WOODEN_FENCE", "METAL_FENCE", "CHAIN_LINK",
+                                               "HEDGE_FENCE", "STONE_WALL", "GRAVEL_PATH")])
+    @pytest.mark.parametrize(("path", "stroke"), [
+        (CLOSED_PATH, 3.0),          # the last point is the first
+        (NEARLY_CLOSED_PATH, 10.0),  # a 5 cm gap that a 10 cm stroke bridges: its outline closes
+        (ACUTE_LOOP_PATH, 3.0),      # a loop with a 30° corner
+    ], ids=["closed", "nearly-closed-wide-stroke", "acute-loop"])
+    def test_nothing_is_built_over_the_hole(self, kind: str, style: str | None, path,
+                                            stroke: float) -> None:
+        """The plan-view gate of ``verify_builder`` (L1.1's fix), on every line solid:
+        of the hole a closed line encloses, at most half may lie under the solid.
+        Measured here against tighter, stated bounds: a post fence and a plain panel
+        stand on the stroke and cover next to none of it; a wall or a hedge is wider
+        than the stroke and covers the strip along the hole's edge — never the garden."""
+        record = line_record(kind, path, 120.0, width=stroke, style=style)
+        parts = verify_builder(REGISTRY.builder_for(kind), record, height_tolerance_cm=0.5)
+        assert record.holes != ()
+        beyond_cm2, hole_cover = plan_overreach(parts, record.regions, 50.0)
+        assert beyond_cm2 == 0.0  # nothing further than 50 cm from the line's stroke
+        wide = lines.solid_of(record) in ("STONE_WALL", "HEDGE_FENCE")
+        assert hole_cover <= (0.3 if wide else 0.03), hole_cover
+
+    def test_a_gap_wider_than_the_stroke_leaves_no_hole_in_the_record(self) -> None:
+        """A 5 cm gap in a 3 cm stroke: the outline does not close, the record has no
+        hole — and the garden is open all the same, because the fence is built from
+        the centre line (``test_a_loop_encloses_nothing`` probes it)."""
+        record = line_record("FENCE", NEARLY_CLOSED_PATH, 120.0)
+        assert record.holes == () and len(record.footprints) == 1
+        assert record.plan_area_cm2 == pytest.approx(path_length(NEARLY_CLOSED_PATH) * 3.0, rel=2e-3)
+
+    def test_the_gate_refuses_a_slab_over_the_garden(self) -> None:
+        """… and it IS a gate: a builder that takes the outer ring for the fence's
+        shape is refused, with the top at exactly the right height."""
+        def slab(record: Record) -> tuple[MeshPart, ...]:
+            return (MeshPart(prism_mesh(record.footprints, record.height_cm or 0.0), "vc", name="slab"),)
+
+        record = line_record("FENCE", CLOSED_PATH, 120.0)
+        with pytest.raises(BuilderContractError, match="hole"):
+            verify_builder(slab, record, height_tolerance_cm=0.5)
 
     @pytest.mark.parametrize("kind", ["FENCE", "WALL"])
     @pytest.mark.parametrize("style", [None, *FENCE_STYLES])
@@ -1054,3 +1109,82 @@ def test_the_whole_matrix_through_scene_sync_and_a_recording_sink() -> None:
     sink.clear_calls()
     assert sync.apply(records).is_empty and sink.calls == []  # nothing changed: nothing built
     assert sync.build_count == len(records)
+
+
+# ── records that are not one plain ring (L1.1's fix: a self-crossing polygon) ─
+
+
+BOW_TIE_LOBES = (((-300.0, -200.0), (0.0, 0.0), (-300.0, 200.0)),      # two triangles that met in
+                 ((300.0, 200.0), (0.0, 0.0), (300.0, -200.0)))         # a point: resolved into two
+
+
+def lobes_record(kind: str, height: float | None, **params: object) -> Record:
+    """What the snapshot hands a builder for a polygon drawn crossing itself: its
+    lobes as several outer rings (here two that do not touch: the clipper's grid
+    keeps them a hair apart)."""
+    lobes = tuple(tuple((x + shift, y) for x, y in lobe)
+                  for lobe, shift in zip(BOW_TIE_LOBES, (-1.0, 1.0), strict=True))
+    return Record("lobes", kind, "polygon", lobes, Transform(), Material(kind, (200, 180, 140, 255)),
+                  height_cm=height, params=Params({"seed": "lobes", **params}))
+
+
+class TestRecordsThatAreNotOnePlainRing:
+    """A HOUSE, bed, container or hedge drawn as a self-crossing polygon reaches the
+    builder as SEVERAL outer rings. No shape function builds on its first lobe alone:
+    the item gets the default prism of exactly its region."""
+
+    @pytest.mark.parametrize("kind", ["HOUSE", "GARAGE_SHED", "RAISED_BED", "CONTAINER", "WALL_PLANTER",
+                                      "CONTAINER_ROUND", "GARDEN_BED", "HEDGE_SECTION", "HEDGE_POLYGON"])
+    def test_several_lobes_are_the_default_prism(self, kind: str) -> None:
+        params = {"ridge": ((-300.0, 0.0), (300.0, 0.0))} if kind == "HOUSE" else {}
+        record = lobes_record(kind, 150.0, **params)
+        builder = builder_of(record)
+        assert builder.uses_the_default_prism(record)
+        parts = verify_builder(builder, record, height_tolerance_cm=0.5, plan_margin_cm=0.0)
+        assert parts == default_builder(record) and [part.name for part in parts] == ["prism"]
+        assert plan_area([parts[0].mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6)  # both lobes
+        assert float(positions(parts)[:, 2].max()) == 150.0 and builder.fit_scale(record) == 1.0
+        assert parts[0].tinted and parts[0].casts_shadow
+
+    @pytest.mark.parametrize("kind", ["HOUSE", "RAISED_BED", "HEDGE_POLYGON"])
+    def test_without_a_height_there_is_nothing(self, kind: str) -> None:
+        """The default prism has no nominal height to fall back on: no solid, as for any
+        item the default builder handles."""
+        record = lobes_record(kind, None)
+        assert built(record) == () and builder_of(record).raw(record) == ()
+
+    def test_a_ring_with_a_hole_is_the_default_prism_too(self) -> None:
+        outer = rectangle(400.0, 300.0)
+        hole = tuple(reversed(rectangle(200.0, 100.0)))  # clockwise
+        record = Record("ring", "RAISED_BED", "polygon", (outer,), Transform(),
+                        Material("RAISED_BED", (200, 180, 140, 255)), height_cm=40.0,
+                        params=Params({"seed": "ring"}), holes=((hole,),))
+        parts = verify_builder(builder_of(record), record, height_tolerance_cm=0.5)
+        assert parts == default_builder(record)
+        assert not covers([parts[0].mesh], 37.0, 11.0)  # the hole stays open
+
+    def test_one_plain_ring_is_what_every_matrix_record_is(self) -> None:
+        for case in CASES:
+            if case.record.shape != "polyline":
+                assert not builder_of(case.record).uses_the_default_prism(case.record), case.name
+        closed = line_record("FENCE", CLOSED_PATH, 120.0)  # a line with a hole is still a line
+        assert not builder_of(closed).uses_the_default_prism(closed)
+
+
+def test_no_builder_uses_numpy_s_default_bit_generator() -> None:
+    """``np.random.default_rng`` picks whatever bit generator numpy currently prefers;
+    a change there would reshuffle every seeded hedge. The builders name theirs."""
+    import ast
+    from pathlib import Path
+
+    package = Path(hedges.__file__).parent
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        assert "default_rng" not in names, path.name
+        assert "RandomState" not in names and "seed" not in {
+            node.func.attr for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "random"}, path.name
+    source = (package / "hedges.py").read_text(encoding="utf-8")
+    assert "np.random.Generator(np.random.PCG64(seed))" in source

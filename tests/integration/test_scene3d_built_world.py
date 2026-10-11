@@ -21,12 +21,14 @@ against Qt Quick 3D).
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 from PyQt6.QtCore import QPointF
 
+from open_garden_planner.core import ProjectManager
 from open_garden_planner.core.commands import (
     ChangePropertyCommand,
     CreateItemCommand,
@@ -42,7 +44,9 @@ from open_garden_planner.core.scene3d import (
     SceneDiff,
     SceneSync,
     default_builder,
+    plan_overreach,
     pose_points,
+    verify_builder,
 )
 from open_garden_planner.core.scene3d.builders import (
     BUILT_WORLD_KINDS,
@@ -54,6 +58,7 @@ from open_garden_planner.core.scene3d.builders import (
     production_registry,
 )
 from open_garden_planner.core.tools import ToolType
+from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
 from open_garden_planner.ui.canvas.footprints import item_footprints
 from open_garden_planner.ui.canvas.geometry_apply import apply_rotation, build_move_vertex_command
@@ -61,7 +66,8 @@ from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
-from open_garden_planner.ui.view3d.snapshot import snapshot_records
+from open_garden_planner.ui.canvas.sun_shadow_controller import collect_shadow_casters
+from open_garden_planner.ui.view3d.snapshot import SkippedItem, snapshot_records
 
 BEGIN, COMMIT = ("begin", None), ("commit", None)
 STYLES = (PathFenceStyle.WOODEN_FENCE, PathFenceStyle.METAL_FENCE, PathFenceStyle.CHAIN_LINK,
@@ -512,3 +518,111 @@ class TestRidgeIsTheLiveRidge:
         assert len(toward) and len(away)
         assert float((toward @ sun).min()) > 0.9  # square on to a 30° sun
         assert float((toward @ sun).min()) > float((away @ sun).max()) + 0.5
+
+
+# ── the committed edge-case plan (L1.1's fix) through the production builders ─
+
+
+EDGE_PLAN = Path(__file__).resolve().parents[1] / "fixtures" / "plans" / "scene3d_edge_cases.ogp"
+
+
+@pytest.fixture
+def edge_plan(qtbot: Any) -> tuple[CanvasScene, dict[str, Record]]:  # noqa: ARG001
+    scene = CanvasScene()
+    ProjectManager().load(scene, EDGE_PLAN)
+    skipped: list[SkippedItem] = []
+    records = snapshot_records(scene, skipped=skipped)
+    assert skipped == []
+    return scene, records
+
+
+def _named(records: dict[str, Record], name: str) -> Record:
+    (record,) = [r for r in records.values() if r.name == name]
+    return record
+
+
+class TestTheEdgeCasePlan:
+    """``scene3d_edge_cases.ogp`` holds what the bench plans lack: a turned house with
+    its ridge, a closed, a nearly closed and an open fence, a turned raised bed with
+    plants, a pot with a plant, a concave hedge. The production builders and the base
+    rule over all of it."""
+
+    def test_every_built_world_item_passes_the_gate(self, edge_plan) -> None:
+        _scene, records = edge_plan
+        registry = production_registry()
+        built_kinds = []
+        for record in records.values():
+            if record.kind not in BUILT_WORLD_KINDS:
+                continue
+            parts = verify_builder(registry.builder_for(record.kind), record, height_tolerance_cm=0.5)
+            assert parts and record.height_cm is not None, record.name
+            top = max(float(part.mesh.positions[:, 2].max()) for part in parts)
+            assert top == float(np.float32(record.height_cm)), record.name
+            assert min(float(part.mesh.positions[:, 2].min()) for part in parts) == 0.0
+            built_kinds.append(record.kind)
+        assert sorted(built_kinds) == ["CONTAINER_ROUND", "FENCE", "FENCE", "FENCE", "HEDGE_POLYGON",
+                                       "HOUSE", "RAISED_BED"]
+        sync = SceneSync(RecordingSink(), registry, validate=True)
+        sync.apply(records)
+        assert sync.failures == {}
+
+    def test_the_fences_enclose_nothing(self, edge_plan) -> None:
+        """A fence drawn round 80 m² of garden is 36 m of fence in 3D: nothing over the
+        hole its stroke encloses, closed or 2 cm short of closed."""
+        _scene, records = edge_plan
+        registry = production_registry()
+        closed, nearly, open_u = (_named(records, name) for name in
+                                  ("Closed fence", "Nearly closed fence", "Open U fence"))
+        assert closed.holes != () and nearly.holes != () and open_u.holes == ()
+        for record in (closed, nearly, open_u):
+            parts = registry.build(record)
+            assert [part.name for part in parts] == ["fence"]  # no style: the default fence
+            beyond_cm2, hole_cover = plan_overreach(parts, record.regions, 50.0)
+            assert beyond_cm2 == 0.0 and hole_cover <= 0.01, (record.name, hole_cover)
+            plan = np.concatenate([part.mesh.positions[:, :2] for part in parts]).astype(np.float64)
+            path = np.asarray(record.path)
+            start, end = path[:-1], path[1:]
+            step = end - start
+            t = np.clip(((plan[:, None, :] - start[None]) * step[None]).sum(-1) / (step * step).sum(-1), 0, 1)
+            away = np.linalg.norm(plan[:, None, :] - (start[None] + t[..., None] * step[None]), axis=2).min(axis=1)
+            # the posts are as wide as the 10 cm stroke: no vertex beyond their half diagonal
+            assert float(away.max()) <= 10.0 / 2.0 * math.sqrt(2.0) + 1e-3
+
+    def test_plants_stand_on_the_turned_bed_and_in_the_pot(self, edge_plan) -> None:
+        scene, records = edge_plan
+        bed, pot = _named(records, "Turned raised bed"), _named(records, "Pot")
+        assert bed.transform.rotation_deg == 30.0 and (bed.height_cm, pot.height_cm) == (40.0, 30.0)
+        in_bed = [r for r in records.values() if r.parent_id == bed.item_id]
+        (in_pot,) = [r for r in records.values() if r.parent_id == pot.item_id]
+        assert len(in_bed) == 2
+        assert [r.transform.base_cm for r in in_bed] == [38.0, 38.0]  # 2 cm under the bed's rim
+        assert in_pot.transform.base_cm == 30.0                       # AT the pot's fill height
+        # … where the bed's and the pot's meshes have their soil
+        registry = production_registry()
+        soil = np.asarray(palette.SOIL.linear, dtype=np.float32)
+        for parent, level in ((bed, 38.0), (pot, 30.0)):
+            for part in registry.build(parent):
+                mine = np.isclose(part.mesh.colors, soil, atol=1e-6).all(axis=1)
+                if mine.any():
+                    assert float(part.mesh.positions[mine][:, 2].max()) == level
+        # the 2D casters carry the same bases, and nothing else is raised
+        casters = collect_shadow_casters(scene)
+        assert sorted(c.base_cm for c in casters if c.base_cm > 0.0) == [30.0, 38.0, 38.0]
+        assert sum(1 for r in records.values() if r.transform.base_cm > 0.0) == 3
+
+    def test_the_turned_house_has_its_roof_on_the_live_ridge(self, edge_plan) -> None:
+        scene, records = edge_plan
+        house_record = _named(records, "House")
+        assert house_record.transform.rotation_deg == 25.0 and len(house_record.footprints) == 1
+        items = {str(i.item_id): i for i in scene.items() if hasattr(i, "item_id")}
+        house = items[house_record.item_id]
+        ridge = items[str(house.metadata["ridge_item_id"])]
+        assert str(ridge.item_id) not in records  # a ridge has no record: it is the house's param
+        sink = RecordingSink()
+        SceneSync(sink, production_registry(), validate=True).apply(records)
+        held = sink.item(house_record.item_id)
+        assert [part.name for part in held.parts] == ["walls", "roof"]
+        line = _ridge_in_scene(held, float(house_record.height_cm or 0.0))
+        expected = _expected_live_ridge(house, ridge, buildings.HOUSE_ROOF.overhang_cm)
+        worst = max(float(np.linalg.norm(line - point, axis=1).min()) for point in expected)
+        assert len(line) == 2 and worst <= 0.1  # gate G2

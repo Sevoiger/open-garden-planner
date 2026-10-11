@@ -147,7 +147,9 @@ def leaf_shell(shell: Shell, height_cm: float, seed: int, *, tinted: bool) -> Me
     triangles, normals = shell
     if not len(triangles) or height_cm <= 0.0:
         return Mesh.empty()
-    rng = np.random.default_rng(seed)
+    # the bit generator by NAME: numpy may change what ``default_rng`` picks, and that
+    # would reshuffle every hedge in every plan
+    rng = np.random.Generator(np.random.PCG64(seed))
     cross = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
     area = np.linalg.norm(cross, axis=1) / 2.0
     total = float(area.sum())

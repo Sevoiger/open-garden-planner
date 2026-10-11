@@ -21,9 +21,22 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   goes through a QWidget overlay with `self.tr()` (§8.3).
 - `spike_q3d/meshes.py` is **Qt-free numpy** (it graduates into `core/`).
 - **`core/scene3d/` is Qt-free** (standard library + numpy; AST scan in
-  `tests/unit/test_scene3d_contract.py`). It is the production side of the engine boundary since
+  `tests/unit/test_scene3d_contract.py`). That is a rule about its source — no module there uses
+  Qt — not about the interpreter: importing the package runs `core/__init__.py`, which loads
+  PyQt6 for other `core` modules. It is the production side of the engine boundary since
   L1.1 (ADR-054, §8.26.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
   driven by `SceneSync`; builders are tested against `RecordingSink` with no GPU.
+- **`EngineSink` has ten methods, and `clear()` is the one an adapter gets wrong.** After
+  `clear()` the engine holds nothing — no items, no sun, no ground, no open transaction — and it
+  must work at any time: inside a transaction (abort it), on an empty scene, and after one of the
+  adapter's own calls failed half way. `SceneSync.reset()` recovers through it and through
+  nothing else. Test an adapter's recovery the way `tests/unit/test_scene3d_sync.py` tests the
+  double: fail a call in mid-transaction, `reset()`, apply, and compare with a from-scratch
+  apply (`sync.expected_state()`).
+- **A record's `footprints` are outer rings only; its `holes` are cut out of them.** A closed
+  fence is one outer ring and one hole. Anything that gives a footprint area — a mesh, the ground
+  bake, a pick shape — iterates `record.regions`. `verify_builder` refuses a solid built over a
+  hole.
 - **The production builders are `core/scene3d/builders/`** (L1.6, ADR-054 addendum):
   `production_registry()` returns the `BuilderRegistry` the wiring hands to `SceneSync`. Their
   rules (the top is the height by construction, polylines from the centre line — `lines.py`

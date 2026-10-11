@@ -55,6 +55,7 @@ from open_garden_planner.core.scene3d import (  # noqa: E402
     Params,
     Record,
     Transform,
+    group_rings,
 )
 from open_garden_planner.core.scene3d.builders import production_registry  # noqa: E402
 from open_garden_planner.core.shadow_geometry import (  # noqa: E402
@@ -104,12 +105,13 @@ def _rectangle(width: float, depth: float) -> Ring:
 
 def _line(kind: str, style: str | None, stroke_cm: float, height_cm: float) -> Record:
     """A polyline record as the snapshot makes it: centre line, stroke width, and
-    the stroke strip — the 2D caster's footprint — as its footprint."""
-    strips = tuple(tuple(ring) for ring in polyline_footprint(list(LINE), stroke_cm))
+    the stroke strip — the 2D caster's footprint — as its (outer) footprint ring."""
+    regions = group_rings([tuple(ring) for ring in polyline_footprint(list(LINE), stroke_cm)])
+    assert len(regions) == 1 and not regions[0][1]  # an open straight line: one ring, no hole
     params: dict[str, object] = {"seed": f"{kind}-{style}"}
     if style is not None:
         params["path_style"] = style
-    return Record(f"{kind}-{style}", kind, "polyline", strips, Transform(),
+    return Record(f"{kind}-{style}", kind, "polyline", (regions[0][0],), Transform(),
                   Material(kind, None, (139, 69, 19, 255)), height_cm=height_cm, path=LINE,
                   path_width_cm=stroke_cm, params=Params(params))
 

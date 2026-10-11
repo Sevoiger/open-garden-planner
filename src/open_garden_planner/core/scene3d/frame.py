@@ -101,6 +101,25 @@ def engine_to_scene_vectors(vectors: ArrayLike) -> NDArray[Any]:
     return engine_to_scene_points(vectors)
 
 
+def sun_direction_scene(
+    elevation_deg: float, azimuth_deg: float
+) -> tuple[float, float, float]:
+    """Unit vector pointing AT the sun, scene frame (E, N, up).
+
+    ``(cos α sin Az, cos α cos Az, sin α)`` — the US-E6 gate pins Berlin
+    Jun-21 noon at (−0.2056, −0.4675, 0.8598). The engine's LIGHT direction
+    is the negation (light travels away from the sun), mapped by
+    ``to_engine_frame`` at the adapter boundary.
+    """
+    elev = math.radians(elevation_deg)
+    az = math.radians(azimuth_deg)
+    return (
+        math.cos(elev) * math.sin(az),
+        math.cos(elev) * math.cos(az),
+        math.sin(elev),
+    )
+
+
 def cos_sin(rotation_deg: float) -> tuple[float, float]:
     """``(cos θ, sin θ)``, exact at quarter turns (no ``cos(90°) = 6e-17`` dust)."""
     turn = rotation_deg % 360.0

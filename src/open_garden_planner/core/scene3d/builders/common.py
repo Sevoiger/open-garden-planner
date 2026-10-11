@@ -10,6 +10,11 @@ The truth rules of the built world live here, once:
   kind's nominal height as decoration and none of its parts casts a shadow —
   exactly as in 2D, where it casts none. A kind without a nominal height gets
   no solid at all.
+- **One plain ring, or the honest prism.** A shape function for a polygon,
+  rectangle, ellipse or circle builds on ONE outer ring. A record that holds
+  several (a polygon drawn crossing itself is resolved into its lobes) or a ring
+  with holes gets ``build.default_builder``'s prism of exactly that region —
+  never a house, a bed or a hedge on its first lobe alone.
 
 ``BuiltBuilder`` wraps a *shape function* ``(record, height_cm) -> parts`` into
 the ``Builder`` the registry wants and applies both rules.
@@ -24,8 +29,9 @@ from typing import Final, TypeAlias
 import numpy as np
 
 from ...object_height import effective_height_cm
+from ..build import default_builder
 from ..mesh import Mesh, MeshPart
-from ..record import Record
+from ..record import SHAPE_POLYLINE, Record
 from .primitives import F64, MIN_SEGMENT_CM, clean_path
 
 ShapeFunction: TypeAlias = Callable[[Record, float], tuple[MeshPart, ...]]
@@ -47,12 +53,21 @@ def centre_line(record: Record) -> tuple[F64, bool]:
     """A polyline record's centre line without repeated points, and whether it is
     a closed loop (its last point is its first — then the last point is dropped).
 
-    What every line solid is built from. Never ``record.footprints``: a fence
-    round a garden is a closed loop, and its stroke polygon is a ring with a hole.
+    What every line solid is built from. Never ``record.footprints``: those are
+    the outline of the STROKE — for a fence round a garden one outer ring, with
+    the garden as its hole in ``record.holes`` — the ground the 2D model treats
+    as built on, not the shape of a fence.
     """
     line = clean_path(record.path) if len(record.path) >= 2 else np.zeros((0, 2))
     closed = len(line) > 3 and float(np.linalg.norm(line[0] - line[-1])) <= MIN_SEGMENT_CM
     return (line[:-1] if closed else line), closed
+
+
+def has_one_plain_ring(record: Record) -> bool:
+    """True when the record's ground is ONE outer ring without a hole — what every
+    polygon-footprint shape function builds on. False for a self-crossing polygon
+    (its lobes are several outer rings) and for a ring with holes."""
+    return len(record.footprints) == 1 and not record.holes
 
 
 def top_cm(parts: Sequence[MeshPart]) -> float | None:
@@ -109,8 +124,15 @@ class BuiltBuilder:
             return record.height_cm
         return nominal_height_cm(record.kind)
 
+    def uses_the_default_prism(self, record: Record) -> bool:
+        """A polygon-footprint record that is not one plain ring: the shape function
+        cannot build on it honestly, the default prism of its region can."""
+        return record.shape != SHAPE_POLYLINE and not has_one_plain_ring(record)
+
     def raw(self, record: Record) -> tuple[MeshPart, ...]:
         """The shape function's parts, unfitted (``()`` when there is no height at all)."""
+        if self.uses_the_default_prism(record):
+            return default_builder(record)
         height = self.height_for(record)
         if height is None:
             return ()
@@ -122,6 +144,8 @@ class BuiltBuilder:
         return 1.0 if height is None else fit_scale(self.raw(record), height)
 
     def __call__(self, record: Record) -> tuple[MeshPart, ...]:
+        if self.uses_the_default_prism(record):
+            return default_builder(record)  # exact to the height by itself; nothing without one
         height = self.height_for(record)
         if height is None:
             return ()
@@ -132,8 +156,10 @@ class BuiltBuilder:
 
 
 def footprint_of(record: Record) -> tuple[tuple[float, float], ...]:
-    """The item's outer footprint ring (item-local), or ``()``. For a polygon,
-    rectangle, ellipse or circle that is its one ring. NEVER build a polyline
-    from this: its stroke polygon can come back as an outer ring plus a hole
-    (a fence round a garden) — use ``record.path``."""
+    """The item's one outer footprint ring (item-local, counter-clockwise), or
+    ``()``. For a polygon, rectangle, ellipse or circle — ``BuiltBuilder`` only
+    calls a shape function for a record with exactly one plain ring. NEVER build
+    a polyline from this: its ``footprints`` are the outline of its STROKE (a
+    fence round a garden: one outer ring, with the garden as a hole in
+    ``record.holes``) — a line is built from ``record.path``."""
     return record.footprints[0] if record.footprints else ()
