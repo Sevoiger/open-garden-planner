@@ -122,13 +122,19 @@ _SOIL_PARENT_TYPE_NAMES = frozenset(
 #: height (``soil_surface_cm``).
 SOIL_DROP_CM = 2.0
 
-#: A parent taller than this has no soil to stand on. It is the 3D scene
-#: contract's ``core/scene3d/record.MAX_LENGTH_CM`` (10 km) — mirrored, because
-#: this module serves the 2D app and does not import the 3D package, and pinned
-#: equal by a test. A parent beyond it gets no scene record, hence no solid; a
-#: plant must not stand where that solid would have been (it would float over
-#: nothing, or be refused with its parent). The same answer an infinite height
-#: always got.
+#: No base is derived from a parent height beyond this — as none is from an
+#: infinite one. That is all this bound says: a base is itself a length of a 3D
+#: scene record (``transform.base_cm``), and one derived from a taller parent
+#: would be out of the record's range, so the plant would lose its record over
+#: its parent's nonsense height. The number is the scene contract's
+#: ``core/scene3d/record.MAX_LENGTH_CM`` (10 km), mirrored — this module serves
+#: the 2D app and does not import the 3D package — and pinned equal by a test.
+#: It is NOT the rule "nothing stands on a parent the 3D scene does not hold":
+#: whether a parent has a record is the snapshot's knowledge, and
+#: ``ui/view3d/snapshot.snapshot_records`` settles that for every reason a parent
+#: can be left out (a bed 30 km wide has an ordinary height). In 2D a bed taller
+#: than this still casts while its plant casts from the ground — an oddity,
+#: stated here, of plans no garden has.
 MAX_PARENT_HEIGHT_CM = 1e6
 
 # height_source() return values (stable identifiers, not user-visible text).
@@ -234,8 +240,8 @@ def effective_height_cm(
 def soil_surface_cm(object_type: Any, height_cm: float | None) -> float:
     """Height above ground of the soil in a soil parent of that type, ``height_cm``
     tall. 0.0 without a usable height: none at all (an in-ground bed), not
-    positive, not finite, or beyond ``MAX_PARENT_HEIGHT_CM`` (a parent the 3D
-    scene cannot hold is not there).
+    positive, not finite, or beyond ``MAX_PARENT_HEIGHT_CM`` (no base is derived
+    from a height beyond the bound).
 
     Two kinds of soil parent, because the plan says two different things:
 

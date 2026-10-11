@@ -244,13 +244,19 @@ class TestTheOneRule:
     @pytest.mark.parametrize("height", [float("inf"), 1e6 + 1.0, 1e6 + 2.0, 1e6 + 3.0, 2e6])
     def test_a_parent_the_scene_cannot_hold_is_not_there(self, canvas: CanvasView,
                                                         height: float) -> None:
-        """Merge of 9944012: the contract holds no length beyond 10 km (``MAX_LENGTH_CM``),
+        """The HEIGHT axis. The contract holds no length beyond 10 km (``MAX_LENGTH_CM``),
         so a bed taller than that gets no record and is reported. Its plant is NOT taken
-        down with it, and does not float where the bed's soil would be: it stands on the
-        ground, in the record and in the 2D caster alike — a parent without a solid is
-        not there (the rule of a hidden parent). Measured before this rule: a bed of
-        10 km + 1 cm had no record and its plant a base of 999,999 cm; a bed of 20 km
-        had no record and neither had its plant."""
+        down with it and does not float where the bed's soil would be. Two rules act, and
+        each says only what it knows (review round 3, P2-3):
+
+        - ``object_height``: no base is derived from a height beyond the bound — such a
+          base would be out of the record's own range, and the plant would lose its
+          record over its bed's nonsense height (measured before: a 20 km bed had no
+          record and neither had its plant). This one acts in 2D too: the plant casts
+          from the ground, although the bed itself still casts there;
+        - ``snapshot_records``: an item whose parent got no record stands on the ground
+          (measured before: a bed of 10 km + 1 cm had no record, its plant a base of
+          999,999 cm) — ``test_a_parent_without_a_record_lifts_nothing`` for the rest."""
         from open_garden_planner.core.scene3d import MAX_LENGTH_CM
         from open_garden_planner.ui.view3d.snapshot import SkippedItem, SkipReason
 
@@ -270,6 +276,85 @@ class TestTheOneRule:
         assert skipped == [] and records[garden.bed_id].height_cm == MAX_LENGTH_CM
         assert records[garden.plant_id].transform.base_cm == MAX_LENGTH_CM - SOIL_DROP_CM
         assert garden.caster_base() == MAX_LENGTH_CM - SOIL_DROP_CM
+
+    @pytest.mark.parametrize("why", ["out of range: 30 km wide", "its record failed",
+                                     "its outline cannot be built"])
+    def test_a_parent_without_a_record_lifts_nothing(self, canvas: CanvasView, why: str,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+        """Review round 3, P2-3 — the OTHER axes. "A parent that has no solid is not
+        there" was stated as a rule and held for a parent's height only: a raised bed
+        30 km WIDE got no record (``out_of_range``) while its plant's record stood at 38
+        over nothing. Whether a parent is in the 3D scene is the snapshot's knowledge,
+        so the snapshot settles it, for every reason a parent can be left out: a record
+        whose parent got none stands on the ground.
+
+        2D is a different view with its own facts: there the wide bed IS a caster, and
+        its plant casts from the bed's soil."""
+        from open_garden_planner.ui.view3d.snapshot import SkippedItem, SkipReason
+
+        scene = canvas.scene()
+        layer = scene.active_layer.id
+        wide = why.startswith("out of range")
+        bed = (RectangleItem(-1.5e6, 300.0, 3.0e6, 200.0, object_type=ObjectType.RAISED_BED,
+                             layer_id=layer) if wide else
+               RectangleItem(400.0, 300.0, 300.0, 200.0, object_type=ObjectType.RAISED_BED,
+                             layer_id=layer))
+        plant = CircleItem(500.0, 400.0, 15.0, object_type=ObjectType.PERENNIAL, layer_id=layer)
+        plant.metadata[METADATA_KEY] = 60.0
+        canvas.command_manager.execute(CreateItemCommand(scene, bed, "bed"))
+        canvas.command_manager.execute(CreateItemCommand(scene, plant, "plant"))
+        bed_id, plant_id = str(bed.item_id), str(plant.item_id)
+        assert plant.parent_bed_id == bed.item_id  # linked, and its centre is inside
+        expected = SkipReason.OUT_OF_RANGE
+        if not wide:  # the bed's record fails for a reason the plan's numbers do not show
+            real = snapshot_module._record_of
+            failure: Exception = (ZeroDivisionError("a bed nobody can build") if why.startswith("its record")
+                                  else snapshot_module._UnbuildableOutline("no reading of the outline"))
+            expected = (SkipReason.RECORD_FAILED if why.startswith("its record")
+                        else SkipReason.OUTLINE_UNBUILDABLE)
+
+            def record_of(item: Any, *args: Any) -> Any:
+                if item is bed:
+                    raise failure
+                return real(item, *args)
+
+            monkeypatch.setattr(snapshot_module, "_record_of", record_of)
+
+        skipped: list[SkippedItem] = []
+        records = snapshot_records(scene, skipped=skipped)
+        assert [(item.item_id, item.reason) for item in skipped] == [(bed_id, expected)]
+        assert list(records) == [plant_id]                     # the plant keeps its record …
+        assert records[plant_id].parent_id == bed_id           # … and still says whose it is …
+        assert records[plant_id].transform.base_cm == 0.0      # … but stands on the ground
+        # the rule the lift itself answers is unchanged: it knows nothing of records
+        assert footprints.item_base_cm(plant, footprints.ItemLookup(scene.items())) == 38.0
+        # 2D holds the bed (it casts), so there the plant stands on it
+        casters = collect_shadow_casters(scene)
+        assert sorted((caster.height_cm, caster.base_cm) for caster in casters) == [
+            (40.0, 0.0), (60.0, 38.0)]
+
+    def test_a_plant_is_grounded_whichever_of_the_two_is_stacked_higher(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The snapshot walks bottom to top; a parent can lie ABOVE its plant. The rule
+        is applied when every record is known, so the order does not matter."""
+        garden = Garden(canvas)
+        garden.bed.setZValue(garden.plant.zValue() + 5.0)  # the bed is walked AFTER its plant
+        order = [str(item.item_id) for item in reversed(garden.scene.items())
+                 if hasattr(item, "item_id")]
+        assert order.index(garden.plant_id) < order.index(garden.bed_id)
+        assert garden.base() == 38.0  # with its bed in the scene: on the soil, as ever
+        real = snapshot_module._record_of
+
+        def record_of(item: Any, *args: Any) -> Any:
+            if item is garden.bed:
+                raise ZeroDivisionError("a bed nobody can build")
+            return real(item, *args)
+
+        monkeypatch.setattr(snapshot_module, "_record_of", record_of)
+        records = snapshot_records(garden.scene)
+        assert list(records) == [garden.plant_id]
+        assert records[garden.plant_id].transform.base_cm == 0.0
 
     def test_the_base_follows_the_date_of_the_height_resolver(self, canvas: CanvasView) -> None:
         """``at_date`` reaches the parent's height exactly as it reaches the item's."""
@@ -377,6 +462,58 @@ def contains_of_a_mapped_point(tree: ast.AST) -> set[tuple[str, int]]:
     return hits
 
 
+def _is_item_lookup_call(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Call)
+            and getattr(node.func, "id", getattr(node.func, "attr", "")) == "ItemLookup")
+
+
+def lookups_constructed(tree: ast.AST) -> list[tuple[str, str]]:
+    """``(function, problem)`` for every ``ItemLookup(...)`` constructed in ``tree``;
+    ``problem`` is "" when the lookup is bound to a local name of the function that
+    makes it and that name is neither stored nor returned.
+
+    What it does not follow: a lookup handed to another function as an argument (that
+    is how a walk uses it) and kept THERE. The callee's own parameter is not checked."""
+    functions = [node for node in ast.walk(tree)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    found: list[tuple[str, str]] = []
+    claimed: set[int] = set()
+    for function in functions:
+        escaping = {name for node in ast.walk(function)
+                    if isinstance(node, (ast.Global, ast.Nonlocal)) for name in node.names}
+        body_nodes = [node for statement in function.body for node in ast.walk(statement)]
+        for node in body_nodes:
+            if (isinstance(node, (ast.Assign, ast.AnnAssign)) and _is_item_lookup_call(node.value)
+                    and id(node.value) not in claimed):  # a nested function: reported once
+                claimed.add(id(node.value))
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if not all(isinstance(target, ast.Name) for target in targets):
+                    found.append((function.name, "bound to something that is not a local name"))
+                    continue
+                names = {target.id for target in targets}
+                if names & escaping:
+                    found.append((function.name, "the local name is declared global or nonlocal: "
+                                  + ", ".join(sorted(names & escaping))))
+                    continue
+                kept = set()
+                for other in body_nodes:
+                    hands_on = isinstance(other, (ast.Return, ast.Yield, ast.YieldFrom)) or (
+                        isinstance(other, (ast.Assign, ast.AnnAssign)) and other is not node)
+                    stored = other.value if hands_on else None  # type: ignore[attr-defined]
+                    if isinstance(stored, ast.Name) and stored.id in names:
+                        kept.add(stored.id)
+                found.append((function.name, "the local name is stored or returned: "
+                              + ", ".join(sorted(kept)) if kept else ""))
+        for node in body_nodes:
+            if _is_item_lookup_call(node) and id(node) not in claimed:
+                claimed.add(id(node))
+                found.append((function.name, "not bound to a local name"))
+    for node in ast.walk(tree):  # what is left: a module or class level, a default argument
+        if _is_item_lookup_call(node) and id(node) not in claimed:
+            found.append(("<module>", "constructed outside a function"))
+    return found
+
+
 class TestTheLinkAloneNeverLifts:
     """Review round 1, P1-1. ``parent_bed_id`` is bookkeeping, not geometry: the app
     evaluates it when a plant is created (one by one, in bulk, pasted), dropped or
@@ -426,7 +563,9 @@ class TestTheLinkAloneNeverLifts:
 
     def test_b_a_bed_drawn_around_a_plant_does_not_lift_it(self, canvas: CanvasView) -> None:
         """Expected base 0 — a KNOWN LIMIT, not the wanted end state. WHY: membership
-        is decided when a PLANT is created or dropped; creating a bed links nothing,
+        is decided from geometry in three places only — when a PLANT is created (one by
+        one, in bulk, or pasted without its bed), when a selected plant is dropped after
+        a mouse drag, and when the agent moves a plant; creating a bed links nothing,
         so the plant has no parent, and without the link there is no base. The
         same-looking plan drawn bed-first gives 38. Fixing it means reconciling
         membership when a bed is created or resized (follow-up issue), not guessing
@@ -786,6 +925,14 @@ class TestWhichPointEachDecisionAsks:
         record = snapshot_records(window.canvas_scene)[str(plant.item_id)]
         (caster,) = [c for c in collect_shadow_casters(window.canvas_scene) if c.height_cm == 61.0]
         assert (record.transform.base_cm, caster.base_cm) == (38.0, 38.0)
+        # … and the text an AGENT reads about that field says so (review round 3, P2-1):
+        # until then it said that false means "the plant sits outside the bed's outline"
+        from open_garden_planner.agent_api.schema import WriteResult
+
+        told = " ".join((WriteResult.model_fields["link_is_geometric"].description or "").split())
+        for words in ("bounding box", "warning badge", "up to 2 cm", "sun study", "3D view",
+                      "do not report a mismatch"):
+            assert words in told, words
 
     def test_the_mirror_case_a_link_made_under_a_badge_does_not_lift(self, window: Any) -> None:
         """At the WEST edge the badge pulls the link point INTO the bed: a plant whose
@@ -849,10 +996,12 @@ class TestTheParentShapeIsBuiltOncePerWalk:
             assert answers == {True, False}
         assert probes == 4 * (41 * 41 + 101)
 
-    def test_no_canvas_item_overrides_contains_or_shape(self) -> None:
+    def test_no_canvas_item_overrides_contains_or_clip_path(self) -> None:
         """``contains_path`` mirrors ``QGraphicsItem::contains`` (the clip path of a
-        clipped item, else its shape). A Python ``contains`` on a footprint item
-        would be bypassed by the cached path — so there must be none."""
+        clipped item, else its shape). A Python ``contains`` or ``clipPath`` on a
+        footprint item would be bypassed by the cached path — so there must be none.
+        (``shape`` may be overridden freely: the cached path IS the item's own
+        ``shape()``, whatever implements it.)"""
         from open_garden_planner.ui.canvas.items.ellipse_item import EllipseItem
         from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
 
@@ -863,6 +1012,71 @@ class TestTheParentShapeIsBuiltOncePerWalk:
             for base in own:
                 assert "contains" not in vars(base), (item_class, base)
                 assert "clipPath" not in vars(base), (item_class, base)
+
+    def test_a_lookup_kept_across_an_edit_would_answer_from_the_old_shape(
+        self, canvas: CanvasView
+    ) -> None:
+        """Why the next test exists. ``ItemLookup`` holds each parent's shape for ONE
+        walk. Kept across an edit it is stale: the bed is shrunk away from its plant,
+        a fresh lookup says 0, the kept one still says 38."""
+        garden = Garden(canvas)
+        kept = footprints.ItemLookup(garden.scene.items())
+        assert footprints.item_base_cm(garden.plant, kept) == 38.0  # the shape is cached now
+        old, new = build_rect_resize(garden.bed, 60.0, 200.0)
+        garden.commands.execute(ResizeItemCommand(garden.bed, old, new, apply_rect_like_geometry))
+        fresh = footprints.ItemLookup(garden.scene.items())
+        assert footprints.item_base_cm(garden.plant, fresh) == 0.0   # the truth
+        assert footprints.item_base_cm(garden.plant, kept) == 38.0   # a lookup that outlived its walk
+        assert _bases(garden, garden.plant) == (0.0, 0.0)            # both walks make their own
+
+    def test_a_lookup_lives_for_one_walk_and_is_never_kept(self) -> None:
+        """Review round 3, P2-8. The only thing between the shape cache and a stale lift
+        was a docstring sentence, and the next stories will be tempted to keep "the
+        scene's lookup". The guard: in the application an ``ItemLookup`` is constructed
+        in exactly two functions — the two walks — and only ever bound to a LOCAL name
+        there: never an attribute, a module global, a default argument, a container
+        element or a return value."""
+        src = Path(open_garden_planner.__file__).parent
+        constructed: dict[str, set[str]] = {}
+        kept: list[str] = []
+        for path in src.rglob("*.py"):
+            relative = path.relative_to(src).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for where, problem in lookups_constructed(tree):
+                constructed.setdefault(relative, set()).add(where)
+                if problem:
+                    kept.append(f"{relative}::{where}: {problem}")
+        assert constructed == {
+            "ui/canvas/sun_shadow_controller.py": {"collect_shadow_casters"},  # the 2D caster walk
+            "ui/view3d/snapshot.py": {"snapshot_records"},                      # the 3D record walk
+        }
+        assert kept == []
+
+    @pytest.mark.parametrize(("source", "expected"), [
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    return [base(i, lookup) for i in items]\n",
+         [("walk", "")]),
+        ("def walk(items):\n    lookup: ItemLookup = footprints.ItemLookup(items)\n    use(lookup)\n",
+         [("walk", "")]),
+        ("class C:\n    def walk(self, items):\n        self._lookup = ItemLookup(items)\n",
+         [("walk", "bound to something that is not a local name")]),
+        ("LOOKUP = ItemLookup([])\n", [("<module>", "constructed outside a function")]),
+        ("def walk(items):\n    return ItemLookup(items)\n",
+         [("walk", "not bound to a local name")]),
+        ("def walk(items):\n    cache['scene'] = ItemLookup(items)\n",
+         [("walk", "bound to something that is not a local name")]),
+        ("def walk(items, lookup=ItemLookup(())):\n    pass\n",
+         [("<module>", "constructed outside a function")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    self.lookup = lookup\n",
+         [("walk", "the local name is stored or returned: lookup")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    return lookup\n",
+         [("walk", "the local name is stored or returned: lookup")]),
+        ("def walk(items):\n    global lookup\n    lookup = ItemLookup(items)\n",
+         [("walk", "the local name is declared global or nonlocal: lookup")]),
+        ("def other(items):\n    return base(items)\n", []),
+    ])
+    def test_the_lifetime_guard_sees_how_a_lookup_can_be_kept(self, source: str,
+                                                              expected: list) -> None:
+        assert lookups_constructed(ast.parse(source)) == expected
 
     def test_one_shape_per_parent_and_walk(self, canvas: CanvasView, monkeypatch: Any) -> None:
         garden = Garden(canvas)
@@ -955,6 +1169,117 @@ class TestHeatmapEndToEnd:
         # … and every cell between the bed's shadow and that tip lost at least one sample
         between = lost[rows.min():rows.max() + 1, column]
         assert np.all(between >= SAMPLE_STEP_MINUTES)
+
+
+class OverlayWatch:
+    """Waits for a ``SunShadowController`` on what it is known to do — never on a duration.
+
+    A recompute sets the overlay's path. The scene answers with ``changed`` one
+    event-loop round LATER, and ``changed`` is wired to the controller's debounce:
+    150 ms after that echo the controller recomputes once more. While nothing has
+    changed that recompute is a no-op (the key holds) — but an edit made in the
+    meantime, even one nothing announces, is carried into the overlay by it.
+
+    So "the debounce timer is idle" does not mean "nothing is pending": straight
+    after a recompute the timer IS idle and the echo is still on its way. Review
+    round 3, P1: a wait built on the timer alone let that echo land inside a negative
+    control (CI: ``assert 6 == 1 + 4``). ``settled`` waits for the recompute, then for
+    the echo it knows is coming, then for the debounce that echo starts.
+    """
+
+    def __init__(self, qtbot: Any, scene: Any, controller: SunShadowController) -> None:
+        self.qtbot, self.controller = qtbot, controller
+        #: per delivered ``scene.changed``: the controller's recompute count at that moment
+        self.changes: list[int] = []
+        scene.changed.connect(self._on_changed)
+
+    def _on_changed(self, _regions: Any = None) -> None:
+        self.changes.append(self.controller.recompute_count)
+
+    def echo_delivered(self, recompute: int) -> bool:
+        """Has the scene emitted ``changed`` since recompute number ``recompute`` set the path?"""
+        return bool(self.changes) and self.changes[-1] >= recompute
+
+    def quiet(self) -> None:
+        """Until the debounce timer has fired. NOT "nothing is pending" — see the class."""
+        self.qtbot.waitUntil(lambda: not self.controller._debounce.isActive(), timeout=5000)
+
+    def settled(self, expected_count: int) -> None:
+        """Recompute number ``expected_count`` has happened, its echo has been delivered,
+        the debounce the echo started has fired — and the count is still that."""
+        self.qtbot.waitUntil(lambda: self.controller.recompute_count >= expected_count, timeout=5000)
+        self.qtbot.waitUntil(lambda: self.echo_delivered(expected_count), timeout=5000)
+        self.quiet()
+        assert self.controller.recompute_count == expected_count
+
+
+def _set_height(item: Any, value: float | None) -> None:  # the properties panel's apply_func
+    if value is None:
+        item.metadata.pop(METADATA_KEY, None)
+    else:
+        item.metadata[METADATA_KEY] = value
+
+
+class TestTheOverlaysOwnEcho:
+    """Review round 3, P1. The two halves of one race, each made deterministic by
+    running the recompute SYNCHRONOUSLY — its echo is then certainly undelivered,
+    on every machine, not in one CI run out of four."""
+
+    @staticmethod
+    def _rig(canvas: CanvasView, qtbot: Any) -> tuple[Garden, SunShadowController, OverlayWatch, int]:
+        garden = Garden(canvas)
+        controller = SunShadowController(garden.scene, lambda: BERLIN)
+        controller.set_sim_datetime(datetime(2026, 6, 21, 18, 0, tzinfo=UTC))
+        watch = OverlayWatch(qtbot, garden.scene, controller)
+        controller.set_enabled(True)  # recomputes at once: count 1, its echo on the way
+        watch.settled(controller.recompute_count)
+        return garden, controller, watch, controller.recompute_count
+
+    def test_an_echo_that_was_not_waited_for_carries_a_later_edit_into_the_overlay(
+        self, canvas: CanvasView, qtbot: Any
+    ) -> None:
+        """The mechanism. Nothing here is wired to the command stack, so no edit is
+        announced: what reaches the overlay reaches it through the echo alone."""
+        garden, controller, watch, count = self._rig(canvas, qtbot)
+        garden.commands.execute(
+            ChangePropertyCommand(garden.bed, "object height", None, 75.0, _set_height))
+        assert not controller._debounce.isActive()  # the edit announced nothing
+        controller.recompute_now()                  # synchronously: the overlay shows 75 cm …
+        assert controller.recompute_count == count + 1
+        assert not watch.echo_delivered(count + 1)  # … and its echo has NOT been delivered
+        assert not controller._debounce.isActive()  # "the debounce is idle" is true all the same:
+        #                                             a wait on the timer alone returns here
+        garden.commands.undo()                      # an edit nothing announces: 40 cm again
+        qtbot.waitUntil(lambda: watch.echo_delivered(count + 1), timeout=5000)
+        assert controller._debounce.isActive()      # the echo started the debounce
+        watch.quiet()
+        # exactly ONE extra recompute: the echo's, and it saw the undone height. This is the
+        # recompute that landed in the negative control in CI (6 where 1 + 4 was expected).
+        assert controller.recompute_count == count + 2
+        watch.settled(count + 2)                    # … whose own echo is a no-op: the key holds
+        controller.set_enabled(False)
+
+    def test_settled_waits_for_the_echo_so_a_negative_control_cannot_race_it(
+        self, canvas: CanvasView, qtbot: Any
+    ) -> None:
+        """The same worst case through ``OverlayWatch.settled``: nothing is left to
+        carry the unannounced edit, and the count stays. With a ``settled`` that only
+        asks the debounce timer this test fails every time, on every machine."""
+        garden, controller, watch, count = self._rig(canvas, qtbot)
+        garden.commands.execute(
+            ChangePropertyCommand(garden.bed, "object height", None, 75.0, _set_height))
+        controller.recompute_now()                  # synchronously: the echo is on its way
+        assert controller.recompute_count == count + 1 and not watch.echo_delivered(count + 1)
+        watch.settled(count + 1)                    # the recompute, ITS ECHO, the debounce after it
+        assert watch.echo_delivered(count + 1)
+
+        garden.commands.undo()                      # the negative control: an unannounced edit
+        assert not controller._debounce.isActive()  # nothing is scheduled …
+        delivered = len(watch.changes)
+        qtbot.wait(2 * controller._debounce.interval())
+        assert len(watch.changes) == delivered      # … no echo arrived late …
+        assert controller.recompute_count == count + 1  # … and nothing recomputed
+        controller.set_enabled(False)
 
 
 class TestOneCasterWalk:
@@ -1074,6 +1399,7 @@ class TestOneCasterWalk:
         direction = shadow_direction_scene(position.azimuth_deg)
         controller = SunShadowController(garden.scene, lambda: BERLIN)
         controller.set_sim_datetime(instant)
+        watch = OverlayWatch(qtbot, garden.scene, controller)
         controller.set_enabled(True)
         garden.commands.stack_changed.connect(controller.schedule_recompute)  # the app's wiring
         overlay = next(i for i in garden.scene.items() if isinstance(i, SunShadowOverlayItem))
@@ -1087,29 +1413,13 @@ class TestOneCasterWalk:
             return max(path.elementAt(i).x * direction[0] + path.elementAt(i).y * direction[1]
                        for i in range(path.elementCount())) - plant_far
 
-        def quiet() -> None:
-            """Until the debounce timer has fired and nothing is pending."""
-            qtbot.waitUntil(lambda: not controller._debounce.isActive(), timeout=5000)
-
-        def settled(expected_count: int) -> None:
-            """The edit's ONE recompute has happened — waited for, not slept for — and
-            when the debounce is quiet again it is still one."""
-            qtbot.waitUntil(lambda: controller.recompute_count >= expected_count, timeout=5000)
-            quiet()
-            assert controller.recompute_count == expected_count
-
-        quiet()  # the echoes of creating the items
+        settled = watch.settled  # the recompute, its own scene.changed echo, the debounce after it
         count = controller.recompute_count
+        settled(count)  # enabling recomputed once; its echo and the items' own are delivered
         assert tip() == pytest.approx((38.0 + 60.0) / tan_a, abs=0.01)
 
-        def set_height(item: Any, value: float | None) -> None:  # the properties panel's apply_func
-            if value is None:
-                item.metadata.pop(METADATA_KEY, None)
-            else:
-                item.metadata[METADATA_KEY] = value
-
         garden.commands.execute(
-            ChangePropertyCommand(garden.bed, "object height", None, 75.0, set_height))
+            ChangePropertyCommand(garden.bed, "object height", None, 75.0, _set_height))
         settled(count + 1)
         assert tip() == pytest.approx((73.0 + 60.0) / tan_a, abs=0.01)  # the plant rose with its bed
 
@@ -1127,11 +1437,16 @@ class TestOneCasterWalk:
         settled(count + 4)
         assert tip() == pytest.approx((38.0 + 60.0) / tan_a, abs=0.01)
 
-        # negative control: without the wiring the same edit goes unseen — nothing is
-        # even scheduled, so there is nothing to wait for
+        # Negative control: without the wiring the same edit goes unseen. ``settled`` has
+        # waited for the last recompute's own echo, so nothing is on its way that could
+        # carry this edit into the overlay (CI once read 6 == 1 + 4 here: a late echo —
+        # ``TestTheOverlaysOwnEcho`` holds that race still).
         garden.commands.stack_changed.disconnect(controller.schedule_recompute)
+        delivered = len(watch.changes)
         garden.commands.redo()
-        assert not controller._debounce.isActive()
+        assert not controller._debounce.isActive()  # nothing is scheduled …
         qtbot.wait(2 * controller._debounce.interval())  # longer than a debounce would take
-        assert controller.recompute_count == count + 4
+        assert len(watch.changes) == delivered      # … a metadata edit emits no scene.changed …
+        assert controller.recompute_count == count + 4  # … and nothing recomputed
+        assert tip() == pytest.approx((38.0 + 60.0) / tan_a, abs=0.01)  # the overlay: still 40 cm
         controller.set_enabled(False)

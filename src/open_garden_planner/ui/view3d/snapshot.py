@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
 from functools import lru_cache
@@ -703,6 +703,9 @@ def snapshot_records(
       the rule the 2D shadow casters use: 2 cm under a bed's rim, at a
       container's height), 0.0 on the ground. It is part of the transform, so a
       bed that changes height re-poses its plants and rebuilds none of them.
+      An item whose parent got NO record here — left out for any of the reasons
+      above — stands on the ground: nothing stands on a solid the scene does
+      not hold (``_ground_items_without_a_parent_record``).
     - ``at_date`` (US-E8) grows dated plants: canopy radius and height.
     """
     items: list[Any] = scene.items()  # top-first; garden items are duck-typed below
@@ -739,4 +742,25 @@ def snapshot_records(
             _report(SkippedItem(item_id, kind, SkipReason.DUPLICATE_ID), skipped)
             continue
         records[item_id] = record
+    _ground_items_without_a_parent_record(records)
     return records
+
+
+def _ground_items_without_a_parent_record(records: dict[str, Record]) -> None:
+    """An item lifted onto a parent that got no record stands on the ground instead.
+
+    ``item_base_cm`` answers where an item stands from the ITEMS: the link, the
+    parent's height, the item's centre inside the parent's shape. Whether that
+    parent is in the 3D scene at all is known only here, and only once every
+    record is built (the walk is bottom to top; a parent may lie above its
+    plant). A parent is left out when it is beyond the contract's range (a bed
+    30 km wide), when its outline cannot be built, when its record failed — and
+    then there is no solid for a plant to stand on: 38 cm up over nothing.
+
+    Only ``base_cm`` changes; ``parent_id`` still says whose the item is. The 2D
+    shadow casters are not this function's business: there the parent is a
+    caster like any other, and its plants stand on it.
+    """
+    for item_id, record in records.items():  # values are replaced, no key is added
+        if record.transform.base_cm != 0.0 and record.parent_id not in records:
+            records[item_id] = replace(record, transform=replace(record.transform, base_cm=0.0))

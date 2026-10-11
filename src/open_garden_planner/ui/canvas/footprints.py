@@ -157,8 +157,11 @@ class ItemLookup:
     each soil parent's shape.
 
     One per walk over ``scene.items()``: most plans have few parented items, and
-    a walk that meets none never pays for the dictionary. Never kept between
-    walks: the shapes it holds are the items' shapes at the time of the walk.
+    a walk that meets none never pays for the dictionary. NEVER kept between
+    walks: the shapes it holds are the items' shapes at the time of the walk, and
+    a lookup that outlives an edit answers from the old ones (a bed shrunk away
+    from its plant still "contains" it). Construct one as a local of the walk and
+    let it die there — a test reads the source and fails otherwise.
     """
 
     __slots__ = ("_by_id", "_items", "_shapes")
