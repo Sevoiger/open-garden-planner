@@ -13,7 +13,8 @@ The pipeline::
 Modules: ``record`` (the contract: ``Record``, ``Transform``, ``Material``,
 ``Params``, three signatures), ``diff``, ``frame`` (scene ↔ engine, local ↔
 scene), ``mesh``, ``sink``, ``build`` (builder seam + default prism builder),
-``sync``, ``color``. Nothing here imports Qt (pinned by an AST scan); numpy and
+``sync``, ``color``, ``interleave`` (a mesh as the bytes an engine uploads —
+L1.2). Nothing here imports Qt (pinned by an AST scan); numpy and
 the standard library only.
 
 ``legacy`` is the pre-L1.1 contract (the former ``core/scene3d.py``, moved
@@ -50,6 +51,15 @@ from .frame import (
     pose_ring,
     scene_to_engine_points,
     scene_to_engine_vectors,
+)
+from .interleave import (
+    COLOR_OFFSET,
+    NORMAL_OFFSET,
+    POSITION_OFFSET,
+    UV_OFFSET,
+    VERTEX_STRIDE,
+    EngineBuffers,
+    engine_buffers,
 )
 from .legacy import (
     DECAL_LIFT_CM,
@@ -122,6 +132,7 @@ __all__ = [
     "ANGLE_DECIMALS",
     "BENT_NORMAL_KINDS",
     "BUILT_HEIGHT_TOLERANCE",
+    "COLOR_OFFSET",
     "DECAL_LIFT_CM",
     "DECAL_MAX_LIFT_CM",
     "DECAL_STACK_STEP_CM",
@@ -134,6 +145,7 @@ __all__ = [
     "LENGTH_DECIMALS",
     "MATERIAL_FIELDS",
     "MATERIAL_KINDS",
+    "NORMAL_OFFSET",
     "PARAM_CONTAINER_MATERIAL",
     "PARAM_PATH_STYLE",
     "PARAM_PLANT_CATEGORY",
@@ -142,6 +154,7 @@ __all__ = [
     "PARAM_SEED",
     "PARAM_SPECIES_KEY",
     "PARAM_SPECIES_NAME",
+    "POSITION_OFFSET",
     "SCENE_TO_ENGINE",
     "SHAPES",
     "SHAPE_CIRCLE",
@@ -152,10 +165,13 @@ __all__ = [
     "SIGNATURE_FIELDS",
     "TRANSFORM_FIELDS",
     "UNSIGNED_FIELDS",
+    "UV_OFFSET",
+    "VERTEX_STRIDE",
     "BuildFailure",
     "Builder",
     "BuilderContractError",
     "BuilderRegistry",
+    "EngineBuffers",
     "EnginePose",
     "EngineSink",
     "GroundSpec",
@@ -183,6 +199,7 @@ __all__ = [
     "Transform",
     "default_builder",
     "diff",
+    "engine_buffers",
     "engine_model_matrix",
     "engine_pose",
     "engine_to_scene_points",
