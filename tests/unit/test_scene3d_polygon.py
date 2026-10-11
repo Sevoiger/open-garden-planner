@@ -133,6 +133,80 @@ class TestSimple:
         assert not is_flat_ring(LOPSIDED_BOW_TIE) and not is_flat_ring(PENTAGRAM)
 
 
+def _wobbly(n: int, rng: random.Random, *, tangle: bool) -> tuple[tuple[float, float], ...]:
+    """A star-shaped ring of ``n`` vertices (simple by construction); ``tangle``
+    swaps two of its vertices, which makes two pairs of edges cross."""
+    radii = [300.0 + rng.uniform(-80.0, 80.0) for _ in range(n)]
+    ring = [(r * math.cos(2.0 * math.pi * k / n), r * math.sin(2.0 * math.pi * k / n))
+            for k, r in enumerate(radii)]
+    if tangle:
+        i = rng.randrange(n)
+        j = (i + rng.randrange(2, n - 2)) % n
+        ring[i], ring[j] = ring[j], ring[i]
+    return tuple(ring)
+
+
+class TestSimpleRingAtScale:
+    """The simplicity test is quadratic and runs on every edit of a ring. From
+    ``SIMPLE_RING_NUMPY_FROM`` vertices on it runs on numpy — and must say exactly
+    what the plain loop says."""
+
+    @pytest.mark.parametrize("n", [5, 31, 32, 33, 100, 257, 600])
+    def test_both_implementations_agree(self, n: int) -> None:
+        rng = random.Random(385 + n)
+        verdicts = set()
+        for case in range(12):
+            ring = _wobbly(n, rng, tangle=case % 2 == 1)
+            loop = polygon_module._edges_touch_loop(ring)
+            assert polygon_module._edges_touch_numpy(ring) is loop, (n, case)
+            assert is_simple_ring(ring) is (not loop)
+            verdicts.add(loop)
+        assert verdicts == {True, False}  # both answers were exercised
+
+    @pytest.mark.parametrize("n", [40, 300])
+    def test_touching_without_crossing_is_seen_at_scale(self, n: int) -> None:
+        """The cases only the ``== 0`` branches catch: a vertex lying exactly on
+        another edge, and a vertex repeated elsewhere on the ring."""
+        base = [(float(k), 0.0) for k in range(n // 2)]  # a comb's back, then its teeth
+        top = [(float(k), 50.0 + (k % 3)) for k in reversed(range(n // 2))]
+        ring = tuple(base + top)
+        assert is_simple_ring(ring)
+        on_an_edge = list(ring)
+        on_an_edge[-1] = (2.5, 0.0)  # the last vertex now sits on the edge (2, 0)-(3, 0)
+        assert not is_simple_ring(tuple(on_an_edge))
+        assert polygon_module._edges_touch_numpy(tuple(on_an_edge))
+        assert polygon_module._edges_touch_loop(tuple(on_an_edge))
+        repeated = list(ring)
+        repeated[-1] = ring[3]  # a vertex visited twice
+        assert not is_simple_ring(tuple(repeated))
+
+    def test_a_crossing_in_the_last_block_of_rows_is_found(self) -> None:
+        """The array version works through the edges in blocks; a ring longer than
+        two blocks whose only crossing lies among its last edges must still be seen."""
+        n = 2 * polygon_module._SIMPLE_RING_ROWS + 100
+        ring = _wobbly(n, random.Random(1), tangle=False)
+        assert is_simple_ring(ring)
+        crossed = list(ring)
+        crossed[n - 40], crossed[n - 10] = crossed[n - 10], crossed[n - 40]
+        assert polygon_module._edges_touch_loop(tuple(crossed))
+        assert not is_simple_ring(tuple(crossed))
+
+    def test_small_rings_take_the_loop_and_large_ones_the_arrays(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        used: list[str] = []
+        loop, arrays = polygon_module._edges_touch_loop, polygon_module._edges_touch_numpy
+        monkeypatch.setattr(polygon_module, "_edges_touch_loop",
+                            lambda ring: used.append("loop") or loop(ring))
+        monkeypatch.setattr(polygon_module, "_edges_touch_numpy",
+                            lambda ring: used.append("arrays") or arrays(ring))
+        threshold = polygon_module.SIMPLE_RING_NUMPY_FROM
+        rng = random.Random(7)
+        assert is_simple_ring(_wobbly(threshold - 1, rng, tangle=False))
+        assert is_simple_ring(_wobbly(threshold, rng, tangle=False))
+        assert used == ["loop", "arrays"]
+
+
 # ── nesting ───────────────────────────────────────────────────────────────────
 
 

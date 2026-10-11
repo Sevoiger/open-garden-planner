@@ -41,6 +41,7 @@ I = "tests/integration/"  # noqa: E741  (a path prefix, read next to U)
 CONTRACT = U + "test_scene3d_contract.py"
 FRAME = U + "test_scene3d_frame.py"
 MESH = U + "test_scene3d_mesh.py"
+POLYGON = U + "test_scene3d_polygon.py"
 SYNC = U + "test_scene3d_sync.py"
 SNAPSHOT = I + "test_scene3d_snapshot.py"
 PIPELINE = I + "test_scene3d_pipeline.py"
@@ -185,6 +186,25 @@ MUTANTS: tuple[Mutant, ...] = (
            SRC + "core/scene3d/build.py",
            "    steps = (np.arange(24) + 0.5) / 24.0\n", "    steps = (np.arange(1) + 0.5) / 1.0\n",
            (MESH,)),
+    # ── polygons ─────────────────────────────────────────────────────────────
+    Mutant("a large ring is never tested for crossings",
+           SRC + "core/scene3d/polygon.py",
+           "        return not _edges_touch_numpy(ring)\n", "        return True\n",
+           (POLYGON,)),
+    Mutant("the array version of the simplicity test ignores edges that only touch",
+           SRC + "core/scene3d/polygon.py",
+           "        if bool(np.any(crossing | touching)):\n", "        if bool(np.any(crossing)):\n",
+           (POLYGON,)),
+    Mutant("the bounding-box prune drops edges whose boxes only touch",
+           SRC + "core/scene3d/polygon.py",
+           "                & (low[rows, None, 1] <= high[None, :, 1]) & (low[None, :, 1] <= high[rows, None, 1])\n",
+           "                & (low[rows, None, 1] < high[None, :, 1]) & (low[None, :, 1] < high[rows, None, 1])\n",
+           (POLYGON,)),
+    Mutant("a hole joins the LARGEST outer ring around it",
+           SRC + "core/scene3d/polygon.py",
+           "                best < 0 or ring_area(outer) < ring_area(outers[best])\n",
+           "                best < 0 or ring_area(outer) > ring_area(outers[best])\n",
+           (POLYGON,)),
     # ── sink and sync ────────────────────────────────────────────────────────
     Mutant("a builder failure escapes (the transaction is half applied)",
            SRC + "core/scene3d/sync.py",

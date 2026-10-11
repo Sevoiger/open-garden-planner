@@ -8,10 +8,12 @@ clockwise (signed area < 0). That is the orientation pyclipper emits and the one
 load-bearing — its stroke comes back as two rings, and extruding the inner one
 as a solid turns a 3.6 m² fence into an 80 m² slab (senior review, fix round 1).
 
-Everything here is plain Python on float pairs. ``triangulate_polygon`` is the
-ear clipper the Qt 3D view has always used (US-E6), moved here unchanged so it
-survives ``legacy.py``; ``triangulate_region`` adds holes by bridging each hole
-to the boundary and clipping ears of the merged ring.
+Plain Python on float pairs, with one exception: the simplicity test of a large
+ring runs on numpy (it is quadratic, and it runs on every edit of that ring).
+``triangulate_polygon`` is the ear clipper the Qt 3D view has always used
+(US-E6), moved here unchanged so it survives ``legacy.py``;
+``triangulate_region`` adds holes by bridging each hole to the boundary and
+clipping ears of the merged ring.
 """
 
 from __future__ import annotations
@@ -19,7 +21,10 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from functools import lru_cache
-from typing import TypeAlias
+from typing import Final, TypeAlias
+
+import numpy as np
+from numpy.typing import NDArray
 
 Point: TypeAlias = tuple[float, float]
 Ring: TypeAlias = tuple[Point, ...]
@@ -133,27 +138,94 @@ def is_flat_ring(ring: Sequence[Sequence[float]]) -> bool:
     return all(_cross(origin, far, p) == 0 for p in ring)
 
 
+#: From this many vertices on the simplicity test runs on numpy. Below it the
+#: plain loop is faster (a rectangle costs microseconds); above it the loop is
+#: what an edit of a traced outline would wait for — measured on the dev box:
+#: 500 vertices 72 ms in the loop, 1,000 vertices 262 ms.
+SIMPLE_RING_NUMPY_FROM: Final = 32
+_SIMPLE_RING_ROWS: Final = 512  # edges per block: bounds the rows x n temporaries
+
+
+def _edges_touch_loop(ring: Ring) -> bool:
+    n = len(ring)
+    for i in range(n):
+        a, b = ring[i], ring[(i + 1) % n]
+        for j in range(i + 1, n):
+            if (j + 1) % n == i or (i + 1) % n == j:
+                continue  # a neighbour: they share a vertex by design
+            if segments_touch(a, b, ring[j], ring[(j + 1) % n]):
+                return True
+    return False
+
+
+def _edges_touch_numpy(ring: Ring) -> bool:
+    """``_edges_touch_loop`` on arrays, in two steps.
+
+    First the pairs of non-adjacent edges whose bounding boxes meet — two closed
+    segments that share a point have boxes that do, so nothing is lost, and for
+    an outline that leaves a few pairs per edge instead of n. Then, on those
+    pairs only, the four cross products of ``segments_touch``, written in the
+    same order of operations: the answer is the loop's, bit for bit (pinned by
+    a test over random rings on both sides of the threshold).
+    """
+    points = np.asarray(ring, dtype=np.float64)
+    n = len(points)
+    following = np.roll(points, -1, axis=0)
+    low, high = np.minimum(points, following), np.maximum(points, following)
+    index = np.arange(n)
+    column = index[None, :]
+    for start in range(0, n, _SIMPLE_RING_ROWS):
+        rows = slice(start, min(start + _SIMPLE_RING_ROWS, n))
+        row = index[rows, None]
+        near = ((low[rows, None, 0] <= high[None, :, 0]) & (low[None, :, 0] <= high[rows, None, 0])
+                & (low[rows, None, 1] <= high[None, :, 1]) & (low[None, :, 1] <= high[rows, None, 1])
+                & (column > row) & ((column + 1) % n != row) & ((row + 1) % n != column))
+        i, j = np.nonzero(near)
+        if not len(i):
+            continue
+        i = i + start
+        ax, ay, bx, by = points[i, 0], points[i, 1], following[i, 0], following[i, 1]  # edge i: a -> b
+        cx, cy, dx, dy = points[j, 0], points[j, 1], following[j, 0], following[j, 1]  # edge j: c -> d
+        d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx)  # _cross(c, d, a)
+        d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx)  # _cross(c, d, b)
+        d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)  # _cross(a, b, c)
+        d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax)  # _cross(a, b, d)
+        crossing = (((d1 > 0) != (d2 > 0)) & (d1 != 0) & (d2 != 0)
+                    & ((d3 > 0) != (d4 > 0)) & (d3 != 0) & (d4 != 0))
+        touching = (((d1 == 0) & _within(ax, ay, cx, cy, dx, dy))
+                    | ((d2 == 0) & _within(bx, by, cx, cy, dx, dy))
+                    | ((d3 == 0) & _within(cx, cy, ax, ay, bx, by))
+                    | ((d4 == 0) & _within(dx, dy, ax, ay, bx, by)))
+        if bool(np.any(crossing | touching)):
+            return True
+    return False
+
+
+def _within(px: NDArray[np.float64], py: NDArray[np.float64], sx: NDArray[np.float64],
+            sy: NDArray[np.float64], ex: NDArray[np.float64], ey: NDArray[np.float64]) -> NDArray[np.bool_]:
+    """``_on_segment`` on arrays: p inside the bounding box of s–e."""
+    return ((np.minimum(sx, ex) <= px) & (px <= np.maximum(sx, ex))
+            & (np.minimum(sy, ey) <= py) & (py <= np.maximum(sy, ey)))
+
+
 @lru_cache(maxsize=4096)
 def is_simple_ring(ring: Ring) -> bool:
     """True when ``ring`` is a simple polygon: at least three vertices, a non-zero
     area, and no two non-adjacent edges sharing a point (no bow-tie, no touching).
 
-    O(n²), cached: the snapshot asks it for every user-drawn polygon and the
-    default builder for every ring it extrudes, and rings repeat between snapshots.
+    Quadratic in the vertex count, so it is cached (the snapshot asks it for every
+    user-drawn polygon and the default builder for every ring it extrudes, and
+    rings repeat between snapshots) and, from ``SIMPLE_RING_NUMPY_FROM`` vertices
+    on, vectorised: a ring that is being edited misses the cache on every tick.
     """
     n = len(ring)
     if n < 3 or _signed_area(ring) == 0.0:
         return False
-    for i in range(n):
-        a, b = ring[i], ring[(i + 1) % n]
-        if a == b:
-            return False
-        for j in range(i + 1, n):
-            if j == i or (j + 1) % n == i or (i + 1) % n == j:
-                continue  # the same edge or a neighbour: they share a vertex by design
-            if segments_touch(a, b, ring[j], ring[(j + 1) % n]):
-                return False
-    return True
+    if any(ring[i] == ring[(i + 1) % n] for i in range(n)):
+        return False  # an edge without a length
+    if n >= SIMPLE_RING_NUMPY_FROM:
+        return not _edges_touch_numpy(ring)
+    return not _edges_touch_loop(ring)
 
 
 # ── nesting ───────────────────────────────────────────────────────────────────
