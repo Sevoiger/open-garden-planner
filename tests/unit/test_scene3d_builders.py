@@ -683,7 +683,13 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         leaves a 62 cm opening); the bound is for large loops. Measured: a closed WALL
         up to 120 cm side, a stone-wall or hedge fence up to 110 cm, is refused by the
         default. So a small loop is verified with the limit stated here — the strip the
-        section reaches into, never the middle."""
+        section reaches into, never the middle.
+
+        Re-measured after the merge of 9944012, whose gate has a size floor: a hole
+        narrower than ``HOLE_MIN_WIDTH_CM`` (10 cm) is not judged at all. That is the
+        other end of the range — a 12 cm loop, whose wall is one solid block over an
+        8 cm "hole", passes the default — and it leaves the 1 m loop where it was: its
+        hole is 92 to 96 cm wide. The default refuses a wall loop from 16 to 120 cm."""
         side = 100.0
         record = line_record(kind, square_loop(side), 120.0, width=stroke, style=style)
         assert len(record.holes) == 1 and len(record.holes[0]) == 1
@@ -703,6 +709,19 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         large = line_record(kind, square_loop(150.0), 120.0, width=stroke, style=style)
         verify_builder(builder, large, height_tolerance_cm=0.5)
         assert plan_overreach(REGISTRY.build(large), large.regions, 50.0)[1] < 0.5
+        # … and below the gate's size floor a hole is not judged: a 12 cm loop of a thick
+        # line is one block, its 4 – 8 cm hole reads 0.0, and the default passes it
+        from open_garden_planner.core.scene3d.build import HOLE_MIN_WIDTH_CM
+
+        assert HOLE_MIN_WIDTH_CM == 10.0
+        tiny = line_record(kind, square_loop(12.0), 120.0, width=stroke, style=style)
+        assert len(tiny.holes) == 1 and len(tiny.holes[0]) == 1
+        tiny_parts = verify_builder(builder, tiny, height_tolerance_cm=0.5)
+        assert plan_overreach(tiny_parts, tiny.regions, 50.0)[1] == 0.0
+        # the first loop whose hole IS judged (12 cm wide and more) is refused again
+        judged = line_record(kind, square_loop(stroke + 12.0), 120.0, width=stroke, style=style)
+        with pytest.raises(BuilderContractError, match="hole"):
+            verify_builder(builder, judged, height_tolerance_cm=0.5)
 
     def test_a_gap_wider_than_the_stroke_leaves_no_hole_in_the_record(self) -> None:
         """A 5 cm gap in a 3 cm stroke: the outline does not close, the record has no
@@ -1276,9 +1295,10 @@ class TestGroundThatIsNotOnePlainRing:
     """A builder that needs ONE simple outline — a gable roof, a bed's frame, a pot, a
     hedge — checks that it has one. A record with several regions, or with a hole, is
     built as the plain block of ALL its regions with the holes cut out; never on
-    ``footprints[0]`` alone. (A self-crossing drawing is not reliably detectable from
-    the ring count — it can also resolve to one plain ring — so this is a rule about
-    the ground a builder is handed, whatever its history.)"""
+    ``footprints[0]`` alone. So is a record the scene contract flags as RESOLVED
+    (``params["outline_resolved"]``: a polygon drawn crossing or touching itself) —
+    even when it is one plain ring: the ring count cannot tell such a drawing from an
+    ordinary polygon, the flag can."""
 
     @pytest.mark.parametrize("make", NOT_ONE_RING.values(), ids=NOT_ONE_RING.keys())
     @pytest.mark.parametrize("kind", POLYGON_KINDS)
@@ -1366,6 +1386,61 @@ class TestGroundThatIsNotOnePlainRing:
             assert plan_area([walls_part.mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6)
             if record.holes:
                 assert not covers([walls_part.mesh], 37.0, 11.0)
+
+    @pytest.mark.parametrize("kind", POLYGON_KINDS)
+    def test_a_resolved_outline_is_the_plain_block_even_when_it_is_one_ring(self, kind: str) -> None:
+        """The contract flags a polygon drawn crossing or touching itself
+        (``params["outline_resolved"]``, merge of 9944012). Its regions may be ONE plain
+        ring — the ring count says nothing — and until the flag existed such a HOUSE kept
+        a gable roof (round 1's open point). The flag alone makes it the plain block of
+        its regions, for every polygon kind: a resolved ring can come within 0.002 cm of
+        itself, and no frame, inset or overhang is offset from such an outline. The
+        builder does not rely on the snapshot having dropped the ridge."""
+        from open_garden_planner.core.scene3d import PARAM_OUTLINE_RESOLVED
+        from open_garden_planner.core.scene3d.builders.common import (
+            footprint_of,
+            has_one_plain_ring,
+        )
+
+        ring = rectangle(600.0, 400.0)
+        params = {"ridge": ((-300.0, 0.0), (300.0, 0.0))} if kind == "HOUSE" else {}
+        plain = polygon_record(kind, ring, 150.0, params=params)
+        flagged = polygon_record(kind, ring, 150.0, params={**params, PARAM_OUTLINE_RESOLVED: True})
+        assert PARAM_OUTLINE_RESOLVED == "outline_resolved"
+        assert flagged.footprints == plain.footprints and flagged.holes == () == plain.holes
+        builder = builder_of(flagged)
+        assert has_one_plain_ring(plain) and not has_one_plain_ring(flagged)
+        assert not builder.uses_the_plain_block(plain) and builder.uses_the_plain_block(flagged)
+        with pytest.raises(ValueError, match="resolved"):
+            footprint_of(flagged)
+        parts = verify_builder(builder, flagged, height_tolerance_cm=0.5, plan_margin_cm=0.0,
+                               hole_cover_limit=0.0)
+        assert [part.name for part in parts] == ["prism"]
+        assert parts[0].mesh == default_builder(flagged)[0].mesh
+        assert float(positions(parts)[:, 2].max()) == 150.0 and builder.fit_scale(flagged) == 1.0
+        # … where the very same ring WITHOUT the flag is built as its kind
+        as_its_kind = built(plain)
+        assert as_its_kind and [part.name for part in as_its_kind] != ["prism"]
+        assert parts[0].mesh.triangle_count < triangle_count(as_its_kind)
+        # a flag that is present and false is not a flag
+        unflagged = polygon_record(kind, ring, 150.0, params={**params, PARAM_OUTLINE_RESOLVED: False})
+        assert not builder.uses_the_plain_block(unflagged)
+
+    @pytest.mark.parametrize("shape", ["_house", "_shed"])
+    def test_a_building_s_own_shape_function_hangs_no_roof_on_a_resolved_outline(
+        self, shape: str
+    ) -> None:
+        """… and the buildings check again themselves: called directly on a resolved
+        one-ring record WITH a usable ridge, they build the block, not walls and a roof."""
+        ring = rectangle(900.0, 540.0)
+        ridge = ((-450.0, 0.0), (450.0, 0.0))
+        plain = polygon_record("HOUSE", ring, 450.0, params={"ridge": ridge})
+        flagged = polygon_record("HOUSE", ring, 450.0,
+                                 params={"ridge": ridge, "outline_resolved": True})
+        function = getattr(buildings, shape)
+        assert [part.name for part in function(plain, 450.0)] == ["walls", "roof"]
+        (block,) = function(flagged, 450.0)
+        assert block.name == "walls" and block.mesh == default_builder(flagged)[0].mesh
 
     @pytest.mark.parametrize(("name", "record"), [
         ("no ridge", polygon_record("HOUSE", L_SHAPE, 450.0)),

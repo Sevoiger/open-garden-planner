@@ -20,6 +20,7 @@ against Qt Quick 3D).
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ from open_garden_planner.core.object_types import ObjectType, PathFenceStyle
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
     MeshPart,
+    Params,
     Record,
     RecordingSink,
     SceneDiff,
@@ -520,6 +522,62 @@ class TestRidgeIsTheLiveRidge:
         assert float((toward @ sun).min()) > float((away @ sun).max()) + 0.5
 
 
+# ── an outline the contract had to resolve: a block, whatever its ring count ──
+
+
+class TestAResolvedOutlineGetsNoRoof:
+    """Round 1's open point, closed by the contract's flag (merge of 9944012): a HOUSE
+    drawn crossing itself can resolve to ONE plain ring, and then nothing but
+    ``params["outline_resolved"]`` tells it from an ordinary house."""
+
+    #: The scene contract's own "one ring of ten" (``test_scene3d_snapshot.py``).
+    ONE_RING = [(50.0, 400.0), (0.0, 300.0), (350.0, 100.0), (0.0, 400.0), (50.0, 0.0)]
+
+    def test_a_self_crossing_house_that_resolves_to_one_ring_is_a_block(
+        self, canvas: CanvasView
+    ) -> None:
+        scene = canvas.scene()
+        house = PolygonItem([QPointF(1000.0 + x, 800.0 + y) for x, y in self.ONE_RING],
+                            object_type=ObjectType.HOUSE)
+        ridge = PolylineItem([QPointF(1000.0, 1000.0), QPointF(1350.0, 1000.0)],
+                             object_type=ObjectType.ROOF_RIDGE)
+        house.set_metadata("ridge_item_id", str(ridge.item_id))
+        scene.addItem(house)
+        scene.addItem(ridge)
+        skipped: list[SkippedItem] = []
+        records = snapshot_records(scene, skipped=skipped)
+        record = records[str(house.item_id)]
+        assert skipped == [] and list(records) == [str(house.item_id)]
+        # ONE ring without a hole: the count says nothing …
+        assert len(record.footprints) == 1 and record.holes == () and len(record.footprints[0]) == 10
+        # … the record does, and the ridge drawn for the DRAWN outline is not handed on
+        assert record.params.get("outline_resolved") is True and "ridge" not in record.params
+
+        registry = production_registry()
+        builder = registry.builder_for("HOUSE")
+        parts = verify_builder(builder, record, height_tolerance_cm=0.5, plan_margin_cm=0.0,
+                               hole_cover_limit=0.0)
+        assert [part.name for part in parts] == ["prism"]             # no walls + roof
+        assert parts[0].mesh == default_builder(record)[0].mesh       # the regions, as a block
+        assert float(parts[0].mesh.positions[:, 2].max()) == float(np.float32(record.height_cm))
+
+        # It is the FLAG that decides — not the missing ridge. Hand the builder a ridge it
+        # could use (a line through the middle of the ring): still the block. Take the flag
+        # away and the very same ring gets a gable roof — what round 1 built.
+        usable = ((-150.0, 0.0), (150.0, 0.0))
+        with_ridge = dataclasses.replace(record, params=Params({**record.params, "ridge": usable}))
+        assert [part.name for part in registry.build(with_ridge)] == ["prism"]
+        unflagged = dataclasses.replace(with_ridge, params=Params(
+            {key: value for key, value in with_ridge.params.items() if key != "outline_resolved"}))
+        assert [part.name for part in registry.build(unflagged)] == ["walls", "roof"]
+
+        sink = RecordingSink()
+        sync = SceneSync(sink, registry, validate=True)
+        sync.apply(records)
+        assert sync.failures == {}
+        assert [part.name for part in sink.item(record.item_id).parts] == ["prism"]
+
+
 # ── the committed edge-case plan (L1.1's fix) through the production builders ─
 
 
@@ -544,8 +602,10 @@ def _named(records: dict[str, Record], name: str) -> Record:
 class TestTheEdgeCasePlan:
     """``scene3d_edge_cases.ogp`` holds what the bench plans lack: a turned house with
     its ridge, a closed, a nearly closed and an open fence, a turned raised bed with
-    plants, a pot with a plant, a concave hedge. The production builders and the base
-    rule over all of it."""
+    plants, a pot with a plant, a concave hedge — and, since the contract's second
+    fix round (merge of 9944012), a house drawn crossing itself, a ladder of a fence
+    whose stroke has four holes, and a fence that stops 6 cm short of closing. The
+    production builders and the base rule over all of it."""
 
     def test_every_built_world_item_passes_the_gate(self, edge_plan) -> None:
         _scene, records = edge_plan
@@ -560,11 +620,51 @@ class TestTheEdgeCasePlan:
             assert top == float(np.float32(record.height_cm)), record.name
             assert min(float(part.mesh.positions[:, 2].min()) for part in parts) == 0.0
             built_kinds.append(record.kind)
-        assert sorted(built_kinds) == ["CONTAINER_ROUND", "FENCE", "FENCE", "FENCE", "HEDGE_POLYGON",
-                                       "HOUSE", "RAISED_BED"]
+        assert sorted(built_kinds) == ["CONTAINER_ROUND", *["FENCE"] * 5, "HEDGE_POLYGON",
+                                       "HOUSE", "HOUSE", "RAISED_BED"]
+        assert len(records) == 14  # 16 items; the two ridges have no record
         sync = SceneSync(RecordingSink(), registry, validate=True)
         sync.apply(records)
         assert sync.failures == {}
+
+    def test_the_crossed_house_is_the_block_of_its_regions(self, edge_plan) -> None:
+        """A HOUSE drawn crossing itself, with a ridge item: the contract resolves the
+        outline (three rings here), says so, and hands on no ridge. The house builder
+        builds the regions as ONE block — no roof on a part of it, no ring dropped."""
+        scene, records = edge_plan
+        crossed, house = _named(records, "Crossed house"), _named(records, "House")
+        assert crossed.params.get("outline_resolved") is True and "ridge" not in crossed.params
+        assert len(crossed.footprints) == 3 and crossed.holes == ()
+        assert "outline_resolved" not in house.params and "ridge" in house.params
+        item = next(i for i in scene.items() if str(getattr(i, "item_id", "")) == crossed.item_id)
+        assert item.metadata.get("ridge_item_id")  # the plan DOES hold a ridge for it
+        registry = production_registry()
+        parts = verify_builder(registry.builder_for("HOUSE"), crossed, height_tolerance_cm=0.5,
+                               plan_margin_cm=0.0, hole_cover_limit=0.0)
+        assert [part.name for part in parts] == ["prism"]
+        assert parts[0].mesh == default_builder(crossed)[0].mesh
+        assert float(parts[0].mesh.positions[:, 2].max()) == 450.0 == crossed.height_cm
+        beyond_cm2, _cover = plan_overreach(parts, crossed.regions, 0.0)
+        assert beyond_cm2 == 0.0
+        assert [part.name for part in registry.build(house)] == ["walls", "roof"]  # the other one
+
+    def test_the_ladder_and_the_gap(self, edge_plan) -> None:
+        """Two more fences of the contract's second round: a stroke with FOUR holes
+        (each cell of the ladder 140 x 140 cm of garden) and one that stops 6 cm short
+        of closing at a corner — its 10 cm stroke does not bridge that, so it has no
+        hole. Both are built from the centre line: posts, rails and pickets on the
+        stroke, the cells open."""
+        _scene, records = edge_plan
+        registry = production_registry()
+        ladder, gap = _named(records, "Ladder fence"), _named(records, "Fence with a gap")
+        assert [len(group) for group in ladder.holes] == [4] and len(ladder.footprints) == 1
+        assert gap.holes == () and len(gap.footprints) == 1
+        for record in (ladder, gap):
+            parts = verify_builder(registry.builder_for("FENCE"), record, height_tolerance_cm=0.5)
+            assert [part.name for part in parts] == ["fence"]  # no style: the default fence
+            beyond_cm2, hole_cover = plan_overreach(parts, record.regions, 50.0)
+            assert beyond_cm2 == 0.0 and hole_cover <= 0.01, (record.name, hole_cover)
+            assert sum(part.mesh.triangle_count for part in parts) <= lines.triangle_budget(record)
 
     def test_the_fences_enclose_nothing(self, edge_plan) -> None:
         """A fence drawn round 80 m² of garden is 36 m of fence in 3D: nothing over the

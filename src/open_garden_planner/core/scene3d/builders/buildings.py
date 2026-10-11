@@ -12,8 +12,12 @@ the item's own fill colour, as the shipped 3D view always extruded it) and
   a ridge whose line misses the building, a house too low for a roof slab) is a
   plain block up to its height: honest about what the plan holds.
 - **The plain block is ``common.plain_block``**: ALL of the record's regions
-  with their holes cut out — never ``footprints[0]`` alone. A gable roof needs
-  ONE simple outline; a record whose ground is anything else is that block too.
+  with their holes cut out — never ``footprints[0]`` alone. A gable roof needs a
+  usable ridge AND one plain outline (``common.has_one_plain_ring``: one ring, no
+  hole, not ``params["outline_resolved"]``); a record whose ground is anything
+  else is that block too. A HOUSE drawn crossing itself comes without a ridge
+  from the snapshot — and gets no roof here even if one is handed in: the flag
+  decides, not the missing param.
 - **GARAGE_SHED / TOOL_SHED** have no ridge item; theirs runs along the long
   axis of the footprint's local bounding box (``roofs.bounding_box_ridge``).
 """
@@ -66,8 +70,9 @@ def _block(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
 
 def _roofed(record: Record, height_cm: float, ridge: Ridge | None,
             style: RoofStyle) -> tuple[MeshPart, ...]:
-    """Walls and a gable roof — on ONE simple outline, and only with a ridge whose
-    line the roof can be hung on; in every other case the plain block."""
+    """Walls and a gable roof — on ONE plain outline (not a resolved one), and only
+    with a ridge whose line the roof can be hung on; in every other case the block
+    of the record's regions."""
     if ridge is None or not has_one_plain_ring(record):
         return _block(record, height_cm)
     built = gable_roof(footprint_of(record), ridge, height_cm, style)

@@ -10,14 +10,19 @@ The truth rules of the built world live here, once:
   kind's nominal height as decoration and none of its parts casts a shadow —
   exactly as in 2D, where it casts none. A kind without a nominal height gets
   no solid at all.
-- **One plain ring, or the plain block.** A shape function for a polygon,
-  rectangle, ellipse or circle builds on ONE simple outline. A record whose
-  ground is anything else — several outer rings, or a ring with holes: a polygon
-  drawn crossing itself can be resolved into either — gets ``plain_block``: a
-  prism of ALL its regions with their holes cut out. Never a house, a bed or a
-  hedge on ``footprints[0]`` alone. ``plain_block`` is also THE block every
-  builder falls back to (a house without a usable ridge), so no fallback can
-  drop a region or fill a hole.
+- **One plain outline, or the plain block.** A shape function for a polygon,
+  rectangle, ellipse or circle builds on ONE simple outline, as drawn. A record
+  whose ground is anything else gets ``plain_block``: a prism of ALL its regions
+  with their holes cut out. "Anything else" is three things: several outer
+  rings; a ring with holes; and an outline the scene contract had to RESOLVE —
+  a polygon drawn crossing or touching itself, flagged
+  ``params["outline_resolved"]``. The flag counts even when the resolved ground
+  is one ring without a hole: the ring count says nothing about how the item
+  was drawn, a resolved ring can come within 0.002 cm of itself (no frame, inset
+  or overhang is offset from that), and a roof would hang on a ridge drawn for
+  another outline. Never a house, a bed or a hedge on ``footprints[0]`` alone.
+  ``plain_block`` is also THE block every builder falls back to (a house without
+  a usable ridge), so no fallback can drop a region or fill a hole.
 
 ``BuiltBuilder`` wraps a *shape function* ``(record, height_cm) -> parts`` into
 the ``Builder`` the registry wants and applies the three rules.
@@ -34,7 +39,7 @@ import numpy as np
 from ...object_height import effective_height_cm
 from ..build import prism_mesh
 from ..mesh import Mesh, MeshPart
-from ..record import SHAPE_POLYLINE, Record
+from ..record import PARAM_OUTLINE_RESOLVED, SHAPE_POLYLINE, Record
 from .primitives import F64, MIN_SEGMENT_CM, clean_path
 
 ShapeFunction: TypeAlias = Callable[[Record, float], tuple[MeshPart, ...]]
@@ -67,12 +72,16 @@ def centre_line(record: Record) -> tuple[F64, bool]:
 
 
 def has_one_plain_ring(record: Record) -> bool:
-    """True when the record's ground is ONE outer ring without a hole — what every
-    polygon-footprint shape function builds on. False for several outer rings and
-    for a ring with holes; a self-crossing polygon can be resolved into either
-    (and, be warned, also into one plain ring — this is a test of the GROUND a
-    builder gets, not a detector of how the item was drawn)."""
-    return len(record.footprints) == 1 and not any(record.holes)
+    """True when the record's ground is ONE plain outline — what every
+    polygon-footprint shape function builds on: one outer ring, no hole, and not
+    the resolved reading of an outline drawn crossing or touching itself
+    (``params["outline_resolved"]``, set by the snapshot and by nothing else).
+
+    False for several outer rings, for a ring with holes, and for ANY resolved
+    outline — which can be one ring, several, or rings with holes: only the flag
+    tells a resolved single ring from an ordinary polygon."""
+    return (len(record.footprints) == 1 and not any(record.holes)
+            and not record.params.get(PARAM_OUTLINE_RESOLVED))
 
 
 def plain_block(record: Record, height_cm: float, *, name: str = "prism") -> tuple[MeshPart, ...]:
@@ -143,8 +152,10 @@ class BuiltBuilder:
         return nominal_height_cm(record.kind)
 
     def uses_the_plain_block(self, record: Record) -> bool:
-        """A polygon-footprint record whose ground is not one plain ring: the shape
-        function cannot build on it honestly, ``plain_block`` of its regions can."""
+        """A polygon-footprint record whose ground is not one plain outline (several
+        rings, a hole, or a resolved outline): the shape function cannot build on
+        it honestly, ``plain_block`` of its regions can. Never a polyline: a line
+        is built from its centre line, whatever its stroke's rings are."""
         return record.shape != SHAPE_POLYLINE and not has_one_plain_ring(record)
 
     def raw(self, record: Record) -> tuple[MeshPart, ...]:
@@ -176,17 +187,20 @@ def footprint_of(record: Record) -> tuple[tuple[float, float], ...]:
     """The item's ONE simple outline (item-local, counter-clockwise), or ``()`` for
     a record without ground. For a shape function that needs exactly one — a
     gable roof, a bed's frame, a pot, a hedge. Raises ``ValueError`` for a record
-    whose ground is several rings or a ring with holes: such a record is built by
-    ``plain_block`` (``BuiltBuilder`` sees to it before any shape function runs),
-    and taking ``footprints[0]`` for the whole would drop a region or fill a
-    hole. NEVER build a polyline from this either: its ``footprints`` are the
-    outline of its STROKE — a line is built from ``record.path``."""
+    whose ground is several rings, a ring with holes or a resolved outline: such
+    a record is built by ``plain_block`` (``BuiltBuilder`` sees to it before any
+    shape function runs), and taking ``footprints[0]`` for the whole would drop a
+    region, fill a hole or dress up a ring that is not the drawn one. NEVER build
+    a polyline from this either: its ``footprints`` are the outline of its
+    STROKE — a line is built from ``record.path``."""
     if not record.footprints:
         return ()
     if not has_one_plain_ring(record):
+        resolved = ", a resolved outline" if record.params.get(PARAM_OUTLINE_RESOLVED) else ""
         raise ValueError(
             f"{record.kind} item {record.item_id!r} is not one plain ring "
-            f"({len(record.footprints)} outer rings, {sum(len(group) for group in record.holes)} holes): "
+            f"({len(record.footprints)} outer rings, "
+            f"{sum(len(group) for group in record.holes)} holes{resolved}): "
             "build it with plain_block, not on footprints[0]")
     return record.footprints[0]
 
