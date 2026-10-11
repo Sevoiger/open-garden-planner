@@ -36,7 +36,17 @@ F64: TypeAlias = NDArray[np.float64]
 #: Triangles whose doubled area is below this (cm²) are dropped: they have no
 #: usable winding normal. Far above ``mesh.normal_vs_winding``'s own cut (1e-6).
 MIN_DOUBLE_AREA: Final = 1e-4
-#: A mitre joint is never longer than this many offsets (a hairpin bend).
+#: On the side of a corner where the two offset edges run APART (the outside of a
+#: bend), a mitre longer than this many offsets is cut flat instead — a bevel
+#: between the ends of the two edges. 2.0 is a turn of 120°, an interior angle of
+#: 60°: squarer corners keep their mitre, sharper ones (an acute-triangle house's
+#: eaves, a hairpin wall) would otherwise grow a spike — 3.9 offsets at 30°. So
+#: nothing built by ``sweep`` or ``offset_ring`` lies further than ``BEVEL_BEYOND``
+#: offsets from the line or ring it was built on.
+BEVEL_BEYOND: Final = 2.0
+#: On the side where the two offset edges run TOGETHER (the inside of a bend) the
+#: mitre is their true intersection and is kept; only a hairpin, whose
+#: intersection runs away, is cut off at this many offsets.
 MITER_LIMIT: Final = 4.0
 #: Path points closer than this (cm) are one point.
 MIN_SEGMENT_CM: Final = 1e-3
@@ -244,17 +254,48 @@ def _miter(before: F64, after: F64) -> F64:
     return out
 
 
+def _sharp(before: F64, after: F64) -> NDArray[np.bool_]:
+    """Joints whose mitre is longer than ``BEVEL_BEYOND`` offsets. A turn of exactly
+    120° (an equilateral corner) is not: the margin keeps it on the mitre side
+    whatever the last bit of its coordinates."""
+    scale = 1.0 + (before * after).sum(axis=1)
+    sharp: NDArray[np.bool_] = scale < (2.0 / (BEVEL_BEYOND * BEVEL_BEYOND)) * (1.0 - 1e-6)
+    return sharp
+
+
+def _cross(a: F64, b: F64) -> F64:
+    turn: F64 = a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]
+    return turn
+
+
 def offset_ring(ring: ArrayLike, distance: float) -> F64:
     """A counter-clockwise plan polygon moved outward by ``distance`` cm (inward when
-    negative), mitred corners. Every edge keeps its direction and moves exactly
-    ``distance`` — a roof's overhang, a bed's soil inset."""
+    negative). Every edge keeps its direction and moves exactly ``distance`` — a
+    roof's overhang, a bed's soil inset.
+
+    Corners are mitred. Where the moved edges run apart (an outward offset at a
+    convex corner, an inward one at a reflex corner) and the mitre would be longer
+    than ``BEVEL_BEYOND`` offsets, the corner is bevelled: it becomes TWO points,
+    the ends of the two moved edges, so the result can have more points than the
+    ring and no point lies further than ``BEVEL_BEYOND · |distance|`` from the
+    ring. Where the moved edges run together (an inset at an acute corner) their
+    intersection is the corner, however far in it lies — up to ``MITER_LIMIT``.
+    """
     points = ccw_ring(ring)
     if len(points) < 3:
         return points
     edge = np.roll(points, -1, axis=0) - points
     edge /= np.maximum(np.linalg.norm(edge, axis=1, keepdims=True), 1e-12)
     outward = -_left_normals(edge)  # right of travel on a counter-clockwise ring
-    return points + distance * _miter(np.roll(outward, 1, axis=0), outward)
+    before, arriving = np.roll(outward, 1, axis=0), np.roll(edge, 1, axis=0)
+    bevel = _sharp(before, outward) & (distance * _cross(arriving, edge) > 0.0)
+    first = points + distance * np.where(bevel[:, None], before, _miter(before, outward))
+    if not bevel.any():
+        return first
+    copies = 1 + bevel.astype(np.int64)
+    moved = np.repeat(first, copies, axis=0)
+    moved[(np.cumsum(copies) - 1)[bevel]] = (points + distance * outward)[bevel]
+    return moved
 
 
 def polygon_triangles(ring: ArrayLike) -> F64:
@@ -347,7 +388,13 @@ def sweep(profile: ArrayLike, path: ArrayLike, colors: ArrayLike = _WHITE, *,
     ``cap_color`` (default: the first colour).
 
     Each wall is one planar quad per path segment: at a joint both sides move
-    along the mitre, so they stay on lines parallel to the segment.
+    along the mitre, so they stay on lines parallel to the segment. At a joint
+    sharper than ``BEVEL_BEYOND`` the OUTSIDE of the bend is bevelled instead —
+    the section ends square on each segment and a flat face joins the two — so a
+    hairpin grows no spike: no vertex lies further from the path than
+    ``BEVEL_BEYOND`` times its lateral offset (a mitre of up to 2 offsets, a
+    bevel of exactly 1). The inside of a bend keeps its mitre: the two inner
+    edges' intersection, within the section's own width of the path.
     """
     section = np.asarray(profile, dtype=np.float64).reshape(-1, 2)
     line = clean_path(path)
@@ -358,34 +405,50 @@ def sweep(profile: ArrayLike, path: ArrayLike, colors: ArrayLike = _WHITE, *,
     points = len(line)
     travel = (np.roll(line, -1, axis=0) - line)[: points if closed else points - 1]
     travel /= np.maximum(np.linalg.norm(travel, axis=1, keepdims=True), 1e-12)
-    left = _left_normals(travel)
-    if closed:
-        miter = _miter(np.roll(left, 1, axis=0), left)
-    else:
-        miter = np.empty((points, 2))
-        miter[0], miter[-1] = left[0], left[-1]
-        if points > 2:
-            miter[1:-1] = _miter(left[:-1], left[1:])
-    plan = line[:, None, :] + section[None, :, 0:1] * miter[:, None, :]  # (m, p, 2)
+    if closed:  # per path point: the direction of the segment arriving and of the one leaving
+        coming, going = np.roll(travel, 1, axis=0), travel
+    else:       # an end point has one segment: it is its own neighbour (a square end)
+        coming, going = np.concatenate([travel[:1], travel]), np.concatenate([travel, travel[-1:]])
+    before, after = _left_normals(coming), _left_normals(going)
+    miter = _miter(before, after)
+    lateral = section[:, 0]
+    # outside of a sharp bend: a left turn's right side, a right turn's left side
+    sharp = _sharp(before, after)
+    outside = sharp[:, None] & (lateral[None, :] * _cross(coming, going)[:, None] < 0.0)  # (m, p)
     rise = np.broadcast_to(section[None, :, 1:2], (points, len(section), 1))
-    stations = np.concatenate([plan, rise], axis=2)  # (m, p, 3)
+
+    def stations(normal: F64) -> F64:
+        """The section at every path point (m, p, 3): mitred, or square to the
+        segment with left normal ``normal`` on the outside of a sharp bend."""
+        direction = np.where(outside[:, :, None], normal[:, None, :], miter[:, None, :])
+        plan = line[:, None, :] + lateral[None, :, None] * direction
+        return np.concatenate([plan, rise], axis=2)
+
+    arrive, leave = stations(before), stations(after)  # equal wherever nothing is bevelled
 
     edge_count = len(section) if profile_closed else len(section) - 1
     used = np.ones(edge_count, dtype=bool) if edges is None else np.asarray(edges, dtype=bool)
     start = np.arange(edge_count)[used]
     end = (start + 1) % len(section)
-    here = stations if closed else stations[:-1]
-    there = np.roll(stations, -1, axis=0) if closed else stations[1:]
-    quads = np.stack([here[:, start], here[:, end], there[:, end], there[:, start]], axis=2)
     edge_colors = _rows(colors, edge_count, 4)[used]
-    triangles = [quad_triangles(quads)]
-    triangle_colors = [np.tile(np.repeat(edge_colors, 2, axis=0), (len(here), 1))]
+
+    def faces(here: F64, there: F64) -> tuple[F64, F64]:
+        quads = np.stack([here[:, start], here[:, end], there[:, end], there[:, start]], axis=2)
+        return quad_triangles(quads), np.tile(np.repeat(edge_colors, 2, axis=0), (len(here), 1))
+
+    walls = faces(leave if closed else leave[:-1],
+                  np.roll(arrive, -1, axis=0) if closed else arrive[1:])
+    triangles, triangle_colors = [walls[0]], [walls[1]]
+    if sharp.any():  # the bevel faces; where a section point is mitred they are a triangle
+        joins = faces(arrive[sharp], leave[sharp])
+        triangles.append(joins[0])
+        triangle_colors.append(joins[1])
     if caps and profile_closed and not closed:
         index = triangulate_polygon([(float(a), float(b)) for a, b in section])
         if index:
             corner = np.asarray(index, dtype=np.int64)
-            triangles.append(stations[0][corner[:, [0, 2, 1]]])  # looks back along the path
-            triangles.append(stations[-1][corner])
+            triangles.append(leave[0][corner[:, [0, 2, 1]]])  # looks back along the path
+            triangles.append(arrive[-1][corner])
             cap = np.asarray(cap_color if cap_color is not None else _rows(colors, edge_count, 4)[0],
                              dtype=np.float64)
             triangle_colors.append(np.broadcast_to(cap, (2 * len(corner), 4)))

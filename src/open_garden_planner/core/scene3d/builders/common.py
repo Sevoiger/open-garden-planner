@@ -23,10 +23,10 @@ from typing import Final, TypeAlias
 
 import numpy as np
 
-from ...container_model import container_height_cm
-from ...object_height import DEFAULT_HEIGHTS_CM
+from ...object_height import effective_height_cm
 from ..mesh import Mesh, MeshPart
 from ..record import Record
+from .primitives import F64, MIN_SEGMENT_CM, clean_path
 
 ShapeFunction: TypeAlias = Callable[[Record, float], tuple[MeshPart, ...]]
 
@@ -34,17 +34,25 @@ ShapeFunction: TypeAlias = Callable[[Record, float], tuple[MeshPart, ...]]
 #: and the mesh is left untouched.
 FIT_IDENTITY: Final = 1e-6
 
-#: Kinds whose resolver always has a height, but through the container fill
-#: height rather than the per-type table (``object_height._CONTAINER_TYPE_NAMES``).
-_CONTAINER_KINDS: Final = frozenset({"CONTAINER", "CONTAINER_ROUND", "WALL_PLANTER"})
-
 
 def nominal_height_cm(kind: str) -> float | None:
     """The height an item of ``kind`` is drawn at when the plan gives it none:
-    its default from the 2D resolver's own tables, or None when it has none."""
-    if kind in _CONTAINER_KINDS:
-        return container_height_cm(None)
-    return DEFAULT_HEIGHTS_CM.get(kind)
+    what the 2D height resolver itself answers for that kind without any data —
+    the per-type default, a container's default fill height — or None when it
+    has none. Asked, not mirrored: there is no table of kinds here."""
+    return effective_height_cm(kind, None)
+
+
+def centre_line(record: Record) -> tuple[F64, bool]:
+    """A polyline record's centre line without repeated points, and whether it is
+    a closed loop (its last point is its first — then the last point is dropped).
+
+    What every line solid is built from. Never ``record.footprints``: a fence
+    round a garden is a closed loop, and its stroke polygon is a ring with a hole.
+    """
+    line = clean_path(record.path) if len(record.path) >= 2 else np.zeros((0, 2))
+    closed = len(line) > 3 and float(np.linalg.norm(line[0] - line[-1])) <= MIN_SEGMENT_CM
+    return (line[:-1] if closed else line), closed
 
 
 def top_cm(parts: Sequence[MeshPart]) -> float | None:

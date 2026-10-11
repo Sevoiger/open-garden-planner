@@ -44,6 +44,15 @@ U_SHAPE: tuple[Point, ...] = ((-450.0, -300.0), (450.0, -300.0), (450.0, 300.0),
                               (250.0, -100.0), (-250.0, -100.0), (-250.0, 300.0), (-450.0, 300.0))
 U_RIDGE: tuple[Point, Point] = ((-450.0, 0.0), (450.0, 0.0))
 TRAPEZOID: tuple[Point, ...] = ((-400.0, -200.0), (400.0, -200.0), (250.0, 200.0), (-250.0, 200.0))
+#: Acute corners (review round 1, P2-10): an isosceles triangle with a 30° apex (its
+#: two base corners are 75°), and a right triangle with a 20° corner. A mitre at 30° is
+#: 3.9 offsets long, at 20° it is 5.8 — both are bevelled.
+ACUTE_TRIANGLE: tuple[Point, ...] = ((-200.0, -250.0), (200.0, -250.0), (0.0, 496.41))
+#: ``core.roof_ridge`` for it: the long axis of its bounding box, wall to wall — it ends
+#: IN the 30° apex.
+ACUTE_RIDGE: tuple[Point, Point] = ((0.0, -250.0), (0.0, 496.41))
+SLIVER_TRIANGLE: tuple[Point, ...] = ((-400.0, -100.0), (400.0, -100.0), (-400.0, 191.18))
+SLIVER_RIDGE: tuple[Point, Point] = ((-400.0, 45.59), (0.0, 45.59))
 
 
 def polygon_record(kind: str, ring: Sequence[Point], height: float | None, *,
@@ -82,10 +91,20 @@ LOOP: tuple[Point, ...] = ((-400.0, -300.0), (400.0, -300.0), (400.0, 300.0), (-
 CLOSED_PATH: tuple[Point, ...] = (*LOOP, LOOP[0])               # first point repeated: a loop
 NEARLY_CLOSED_PATH: tuple[Point, ...] = (*LOOP, (-400.0, -295.0))  # a 5 cm gap
 LONG_PATH: tuple[Point, ...] = ((-2500.0, 0.0), (2500.0, 0.0))  # 50 m of fence
+#: A line that doubles back on itself: a turn of 174°. And a zigzag with a turn of 150°
+#: followed by one of 135°.
+HAIRPIN_PATH: tuple[Point, ...] = ((-300.0, 0.0), (300.0, 0.0), (-300.0, 60.0))
+ZIGZAG_PATH: tuple[Point, ...] = ((-300.0, 0.0), (0.0, 0.0), (-259.81, 150.0), (40.19, 150.0),
+                                  (-171.94, 362.13))
+#: A closed loop with a 30° corner: the acute triangle's outline.
+ACUTE_LOOP_PATH: tuple[Point, ...] = (*ACUTE_TRIANGLE, ACUTE_TRIANGLE[0])
 PATHS = {"straight": STRAIGHT_PATH, "bent": BENT_PATH, "closed": CLOSED_PATH,
-         "nearly_closed": NEARLY_CLOSED_PATH}
+         "nearly_closed": NEARLY_CLOSED_PATH, "hairpin": HAIRPIN_PATH, "zigzag": ZIGZAG_PATH,
+         "acute_loop": ACUTE_LOOP_PATH}
+#: None: no style (the plain line). The five fence styles. A PATH style on a fence and a
+#: name no builder knows: both are built as the plain panel.
 LINE_STYLES = (None, "WOODEN_FENCE", "METAL_FENCE", "CHAIN_LINK", "HEDGE_FENCE", "STONE_WALL",
-               "GRAVEL_PATH")
+               "GRAVEL_PATH", "BAMBOO_FENCE")
 
 
 @dataclass(frozen=True)
@@ -140,6 +159,13 @@ def _cases() -> Iterator[Case]:
         "TOOL_SHED/deep", lambda h: polygon_record("TOOL_SHED", rectangle(150.0, 200.0), h,
                                                    shape="rectangle"), (250.0, 199.0))
     yield Case("GARAGE_SHED/L/h250", polygon_record("GARAGE_SHED", L_SHAPE, 250.0))
+    for angle in ANGLES:  # acute corners: the eaves are bevelled, not spiked
+        yield Case(f"HOUSE/acute-triangle@{angle:g}/h450", polygon_record(
+            "HOUSE", turned(ACUTE_TRIANGLE, angle), 450.0, params={"ridge": turned(ACUTE_RIDGE, angle)}))
+    yield Case("HOUSE/sliver-triangle/h450", polygon_record(
+        "HOUSE", SLIVER_TRIANGLE, 450.0, params={"ridge": SLIVER_RIDGE}))
+    yield Case("GARAGE_SHED/acute-triangle/h250", polygon_record("GARAGE_SHED", ACUTE_TRIANGLE, 250.0))
+    yield Case("TOOL_SHED/sliver-triangle/h250", polygon_record("TOOL_SHED", SLIVER_TRIANGLE, 250.0))
 
     # ── fences and walls: every style x every path x heights ─────────────────
     for kind, heights in (("FENCE", (120.0, 37.5)), ("WALL", (200.0, 61.25))):
@@ -186,6 +212,12 @@ def _cases() -> Iterator[Case]:
         "WALL_PLANTER", lambda h: polygon_record("WALL_PLANTER", turned(rectangle(120.0, 25.0), 17.0), h,
                                                  shape="rectangle",
                                                  params={"container_material": "wood"}), (30.0,))
+    yield Case("RAISED_BED/acute-triangle/h40", polygon_record("RAISED_BED", ACUTE_TRIANGLE, 40.0))
+    yield Case("CONTAINER/sliver-triangle/h30", polygon_record(
+        "CONTAINER", SLIVER_TRIANGLE, 30.0, params={"container_material": "wood"}))
+    yield Case("CONTAINER/unknown-material/h30", polygon_record(
+        "CONTAINER", rectangle(80.0, 40.0), 30.0, shape="rectangle",
+        params={"container_material": "bamboo"}))
     yield Case("GARDEN_BED/raised-polygon/h25", polygon_record("GARDEN_BED", TRAPEZOID, 25.0))
     yield Case("GARDEN_BED/raised-circle/h25", circle_record("GARDEN_BED", 120.0, 25.0))
     yield Case("GARDEN_BED/in-ground/no-height", polygon_record("GARDEN_BED", TRAPEZOID, None))
@@ -200,6 +232,8 @@ def _cases() -> Iterator[Case]:
         "HEDGE_POLYGON/L", lambda h: polygon_record("HEDGE_POLYGON", L_SHAPE, h), (150.0,))
     yield Case("HEDGE_POLYGON/low/h18", polygon_record("HEDGE_POLYGON", rectangle(400.0, 60.0), 18.0))
     yield Case("HEDGE_SECTION/sliver/h150", polygon_record("HEDGE_SECTION", rectangle(100.0, 10.0), 150.0))
+    yield Case("HEDGE_POLYGON/acute-triangle/h150", polygon_record("HEDGE_POLYGON", ACUTE_TRIANGLE, 150.0))
+    yield Case("HEDGE_POLYGON/sliver-triangle/h150", polygon_record("HEDGE_POLYGON", SLIVER_TRIANGLE, 150.0))
 
 
 CASES: tuple[Case, ...] = tuple(_cases())
@@ -232,6 +266,24 @@ def distance_to_path(points: np.ndarray, path: Sequence[Point], *, closed: bool 
         nearest = a + t[:, None] * step
         best = np.minimum(best, np.linalg.norm(points - nearest, axis=1))
     return best
+
+
+def corner_reach(path: Sequence[Point], *, closed: bool = False, bevel_beyond: float) -> float:
+    """How far past its lateral offset a swept section may reach at the path's corners, in
+    offsets: ``1 / cos(half the turn)`` at a mitred joint — but a joint whose mitre would be
+    longer than ``bevel_beyond`` is bevelled and stays at 1. From the angles alone."""
+    line = np.asarray(path, dtype=np.float64)
+    step = (np.roll(line, -1, axis=0) - line) if closed else np.diff(line, axis=0)
+    heading = np.arctan2(step[:, 1], step[:, 0])
+    turn = np.diff(np.concatenate([heading, heading[:1]])) if closed else np.diff(heading)
+    turn = np.abs((turn + np.pi) % (2.0 * np.pi) - np.pi)
+    reach = 1.0
+    for angle in turn:
+        cosine = math.cos(float(angle) / 2.0)
+        mitre = 1.0 / cosine if cosine > 1e-9 else math.inf
+        if mitre <= bevel_beyond * (1.0 + 1e-6):
+            reach = max(reach, mitre)
+    return reach
 
 
 def path_length(path: Sequence[Point]) -> float:

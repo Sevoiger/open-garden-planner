@@ -33,6 +33,8 @@ from open_garden_planner.core.scene3d.builders.common import (
     top_cm,
 )
 from open_garden_planner.core.scene3d.builders.primitives import (
+    BEVEL_BEYOND,
+    MITER_LIMIT,
     bevelled_boxes,
     boxes,
     ccw_ring,
@@ -193,6 +195,84 @@ class TestPolygons:
         assert signed_area(offset_ring(SQUARE, 30.0)) == pytest.approx(160.0 ** 2)
         assert signed_area(offset_ring(SQUARE, -5.0)) == pytest.approx(90.0 ** 2)
 
+    def test_a_corner_keeps_its_mitre_up_to_two_offsets(self) -> None:
+        """BEVEL_BEYOND = 2: an interior angle of 60° (a mitre of exactly 2 offsets) is
+        still mitred, whatever the last bit of the coordinates says."""
+        assert BEVEL_BEYOND == 2.0 and MITER_LIMIT == 4.0
+        side = 400.0
+        equilateral = [(0.0, 0.0), (side, 0.0), (side / 2.0, side * math.sqrt(3.0) / 2.0)]
+        for turn in (0.0, 17.0, 90.0, 213.5):
+            c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+            ring = [(x * c - y * s, x * s + y * c) for x, y in equilateral]
+            grown = offset_ring(ring, 30.0)
+            assert len(grown) == 3
+            assert np.allclose(np.linalg.norm(grown - ccw_ring(ring), axis=1), 60.0)
+
+    @pytest.mark.parametrize(("apex_deg", "mitre"), [(59.0, 2.031), (30.0, 3.864), (20.0, 5.759),
+                                                     (5.0, 22.926)])
+    def test_a_sharper_corner_is_bevelled_when_the_edges_run_apart(
+        self, apex_deg: float, mitre: float
+    ) -> None:
+        """Review round 1, P2-10. Outward at an acute corner the mitre is
+        1 / sin(angle / 2) offsets long — a spike. It becomes two points, the ends of
+        the two moved edges, each exactly one offset from the corner."""
+        assert 1.0 / math.sin(math.radians(apex_deg) / 2.0) == pytest.approx(mitre, abs=1e-3)
+        half_base = 200.0
+        apex = (0.0, half_base / math.tan(math.radians(apex_deg) / 2.0))
+        ring = [(-half_base, 0.0), (half_base, 0.0), apex]  # the other two corners are > 60°
+        distance = 30.0
+        grown = offset_ring(ring, distance)
+        assert len(grown) == 4  # one corner became two points
+        source = ccw_ring(ring)
+        # every point within BEVEL_BEYOND offsets of the corner it came from …
+        nearest = np.linalg.norm(grown[:, None, :] - source[None, :, :], axis=2).min(axis=1)
+        assert float(nearest.max()) <= BEVEL_BEYOND * distance + 1e-9
+        # … the two at the apex exactly ONE offset from it (round 0: `mitre` offsets, cut at 4)
+        at_apex = grown[np.argsort(np.linalg.norm(grown - np.asarray(apex), axis=1))[:2]]
+        assert np.allclose(np.linalg.norm(at_apex - np.asarray(apex), axis=1), distance)
+        # every edge of the ring is still moved by exactly the distance, parallel to itself
+        for index in range(3):
+            a, b = source[index], source[(index + 1) % 3]
+            edge = (b - a) / np.linalg.norm(b - a)
+            outward = np.array([edge[1], -edge[0]])
+            on_line = np.isclose((grown - a) @ outward, distance, atol=1e-9)
+            assert int(on_line.sum()) == 2  # its two ends
+        assert signed_area(grown) > signed_area(ring)  # still a simple, larger polygon
+
+    def test_inward_at_an_acute_corner_the_mitre_is_the_true_intersection_and_is_kept(self) -> None:
+        """A soil inset or a hedge core at a 30° corner: the two moved edges MEET there,
+        3.9 offsets in from the corner. Cutting that short would let the inset poke into
+        the frame it is meant to clear."""
+        apex = (0.0, 200.0 / math.tan(math.radians(15.0)))
+        ring = [(-200.0, 0.0), (200.0, 0.0), apex]
+        inner = offset_ring(ring, -5.0)
+        assert len(inner) == 3
+        assert float(np.linalg.norm(inner[2] - np.asarray(apex))) == pytest.approx(
+            5.0 / math.sin(math.radians(15.0)), abs=1e-9)
+        source = ccw_ring(ring)
+        for index in range(3):  # every edge exactly 5 cm in
+            a, b = source[index], source[(index + 1) % 3]
+            edge = (b - a) / np.linalg.norm(b - a)
+            outward = np.array([edge[1], -edge[0]])
+            assert float((inner[index] - a) @ outward) == pytest.approx(-5.0, abs=1e-9)
+            assert float((inner[(index + 1) % 3] - a) @ outward) == pytest.approx(-5.0, abs=1e-9)
+
+    def test_a_reflex_corner_is_bevelled_for_an_inward_offset(self) -> None:
+        """The mirror case: at a deep notch the moved edges run apart when moved INWARD."""
+        notch = [(0.0, 0.0), (400.0, 0.0), (400.0, 300.0), (330.0, 300.0), (200.0, 20.0),
+                 (70.0, 300.0), (0.0, 300.0)]  # a 50° notch cut into the top
+        assert signed_area(notch) > 0.0
+        inner = offset_ring(notch, -10.0)
+        assert len(inner) == len(notch) + 1  # the notch's tip became two points
+        tip = np.asarray((200.0, 20.0))
+        at_tip = inner[np.argsort(np.linalg.norm(inner - tip, axis=1))[:2]]
+        assert np.allclose(np.linalg.norm(at_tip - tip, axis=1), 10.0)
+        # outward the same two edges run together: their true intersection, one point
+        outer = offset_ring(notch, 10.0)
+        assert len(outer) == len(notch)
+        assert float(np.linalg.norm(outer - tip, axis=1).min()) == pytest.approx(
+            10.0 / math.sin(math.atan2(130.0, 280.0)), abs=1e-9)
+
     def test_triangles_cover_a_concave_polygon_exactly(self) -> None:
         plan = polygon_triangles(L_SHAPE)
         areas = [signed_area(t) for t in plan]
@@ -228,6 +308,12 @@ class TestPolygons:
 
 
 BOX_PROFILE = [(-5.0, 0.0), (5.0, 0.0), (5.0, 40.0), (-5.0, 40.0)]  # counter-clockwise in (lateral, z)
+
+
+def _distance_to_segment(points: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    step = b - a
+    t = np.clip(((points - a) @ step) / float(step @ step), 0.0, 1.0)
+    return np.linalg.norm(points - (a + t[:, None] * step), axis=1)
 
 
 class TestSweep:
@@ -294,10 +380,87 @@ class TestSweep:
         assert sweep(BOX_PROFILE, [(0.0, 0.0), (9.0, 0.0)], closed=True).vertex_count == 0
 
     def test_a_hairpin_does_not_spike(self) -> None:
-        mesh = sweep(BOX_PROFILE, [(0.0, 0.0), (100.0, 0.0), (0.0, 1.0)])
+        """Review round 1, P2-10: round 0 cut a hairpin's mitre at 4 offsets — a 20 cm
+        spike past the bend on this 10 cm section. Its outside is bevelled: nothing is
+        further than one offset from the line."""
+        path = [(0.0, 0.0), (100.0, 0.0), (0.0, 1.0)]
+        mesh = sweep(BOX_PROFILE, path)
         mesh.validate()
         low, high = mesh.bounds()
-        assert float(high[0]) < 100.0 + 4.0 * 5.0 + 1e-3  # the mitre limit: 4 offsets
+        assert float(high[0]) <= 100.0 + 5.0 + 1e-3  # round 0: 120.0
+        plan = mesh.positions.astype(np.float64)[:, :2]
+        away = np.minimum(_distance_to_segment(plan, np.asarray(path[0]), np.asarray(path[1])),
+                          _distance_to_segment(plan, np.asarray(path[1]), np.asarray(path[2])))
+        assert float(away.max()) <= 5.0 + 1e-3
+        assert float(flat_dots(mesh).min()) > 0.9999
+        assert (float(low[2]), float(high[2])) == (0.0, 40.0)
+
+    @pytest.mark.parametrize("turn_deg", [121.0, 150.0, 174.0, 179.9])
+    @pytest.mark.parametrize("left", [True, False], ids=["left-turn", "right-turn"])
+    def test_a_sharp_bend_is_bevelled_on_its_outside(self, turn_deg: float, left: bool) -> None:
+        sign = 1.0 if left else -1.0
+        heading = math.radians(turn_deg) * sign
+        bend = np.asarray((300.0, 0.0))
+        path = [(0.0, 0.0), tuple(bend),
+                (300.0 + 300.0 * math.cos(heading), 300.0 * math.sin(heading))]
+        mesh = sweep(BOX_PROFILE, path)
+        mesh.validate()
+        corners, winding = triangles_of(mesh)
+        plan = mesh.positions.astype(np.float64)[:, :2]
+        # THE bound: no vertex further than its lateral offset from the line. The outside
+        # ends square on each segment; the inside is the two inner edges' intersection.
+        # (Round 0: the outside mitre, 5 / cos(turn / 2) = 10.2 … 20 cm from the bend.)
+        away = np.minimum(_distance_to_segment(plan, np.asarray(path[0]), bend),
+                          _distance_to_segment(plan, bend, np.asarray(path[2])))
+        assert float(away.max()) <= 5.0 + 1e-3
+        # the bevel is a real face: vertical, looking out along the bend's bisector, with
+        # every corner one offset from the bend
+        normal_in = np.array([0.0, 1.0]) * sign          # the first segment's inside
+        normal_out = np.array([-math.sin(heading), math.cos(heading)]) * sign
+        bisector = -(normal_in + normal_out)
+        bisector /= np.linalg.norm(bisector)
+        bevel = (np.abs(winding[:, 2]) < 1e-6) & (winding[:, :2] @ bisector > 0.999)
+        assert int(bevel.sum()) == 2  # the section's one outer side: a quad
+        assert np.allclose(np.linalg.norm(corners[bevel][:, :, :2] - bend, axis=2), 5.0, atol=1e-3)
+        assert float(flat_dots(mesh).min()) > 0.9999  # every face, the bevel's too, is planar
+        # the lid has no hole at the bend: some top triangle lies over the bend itself
+        lids = corners[np.isclose(corners[:, :, 2], 40.0).all(axis=1)][:, :, :2]
+        assert all(signed_area(t) > 0.0 for t in lids)  # all look up
+
+        def over(point: np.ndarray) -> bool:
+            a, b, c = lids[:, 0], lids[:, 1], lids[:, 2]
+            d1 = (b[:, 0] - a[:, 0]) * (point[1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (point[0] - a[:, 0])
+            d2 = (c[:, 0] - b[:, 0]) * (point[1] - b[:, 1]) - (c[:, 1] - b[:, 1]) * (point[0] - b[:, 0])
+            d3 = (a[:, 0] - c[:, 0]) * (point[1] - c[:, 1]) - (a[:, 1] - c[:, 1]) * (point[0] - c[:, 0])
+            return bool(((d1 >= -1e-9) & (d2 >= -1e-9) & (d3 >= -1e-9)).any())
+
+        # the bevel's chord runs between two points one offset from the bend, so it passes
+        # 5 · cos(turn / 2) from the bend: 2.5 cm at 121°, through the bend itself at 180°
+        chord = 5.0 * math.cos(math.radians(turn_deg) / 2.0)
+        assert over(bend - 1.0 * bisector)               # just inside the bend: under the lid
+        if chord > 0.5:
+            assert over(bend + 0.5 * chord * bisector)   # between the bend and the bevel: lid
+        assert not over(bend + (chord + 0.5) * bisector)  # past the bevel: open air (round 0: lid)
+
+    def test_a_bend_of_120_degrees_is_still_mitred(self) -> None:
+        heading = math.radians(120.0)
+        bend = np.asarray((300.0, 0.0))
+        path = [(0.0, 0.0), tuple(bend),
+                (300.0 + 300.0 * math.cos(heading), 300.0 * math.sin(heading))]
+        mesh = sweep(BOX_PROFILE, path)
+        assert mesh.triangle_count == 2 * 4 * 2 + 2 * 2  # two segments, two ends: no bevel face
+        plan = mesh.positions.astype(np.float64)[:, :2]
+        at_the_bend = plan[np.linalg.norm(plan - bend, axis=1) < 50.0]
+        # both sides of the section sit on the mitre: 2 offsets from the bend
+        assert np.allclose(np.linalg.norm(at_the_bend - bend, axis=1), 2.0 * 5.0, atol=1e-3)
+
+    def test_a_closed_loop_with_an_acute_corner(self) -> None:
+        apex = (0.0, 200.0 / math.tan(math.radians(15.0)))
+        loop = sweep(BOX_PROFILE, [(-200.0, 0.0), (200.0, 0.0), apex], closed=True)
+        loop.validate()
+        plan = loop.positions.astype(np.float64)[:, :2]
+        assert float(plan[:, 1].max()) <= apex[1] + 5.0 + 1e-3  # round 0: + 19.3 (5 / sin 15°)
+        assert float(flat_dots(loop).min()) > 0.9999
 
     def test_plank(self) -> None:
         board = plank((0.0, 0.0), (0.0, 180.0), 14.0, 20.0, 24.0, 0.5, RED)

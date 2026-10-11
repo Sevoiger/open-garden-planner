@@ -28,6 +28,14 @@ from typing import Final
 
 import numpy as np
 
+from ...container_model import (
+    DEFAULT_MATERIAL,
+    METAL,
+    PLASTIC,
+    TERRACOTTA,
+    WOOD,
+    container_material,
+)
 from ...object_height import soil_surface_cm
 from ..build import BuilderRegistry
 from ..mesh import Mesh, MeshPart
@@ -42,9 +50,11 @@ PLANK_ROW_CM: Final = 15.0
 GROOVE_CM: Final = 0.8
 #: Chamfer of a frame's top edges (cm).
 CHAMFER_CM: Final = 0.6
-#: Frame thickness by material (cm); a raised bed is planks.
+#: Frame thickness by material (cm); a raised bed is planks. Keyed by the
+#: container model's own material names — imported, not retyped; a test pins that
+#: every material of ``container_model.MATERIALS`` has a thickness here.
 PLANK_THICKNESS_CM: Final = 5.0
-WALL_THICKNESS_CM: Final = {"terracotta": 3.0, "wood": 3.0, "plastic": 1.5, "metal": 1.5}
+WALL_THICKNESS_CM: Final = {TERRACOTTA: 3.0, WOOD: 3.0, PLASTIC: 1.5, METAL: 1.5}
 #: A frame is never thicker than this share of the footprint's shorter side.
 MAX_THICKNESS_SHARE: Final = 0.2
 #: Soil lower than this above the ground is the ground: no soil face.
@@ -126,16 +136,21 @@ def _raised_bed(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
 
 
 def _material(record: Record) -> str:
-    value = record.params.get(PARAM_CONTAINER_MATERIAL)
-    return value if isinstance(value, str) and value in WALL_THICKNESS_CM else "plastic"
+    """The container's material as the container model itself resolves it: an
+    unknown or missing value is the model's default, never a guess made here."""
+    return container_material({"container_material": record.params.get(PARAM_CONTAINER_MATERIAL)})
+
+
+def _wall_thickness(material: str) -> float:
+    return WALL_THICKNESS_CM.get(material, WALL_THICKNESS_CM[DEFAULT_MATERIAL])
 
 
 def _box(record: Record, height_cm: float, material: str) -> tuple[MeshPart, ...]:
     ring = ccw_ring(footprint_of(record))
     if len(ring) < 3:
         return ()
-    thickness = thickness_cm(ring, WALL_THICKNESS_CM[material])
-    planked = material == "wood"
+    thickness = thickness_cm(ring, _wall_thickness(material))
+    planked = material == WOOD
     foot = 0.0 if planked else min(0.5 * thickness, 0.06 * height_cm)
     walls = _frame(ring, height_cm, thickness, rows=plank_rows(height_cm) if planked else 1,
                    foot_inset_cm=foot, face=palette.TINT, groove=palette.TINT)
@@ -150,7 +165,7 @@ def _container(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
 def _garden_bed(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
     """A GARDEN_BED the user gave a height: an edged bed, same soil rule. (Without
     a height ``BuiltBuilder`` never calls this: the kind has no nominal height.)"""
-    return _box(record, height_cm, "wood")
+    return _box(record, height_cm, WOOD)
 
 
 def round_profile(radius_cm: float, height_cm: float, material: str
@@ -158,13 +173,13 @@ def round_profile(radius_cm: float, height_cm: float, material: str
     """A round container's ``lathe`` profile (radius, z) — up the outside, over the
     rim, down the inside to just under the soil — and its wall thickness. The rim
     is the widest point: exactly ``radius_cm``."""
-    wall = min(WALL_THICKNESS_CM[material], MAX_THICKNESS_SHARE * radius_cm)
+    wall = min(_wall_thickness(material), MAX_THICKNESS_SHARE * radius_cm)
     chamfer = max(0.0, min(CHAMFER_CM, wall / 3.0, height_cm / 4.0))
     _soil, inner_bottom = _inner_bottom(height_cm)
     inner_bottom = max(0.0, min(inner_bottom, height_cm - chamfer - 0.1))
     inside = [(radius_cm - chamfer, height_cm), (radius_cm - wall + chamfer, height_cm),
               (radius_cm - wall, height_cm - chamfer), (radius_cm - wall, inner_bottom)]
-    if material == "terracotta":  # a tapered pot with a rim band
+    if material == TERRACOTTA:  # a tapered pot with a rim band
         rim = min(0.18 * height_cm, 6.0)
         outside = [(0.72 * radius_cm, 0.0), (0.92 * radius_cm, height_cm - rim),
                    (radius_cm, height_cm - rim), (radius_cm, height_cm - chamfer)]

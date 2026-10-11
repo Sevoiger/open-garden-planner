@@ -44,28 +44,41 @@ from open_garden_planner.core.scene3d.builders import (
     buildings,
     fences,
     hedges,
+    lines,
     palette,
     production_registry,
     register,
     walls,
 )
 from open_garden_planner.core.scene3d.builders.common import BuiltBuilder, nominal_height_cm
-from open_garden_planner.core.scene3d.builders.primitives import ccw_ring, offset_ring
+from open_garden_planner.core.scene3d.builders.primitives import (
+    BEVEL_BEYOND,
+    ccw_ring,
+    offset_ring,
+)
 from open_garden_planner.core.scene3d.builders.roofs import bounding_box_ridge, gable_roof
 from open_garden_planner.core.scene3d.color import srgb8_to_linear
 from tests.unit.scene3d_builder_cases import (
+    ACUTE_LOOP_PATH,
+    ACUTE_RIDGE,
+    ACUTE_TRIANGLE,
     BENT_PATH,
     CASES,
     CLOSED_PATH,
+    HAIRPIN_PATH,
     L_RIDGE,
     L_SHAPE,
     LOOP,
     NEARLY_CLOSED_PATH,
+    SLIVER_RIDGE,
+    SLIVER_TRIANGLE,
     TRAPEZOID,
     U_RIDGE,
     U_SHAPE,
+    ZIGZAG_PATH,
     Case,
     circle_record,
+    corner_reach,
     covers,
     distance_to_path,
     line_record,
@@ -100,15 +113,40 @@ def builder_of(record: Record) -> BuiltBuilder:
     return builder
 
 
+def line_reach_cm(record: Record) -> float:
+    """The furthest a FENCE's or WALL's vertex may lie from its centre line — stated
+    per solid, from the builders' own sections and the path's angles:
+
+    - a swept section (wall, plain panel, hedge core) reaches its half width times the
+      sharpest MITRED corner's ``1 / cos(half the turn)``; a corner whose mitre would be
+      longer than ``BEVEL_BEYOND`` half widths is bevelled and stays at the half width;
+    - a post fence reaches the half diagonal of its square posts, whatever the corner;
+    - a hedge's leaves are rooted within the block's half width and are a leaf long.
+    """
+    closed = record.path[0] == record.path[-1]
+    corner = corner_reach(record.path[:-1] if closed else record.path, closed=closed,
+                          bevel_beyond=BEVEL_BEYOND)
+    assert 1.0 <= corner <= BEVEL_BEYOND * (1.0 + 1e-6)
+    stroke = record.path_width_cm or 0.0
+    solid = lines.solid_of(record)
+    if solid == "STONE_WALL":
+        return (walls.body_thickness_cm(record) / 2.0 + walls.COPING_OVERSAIL_CM) * corner
+    if solid == fences.PLAIN:
+        return fences.plain_width_cm(record) / 2.0 * corner
+    if solid == "HEDGE_FENCE":
+        half = max(stroke, fences.HEDGE_THICKNESS_CM) / 2.0 - hedges.CORE_INSET_CM
+        return half * corner + hedges.LEAF_LENGTH_CM
+    post = {"WOODEN_FENCE": fences.POST_CM, "METAL_FENCE": fences.METAL_POST_CM,
+            "CHAIN_LINK": fences.CHAIN_POST_CM}[solid]
+    return max(stroke, post) / 2.0 * math.sqrt(2.0)
+
+
 def budget_of(record: Record) -> int:
     height = record.height_cm or nominal_height_cm(record.kind) or 0.0
     if record.kind in ("HOUSE", "GARAGE_SHED", "TOOL_SHED"):
         return buildings.triangle_budget(record)
-    if record.kind == "FENCE" or (record.kind == "WALL" and fences.is_fence_style(
-            record.params.get("path_style")) and record.params.get("path_style") != "STONE_WALL"):
-        return fences.triangle_budget(record)
-    if record.kind == "WALL":
-        return walls.triangle_budget(record)
+    if record.kind in ("FENCE", "WALL"):
+        return lines.triangle_budget(record)
     if record.kind in ("HEDGE_SECTION", "HEDGE_POLYGON"):
         return hedges.triangle_budget(record)
     return beds.triangle_budget(record, height)
@@ -144,7 +182,8 @@ class TestRegistration:
 
     def test_the_matrix_covers_every_registered_kind(self) -> None:
         assert {case.record.kind for case in CASES} == BUILT_WORLD_KINDS
-        assert len(CASES) == 286
+        assert len(CASES) >= 286  # round 0's matrix; acute corners and unknown styles came on top
+        assert len({case.name for case in CASES}) == len(CASES)
 
 
 # ── gate G1 ──────────────────────────────────────────────────────────────────
@@ -196,17 +235,9 @@ class TestGateG1:
         plan = positions(parts)[:, :2]
         if record.shape == "polyline":
             closed = record.path[0] == record.path[-1]
-            style = record.params.get("path_style")
-            wall_like = style == "STONE_WALL" or (record.kind == "WALL" and not fences.is_fence_style(style))
-            if wall_like:
-                reach = walls.body_thickness_cm(record) / 2.0 + walls.COPING_OVERSAIL_CM
-            elif style == "HEDGE_FENCE":
-                reach = max(record.path_width_cm or 0.0, fences.HEDGE_THICKNESS_CM) / 2.0 + 6.0
-            else:
-                reach = max(record.path_width_cm or 0.0, fences.POST_CM) / 2.0
-            away = distance_to_path(plan, record.path[:-1] if closed else record.path, closed=closed)
-            # a mitred corner reaches further than the half width: 1 / cos(half the turn)
-            assert float(away.max()) <= reach * math.sqrt(2.0) + 1e-3
+            line = record.path[:-1] if closed else record.path
+            away = float(distance_to_path(plan, line, closed=closed).max())
+            assert away <= line_reach_cm(record) + 1e-3
             return
         ring = record.footprints[0]
         overhang = {"HOUSE": buildings.HOUSE_ROOF.overhang_cm,
@@ -217,8 +248,9 @@ class TestGateG1:
         if overhang:  # a roof: inside the footprint grown by the overhang, on its edge somewhere
             eaves = offset_ring(ring, overhang)
             assert outside_distance(plan, [tuple(p) for p in eaves]) <= 1e-3
-            assert outside_distance(plan, ring) == pytest.approx(
-                float(np.linalg.norm(eaves - ccw_ring(ring), axis=1).max()), abs=1e-3)
+            assert outside_distance(plan, ring) == pytest.approx(outside_distance(eaves, ring), abs=1e-3)
+            # the stated bound: a mitre up to BEVEL_BEYOND overhangs, a bevel beyond — no spike
+            assert outside_distance(plan, ring) <= BEVEL_BEYOND * overhang + 1e-3
         elif record.kind.startswith("HEDGE"):
             # leaves are rooted on a core drawn in by 4 cm; a tip may pass the outline
             inset = len(hedges.core_ring(ring)) and not np.allclose(hedges.core_ring(ring), ccw_ring(ring))
@@ -460,6 +492,83 @@ class TestShedRidge:
         assert np.allclose(line, [[0.0, -100.0 - overhang], [0.0, 100.0 + overhang]], atol=1e-3)
 
 
+# ── acute corners: bevelled, not spiked (review round 1, P2-10) ──────────────
+
+
+class TestAcuteCorners:
+    """A mitre at an interior angle φ is ``1 / sin(φ / 2)`` offsets long: 3.9 at 30°,
+    5.8 at 20°. Round 0 only cut it at 4 offsets: a 116 cm eave spike on an
+    acute-triangle house (30 cm overhang), a 76 cm spike of coping on a hairpin wall.
+    A corner sharper than ``BEVEL_BEYOND`` (2 offsets, 60°) is cut flat, and the stated
+    bound is: nothing further than ``BEVEL_BEYOND`` offsets outside the true outline —
+    in fact one offset at every bevelled corner."""
+
+    @pytest.mark.parametrize(("ring", "ridge", "corner", "round_0_cm"), [
+        (ACUTE_TRIANGLE, ACUTE_RIDGE, ACUTE_TRIANGLE[2], 115.9),     # 30°: 30 / sin 15°
+        (SLIVER_TRIANGLE, SLIVER_RIDGE, SLIVER_TRIANGLE[1], 120.0),  # 20°: 172.8, cut at 4 x 30
+    ], ids=["30-degree-apex", "20-degree-corner"])
+    def test_an_acute_house_has_no_eave_spike(self, ring, ridge, corner, round_0_cm) -> None:
+        overhang = buildings.HOUSE_ROOF.overhang_cm
+        record = polygon_record("HOUSE", ring, 450.0, params={"ridge": ridge})
+        parts = verify_builder(REGISTRY.builder_for("HOUSE"), record)
+        assert [part.name for part in parts] == ["walls", "roof"]  # a real roof, not the block
+        roof = positions([parts[1]])[:, :2]
+        walls_plan = positions([parts[0]])[:, :2]
+        assert outside_distance(walls_plan, ring) <= 1e-3  # the walls stand on the footprint
+        beyond = outside_distance(roof, ring)
+        assert beyond <= BEVEL_BEYOND * overhang + 1e-3 < round_0_cm
+        # at the acute corner itself the roof ends ONE overhang out — the bevel's two points —
+        # where round 0 put its tip `round_0_cm` out
+        from_corner = np.linalg.norm(roof - np.asarray(corner), axis=1)
+        overhanging = np.array([outside_distance(point[None, :], ring) > 1e-6 for point in roof])
+        around = from_corner[overhanging & (from_corner < round_0_cm + 1.0)]
+        assert float(around.max()) == pytest.approx(overhang, abs=1e-3)
+        # every eave is still a full overhang out: the roof covers the footprint grown by it
+        eaves = offset_ring(ring, overhang)
+        assert len(eaves) == len(ring) + 1  # the acute corner became two points
+        assert outside_distance(roof, [tuple(p) for p in eaves]) <= 1e-3
+        following = np.roll(eaves, -1, axis=0)
+        eaves_area = float((eaves[:, 0] * following[:, 1] - following[:, 0] * eaves[:, 1]).sum()) / 2.0
+        assert plan_area([parts[1].mesh]) == pytest.approx(eaves_area, rel=1e-4)
+
+    @pytest.mark.parametrize(("kind", "style", "half_cm", "round_0_cm"), [
+        ("WALL", None, 19.0, 76.0),            # body 15 + coping 4; round 0: 4 x 19
+        ("FENCE", "STONE_WALL", 19.0, 76.0),
+        ("FENCE", "BAMBOO_FENCE", 1.5, 6.0),   # the plain panel: a 3 cm stroke
+        ("FENCE", "HEDGE_FENCE", 16.0, 64.0),  # the hedge's core
+    ], ids=["wall", "stone-wall-fence", "plain-panel", "hedge-fence-core"])
+    @pytest.mark.parametrize("path", [HAIRPIN_PATH, ZIGZAG_PATH, ACUTE_LOOP_PATH],
+                             ids=["hairpin-174", "zigzag-150", "loop-30"])
+    def test_a_hairpin_line_has_no_spike(self, kind, style, half_cm, round_0_cm, path) -> None:
+        record = line_record(kind, path, 120.0, style=style)
+        parts = verify_builder(REGISTRY.builder_for(kind), record)
+        closed = path[0] == path[-1]
+        line = path[:-1] if closed else path
+        solid = positions(parts) if style != "HEDGE_FENCE" else positions(parts)[:_core_vertices(parts)]
+        away = float(distance_to_path(solid[:, :2], line, closed=closed).max())
+        # the sharp bends are bevelled: one half width; the squarer ones mitred: up to two
+        assert away <= half_cm * corner_reach(line, closed=closed, bevel_beyond=BEVEL_BEYOND) + 1e-3
+        assert away <= BEVEL_BEYOND * half_cm + 1e-3 < round_0_cm
+        if path is HAIRPIN_PATH:  # its one joint is bevelled: nothing past one half width
+            assert away == pytest.approx(half_cm, abs=1e-3)
+
+    @pytest.mark.parametrize("ring", [ACUTE_TRIANGLE, SLIVER_TRIANGLE], ids=["30-degrees", "20-degrees"])
+    def test_an_acute_bed_and_hedge_stay_on_their_footprint(self, ring) -> None:
+        bed = verify_builder(REGISTRY.builder_for("RAISED_BED"), polygon_record("RAISED_BED", ring, 40.0))
+        assert outside_distance(positions(bed)[:, :2], ring) <= 1e-3
+        assert soil_level(bed) == 38.0
+        hedge = verify_builder(REGISTRY.builder_for("HEDGE_POLYGON"),
+                               polygon_record("HEDGE_POLYGON", ring, 150.0))
+        assert outside_distance(positions(hedge)[:, :2], ring) <= hedges.LEAF_LENGTH_CM
+
+
+def _core_vertices(parts: tuple[MeshPart, ...]) -> int:
+    """A hedge is one mesh, core first: its leaves are quads with a wind weight in uv."""
+    uvs = parts[0].mesh.uvs
+    leaf = np.nonzero((uvs[:, 0] > 0.0) | (uvs[:, 1] > 0.0))[0]
+    return int(leaf[0]) if len(leaf) else len(uvs)
+
+
 # ── polylines: built from the centre line, never from the stroke polygon ─────
 
 
@@ -520,18 +629,80 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         assert float(np.abs(points[:, 1]).max()) == pytest.approx(19.0, abs=1e-4)  # coping: 15 + 4
         body = points[points[:, 2] < 191.9]
         assert float(np.abs(body[:, 1]).max()) == pytest.approx(15.0, abs=1e-4)
-        assert wall.mesh.triangle_count == 9 * 2 + 2 * 8  # nine faces, two capped ends
+        # its anatomy, read off the faces: along the line it looks six ways — out to each
+        # side (body and coping), up each chamfer, up from the top, down from the two
+        # soffits — and it has two flat ends; the face on the ground is left out
+        normals = {tuple(float(v) + 0.0 for v in n)
+                   for n in np.round(wall.mesh.normals.astype(np.float64), 4)}
+        ends = {n for n in normals if abs(n[0]) > 0.5}
+        assert ends == {(1.0, 0.0, 0.0), (-1.0, 0.0, 0.0)}
+        assert normals - ends == {
+            (0.0, 1.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.7071, 0.7071), (0.0, -0.7071, 0.7071),
+            (0.0, 0.0, 1.0), (0.0, 0.0, -1.0)}
+        assert float(points[np.isclose(wall.mesh.normals[:, 2], -1.0)][:, 2].min()) == 192.0
+        assert wall.mesh.triangle_count <= lines.triangle_budget(
+            line_record("WALL", ((-250.0, 0.0), (250.0, 0.0)), 200.0, width=4.0))
 
     def test_the_style_picks_the_fence(self) -> None:
         signatures = {}
-        for style in [None, *FENCE_STYLES, "GRAVEL_PATH"]:
+        for style in [None, *FENCE_STYLES]:
             parts = built(line_record("FENCE", BENT_PATH, 120.0, style=style))
             signatures[style] = (tuple(p.name for p in parts), triangle_count(parts))
             assert all(part.tinted for part in parts)  # a fence is seen in its own stroke colour
-        assert signatures[None] == signatures["WOODEN_FENCE"] == signatures["GRAVEL_PATH"]
+        assert signatures[None] == signatures["WOODEN_FENCE"]  # a FENCE without a style: the default
         assert len({signatures[s] for s in FENCE_STYLES}) == len(FENCE_STYLES)  # five different fences
         assert signatures["HEDGE_FENCE"][0] == ("hedge",)
         assert signatures["STONE_WALL"][0] == ("wall",)
+
+    def test_which_solid_each_kind_and_style_is_built_as(self) -> None:
+        """The dispatch table of ``lines.py``, row by row."""
+        def solid(kind: str, style: object) -> str:
+            record = line_record(kind, BENT_PATH, 120.0)
+            if style is not None:
+                record = dataclasses.replace(record, params=Params({"seed": "s", "path_style": style}))
+            return lines.solid_of(record)
+
+        assert solid("FENCE", None) == "WOODEN_FENCE" == fences.DEFAULT_FENCE_STYLE
+        assert solid("WALL", None) == "STONE_WALL"
+        for style in FENCE_STYLES:  # a fence style is that style whatever the kind
+            assert solid("FENCE", style) == solid("WALL", style) == style
+        for unknown in ("GRAVEL_PATH", "DIRT_PATH", "BAMBOO_FENCE", "", "wooden_fence", 7, 2.5, True):
+            assert solid("FENCE", unknown) == solid("WALL", unknown) == fences.PLAIN
+
+    @pytest.mark.parametrize("kind", ["FENCE", "WALL"])
+    @pytest.mark.parametrize("style", ["GRAVEL_PATH", "BAMBOO_FENCE", 7])
+    def test_a_style_no_builder_knows_is_a_plain_panel_never_a_picket_fence(
+        self, kind: str, style: object
+    ) -> None:
+        """Review round 1, P2-5. A path style on a fence, or a fence style added to the
+        2D table after the builders were written, used to become a picket fence without
+        a word. It is built as what the plan itself holds: the line, as wide as it is
+        drawn, up to its height — the solid the 2D shadow model casts for it."""
+        record = dataclasses.replace(
+            line_record(kind, BENT_PATH, 120.0, width=6.0),
+            params=Params({"seed": "item-1", "path_style": style}))
+        (panel,) = verify_builder(REGISTRY.builder_for(kind), record)
+        assert (panel.name, panel.tinted, panel.material_kind, panel.casts_shadow) == (
+            "fence", True, "vc", True)
+        picket = built(line_record("FENCE", BENT_PATH, 120.0, width=6.0, style="WOODEN_FENCE"))
+        assert panel.mesh.triangle_count < 0.05 * triangle_count(picket)  # no pickets, no posts
+        points = panel.mesh.positions.astype(np.float64)
+        assert float(points[:, 2].max()) == 120.0 and float(points[:, 2].min()) == 0.0
+        # exactly the stroke strip: 6 cm wide along the whole line, mitred at the two corners
+        assert plan_area([panel.mesh]) == pytest.approx(path_length(BENT_PATH) * 6.0, rel=1e-4)
+        assert float(distance_to_path(points[:, :2], BENT_PATH).max()) <= 3.0 * math.sqrt(2.0) + 1e-3
+        # every face is vertical or the flat top: a panel, nothing else
+        up = np.abs(panel.mesh.normals.astype(np.float64)[:, 2])
+        assert set(np.round(up, 4)) <= {0.0, 1.0}
+        assert panel.mesh.triangle_count <= lines.triangle_budget(record)
+
+    def test_the_fence_builders_never_guess_a_style(self) -> None:
+        record = line_record("FENCE", BENT_PATH, 120.0)
+        line = np.asarray(BENT_PATH, dtype=np.float64)
+        with pytest.raises(ValueError, match="no fence is built in the style 'BAMBOO_FENCE'"):
+            fences.fence_parts(record, line, False, 120.0, "BAMBOO_FENCE")
+        with pytest.raises(ValueError, match="STONE_WALL"):  # the wall belongs to walls.py
+            fences.fence_parts(record, line, False, 120.0, "STONE_WALL")
 
     def test_a_fence_style_on_a_wall_builds_that_fence(self) -> None:
         for style in ("WOODEN_FENCE", "METAL_FENCE", "CHAIN_LINK", "HEDGE_FENCE"):
@@ -540,6 +711,9 @@ class TestPolylinesAreBuiltFromTheCentreLine:
             assert [p.mesh for p in as_wall] == [p.mesh for p in as_fence]
         stone = built(line_record("WALL", BENT_PATH, 120.0, style="STONE_WALL"))
         assert stone == built(line_record("WALL", BENT_PATH, 120.0)) != ()
+        as_fence = built(line_record("FENCE", BENT_PATH, 120.0, width=4.0, style="STONE_WALL"))
+        assert [p.mesh for p in as_fence] == [p.mesh for p in built(
+            line_record("WALL", BENT_PATH, 120.0, width=4.0))]  # one wall, whoever asks
 
     def test_picket_fence_anatomy(self) -> None:
         """Posts are the top; pickets stop 0.3 … 4 cm under them (the L0 fence)."""
@@ -552,24 +726,28 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         picket_tops = tops[(tops > 110.0) & (tops < 120.0)]
         assert picket_tops.min() >= 116.0 - 1e-3 and picket_tops.max() <= 119.7 + 1e-3
         assert len(picket_tops) > 5  # no two neighbours level
-        assert fence.mesh.triangle_count == 3 * 38 + 2 * 10 + 33 * 10
+        # 33 pickets on 4 m at a 12 cm pitch, each centred in its pitch
+        low = points[np.isclose(points[:, 2], 2.0, atol=1e-3)]  # where the pickets start
+        assert len(np.unique(np.floor(low[:, 0] / fences.PICKET_PITCH_CM).astype(int))) == 33
+        assert fence.mesh.triangle_count <= lines.triangle_budget(
+            line_record("FENCE", ((0.0, 0.0), (400.0, 0.0)), 120.0, style="WOODEN_FENCE"))
 
     def test_a_shared_corner_has_one_post(self) -> None:
         (bent,) = built(line_record("FENCE", ((0.0, 0.0), (100.0, 0.0), (100.0, 100.0)), 120.0))
         tops = bent.mesh.positions[bent.mesh.positions[:, 2] == 120.0][:, :2].astype(np.float64)
         centres = {(round(float(x) / 100.0), round(float(y) / 100.0)) for x, y in tops}
-        assert centres == {(0, 0), (1, 0), (1, 1)}
-        assert bent.mesh.triangle_count == 3 * 38 + 2 * 2 * 10 + 2 * 8 * 10
+        assert centres == {(0, 0), (1, 0), (1, 1)}  # three posts, not four: the corner has one
         (loop,) = built(line_record("FENCE", CLOSED_PATH, 120.0))
-        loop_tops = loop.mesh.positions[loop.mesh.positions[:, 2] == 120.0]
-        posts = len(loop_tops) // 42  # a bevelled post: 18 top-face + 24 bevel vertices at the top
-        assert posts == 4 + 3 + 2 + 3 + 2  # 4 corners + 3 along each 8 m side + 2 along each 6 m side
+        loop_tops = loop.mesh.positions[loop.mesh.positions[:, 2] == 120.0][:, :2].astype(np.float64)
+        posts = {(round(float(x) / 100.0), round(float(y) / 100.0)) for x, y in loop_tops}
+        # 4 corners + 3 along each 8 m side + 2 along each 6 m side: one every 2 m, none twice
+        assert len(posts) == 4 + 3 + 2 + 3 + 2
 
     @pytest.mark.parametrize("style", ["WOODEN_FENCE", "METAL_FENCE", "CHAIN_LINK"])
     def test_fifty_metres_of_fence_do_not_explode(self, style: str) -> None:
         record = line_record("FENCE", ((-2500.0, 0.0), (2500.0, 0.0)), 120.0, style=style)
         count = triangle_count(built(record))
-        assert count <= fences.triangle_budget(record)
+        assert count <= lines.triangle_budget(record)
         per_metre = count / 50.0
         assert per_metre <= {"WOODEN_FENCE": 105.0, "METAL_FENCE": 100.0, "CHAIN_LINK": 60.0}[style]
         double = line_record("FENCE", ((-5000.0, 0.0), (5000.0, 0.0)), 120.0, style=style)

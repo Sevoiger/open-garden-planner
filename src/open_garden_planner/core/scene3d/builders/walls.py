@@ -1,10 +1,14 @@
-"""WALL: a garden wall with a coping, swept along the centre line (Phase 17 L1.6).
+"""A garden wall with a coping, swept along a centre line (Phase 17 L1.6).
 
-Built from ``record.path`` — the polyline's centre line — never from the stroke
-polygon in ``record.footprints``: a wall round a garden is a closed loop whose
-stroke polygon is an outer ring plus a hole, and extruding it would fill the
-garden with stone. A closed centre line is swept as a loop (mitred all round, no
-ends); an open one gets two flat ends.
+Geometry only: which polyline becomes a wall is decided in ``lines.py`` (a WALL
+without a style, and any line in the ``STONE_WALL`` style).
+
+Built from the polyline's centre line, never from the stroke polygon in
+``record.footprints``: a wall round a garden is a closed loop whose stroke
+polygon is an outer ring plus a hole, and extruding it would fill the garden
+with stone. A closed centre line is swept as a loop (mitred all round, no ends);
+an open one gets two flat ends. A hairpin is bevelled on its outside
+(``primitives.BEVEL_BEYOND``), so the coping grows no spike.
 
 One ``tinted`` part: in 2D a wall is seen in its stroke colour (every polyline
 style paints from the item's pen), so that is its colour here.
@@ -18,14 +22,10 @@ from __future__ import annotations
 
 from typing import Final
 
-import numpy as np
-
-from ..build import BuilderRegistry
 from ..mesh import Mesh, MeshPart
-from ..record import PARAM_PATH_STYLE, Record
-from .common import BuiltBuilder
+from ..record import Record
 from .palette import TINT
-from .primitives import F64, MIN_SEGMENT_CM, clean_path, sweep
+from .primitives import F64, sweep
 
 #: Body thickness when the stroke is thinner (cm).
 WALL_THICKNESS_CM: Final = 30.0
@@ -34,14 +34,6 @@ COPING_OVERSAIL_CM: Final = 4.0
 #: The coping is this tall at most (cm), and at most this share of the wall.
 COPING_HEIGHT_CM: Final = 8.0
 COPING_SHARE: Final = 0.2
-
-
-def centre_line(record: Record) -> tuple[F64, bool]:
-    """The polyline's centre line without repeated points, and whether it is a
-    closed loop (its last point is its first — then the last point is dropped)."""
-    line = clean_path(record.path) if len(record.path) >= 2 else np.zeros((0, 2))
-    closed = len(line) > 3 and float(np.linalg.norm(line[0] - line[-1])) <= MIN_SEGMENT_CM
-    return (line[:-1] if closed else line), closed
 
 
 def body_thickness_cm(record: Record) -> float:
@@ -65,24 +57,14 @@ def wall_mesh(line: F64, closed: bool, thickness_cm: float, height_cm: float) ->
     return sweep(profile, line, TINT, closed=closed, edges=on_the_ground)
 
 
-def _wall(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
-    from .fences import fence_parts, is_fence_style  # a fence style on a WALL builds that fence
-
-    style = record.params.get(PARAM_PATH_STYLE)
-    if is_fence_style(style) and style != "STONE_WALL":
-        return fence_parts(record, height_cm)
-    line, closed = centre_line(record)
+def wall_parts(record: Record, line: F64, closed: bool, height_cm: float) -> tuple[MeshPart, ...]:
+    """The one part of a wall along ``line`` (the record's centre line)."""
     mesh = wall_mesh(line, closed, body_thickness_cm(record), height_cm)
     return (MeshPart(mesh, "vc", tinted=True, name="wall"),)
 
 
-build_wall: Final = BuiltBuilder(_wall, "wall")
-
-
 def triangle_budget(record: Record) -> int:
-    """The most triangles a wall may have: 22 per path segment + 20."""
-    return 22 * max(len(record.path) - 1, 1) + 20
-
-
-def register(registry: BuilderRegistry) -> None:
-    registry.register("WALL", build_wall)
+    """The most triangles a wall may have: per path segment its 9 faces (18
+    triangles) and, if the joint after it is a bevelled hairpin, 18 more; the two
+    ends of an open wall are 16 — so 36 per segment + 20."""
+    return 36 * max(len(record.path) - 1, 1) + 20

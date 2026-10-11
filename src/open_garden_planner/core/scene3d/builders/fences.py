@@ -1,21 +1,22 @@
-"""FENCE, per ``PathFenceStyle`` (Phase 17 L1.6).
+"""The fences, one per fence style (Phase 17 L1.6).
 
-A polyline's style (``params["path_style"]``, a ``PathFenceStyle`` name; absent
-for NONE) picks the fence:
+Geometry only: which polyline becomes which fence is decided in ``lines.py``.
 
 =================  =========================================================
-``WOODEN_FENCE``   posts, two rails, pickets — also the look of a FENCE with
-                   no style, and of one carrying a PATH style (a fence is a
-                   fence whatever its line is drawn like)
+``WOODEN_FENCE``   posts, two rails, pickets
 ``METAL_FENCE``    slim posts, two rails, square bars with spear tips
 ``CHAIN_LINK``     posts, a top rail, a diamond mesh of wires
 ``HEDGE_FENCE``    a hedge block along the line (``hedges.py``)
-``STONE_WALL``     the wall of ``walls.py``
+``PLAIN``          a plain panel: the drawn stroke, as wide as it is drawn,
+                   up to the height — what a line in a style no builder knows
+                   is built as. Nothing is invented for it.
 =================  =========================================================
 
-Everything is built from ``record.path`` — the centre line — segment by
-segment, never from the stroke polygon in ``record.footprints``: a fence round a
-garden is a closed loop, and its stroke polygon is a ring with a hole.
+(The fifth fence style, ``STONE_WALL``, is the wall of ``walls.py``.)
+
+Everything is built from the polyline's centre line, segment by segment, never
+from the stroke polygon in ``record.footprints``: a fence round a garden is a
+closed loop, and its stroke polygon is a ring with a hole.
 
 Colour: in 2D every style paints from the item's own stroke colour (the style
 table only pre-sets it), so every part is ``tinted`` — pure white vertices the
@@ -32,10 +33,8 @@ from typing import Final
 
 import numpy as np
 
-from ..build import BuilderRegistry
 from ..mesh import Mesh, MeshPart
-from ..record import PARAM_PATH_STYLE, ParamValue, Record
-from .common import BuiltBuilder
+from ..record import ParamValue, Record
 from .hedges import (
     CORE_DROP_CM,
     CORE_INSET_CM,
@@ -46,15 +45,20 @@ from .hedges import (
 )
 from .palette import TINT
 from .primitives import F64, bevelled_boxes, boxes, sweep, tubes
-from .walls import body_thickness_cm, centre_line, wall_mesh
-from .walls import triangle_budget as wall_triangle_budget
 
-#: The ``PathFenceStyle`` names that are fences (the others are paths: ground).
+#: The ``PathFenceStyle`` names of the "fence" category (the others are paths).
+#: A mirror — ``core/object_types.py`` imports Qt — pinned against
+#: ``PATH_FENCE_STYLES`` by ``tests/unit/test_scene3d_builders_palette.py``: a
+#: fence style added there fails that test until a builder is chosen for it here.
 FENCE_STYLES: Final = frozenset(
     {"WOODEN_FENCE", "METAL_FENCE", "CHAIN_LINK", "HEDGE_FENCE", "STONE_WALL"}
 )
-#: What a FENCE without a fence style is built as.
+#: What a FENCE that carries NO style is built as (the L0 board's fence).
 DEFAULT_FENCE_STYLE: Final = "WOODEN_FENCE"
+#: What a line in a style no builder knows is built as: its stroke, to the height.
+PLAIN: Final = "PLAIN"
+#: The stroke strip of a plain panel is at least this wide (cm).
+PLAIN_MIN_WIDTH_CM: Final = 1.0
 
 # picket fence (the spike's ``polyline_posts_and_pickets``)
 POST_CM: Final = 9.0
@@ -201,59 +205,59 @@ def hedge_fence_parts(record: Record, line: F64, closed: bool,
     return hedge_parts(core, shell, height_cm, seed_of(record), tinted=True)
 
 
-def fence_parts(record: Record, height_cm: float) -> tuple[MeshPart, ...]:
-    """The parts of a polyline built as a fence in its style (module docstring)."""
-    line, closed = centre_line(record)
-    if len(line) < 2:
-        return ()
-    style = record.params.get(PARAM_PATH_STYLE)
-    if not is_fence_style(style):
-        style = DEFAULT_FENCE_STYLE
-    stroke = record.path_width_cm or 0.0
-    if style == "STONE_WALL":
-        mesh = wall_mesh(line, closed, body_thickness_cm(record), height_cm)
-        return (MeshPart(mesh, "vc", tinted=True, name="wall"),)
+def plain_width_cm(record: Record) -> float:
+    """A plain panel is as wide as the line is drawn."""
+    return max(record.path_width_cm or 0.0, PLAIN_MIN_WIDTH_CM)
+
+
+def plain_fence(line: F64, closed: bool, width_cm: float, height_cm: float) -> Mesh:
+    """The stroke strip along ``line``, from the ground to ``height_cm`` — exactly
+    the solid the 2D shadow model casts for the item."""
+    half = width_cm / 2.0
+    profile = [(-half, 0.0), (half, 0.0), (half, height_cm), (-half, height_cm)]
+    return sweep(profile, line, TINT, closed=closed, edges=[False, True, True, True])
+
+
+#: fence style -> (the builder of its mesh, its nominal post size in cm)
+_POST_FENCES: Final = {
+    "WOODEN_FENCE": (picket_fence, POST_CM),
+    "METAL_FENCE": (metal_fence, METAL_POST_CM),
+    "CHAIN_LINK": (chain_link_fence, CHAIN_POST_CM),
+}
+
+
+def fence_parts(record: Record, line: F64, closed: bool, height_cm: float,
+                style: str) -> tuple[MeshPart, ...]:
+    """The parts of a fence along ``line`` in ``style`` — one of the styles built
+    here (module docstring). Any other name is a programming error: the caller
+    (``lines.py``) decides what an unknown style becomes, this function never
+    guesses a look."""
     if style == "HEDGE_FENCE":
         return hedge_fence_parts(record, line, closed, height_cm)
-    run = _Run(line, closed)
-    if style == "METAL_FENCE":
-        mesh = metal_fence(run, height_cm, max(METAL_POST_CM, stroke))
-    elif style == "CHAIN_LINK":
-        mesh = chain_link_fence(run, height_cm, max(CHAIN_POST_CM, stroke))
+    if style == PLAIN:
+        mesh = plain_fence(line, closed, plain_width_cm(record), height_cm)
+    elif style in _POST_FENCES:
+        build, post_cm = _POST_FENCES[style]
+        mesh = build(_Run(line, closed), height_cm, max(post_cm, record.path_width_cm or 0.0))
     else:
-        mesh = picket_fence(run, height_cm, max(POST_CM, stroke))
+        raise ValueError(f"no fence is built in the style {style!r}")
     return (MeshPart(mesh, "vc", tinted=True, name="fence"),)
 
 
-build_fence: Final = BuiltBuilder(fence_parts, "fence")
-
-
-def path_length_cm(record: Record) -> float:
-    line, closed = centre_line(record)
-    if len(line) < 2:
-        return 0.0
-    return float(_Run(line, closed).length.sum())
-
-
-def triangle_budget(record: Record) -> int:
+def triangle_budget(line: F64, closed: bool, segments: int, style: str) -> int:
     """The most triangles a fence may have, by style — per METRE of centre line
     and per segment, so 50 m of fence cannot explode:
 
     picket 105 / m + 60 / segment · metal 100 / m + 35 / segment ·
-    chain link 55 / m + 110 / segment · each + 60. A stone wall and a hedge fence
-    have their own budgets (``walls``, ``hedges``).
+    chain link 55 / m + 110 / segment · each + 60. A hedge fence: its leaves and
+    its core. A plain panel: 3 faces per segment, as many again for a bevelled
+    joint, and two ends — 12 / segment + 8.
     """
-    style = record.params.get(PARAM_PATH_STYLE)
-    if style == "STONE_WALL":
-        return wall_triangle_budget(record)
     if style == "HEDGE_FENCE":
-        return 2 * MAX_LEAVES + 8 * max(len(record.path), 2) + 40
-    metres = path_length_cm(record) / 100.0
-    segments = max(len(record.path) - 1, 1)
-    per_metre, per_segment = {"METAL_FENCE": (100, 35), "CHAIN_LINK": (55, 110)}.get(
-        style if isinstance(style, str) else "", (105, 60))
-    return int(per_metre * metres) + per_segment * segments + 60
-
-
-def register(registry: BuilderRegistry) -> None:
-    registry.register("FENCE", build_fence)
+        return 2 * MAX_LEAVES + 16 * max(segments, 1) + 40
+    if style == PLAIN:
+        return 12 * max(segments, 1) + 8
+    metres = float(_Run(line, closed).length.sum()) / 100.0 if len(line) >= 2 else 0.0
+    per_metre, per_segment = {"WOODEN_FENCE": (105, 60), "METAL_FENCE": (100, 35),
+                              "CHAIN_LINK": (55, 110)}[style]
+    return int(per_metre * metres) + per_segment * max(segments, 1) + 60

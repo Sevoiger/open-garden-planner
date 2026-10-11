@@ -138,3 +138,63 @@ def test_hedge_greens_run_dark_to_light() -> None:
     assert lumas == sorted(lumas)
     core = palette.HEDGE_CORE.srgb
     assert 0.2126 * core[0] + 0.7152 * core[1] + 0.0722 * core[2] < lumas[0]  # the core is darker
+
+
+# ── name sets the builders mirror or share (review round 1, P2-5) ────────────
+
+
+def test_the_fence_styles_are_the_2d_table_s_fence_category() -> None:
+    """``fences.FENCE_STYLES`` mirrors the "fence" category of ``PATH_FENCE_STYLES``
+    (``core/object_types.py`` imports Qt, so the builders cannot import it). A fence
+    style added to the 2D table fails HERE until someone decides what it is built as;
+    until then ``lines.py`` builds it as a plain panel, never as some other fence."""
+    from open_garden_planner.core.object_types import PATH_FENCE_STYLES, PathFenceStyle
+    from open_garden_planner.core.scene3d.builders import fences, lines
+
+    in_2d = {style.name for style, info in PATH_FENCE_STYLES.items() if info.category == "fence"}
+    assert in_2d == fences.FENCE_STYLES
+    assert set(PATH_FENCE_STYLES) == set(PathFenceStyle)  # no style without a category entry
+    assert fences.DEFAULT_FENCE_STYLE in fences.FENCE_STYLES
+    assert set(lines.DEFAULT_SOLID.values()) <= fences.FENCE_STYLES
+    assert fences.PLAIN not in {style.name for style in PathFenceStyle}  # never a real style name
+
+
+def test_every_fence_style_has_a_solid_of_its_own() -> None:
+    """Each mirrored style is really built: by the wall, the hedge or a post fence."""
+    from open_garden_planner.core.scene3d.builders import fences
+
+    built_here = set(fences._POST_FENCES) | {"HEDGE_FENCE"}
+    assert built_here | {"STONE_WALL"} == fences.FENCE_STYLES
+    assert built_here & {"STONE_WALL", fences.PLAIN} == set()
+
+
+def test_the_container_materials_are_the_container_model_s() -> None:
+    """``beds.py`` imports the material names; every material has a wall thickness."""
+    from open_garden_planner.core import container_model
+    from open_garden_planner.core.scene3d.builders import beds
+
+    assert set(beds.WALL_THICKNESS_CM) == set(container_model.MATERIALS)
+    code = ast.parse(Path(beds.__file__).read_text(encoding="utf-8"))
+    literals = {node.value for node in ast.walk(code)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    assert literals.isdisjoint(container_model.MATERIALS)  # imported, not retyped
+
+
+def test_the_nominal_height_is_the_resolver_s_answer() -> None:
+    """``common.nominal_height_cm`` asks the 2D height resolver; it holds no table of
+    kinds (round 0 kept a third copy of the container set)."""
+    from open_garden_planner.core import object_height
+    from open_garden_planner.core.object_types import ObjectType
+    from open_garden_planner.core.scene3d.builders import BUILT_WORLD_KINDS, common
+
+    for member in ObjectType:
+        assert common.nominal_height_cm(member.name) == object_height.effective_height_cm(member, {})
+    assert {kind: common.nominal_height_cm(kind) for kind in sorted(BUILT_WORLD_KINDS)} == {
+        "CONTAINER": 30.0, "CONTAINER_ROUND": 30.0, "FENCE": 120.0, "GARAGE_SHED": 250.0,
+        "GARDEN_BED": None, "HEDGE_POLYGON": 150.0, "HEDGE_SECTION": 150.0, "HOUSE": 450.0,
+        "RAISED_BED": 40.0, "TOOL_SHED": 250.0, "WALL": 200.0, "WALL_PLANTER": 30.0,
+    }
+    code = ast.parse(Path(common.__file__).read_text(encoding="utf-8"))
+    literals = {node.value for node in ast.walk(code)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    assert literals.isdisjoint({member.name for member in ObjectType})  # no kind is named there

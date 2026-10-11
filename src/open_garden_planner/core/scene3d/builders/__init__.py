@@ -8,8 +8,9 @@ covers this package).
 =================  ==========================================================
 ``buildings``      HOUSE (walls + gable roof from the live ridge), GARAGE_SHED,
                    TOOL_SHED (ridge from the local bounding box)
-``fences``         FENCE, per ``PathFenceStyle``
-``walls``          WALL
+``lines``          FENCE and WALL: the one dispatch from a polyline's kind and
+                   style to its solid; the geometry is in ``fences`` (picket,
+                   metal, chain link, hedge fence, plain panel) and ``walls``
 ``beds``           RAISED_BED, CONTAINER, WALL_PLANTER, CONTAINER_ROUND, and a
                    GARDEN_BED that was given a height
 ``hedges``         HEDGE_SECTION, HEDGE_POLYGON
@@ -30,9 +31,11 @@ The wiring (L1.3) calls ``production_registry()`` once and hands the result to
 from __future__ import annotations
 
 from ..build import BuilderRegistry
-from . import beds, buildings, fences, hedges, walls
+from ..record import Record
+from . import beds, buildings, hedges, lines
+from .common import nominal_height_cm
 
-__all__ = ["BUILT_WORLD_KINDS", "production_registry", "register"]
+__all__ = ["BUILT_WORLD_KINDS", "production_registry", "register", "triangle_budget"]
 
 #: The kinds the built world registers a builder for (pinned by a test).
 BUILT_WORLD_KINDS: frozenset[str] = frozenset({
@@ -46,10 +49,27 @@ BUILT_WORLD_KINDS: frozenset[str] = frozenset({
 def register(registry: BuilderRegistry) -> None:
     """Register every built-world builder (this story's five families)."""
     buildings.register(registry)
-    fences.register(registry)
-    walls.register(registry)
+    lines.register(registry)
     beds.register(registry)
     hedges.register(registry)
+
+
+def triangle_budget(record: Record) -> int | None:
+    """The most triangles the built world may make for ``record`` — its family's
+    stated budget (``buildings`` / ``lines`` / ``hedges`` / ``beds``
+    ``.triangle_budget``) — or None for a kind the built world does not build.
+    A budget is a ceiling the tests hold every builder to, not a count."""
+    kind = record.kind
+    if kind in ("HOUSE", "GARAGE_SHED", "TOOL_SHED"):
+        return buildings.triangle_budget(record)
+    if kind in ("FENCE", "WALL"):
+        return lines.triangle_budget(record)
+    if kind in ("HEDGE_SECTION", "HEDGE_POLYGON"):
+        return hedges.triangle_budget(record)
+    if kind in BUILT_WORLD_KINDS:
+        height = record.height_cm if record.height_cm is not None else nominal_height_cm(kind)
+        return beds.triangle_budget(record, height or 0.0)
+    return None
 
 
 def production_registry() -> BuilderRegistry:

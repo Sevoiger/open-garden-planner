@@ -48,11 +48,10 @@ from open_garden_planner.core.scene3d.builders import (
     BUILT_WORLD_KINDS,
     beds,
     buildings,
-    fences,
     hedges,
+    lines,
     palette,
     production_registry,
-    walls,
 )
 from open_garden_planner.core.tools import ToolType
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
@@ -216,7 +215,7 @@ def test_kinds_builders_heights_and_bases(garden: Garden) -> None:
     production = production_registry()
     expected_builder = {
         "HOUSE": buildings.build_house, "TOOL_SHED": buildings.build_shed,
-        "FENCE": fences.build_fence, "WALL": walls.build_wall,
+        "FENCE": lines.build_fence, "WALL": lines.build_wall,
         "RAISED_BED": beds.build_raised_bed, "CONTAINER_ROUND": beds.build_round_container,
         "HEDGE_SECTION": hedges.build_hedge, "HEDGE_POLYGON": hedges.build_hedge,
     }
