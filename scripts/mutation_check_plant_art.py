@@ -6,9 +6,14 @@ itself while a squash was built 1.6 times too tall and squashed back, a lavender
 floated 9 cm above the ground, and dropping the renderer's "is the file there"
 survived 3,048 tests. This script asks the second question directly: it breaks
 ONE rule at a time and runs the tests that are supposed to notice. Every mutant
-must be KILLED (the tests fail); a SURVIVED mutant is a rule no test pins, and a
-pattern that no longer matches exactly once is STALE and counts as a failure —
-a mutant that silently stopped mutating proves nothing.
+must be KILLED — pytest exits with code 1 ("tests ran and some failed") AND
+names a FAILED test. A SURVIVED mutant is a rule no test pins; a pattern that no
+longer matches exactly once is STALE — a mutant that silently stopped mutating
+proves nothing; and any other outcome is BROKEN: pytest exiting with 2
+(interrupted, a collection error), 3 (internal error), 4 (usage: a test id that
+does not exist any more) or 5 (nothing collected) is a run that did not test
+the mutant, and "any non-zero exit" used to count it as a kill (review round 3;
+the fix is the scene-contract script's, ``scripts/mutation_check_scene3d.py``).
 
 How it works: the tree (``src/``, ``tests/``, ``scripts/``, ``pyproject.toml``)
 is copied ONCE into a temporary directory; each mutant is one or more textual
@@ -26,7 +31,7 @@ or their tests::
     venv/Scripts/python.exe scripts/mutation_check_plant_art.py --stale    # patterns only, no tests
     venv/Scripts/python.exe scripts/mutation_check_plant_art.py -k leaf    # a subset
 
-Exit code 0: every mutant killed. 1: a mutant survived or is stale.
+Exit code 0: every mutant killed. 1: a mutant survived, is stale or its run was broken.
 """
 
 from __future__ import annotations
@@ -156,8 +161,11 @@ MUTANTS: tuple[Mutant, ...] = (
         "        pressed_share=0.0, set_down=0.0,", UNIT),
     # ── where a plant ENDS: the fit's last step (review round 2, P1-A) ────────
     one("the fit's last step is skipped: nothing bounds where a vertex ends", PLANTS,
-        "    reined = sum(_rein_in(part.pos, REACH_MAX * radius) for part in parts)\n",
+        "    reined = _rein_in(foliage.pos, REACH_MAX * radius)\n",
         "    reined = 0\n", UNIT),
+    one("the last step reins in the wood too (a flat face keeps a normal that is not its own)", PLANTS,
+        "    reined = _rein_in(foliage.pos, REACH_MAX * radius)\n",
+        "    reined = sum(_rein_in(part.pos, REACH_MAX * radius) for part in parts)\n", UNIT),
     one("the last step pulls a vertex straight toward the axis (the box shrinks)", PLANTS,
         "        flat[beyond, major] = np.copysign(kept, flat[beyond, major])\n"
         "        flat[beyond, minor] = np.copysign(np.sqrt(np.maximum(limit * limit - kept * kept, 0.0)),\n"
@@ -274,6 +282,15 @@ MUTANTS: tuple[Mutant, ...] = (
         "    if record.height_cm is None:\n        return PLACEHOLDER\n",
         "    sprite = plant_sprite(record)\n    if sprite is None:\n        return None\n"
         "    plant = (sprite, 1.0)\n    if record.height_cm is None:\n        return PLACEHOLDER\n", UNIT),
+    # ── the sizes a plant is built at (review round 3) ───────────────────────
+    one("a size beyond what a record can hold is built (a mesh of NaNs)", PLANTS,
+        "    if not (MIN_SIZE_CM <= height_cm <= MAX_LENGTH_CM and MIN_SIZE_CM <= radius_cm <= MAX_LENGTH_CM):",
+        "    if not (MIN_SIZE_CM <= height_cm and MIN_SIZE_CM <= radius_cm):", UNIT),
+    one("a size under a micrometre is built (the logarithm overflows)", PLANTS,
+        "    if not (MIN_SIZE_CM <= height_cm <= MAX_LENGTH_CM and MIN_SIZE_CM <= radius_cm <= MAX_LENGTH_CM):",
+        "    if not (0.0 < height_cm <= MAX_LENGTH_CM and 0.0 < radius_cm <= MAX_LENGTH_CM):", UNIT),
+    one("the floor of the sizes is a centimetre (a seedling is refused)", PLANTS,
+        "MIN_SIZE_CM: Final = 1e-4", "MIN_SIZE_CM: Final = 1.0", UNIT),
     # ── the shape cache (review P2-1) ────────────────────────────────────────
     one("the cache ignores the proportion", PLANTS,
         "    return round(math.log(height_cm / radius_cm) / math.log(PROPORTION_STEP))",
@@ -313,6 +330,9 @@ MUTANTS: tuple[Mutant, ...] = (
         "            before = self._asked.pop(key, None) and None\n", UNIT),
     one("a shape larger than the cap empties the cache", PLANTS,
         "        if key in self._held or size > self._max_bytes:\n", "        if key in self._held:\n", UNIT),
+    one("clearing the cache keeps the request log", PLANTS,
+        "            self._held.clear()\n            self._asked.clear()\n",
+        "            self._held.clear()\n", UNIT),
     one("a smaller cap drops nothing", PLANTS,
         "            while self._held and self._bytes > self._max_bytes:\n",
         "            while False and self._bytes > self._max_bytes:\n", UNIT),
@@ -341,8 +361,26 @@ def stale(mutant: Mutant, root: Path) -> str:
     return ""
 
 
+#: pytest's exit code for "tests were collected and run, and some failed".
+PYTEST_TESTS_FAILED = 1
+
+
+def failed_test_of(output: str) -> str:
+    """The first ``FAILED tests/…`` line of a pytest run's output, or ''."""
+    return next((line for line in output.splitlines() if line.startswith("FAILED tests")), "")
+
+
+def verdict_of(returncode: int, failed_test: str) -> str:
+    """What a pytest run says about a mutant. KILLED needs BOTH: exit code 1 and a
+    test pytest names as FAILED. Exit code 0 is SURVIVED; everything else — another
+    exit code, or code 1 without a failed test (errors only) — is BROKEN."""
+    if returncode == 0:
+        return "SURVIVED"
+    return "KILLED" if returncode == PYTEST_TESTS_FAILED and failed_test else "BROKEN"
+
+
 def run(mutant: Mutant, root: Path) -> tuple[str, str]:
-    """``(verdict, detail)`` — KILLED, SURVIVED or STALE."""
+    """``(verdict, detail)`` — KILLED, SURVIVED, STALE or BROKEN."""
     reason = stale(mutant, root)
     if reason:
         return "STALE", reason
@@ -362,10 +400,13 @@ def run(mutant: Mutant, root: Path) -> tuple[str, str]:
         path.write_bytes(original)
     lines = proc.stdout.strip().splitlines()
     tail = lines[-1] if lines else proc.stderr.strip()[-200:]
-    if proc.returncode == 0:
-        return "SURVIVED", tail
-    failed = next((line for line in lines if line.startswith(("FAILED tests", "ERROR tests"))), tail)
-    return "KILLED", failed[:170]
+    failed = failed_test_of(proc.stdout)
+    verdict = verdict_of(proc.returncode, failed)
+    if verdict == "SURVIVED":
+        return verdict, tail
+    if verdict == "BROKEN":
+        return verdict, f"pytest exit code {proc.returncode}, no FAILED test: {tail[:130]}"
+    return verdict, failed[:170]
 
 
 def main(argv: list[str] | None = None) -> int:
