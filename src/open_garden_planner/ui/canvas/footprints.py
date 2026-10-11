@@ -26,10 +26,25 @@ item is linked to that parent AND its centre is inside the parent's shape. The
 2D shadow casters (overlay and heatmap) and the 3D records both ask it, so a
 plant's shadow and its 3D solid start at the same height.
 
-And one point-in-bed test (``bed_membership_point`` / ``shape_contains`` /
-``centre_is_inside``): auto-parenting, the re-link after a drag, the agent's
-``link_is_geometric`` and the lift all ask it, so they cannot disagree on a
-boundary case.
+And one point-in-bed PREDICATE, ``shape_contains``, asked with one of two points:
+
+- the LINK decisions (auto-parenting on creation, bulk create and paste, the
+  re-link after a drag, the agent's ``move_object`` re-link and its
+  ``link_is_geometric``) ask it with ``bed_membership_point`` — the centre of the
+  item's ``boundingRect()``, exactly as they always did (``centre_is_inside``);
+- the LIFT (``item_base_cm``) asks it with ``standing_point`` — the item's stable
+  geometric centre, the origin of its footprint and of its 3D record.
+
+The two points differ while a plant shows its antagonist badge: the badge grows
+the bounding rect towards +x / +y by ``0.3 * min(0.45 * radius, cap)``, which
+moves its centre by up to 1.8 cm. A link decision made in that state can
+therefore differ from the lift for a plant whose centre is within that margin of
+its bed's edge — the link is bookkeeping and keeps its shipped point; where a
+solid STANDS must not change when a warning is painted over it.
+
+This module is collecting jobs — footprints, the base rule, the app's
+point-in-bed test, with ``core/commands.py`` importing from ``ui/`` lazily for
+the last one. A known smell (§8.26.6), not restructured in L1.6.
 """
 
 from __future__ import annotations
@@ -41,6 +56,7 @@ from datetime import date
 from typing import Any
 
 from PyQt6.QtCore import QPointF
+from PyQt6.QtGui import QPainterPath
 
 from open_garden_planner.core.object_height import standing_base_cm
 from open_garden_planner.core.shadow_geometry import (
@@ -137,17 +153,20 @@ def plant_canopy_radius_cm(item: Any, at_date: date | None) -> float | None:
 
 
 class ItemLookup:
-    """A scene's items by id, built on first use.
+    """A scene's items by id, built on first use — and, for the walk it serves,
+    each soil parent's shape.
 
     One per walk over ``scene.items()``: most plans have few parented items, and
-    a walk that meets none never pays for the dictionary.
+    a walk that meets none never pays for the dictionary. Never kept between
+    walks: the shapes it holds are the items' shapes at the time of the walk.
     """
 
-    __slots__ = ("_by_id", "_items")
+    __slots__ = ("_by_id", "_items", "_shapes")
 
     def __init__(self, items: Iterable[Any]) -> None:
         self._items = items
         self._by_id: dict[str, Any] | None = None
+        self._shapes: dict[int, QPainterPath] = {}
 
     def get(self, item_id: Any) -> Any | None:
         """The item with that id (a ``UUID`` or its string), or None."""
@@ -156,28 +175,79 @@ class ItemLookup:
                            if hasattr(item, "item_id")}
         return self._by_id.get(str(item_id))
 
+    def shape_of(self, parent: Any) -> QPainterPath:
+        """``contains_path(parent)``, built once per walk.
+
+        Qt's ``contains`` rebuilds the item's shape on every call; a bed with
+        forty plants built it forty times a walk (bench_large: 240 times).
+        """
+        key = id(parent)  # the walk's items outlive the lookup that indexes them
+        shape = self._shapes.get(key)
+        if shape is None:
+            shape = self._shapes[key] = contains_path(parent)
+        return shape
+
 
 def bed_membership_point(item: Any) -> QPointF:
-    """The scene point that decides which bed an item is in.
+    """The scene point the LINK decisions ask: which bed is an item in?
 
-    The centre of the item's ``boundingRect()`` — the construct every membership
-    decision of the app uses (auto-parenting on creation, the re-link after a
-    drag, the agent's ``link_is_geometric``). Deliberately NOT the geometric
-    ``rect().center()`` the serializer and the footprints use: the two differ by
-    the antagonist badge's asymmetric overflow, and what matters here is that
-    every membership decision asks the same point.
+    The centre of the item's ``boundingRect()`` — the construct every link
+    decision of the app uses (auto-parenting on creation, bulk create and paste,
+    the re-link after a drag, the agent's ``move_object`` re-link and its
+    ``link_is_geometric``). Kept exactly as shipped. It is NOT the geometric
+    centre: the antagonist badge grows the bounding rect towards +x / +y and so
+    moves this point by up to 1.8 cm. Where an item STANDS is asked of
+    ``standing_point`` instead.
     """
     point: QPointF = item.mapToScene(item.boundingRect().center())
     return point
 
 
-def shape_contains(parent: Any, scene_point: QPointF) -> bool:
-    """Does the parent's own shape contain that scene point? (Qt's ``contains``.)"""
-    return bool(parent.contains(parent.mapFromScene(scene_point)))
+def standing_point(item: Any) -> QPointF | None:
+    """The scene point an item STANDS on: its stable geometric centre.
+
+    ``item_outline``'s anchor in scene coordinates — a plant circle's centre, an
+    ellipse's or rectangle's ``rect().center()``, the centre of a polygon's
+    vertex bounding box: the point its footprint is built around and the origin
+    of its 3D record. It moves only when the item's geometry or pose does —
+    never with a badge, a highlight, a selection or a spacing ring, all of which
+    change ``boundingRect()``. None for an item without a footprint.
+    """
+    if isinstance(item, CircleItem):  # every plant; skips the canopy lookup
+        centre: QPointF = item.mapToScene(item.center)
+        return centre
+    outline = item_outline(item)
+    if outline is None:
+        return None
+    mapped: QPointF = item.mapToScene(QPointF(outline.anchor[0], outline.anchor[1]))
+    return mapped
+
+
+def contains_path(parent: Any) -> QPainterPath:
+    """The path Qt's ``QGraphicsItem::contains`` tests a local point against:
+    the clip path of a clipped item, else its shape."""
+    path: QPainterPath = parent.clipPath() if parent.isClipped() else parent.shape()
+    return path
+
+
+def shape_contains(parent: Any, scene_point: QPointF,
+                   shape: QPainterPath | None = None) -> bool:
+    """Does the parent's own shape contain that scene point? — the app's ONE
+    point-in-bed predicate (Qt's ``contains``).
+
+    ``shape``: the parent's ``contains_path`` when the caller holds it for a
+    walk (``ItemLookup.shape_of``) — the same answer without rebuilding the path
+    for every plant of the bed.
+    """
+    local = parent.mapFromScene(scene_point)
+    if shape is None:
+        return bool(parent.contains(local))
+    return bool(shape.contains(local))
 
 
 def centre_is_inside(item: Any, parent: Any) -> bool:
-    """Is the item geometrically in that parent — the app's ONE point-in-bed test."""
+    """Is the item in that parent, as the LINK decisions see it
+    (``bed_membership_point``)? Not the lift: ``item_base_cm``."""
     return shape_contains(parent, bed_membership_point(item))
 
 
@@ -188,16 +258,23 @@ def item_base_cm(item: Any, lookup: ItemLookup, at_date: date | None = None) -> 
 
     1. its ``parent_bed_id`` (a ``GardenItem`` PROPERTY, never a metadata key)
        names a VISIBLE soil container with a resolved height —
-       ``core.object_height.standing_base_cm``: the parent's effective height
-       minus the soil drop; and
-    2. the item's centre lies inside that parent's shape (``centre_is_inside``).
+       ``core.object_height.standing_base_cm``: the parent's soil surface; and
+    2. the item's ``standing_point`` — its stable geometric centre — lies inside
+       that parent's shape (``shape_contains``).
 
     The link alone never decides where a solid stands: the app keeps it as
-    bookkeeping, not as geometry — it is evaluated when a plant is created or
-    dropped and by nothing else, so shrinking a bed away from its plant leaves
-    the link in place (``set_parent_bed`` even sets one on purpose without
-    containment). A linked plant that is not in its bed stands on the ground,
-    exactly as every plant did before bases existed.
+    bookkeeping, not as geometry. It is evaluated when a plant is created (one
+    by one, in bulk, or pasted), when a selected plant is dropped after a drag,
+    and when the agent moves a plant — and by nothing that changes a BED, so
+    shrinking a bed away from its plant leaves the link in place
+    (``set_parent_bed`` even sets one on purpose without containment). A linked
+    plant that is not in its bed stands on the ground, exactly as every plant
+    did before bases existed.
+
+    The point is ``standing_point``, not the link decisions'
+    ``bed_membership_point``: a bounding rect grows with the antagonist badge,
+    and a plant 1 cm inside its bed's edge must not drop to the ground — and
+    lose 38 cm of shadow base — when a warning badge appears.
 
     Everything else stands on the ground too: no parent, an in-ground bed, a
     trellis, a dangling link. A parent that is not visible is not there either —
@@ -207,7 +284,8 @@ def item_base_cm(item: Any, lookup: ItemLookup, at_date: date | None = None) -> 
     ONE rule, asked by the 2D shadow casters and by ``snapshot_records``.
     Parents do not nest (only plants are parented), so there is nothing to sum.
     The geometric test runs last and only for an item that would be lifted, so
-    a plan without raised soil never pays for it.
+    a plan without raised soil never pays for it; the parent's shape is built
+    once per walk (``ItemLookup.shape_of``).
     """
     parent_id = getattr(item, "parent_bed_id", None)
     if parent_id is None:
@@ -218,7 +296,10 @@ def item_base_cm(item: Any, lookup: ItemLookup, at_date: date | None = None) -> 
     base = standing_base_cm(
         getattr(parent, "object_type", None), getattr(parent, "metadata", None), at_date
     )
-    if base <= 0.0 or not centre_is_inside(item, parent):
+    if base <= 0.0:
+        return 0.0
+    point = standing_point(item)
+    if point is None or not shape_contains(parent, point, lookup.shape_of(parent)):
         return 0.0
     return base
 

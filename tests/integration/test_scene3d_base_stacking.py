@@ -284,8 +284,9 @@ def _add(garden: Garden, item: Any, name: str) -> Any:
     return item
 
 
-def _perennial(garden: Garden, x: float, y: float, height: float) -> CircleItem:
-    plant = CircleItem(x, y, 15.0, object_type=ObjectType.PERENNIAL,
+def _perennial(garden: Garden, x: float, y: float, height: float,
+               radius: float = 15.0) -> CircleItem:
+    plant = CircleItem(x, y, radius, object_type=ObjectType.PERENNIAL,
                        layer_id=garden.scene.active_layer.id)
     plant.metadata[METADATA_KEY] = height
     return plant
@@ -299,11 +300,59 @@ def _bases(garden: Garden, plant: Any) -> tuple[float, float]:
     return record.transform.base_cm, caster.base_cm
 
 
+def _is_mapped(node: ast.AST, names: set[str]) -> bool:
+    return any(
+        (isinstance(sub, ast.Call) and getattr(sub.func, "attr", "") == "mapFromScene")
+        or (isinstance(sub, ast.Name) and sub.id in names)
+        for sub in ast.walk(node))
+
+
+def contains_of_a_mapped_point(tree: ast.AST) -> set[tuple[str, int]]:
+    """``(function, line)`` of every ``x.contains(p)`` whose ``p`` derives from
+    ``mapFromScene`` — written as one expression (``bed.contains(bed.mapFromScene(q))``)
+    or through a local name bound in the same function (``local = bed.mapFromScene(q)``,
+    then ``bed.contains(local)`` or ``shape.contains(local)``), also through a second
+    name, a walrus or an annotated assignment.
+
+    LIMIT, stated: a point that reaches ``contains`` through an attribute, a container,
+    a tuple unpacking, a parameter or another function's return value is not seen, and
+    at module level only the one-expression spelling is."""
+    hits: set[tuple[str, int]] = set()
+    functions = [node for node in ast.walk(tree)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    in_a_function = {id(node) for function in functions for node in ast.walk(function)}
+    for scope in [*functions, tree]:
+        names: set[str] = set()
+        growing = scope is not tree
+        while growing:  # a name bound to a name that was bound to a mapped point
+            growing = False
+            for node in ast.walk(scope):
+                if isinstance(node, ast.Assign):
+                    targets, value = node.targets, node.value
+                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                    targets, value = [node.target], node.value
+                else:
+                    continue
+                if _is_mapped(value, names):
+                    for target in targets:
+                        if isinstance(target, ast.Name) and target.id not in names:
+                            names.add(target.id)
+                            growing = True
+        for node in ast.walk(scope):
+            if scope is tree and id(node) in in_a_function:
+                continue  # reported under its function
+            if (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "contains"
+                    and node.args and _is_mapped(node.args[0], names)):
+                hits.add((getattr(scope, "name", "<module>"), node.lineno))
+    return hits
+
+
 class TestTheLinkAloneNeverLifts:
     """Review round 1, P1-1. ``parent_bed_id`` is bookkeeping, not geometry: the app
-    evaluates it when a plant is created or dropped and nowhere else, and
-    ``set_parent_bed`` sets it on purpose without containment. A solid is lifted
-    only when the link holds AND its centre is inside the parent's shape.
+    evaluates it when a plant is created (one by one, in bulk, pasted), dropped or
+    moved by the agent — never when a BED changes — and ``set_parent_bed`` sets it on
+    purpose without containment. A solid is lifted only when the link holds AND its
+    centre is inside the parent's shape.
 
     (a) is the case that was new wrong output; (b)–(d) are the limits that remain
     — pinned so that reconciling bed membership (a follow-up issue) changes them
@@ -404,7 +453,9 @@ class TestTheLinkAloneNeverLifts:
     def test_an_explicit_link_without_containment_does_not_lift(self, canvas: CanvasView) -> None:
         """The agent's ``set_parent_bed`` and the panel's Link action may link a plant
         that is not in the bed (``link_is_geometric: false``). Expected base 0: the
-        same function answers ``link_is_geometric`` and the lift."""
+        same predicate answers ``link_is_geometric`` and the lift (with their two
+        points, which agree everywhere but in a badge's margin of a bed's edge —
+        ``TestWhereAPlantStandsDoesNotDependOnABadge``)."""
         garden = Garden(canvas)
         loner = _add(garden, _perennial(garden, 1500.0, 1200.0, 61.0), "loner")
         assert loner.parent_bed_id is None
@@ -433,40 +484,386 @@ class TestTheLinkAloneNeverLifts:
         assert corner.parent_bed_id is None
         assert _bases(garden, corner) == (0.0, 0.0)
 
-    def test_one_point_in_bed_test_in_the_app(self) -> None:
-        """The construct ``parent.contains(parent.mapFromScene(point))`` and the
-        membership point ``mapToScene(boundingRect().center())`` each exist once."""
+    def test_one_point_in_bed_predicate_in_the_app(self) -> None:
+        """A containment test of a point mapped into an item's frame exists ONCE as a
+        bed-membership test (``footprints.shape_contains``), and each of the two points
+        it is asked with has one maker. ``contains_of_a_mapped_point`` sees both
+        spellings (its limit is in its docstring)."""
         src = Path(open_garden_planner.__file__).parent
-        contains_sites: set[str] = set()
+        contains_sites: dict[str, set[str]] = {}
         users: dict[str, set[str]] = {}
         for path in src.rglob("*.py"):
             relative = path.relative_to(src).as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"))
+            for function, _line in contains_of_a_mapped_point(tree):
+                contains_sites.setdefault(relative, set()).add(function)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
                 name = getattr(node.func, "id", getattr(node.func, "attr", ""))
-                if name in ("bed_membership_point", "shape_contains", "centre_is_inside"):
+                if name in ("bed_membership_point", "standing_point", "shape_contains",
+                            "centre_is_inside", "contains_path", "shape_of"):
                     users.setdefault(name, set()).add(relative)
-                first = node.args[0] if node.args else None
-                if (name == "contains" and isinstance(first, ast.Call)
-                        and getattr(first.func, "attr", "") == "mapFromScene"):
-                    contains_sites.add(relative)
-        assert contains_sites == {"ui/canvas/footprints.py"}
+        assert contains_sites == {
+            "ui/canvas/footprints.py": {"shape_contains"},   # THE predicate
+            # not a membership test: is the CURSOR inside the selected shape, i.e. which
+            # way does the offset tool offset — no plant, no bed
+            "core/tools/offset_tool.py": {"mouse_move", "mouse_press"},
+        }
         assert users["shape_contains"] == {
-            "ui/canvas/footprints.py",      # inside centre_is_inside
+            "ui/canvas/footprints.py",      # centre_is_inside (links) and item_base_cm (the lift)
             "ui/canvas/canvas_scene.py",    # find_smallest_bed_containing
         }
-        assert users["bed_membership_point"] == {
+        assert users["bed_membership_point"] == {   # the LINK decisions' point
             "ui/canvas/footprints.py",      # inside centre_is_inside
-            "core/commands.py",             # auto-parenting on creation
+            "core/commands.py",             # auto-parenting: create, bulk create, paste
             "ui/canvas/canvas_view.py",     # the re-link after a drag
             "app/application.py",           # the agent's re-link after move_object
         }
-        assert users["centre_is_inside"] == {
-            "ui/canvas/footprints.py",      # item_base_cm: the lift
-            "app/application.py",           # set_parent_bed's link_is_geometric
-        }
+        assert users["centre_is_inside"] == {"app/application.py"}  # set_parent_bed's link_is_geometric
+        assert users["standing_point"] == {"ui/canvas/footprints.py"}  # the LIFT's point
+        assert users["contains_path"] == {"ui/canvas/footprints.py"}   # inside ItemLookup.shape_of
+        assert users["shape_of"] == {"ui/canvas/footprints.py"}        # inside item_base_cm
+
+    @pytest.mark.parametrize(("source", "expected"), [
+        ("def f(b, p):\n    return b.contains(b.mapFromScene(p))\n", [("f", 2)]),
+        ("def f(b, p):\n    local = b.mapFromScene(p)\n    return b.contains(local)\n", [("f", 3)]),
+        ("def f(b, p):\n    local = b.mapFromScene(p)\n    return b.shape().contains(local)\n",
+         [("f", 3)]),
+        ("def f(b, p):\n    local = b.mapFromScene(p)\n    again = local\n"
+         "    return b.contains(again)\n", [("f", 4)]),
+        ("def f(b, p):\n    return b.contains(local := b.mapFromScene(p))\n", [("f", 2)]),
+        ("def f(b, p):\n    local: object = b.mapFromScene(p)\n    return b.contains(local)\n",
+         [("f", 3)]),
+        ("x = b.contains(b.mapFromScene(p))\n", [("<module>", 1)]),
+        # not a mapped point: a plain point, a rect, another function's local of the same name
+        ("def f(b, p):\n    return b.contains(p)\n", []),
+        ("def f(b, p):\n    local = b.mapFromScene(p)\n    return local\n"
+         "def g(b, local):\n    return b.contains(local)\n", []),
+    ])
+    def test_the_guard_sees_both_spellings(self, source: str, expected: list) -> None:
+        assert sorted(contains_of_a_mapped_point(ast.parse(source))) == expected
+
+
+EAST_EDGE_CM = 700.0   # the Garden's bed: x 400 … 700, y 300 … 500
+BADGE_SHIFT_CM = 1.8   # 0.3 * min(0.45 * 30, 12) / 2: what the badge moves the rect's centre by
+
+
+class TestWhereAPlantStandsDoesNotDependOnABadge:
+    """Review round 2, P2-1. The antagonist badge grows a plant's ``boundingRect()``
+    towards +x / +y, so the rect's centre — the point the LINK decisions ask — moves
+    by up to 1.8 cm while the badge shows. Round 1 asked the lift with that point: a
+    linked plant 1 cm inside its bed's east edge dropped from 38 to 0, in the 3D
+    record and in the 2D caster, whenever the badge appeared.
+
+    The lift asks ``standing_point`` — the plant's stable geometric centre — and the
+    link decisions keep their point exactly as shipped."""
+
+    def test_a_badge_does_not_move_a_plant_off_its_soil(self, canvas: CanvasView) -> None:
+        garden = Garden(canvas)
+        edge = _add(garden, _perennial(garden, EAST_EDGE_CM - 1.0, 400.0, 61.0, radius=30.0), "edge")
+        assert edge.parent_bed_id == garden.bed.item_id  # created without a badge: linked
+        assert _bases(garden, edge) == (38.0, 38.0)
+        before = garden.records()
+
+        controller = SunShadowController(garden.scene, lambda: BERLIN)
+        controller.set_sim_datetime(datetime(2026, 6, 21, 18, 0, tzinfo=UTC))
+        controller.set_enabled(True)
+        overlay = next(i for i in garden.scene.items() if isinstance(i, SunShadowOverlayItem))
+
+        def painted() -> list[tuple[float, float]]:
+            path = overlay.path()
+            return [(path.elementAt(i).x, path.elementAt(i).y) for i in range(path.elementCount())]
+
+        shadow, count = painted(), controller.recompute_count
+
+        edge.set_antagonist_warning(True)
+        # the link decisions' point left the bed …
+        link_point = footprints.bed_membership_point(edge)
+        assert (link_point.x(), link_point.y()) == pytest.approx(
+            (EAST_EDGE_CM - 1.0 + BADGE_SHIFT_CM, 400.0 + BADGE_SHIFT_CM), abs=1e-9)
+        assert not footprints.centre_is_inside(edge, garden.bed)
+        # … the plant did not move
+        standing = footprints.standing_point(edge)
+        assert standing is not None and (standing.x(), standing.y()) == (EAST_EDGE_CM - 1.0, 400.0)
+        assert _bases(garden, edge) == (38.0, 38.0)      # round 1: (0.0, 0.0)
+        assert garden.records() == before                 # the 3D records: nothing at all
+        controller.recompute_now()
+        assert controller.recompute_count == count        # the overlay's key (it carries the base) held
+        assert painted() == shadow
+
+        edge.set_antagonist_warning(False)
+        assert _bases(garden, edge) == (38.0, 38.0) and garden.records() == before
+        controller.recompute_now()
+        assert controller.recompute_count == count and painted() == shadow
+        controller.set_enabled(False)
+
+    @pytest.mark.parametrize("painted", ["antagonist badge", "companion highlight"])
+    def test_the_standing_point_ignores_what_is_painted_over_the_plant(
+        self, canvas: CanvasView, painted: str
+    ) -> None:
+        garden = Garden(canvas)
+        plant = _add(garden, _perennial(garden, 610.0, 420.0, 61.0, radius=30.0), "plant")
+        point = footprints.standing_point(plant)
+        rect = plant.boundingRect()
+        if painted == "antagonist badge":
+            plant.set_antagonist_warning(True)
+        else:
+            plant.set_companion_highlight("antagonistic")
+        assert plant.boundingRect() != rect  # the paint-dependent rect DID change
+        assert footprints.standing_point(plant) == point
+        assert _bases(garden, plant) == (38.0, 38.0)
+
+    def test_the_standing_point_is_the_origin_of_the_outline_and_of_the_record(
+        self, canvas: CanvasView
+    ) -> None:
+        """``standing_point`` is ``item_outline``'s anchor in scene coordinates — for
+        every footprint shape, turned and moved — and a plant's is its record's origin."""
+        from open_garden_planner.ui.canvas.items.ellipse_item import EllipseItem
+        from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
+
+        garden = Garden(canvas)
+        layer = garden.scene.active_layer.id
+        items: list[Any] = [
+            garden.plant, garden.bed,
+            EllipseItem(100.0, 120.0, 80.0, 40.0, object_type=ObjectType.POND_POOL, layer_id=layer),
+            PolygonItem([QPointF(0.0, 0.0), QPointF(300.0, 0.0), QPointF(300.0, 90.0),
+                         QPointF(120.0, 200.0)], object_type=ObjectType.HOUSE, layer_id=layer),
+            PolylineItem([QPointF(0.0, 0.0), QPointF(250.0, 0.0), QPointF(250.0, 180.0)],
+                         object_type=ObjectType.FENCE, layer_id=layer),
+        ]
+        for index, item in enumerate(items[2:]):
+            garden.scene.addItem(item)
+            item.setPos(900.0 + 400.0 * index, 700.0)
+        for item in items[1:]:
+            apply_rotation(item, 33.0)
+        shapes = set()
+        for item in items:
+            outline = footprints.item_outline(item)
+            assert outline is not None
+            shapes.add(outline.shape)
+            expected = item.mapToScene(QPointF(outline.anchor[0], outline.anchor[1]))
+            point = footprints.standing_point(item)
+            assert point is not None
+            assert (point.x(), point.y()) == pytest.approx((expected.x(), expected.y()), abs=1e-9)
+        assert shapes == set(footprints.OUTLINE_SHAPES)
+        record = garden.records()[garden.plant_id]
+        standing = footprints.standing_point(garden.plant)
+        assert standing is not None
+        assert (record.transform.east_cm, record.transform.north_cm) == (standing.x(), standing.y())
+        assert footprints.standing_point(object()) is None  # no footprint: stands nowhere
+
+
+@pytest.fixture
+def window(qtbot: Any, monkeypatch: Any, _reset_app_settings: Any) -> Any:  # noqa: ARG001
+    """The real application window: the agent's link decisions live on it."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    from open_garden_planner.app.application import GardenPlannerApp
+    from open_garden_planner.app.settings import get_settings
+
+    get_settings().show_welcome_on_startup = False
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *_a, **_k: QMessageBox.StandardButton.Discard)
+    win = GardenPlannerApp()
+    qtbot.addWidget(win)
+    yield win
+    win._stop_agent_api()
+
+
+class TestWhichPointEachDecisionAsks:
+    """Review round 2, P2-1: ONE test per decision that pins its point. Round 1's
+    refactor moved five inline expressions into shared functions, and a swap of the
+    link point for the geometric centre passed every parenting, agent-write,
+    container, trellis and base-stacking test — "identical behaviour" held by reading
+    only.
+
+    The probe: a plant showing its antagonist badge, its geometric centre 1 cm INSIDE
+    a raised bed's east edge — so the centre of its bounding rect is 0.8 cm OUTSIDE.
+    Every LINK decision must answer "outside" (the shipped point); the LIFT "inside"."""
+
+    @staticmethod
+    def _bed(win: Any) -> RectangleItem:
+        bed = RectangleItem(400.0, 300.0, 300.0, 200.0, object_type=ObjectType.RAISED_BED,
+                            layer_id=win.canvas_scene.active_layer.id)
+        win.canvas_view.command_manager.execute(CreateItemCommand(win.canvas_scene, bed, "bed"))
+        return bed
+
+    @staticmethod
+    def _probe(win: Any, *, badge: bool) -> CircleItem:
+        plant = CircleItem(EAST_EDGE_CM - 1.0, 400.0, 30.0, object_type=ObjectType.PERENNIAL,
+                           layer_id=win.canvas_scene.active_layer.id)
+        plant.metadata[METADATA_KEY] = 61.0
+        if badge:
+            plant.set_antagonist_warning(True)
+        return plant
+
+    def test_the_two_points_disagree_on_the_probe(self, window: Any) -> None:
+        bed, plant = self._bed(window), self._probe(window, badge=True)
+        window.canvas_scene.addItem(plant)
+        link, stand = footprints.bed_membership_point(plant), footprints.standing_point(plant)
+        assert stand is not None
+        assert not footprints.shape_contains(bed, link) and footprints.shape_contains(bed, stand)
+
+    def test_create_asks_the_link_point(self, window: Any) -> None:
+        bed, plant = self._bed(window), self._probe(window, badge=True)
+        window.canvas_view.command_manager.execute(
+            CreateItemCommand(window.canvas_scene, plant, "plant"))
+        assert plant.parent_bed_id is None and plant.item_id not in bed.child_item_ids
+
+    def test_bulk_create_and_paste_ask_the_link_point(self, window: Any) -> None:
+        from open_garden_planner.core.commands import CreateItemsCommand
+
+        bed, plant = self._bed(window), self._probe(window, badge=True)
+        window.canvas_view.command_manager.execute(
+            CreateItemsCommand(window.canvas_scene, [plant], "pasted objects"))
+        assert plant.parent_bed_id is None and plant.item_id not in bed.child_item_ids
+
+    def test_the_drop_after_a_drag_asks_the_link_point(self, window: Any) -> None:
+        bed, plant = self._bed(window), self._probe(window, badge=False)
+        window.canvas_view.command_manager.execute(
+            CreateItemCommand(window.canvas_scene, plant, "plant"))
+        assert plant.parent_bed_id == bed.item_id  # no badge: both points are the centre
+        plant.setSelected(True)
+        # after selecting: the window's companion check answers a selection change by
+        # clearing the badge of a plant that has no antagonist near it
+        plant.set_antagonist_warning(True)
+        window.canvas_view._update_plant_bed_relationships()
+        assert plant.antagonist_warning
+        assert plant.parent_bed_id is None  # the drop-time decision follows the badge
+
+    def test_the_agent_s_move_re_link_asks_the_link_point(self, window: Any) -> None:
+        bed, plant = self._bed(window), self._probe(window, badge=False)
+        window.canvas_view.command_manager.execute(
+            CreateItemCommand(window.canvas_scene, plant, "plant"))
+        assert plant.parent_bed_id == bed.item_id
+        plant.set_antagonist_warning(True)
+        assert window._agent_reconcile_bed_membership(plant) == (True, None)
+        assert plant.parent_bed_id is None
+
+    def test_link_is_geometric_asks_the_link_point_and_the_lift_the_standing_point(
+        self, window: Any
+    ) -> None:
+        """The two answers side by side, on one plant: ``set_parent_bed`` reports the
+        link as not geometric (the bounding rect's centre is outside), and the plant —
+        linked, its centre inside — stands on the soil."""
+        bed, plant = self._bed(window), self._probe(window, badge=True)
+        window.canvas_scene.addItem(plant)
+        assert plant.parent_bed_id is None
+        result = window._do_agent_set_parent_bed(str(plant.item_id), str(bed.item_id))
+        assert result["link_is_geometric"] is False
+        assert plant.parent_bed_id == bed.item_id
+        record = snapshot_records(window.canvas_scene)[str(plant.item_id)]
+        (caster,) = [c for c in collect_shadow_casters(window.canvas_scene) if c.height_cm == 61.0]
+        assert (record.transform.base_cm, caster.base_cm) == (38.0, 38.0)
+
+    def test_the_mirror_case_a_link_made_under_a_badge_does_not_lift(self, window: Any) -> None:
+        """At the WEST edge the badge pulls the link point INTO the bed: a plant whose
+        centre is 1 cm outside is linked on creation, and stays on the ground."""
+        bed = self._bed(window)
+        plant = CircleItem(400.0 - 1.0, 400.0, 30.0, object_type=ObjectType.PERENNIAL,
+                           layer_id=window.canvas_scene.active_layer.id)
+        plant.metadata[METADATA_KEY] = 61.0
+        plant.set_antagonist_warning(True)
+        window.canvas_view.command_manager.execute(
+            CreateItemCommand(window.canvas_scene, plant, "plant"))
+        assert plant.parent_bed_id == bed.item_id
+        record = snapshot_records(window.canvas_scene)[str(plant.item_id)]
+        (caster,) = [c for c in collect_shadow_casters(window.canvas_scene) if c.height_cm == 61.0]
+        assert (record.transform.base_cm, caster.base_cm) == (0.0, 0.0)
+
+
+class TestTheParentShapeIsBuiltOncePerWalk:
+    """Review round 2, P2-9. Qt's ``contains`` rebuilds an item's shape on every
+    call; the lift asked it once per plant. ``ItemLookup.shape_of`` holds the path
+    for the walk, and ``shape_contains`` gives the same answer with it."""
+
+    @staticmethod
+    def _parents(layer: Any) -> list[Any]:
+        from open_garden_planner.ui.canvas.items.ellipse_item import EllipseItem
+
+        concave = PolygonItem(
+            [QPointF(0.0, 0.0), QPointF(300.0, 0.0), QPointF(300.0, 200.0), QPointF(150.0, 60.0),
+             QPointF(0.0, 200.0)], object_type=ObjectType.GARDEN_BED, layer_id=layer)
+        return [
+            RectangleItem(0.0, 0.0, 300.0, 200.0, object_type=ObjectType.RAISED_BED, layer_id=layer),
+            concave,
+            CircleItem(150.0, 100.0, 90.0, object_type=ObjectType.CONTAINER_ROUND, layer_id=layer),
+            EllipseItem(0.0, 0.0, 300.0, 160.0, object_type=ObjectType.GARDEN_BED, layer_id=layer),
+        ]
+
+    def test_the_cached_path_answers_as_qt_s_contains_does(self, canvas: CanvasView) -> None:
+        scene = canvas.scene()
+        probes = 0
+        for index, parent in enumerate(self._parents(scene.active_layer.id)):
+            scene.addItem(parent)
+            parent.setPos(500.0 + 600.0 * index, 400.0)
+            apply_rotation(parent, 27.0 * index)
+            lookup = footprints.ItemLookup(scene.items())
+            shape = lookup.shape_of(parent)
+            assert lookup.shape_of(parent) is shape  # built once
+            box = parent.sceneBoundingRect()
+            answers = set()
+            # a grid over the bounding box and beyond it, plus points ON the outline
+            xs = np.linspace(box.left() - 20.0, box.right() + 20.0, 41)
+            ys = np.linspace(box.top() - 20.0, box.bottom() + 20.0, 41)
+            points = [QPointF(float(x), float(y)) for x in xs for y in ys]
+            outline = parent.mapToScene(parent.shape())
+            points += [outline.pointAtPercent(t) for t in np.linspace(0.0, 1.0, 101)]
+            for point in points:
+                expected = bool(parent.contains(parent.mapFromScene(point)))
+                assert footprints.shape_contains(parent, point) is expected
+                assert footprints.shape_contains(parent, point, shape) is expected
+                answers.add(expected)
+                probes += 1
+            assert answers == {True, False}
+        assert probes == 4 * (41 * 41 + 101)
+
+    def test_no_canvas_item_overrides_contains_or_shape(self) -> None:
+        """``contains_path`` mirrors ``QGraphicsItem::contains`` (the clip path of a
+        clipped item, else its shape). A Python ``contains`` on a footprint item
+        would be bypassed by the cached path — so there must be none."""
+        from open_garden_planner.ui.canvas.items.ellipse_item import EllipseItem
+        from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
+
+        for item_class in (RectangleItem, PolygonItem, CircleItem, EllipseItem, PolylineItem):
+            own = [base for base in item_class.__mro__
+                   if base.__module__.startswith("open_garden_planner")]
+            assert own, item_class
+            for base in own:
+                assert "contains" not in vars(base), (item_class, base)
+                assert "clipPath" not in vars(base), (item_class, base)
+
+    def test_one_shape_per_parent_and_walk(self, canvas: CanvasView, monkeypatch: Any) -> None:
+        garden = Garden(canvas)
+        for index in range(5):
+            _add(garden, _perennial(garden, 430.0 + 40.0 * index, 450.0, 61.0 + index), f"p{index}")
+        pot = _add(garden, CircleItem(1500.0, 900.0, 40.0, object_type=ObjectType.CONTAINER_ROUND,
+                                      layer_id=garden.scene.active_layer.id), "pot")
+        _add(garden, _perennial(garden, 1500.0, 900.0, 70.0), "potted")
+        built: list[Any] = []
+        original = footprints.contains_path
+
+        def counting(parent: Any) -> Any:
+            built.append(parent)
+            return original(parent)
+
+        monkeypatch.setattr(footprints, "contains_path", counting)
+        casters = collect_shadow_casters(garden.scene)
+        assert sum(1 for caster in casters if caster.base_cm > 0.0) == 7  # six in the bed, one potted
+        assert sorted(map(id, built)) == sorted([id(garden.bed), id(pot)])  # round 1: seven shapes
+        built.clear()
+        records = snapshot_records(garden.scene)
+        assert sum(1 for record in records.values() if record.transform.base_cm > 0.0) == 7
+        assert sorted(map(id, built)) == sorted([id(garden.bed), id(pot)])
+
+    def test_a_plan_without_raised_soil_builds_no_shape(self, canvas: CanvasView,
+                                                        monkeypatch: Any) -> None:
+        garden = Garden(canvas, ObjectType.GARDEN_BED)  # in the ground: nothing to lift onto
+        built: list[Any] = []
+        monkeypatch.setattr(footprints, "contains_path", built.append)
+        assert garden.caster_base() == 0.0 and garden.base() == 0.0
+        assert built == []
 
 
 class TestHeatmapEndToEnd:
@@ -660,11 +1057,18 @@ class TestOneCasterWalk:
             return max(path.elementAt(i).x * direction[0] + path.elementAt(i).y * direction[1]
                        for i in range(path.elementCount())) - plant_far
 
+        def quiet() -> None:
+            """Until the debounce timer has fired and nothing is pending."""
+            qtbot.waitUntil(lambda: not controller._debounce.isActive(), timeout=5000)
+
         def settled(expected_count: int) -> None:
-            qtbot.wait(400)  # the debounce, then quiet
+            """The edit's ONE recompute has happened — waited for, not slept for — and
+            when the debounce is quiet again it is still one."""
+            qtbot.waitUntil(lambda: controller.recompute_count >= expected_count, timeout=5000)
+            quiet()
             assert controller.recompute_count == expected_count
 
-        qtbot.wait(400)  # the echoes of creating the items
+        quiet()  # the echoes of creating the items
         count = controller.recompute_count
         assert tip() == pytest.approx((38.0 + 60.0) / tan_a, abs=0.01)
 
@@ -693,8 +1097,11 @@ class TestOneCasterWalk:
         settled(count + 4)
         assert tip() == pytest.approx((38.0 + 60.0) / tan_a, abs=0.01)
 
-        # negative control: without the wiring the same edit goes unseen
+        # negative control: without the wiring the same edit goes unseen — nothing is
+        # even scheduled, so there is nothing to wait for
         garden.commands.stack_changed.disconnect(controller.schedule_recompute)
         garden.commands.redo()
-        settled(count + 4)
+        assert not controller._debounce.isActive()
+        qtbot.wait(2 * controller._debounce.interval())  # longer than a debounce would take
+        assert controller.recompute_count == count + 4
         controller.set_enabled(False)
