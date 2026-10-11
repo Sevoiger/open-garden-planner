@@ -1,4 +1,4 @@
-"""Generate the committed 3D edge-case plan (Phase 17 L1.1, fix round 1, #385).
+"""Generate the committed 3D edge-case plan (Phase 17 L1.1, fix rounds 1 and 2, #385).
 
 ``tests/fixtures/plans/scene3d_edge_cases.ogp`` holds the shapes the two bench
 plans do not contain and the first scene contract therefore got wrong without a
@@ -8,11 +8,25 @@ an outer ring and a HOLE. One item per case, on a 40 x 30 m canvas:
 * a HOUSE turned by 25 degrees, with its roof ridge item (ADR-046);
 * an ellipse (a pond), turned by 40 degrees;
 * a closed-loop fence, 10 m x 8 m, 10 cm wide — outer ring + hole;
-* a nearly closed one (a 2 cm gap, narrower than the stroke) — also a hole;
+* a nearly closed one: its two ends stop 2 cm apart AT A CORNER, and the strokes
+  of the two sides overlap there — also a hole;
 * an open U — no hole;
 * a raised bed turned by 30 degrees, with two planted children;
 * a round container with a plant;
-* a polygon with a concave corner (an L-shaped hedge).
+* a polygon with a concave corner (an L-shaped hedge);
+
+and, since fix round 2:
+
+* a ladder drawn as one stroke — two rails, five rungs: ONE outer ring and FOUR
+  holes;
+* a fence whose ends stop 6 cm apart at a corner. A stroke has butt ends
+  (``core/shadow_geometry.polyline_footprint``): it reaches half its width past
+  the centre line sideways and not at all past its end, so a 10 cm stroke closes
+  a corner gap of up to 5 cm and no more — this one stays open, no hole. (A gap
+  in the middle of a straight run never closes, however small.)
+* a HOUSE whose outline crosses itself and encloses a pocket: resolved into
+  three parts that stand a hair apart, with ``outline_resolved`` set and no
+  ``ridge`` — although the plan holds a ridge item for it.
 
 ``tests/integration/test_scene3d_edge_plan.py`` runs the pipeline's gates over
 it (snapshot stability, mesh validity and plan area, transform ∘ local footprint
@@ -70,6 +84,21 @@ FENCES: dict[str, list[tuple[float, float]]] = {
     "Nearly closed fence": [(1500, 202), (1500, 1000), (2500, 1000), (2500, 200), (1500, 200)],
     "Open U fence": [(2800, 1000), (2800, 200), (3800, 200), (3800, 1000)],
 }
+#: Fix round 2. Appended AFTER everything else, so the ids of the items above —
+#: drawn from one seeded sequence — stay what they were.
+LADDER_CELLS = 4
+LADDER_CELL_CM = 150.0
+MORE_FENCES: dict[str, list[tuple[float, float]]] = {
+    # two rails and five rungs without lifting the pen: along the bottom rail, up
+    # the last rung, back along the top rail, down the first, then rung by rung
+    "Ladder fence": [(300, 1300), (900, 1300), (900, 1450), (300, 1450), (300, 1300),
+                     (450, 1300), (450, 1450), (600, 1450), (600, 1300), (750, 1300), (750, 1450)],
+    # its ends stop 6 cm apart at the corner (1100, 1250): more than half the stroke
+    "Fence with a gap": [(1100, 1256), (1100, 1450), (1400, 1450), (1400, 1250), (1100, 1250)],
+}
+#: The second outline of the re-review (item-local numbers there), moved to its place.
+CROSSED_HOUSE = [(3300, 1200), (3300, 1300), (3550, 1550), (3250, 1350), (3350, 1300),
+                 (3200, 1200), (3400, 1450)]
 
 
 def _turned(point: tuple[float, float], centre: tuple[float, float], degrees: float) -> tuple[float, float]:
@@ -111,6 +140,13 @@ def build_edge_cases() -> bench.PlanBuilder:
 
     b.polygon([(3000, 2000), (3900, 2000), (3900, 2300), (3400, 2300), (3400, 2700), (3000, 2700)],
               T.HEDGE_POLYGON, "L-shaped hedge")
+
+    for name, centre_line in MORE_FENCES.items():
+        fence = b.polyline(centre_line, T.FENCE, PathFenceStyle.NONE, name)
+        pen = fence.pen()
+        pen.setWidthF(FENCE_WIDTH_CM)
+        fence.setPen(pen)
+    b.house(CROSSED_HOUSE, "Crossed house")  # with a ridge item, as the polygon tool makes one
     return b
 
 

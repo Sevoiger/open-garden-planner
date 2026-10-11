@@ -1,7 +1,7 @@
 {
   "version": "1.4",
   "metadata": {
-    "modified": "2026-10-11T01:59:40.308014+00:00"
+    "modified": "2026-10-11T06:35:37.994254+00:00"
   },
   "canvas": {
     "width": 4000.0,
@@ -452,6 +452,158 @@
       "fill_pattern": "HEDGE",
       "stroke_style": "SOLID",
       "stack_order": 12288
+    },
+    {
+      "type": "polyline",
+      "item_id": "8dfc21a7-ef50-4acd-b003-bdd41b2acab3",
+      "points": [
+        {
+          "x": 300.0,
+          "y": 1300.0
+        },
+        {
+          "x": 900.0,
+          "y": 1300.0
+        },
+        {
+          "x": 900.0,
+          "y": 1450.0
+        },
+        {
+          "x": 300.0,
+          "y": 1450.0
+        },
+        {
+          "x": 300.0,
+          "y": 1300.0
+        },
+        {
+          "x": 450.0,
+          "y": 1300.0
+        },
+        {
+          "x": 450.0,
+          "y": 1450.0
+        },
+        {
+          "x": 600.0,
+          "y": 1450.0
+        },
+        {
+          "x": 600.0,
+          "y": 1300.0
+        },
+        {
+          "x": 750.0,
+          "y": 1300.0
+        },
+        {
+          "x": 750.0,
+          "y": 1450.0
+        }
+      ],
+      "object_type": "FENCE",
+      "name": "Ladder fence",
+      "stroke_color": "#ff8b4513",
+      "stroke_width": 10.0,
+      "stack_order": 13312
+    },
+    {
+      "type": "polyline",
+      "item_id": "8c950cbe-f997-4c4d-9f54-c8e6e8b5c227",
+      "points": [
+        {
+          "x": 1100.0,
+          "y": 1256.0
+        },
+        {
+          "x": 1100.0,
+          "y": 1450.0
+        },
+        {
+          "x": 1400.0,
+          "y": 1450.0
+        },
+        {
+          "x": 1400.0,
+          "y": 1250.0
+        },
+        {
+          "x": 1100.0,
+          "y": 1250.0
+        }
+      ],
+      "object_type": "FENCE",
+      "name": "Fence with a gap",
+      "stroke_color": "#ff8b4513",
+      "stroke_width": 10.0,
+      "stack_order": 14336
+    },
+    {
+      "type": "polygon",
+      "item_id": "3c2fe1c4-0fcd-4846-a701-4a81ef1e9af8",
+      "points": [
+        {
+          "x": 3300.0,
+          "y": 1200.0
+        },
+        {
+          "x": 3300.0,
+          "y": 1300.0
+        },
+        {
+          "x": 3550.0,
+          "y": 1550.0
+        },
+        {
+          "x": 3250.0,
+          "y": 1350.0
+        },
+        {
+          "x": 3350.0,
+          "y": 1300.0
+        },
+        {
+          "x": 3200.0,
+          "y": 1200.0
+        },
+        {
+          "x": 3400.0,
+          "y": 1450.0
+        }
+      ],
+      "object_type": "HOUSE",
+      "name": "Crossed house",
+      "metadata": {
+        "ridge_item_id": "be0e49ea-2148-4cb4-847e-955e90722ba4"
+      },
+      "fill_color": "#ffd2b48c",
+      "stroke_color": "#ff8b5a2b",
+      "stroke_width": 2.5,
+      "fill_pattern": "ROOF_TILES",
+      "stroke_style": "SOLID",
+      "stack_order": 15360
+    },
+    {
+      "type": "polyline",
+      "item_id": "be0e49ea-2148-4cb4-847e-955e90722ba4",
+      "points": [
+        {
+          "x": 3287.5,
+          "y": 1375.0
+        },
+        {
+          "x": 3375.0,
+          "y": 1375.0
+        }
+      ],
+      "object_type": "ROOF_RIDGE",
+      "metadata": {
+        "owner_polygon_id": "3c2fe1c4-0fcd-4846-a701-4a81ef1e9af8"
+      },
+      "stroke_color": "#ff644826",
+      "stroke_width": 2.0,
+      "stack_order": 16384
     }
   ],
   "location": {

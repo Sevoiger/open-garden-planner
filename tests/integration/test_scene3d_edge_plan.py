@@ -1,4 +1,4 @@
-"""The pipeline's gates over the committed edge-case plan (L1.1 fix round 1, #385).
+"""The pipeline's gates over the committed edge-case plan (L1.1 fix rounds 1 and 2, #385).
 
 ``tests/fixtures/plans/scene3d_edge_cases.ogp`` (``scripts/make_scene3d_edge_plan.py``)
 is the third committed plan. The two bench plans hold no stroke that closes on
@@ -11,13 +11,19 @@ gates run over exactly those shapes, loaded through the real ``ProjectManager``:
   height, and its cap covers the footprint's AREA (the check the defect needed);
 - G4 — ``transform ∘ local rings`` reproduces ``item_footprints``, holes included;
 - the first ``SceneSync.apply`` adds every record once, the next says nothing.
+
+Fix round 2 added three items the review asked for — a ladder drawn as one
+stroke (four holes in one outer ring), a fence whose ends stop too far apart to
+close, and a HOUSE whose outline crosses itself around a pocket — and the same
+gates run over them. For the crossed house G4 reads differently, because its
+record is deliberately NOT the drawn ring: every vertex of its rings lies on the
+drawn outline, and the ground they cover is what the outline fills.
 """
 
 from __future__ import annotations
 
 import copy
 import importlib.util
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +38,7 @@ from open_garden_planner.core.scene3d import (
     SceneSync,
     default_builder,
     diff,
+    is_buildable_region,
     is_simple_ring,
     pose_ring,
     signed_area,
@@ -43,11 +50,13 @@ from open_garden_planner.ui.view3d.snapshot import SkippedItem, snapshot_records
 from tests.integration.test_scene3d_snapshot import (
     JUNE,
     _assert_walls_face_away_from_the_solid,
+    _boundary_distance,
     _cap_area,
     _ring_deviation,
     _rings_of,
     _signed_area_sum,
     _strip_deviation,
+    _winding_area,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -81,8 +90,9 @@ def test_generator_reproduces_the_committed_fixture(qtbot, tmp_path) -> None:  #
 
     "The same plan" is ``same_plan``: this fixture has turned items, so a few of
     its numbers went through ``cos`` / ``sin`` and may differ in their last bit
-    on another platform (the committed file was generated on Windows). On the
-    generating platform the comparison is exact as well."""
+    on another platform (the committed file was generated on Windows). Every
+    platform runs this one comparison — the generating one too: "bit for bit on
+    this machine" would assert the machine, not the plan."""
     import open_garden_planner.app.settings as app_settings
 
     spec = importlib.util.spec_from_file_location(
@@ -98,8 +108,6 @@ def test_generator_reproduces_the_committed_fixture(qtbot, tmp_path) -> None:  #
     regenerated, committed = module.bench._normalised(fresh), module.bench._normalised(PLAN)
     assert module.same_plan(regenerated, committed), (
         "scene3d_edge_cases.ogp is stale — rerun scripts/make_scene3d_edge_plan.py")
-    if sys.platform == "win32":  # where the committed file was generated: bit for bit
-        assert regenerated == committed
     for name, build in zip(BENCH_PLANS, (module.bench.build_small, module.bench.build_large),
                            strict=True):
         again = tmp_path / name
@@ -155,16 +163,27 @@ def test_same_plan_forgives_the_last_bit_and_nothing_else(qtbot) -> None:  # noq
 def test_what_the_plan_contains(plan) -> None:
     """The cases, by name — so a regenerated plan cannot quietly lose one."""
     _scene, snapshot, items = plan
-    assert len(items) == 12 and len(snapshot) == 11  # every item but the roof ridge
+    assert len(items) == 16 and len(snapshot) == 14  # every item but the two roof ridges
     kinds = sorted(record.kind for record in snapshot.values())
-    assert kinds == ["CONTAINER_ROUND", "FENCE", "FENCE", "FENCE", "HEDGE_POLYGON", "HOUSE",
-                     "PERENNIAL", "PERENNIAL", "PERENNIAL", "POND_POOL", "RAISED_BED"]
-    assert sum(1 for i in items.values() if i.object_type is ObjectType.ROOF_RIDGE) == 1
+    assert kinds == ["CONTAINER_ROUND", "FENCE", "FENCE", "FENCE", "FENCE", "FENCE",
+                     "HEDGE_POLYGON", "HOUSE", "HOUSE", "PERENNIAL", "PERENNIAL", "PERENNIAL",
+                     "POND_POOL", "RAISED_BED"]
+    assert sum(1 for i in items.values() if i.object_type is ObjectType.ROOF_RIDGE) == 2
 
     house = _by_name(snapshot, "House")
     assert house.transform.rotation_deg == 25.0 and house.shape == "polygon"
+    assert "outline_resolved" not in house.params
     (start, end) = house.params["ridge"]  # type: ignore[misc]
     assert start == pytest.approx((-450.0, 0.0), abs=1e-6) and end == pytest.approx((450.0, 0.0), abs=1e-6)
+
+    # fix round 2: a house whose outline crosses itself around a pocket. It HAS a
+    # ridge item in the plan; its record says "resolved" and hands no ridge on.
+    crossed = _by_name(snapshot, "Crossed house")
+    (crossed_item,) = [i for i in items.values() if getattr(i, "name", "") == "Crossed house"]
+    assert crossed_item.metadata.get("ridge_item_id") in items
+    assert crossed.params["outline_resolved"] is True and "ridge" not in crossed.params
+    assert sorted(len(ring) for ring in crossed.footprints) == [3, 4, 13] and crossed.holes == ()
+    assert len(item_footprints(crossed_item, JUNE)) == 1  # 2D: the ring as drawn, 7 vertices
 
     pond = _by_name(snapshot, "Pond")
     assert pond.shape == "ellipse" and pond.transform.rotation_deg == 40.0
@@ -178,6 +197,20 @@ def test_what_the_plan_contains(plan) -> None:
     assert closed.plan_area_cm2 == pytest.approx(36000.0, rel=5e-3)
     assert nearly.plan_area_cm2 == pytest.approx(35980.0, rel=5e-3)
     assert open_u.plan_area_cm2 == pytest.approx(26000.0, rel=5e-3)
+
+    # fix round 2: a multi-hole stroke, and the gap a stroke does NOT close
+    ladder, gap = _by_name(snapshot, "Ladder fence"), _by_name(snapshot, "Fence with a gap")
+    assert len(ladder.footprints) == 1 and [len(group) for group in ladder.holes] == [4]
+    assert all(len(hole) == 4 for hole in ladder.holes[0])  # four cells, 140 cm x 140 cm each
+    assert sorted(-signed_area(hole) for hole in ladder.holes[0]) == pytest.approx([140.0 * 140.0] * 4)
+    # two rails of 6 m and five rungs of 1.5 m, 10 cm wide, less what the joints share
+    assert ladder.plan_area_cm2 == pytest.approx(610.0 * 160.0 - 4 * 140.0 * 140.0, rel=2e-3)
+    # the ends stop 6 cm apart at a corner: over half the stroke's width, so it stays OPEN …
+    assert len(gap.footprints) == 1 and gap.holes == ()
+    assert gap.path[0] == pytest.approx((gap.path[-1][0], gap.path[-1][1] + 6.0))
+    # … where 2 cm (the nearly closed fence) closes: the strokes of the two sides overlap
+    assert nearly.path[0] == pytest.approx((nearly.path[-1][0], nearly.path[-1][1] + 2.0))
+    assert ladder.path_width_cm == gap.path_width_cm == 10.0
 
     bed = _by_name(snapshot, "Turned raised bed")
     assert bed.transform.rotation_deg == 30.0
@@ -205,6 +238,8 @@ def test_g7_every_mesh_validates_reaches_its_height_and_covers_its_footprint(pla
     solids = 0
     for record in snapshot.values():
         assert all(is_simple_ring(ring) and signed_area(ring) > 0.0 for ring in record.footprints)
+        # the contract's promise, as the one predicate states it — for every region of every record
+        assert all(is_buildable_region(outer, holes) for outer, holes in record.regions), record.name
         parts = verify_builder(default_builder, record, plan_margin_cm=0.0)  # nothing outside at all
         assert bool(parts) is (record.height_cm is not None), record.name
         for part in parts:
@@ -213,15 +248,28 @@ def test_g7_every_mesh_validates_reaches_its_height_and_covers_its_footprint(pla
             assert _cap_area(part.mesh) == pytest.approx(record.plan_area_cm2, rel=1e-6), record.name
             _assert_walls_face_away_from_the_solid(part.mesh, record)
             solids += 1
-    assert solids >= 8  # house, three fences, bed, pot, hedge, plants with a height
+    assert solids >= 11  # two houses, five fences, bed, pot, hedge, plants with a height
 
 
 def test_g4_transform_and_local_rings_reproduce_the_2d_footprints(plan) -> None:
     _scene, snapshot, items = plan
     worst_exact = worst_strip = 0.0
+    resolved = 0
     for item_id, record in snapshot.items():
         expected = item_footprints(items[item_id], JUNE)
         posed = _rings_of(record)
+        if record.params.get("outline_resolved"):
+            # NOT the drawn ring, on purpose: its rings run along the drawn outline
+            # (to the clipper's grid and the hair by which touching parts are drawn
+            # apart), and they cover the ground the outline fills — by a raster of
+            # its winding number, no clipper involved
+            (drawn,) = expected
+            assert max(_boundary_distance(list(ring), list(drawn)) for ring in posed) <= 3e-3
+            low_x, low_y = min(x for x, _y in drawn), min(y for _x, y in drawn)
+            moved = [(x - low_x, y - low_y) for x, y in drawn]
+            assert record.plan_area_cm2 == pytest.approx(_winding_area(moved, step=0.25), rel=2e-3)
+            resolved += 1
+            continue
         assert len(posed) == len(expected), record.name  # every ring: outers AND holes
         if record.shape == "polyline":
             worst_strip = max(worst_strip, _strip_deviation(posed, expected))
@@ -237,6 +285,7 @@ def test_g4_transform_and_local_rings_reproduce_the_2d_footprints(plan) -> None:
                 for ring, scene_ring in zip(posed, expected, strict=True)))
     assert worst_exact <= 1e-6, worst_exact
     assert worst_strip <= 3e-3, worst_strip
+    assert resolved == 1  # the crossed house, and nothing else
 
 
 def test_the_pipeline_adds_every_record_once_then_says_nothing(plan) -> None:
@@ -255,8 +304,25 @@ def test_the_pipeline_adds_every_record_once_then_says_nothing(plan) -> None:
 def test_turning_the_house_in_the_loaded_plan_is_one_transform_entry(plan) -> None:
     """The loaded house and its loaded ridge item, turned by the app's own rule."""
     scene, before, items = plan
-    house = next(i for i in items.values() if i.object_type is ObjectType.HOUSE)
+    (house,) = [i for i in items.values() if getattr(i, "name", "") == "House"]
     house._apply_rotation(205.0)
     after = snapshot_records(scene, JUNE)
     assert diff(before, after) == SceneDiff(transform=(str(house.item_id),))
     assert after[str(house.item_id)].transform.rotation_deg == 205.0
+
+
+@pytest.mark.parametrize("name", ["Crossed house", "Ladder fence", "Fence with a gap"])
+def test_moving_or_turning_a_round_2_item_is_one_transform_entry(plan, name: str) -> None:
+    """A resolved outline and a stroke with four holes are still item-local
+    geometry: a move or a turn of the loaded item changes its pose and nothing else."""
+    scene, before, items = plan
+    (item,) = [i for i in items.values() if getattr(i, "name", "") == name]
+    item_id = str(item.item_id)
+    item.moveBy(37.5, -21.25)
+    moved = snapshot_records(scene, JUNE)
+    assert diff(before, moved) == SceneDiff(transform=(item_id,))
+    item._apply_rotation(33.0)
+    turned = snapshot_records(scene, JUNE)
+    assert diff(moved, turned) == SceneDiff(transform=(item_id,))
+    assert turned[item_id].footprints == before[item_id].footprints
+    assert turned[item_id].holes == before[item_id].holes

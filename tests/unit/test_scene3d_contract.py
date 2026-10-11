@@ -21,6 +21,7 @@ from open_garden_planner.core.scene3d import (
     EMPTY_PARAMS,
     GEOMETRY_FIELDS,
     MATERIAL_FIELDS,
+    MAX_LENGTH_CM,
     SHAPES,
     SIGNATURE_FIELDS,
     TRANSFORM_FIELDS,
@@ -34,6 +35,7 @@ from open_garden_planner.core.scene3d import (
     quantize_cm,
     quantize_deg,
 )
+from open_garden_planner.core.scene3d.record import RecordRangeError
 
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
 HOLE = ((-10.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (10.0, -10.0))  # clockwise
@@ -235,8 +237,55 @@ class TestRecord:
     def test_a_height_is_positive_and_finite_or_absent(self, bad: float) -> None:
         """An infinite or zero height would reach the engine as a non-finite or
         empty mesh; "no height" has one spelling, None."""
-        with pytest.raises(ValueError, match="height_cm"):
+        with pytest.raises(ValueError, match="height"):
             record(height_cm=bad)
+        assert hash(1.0) == hash(2.0**61) == hash(2.0**-61)  # what the collision test below uses
+
+    # ── fix round 2: no length beyond what a plan can hold ───────────────────
+
+    def test_the_bound_is_ten_kilometres(self) -> None:
+        import numpy as np
+
+        assert MAX_LENGTH_CM == 1e6
+        assert issubclass(RecordRangeError, ValueError)
+        # far inside float32, and still resolving a millimetre there
+        assert float(np.float32(MAX_LENGTH_CM)) == MAX_LENGTH_CM
+        assert float(np.spacing(np.float32(MAX_LENGTH_CM))) == 0.0625
+
+    @pytest.mark.parametrize("height", [1e300, 1.0000001e6, 3.5e38, float("inf")],
+                             ids=["1e300", "just over the bound", "beyond float32", "infinite"])
+    def test_a_height_beyond_the_bound_is_refused(self, height: float) -> None:
+        """The re-review's case. ``1e300`` is positive and finite — and in the
+        mesh's float32 it is infinity. The record decides it once, for every
+        builder: such a height is not a height a plan can hold."""
+        with pytest.raises(RecordRangeError, match="a height of .* beyond what a plan can hold"):
+            record(height_cm=height)
+        assert record(height_cm=MAX_LENGTH_CM).height_cm == MAX_LENGTH_CM  # the bound itself is in
+
+    @pytest.mark.parametrize(
+        ("label", "changes"),
+        [("a footprint coordinate", {"footprints": (((0.0, 0.0), (2e6, 0.0), (2e6, 5.0)),)}),
+         ("a footprint coordinate, negative", {"footprints": (((-1e300, 0.0), (5.0, 0.0), (5.0, 5.0)),)}),
+         ("a hole coordinate", {"footprints": (((-9.0, -9.0), (9.0, -9.0), (9.0, 9.0), (-9.0, 9.0)),),
+                                "holes": ((((-1.0, -1.0), (-1.0, 2e6), (1.0, 1.0)),),)}),
+         ("a centre line", {"path": ((0.0, 0.0), (0.0, -1.5e6))}),
+         ("a stroke width", {"path_width_cm": 1e300}),
+         ("a radius", {"params": lambda: Params({"radius_cm": 1e7})}),
+         ("a ridge", {"params": lambda: Params({"ridge": ((0.0, 0.0), (1e300, 0.0))})}),
+         ("a position east", {"transform": lambda: Transform(1e300, 0.0)}),
+         ("a position north", {"transform": lambda: Transform(0.0, -2e6)}),
+         ("a base", {"transform": lambda: Transform(0.0, 0.0, 0.0, 1e9)})],
+    )
+    def test_every_length_of_a_record_is_bounded(self, label: str, changes: dict) -> None:
+        with pytest.raises(RecordRangeError, match="beyond what a plan can hold"):
+            record(**{key: value() if callable(value) else value for key, value in changes.items()})
+
+    def test_what_is_not_a_length_is_not_bounded(self) -> None:
+        """An angle wraps, a string is a string, an int is not a length: only
+        floats that become geometry are held to the bound."""
+        assert Transform(0.0, 0.0, 1e9).rotation_deg == 1e9
+        assert Params({"seed": "x" * 100, "count": 10**12, "flag": True})["count"] == 10**12
+        assert record(transform=Transform(MAX_LENGTH_CM, -MAX_LENGTH_CM)).transform.east_cm == 1e6
 
     def test_footprints_are_outer_rings_counter_clockwise(self) -> None:
         """Fix round 1: ``footprints`` holds OUTER rings only, and says so by
@@ -300,16 +349,17 @@ class TestRecord:
          ("holes", ((((-1.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (10.0, -10.0)),),),
           ((((-2.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (10.0, -10.0)),),)),
          ("path", ((-1.0, 0.0), (10.0, 0.0)), ((-2.0, 0.0), (10.0, 0.0))),
-         ("path_width_cm", 1.0, float(2**61)),
-         ("height_cm", 1.0, float(2**61)),
+         ("path_width_cm", 1.0, 2.0**-61),
+         ("height_cm", 1.0, 2.0**-61),
          ("params", Params({"seed": "a", "radius_cm": -1.0}), Params({"seed": "a", "radius_cm": -2.0}))],
         ids=["footprints", "holes", "path", "path_width_cm", "height_cm", "params"],
     )
     def test_every_geometry_value_is_compared_not_only_hashed(self, field, one, other) -> None:
         """The same collision in each field that holds numbers. Two floats collide
         when they are equal modulo 2**61 - 1 — ``-1.0`` and ``-2.0`` by CPython's
-        special case for the hash -1, ``1.0`` and ``2.0**61`` by the modulus — and
-        a field that was hashed but not compared would lose exactly those edits.
+        special case for the hash -1, ``1.0`` and ``2.0**-61`` by the modulus (as
+        ``1.0`` and ``2.0**61`` are; that one is beyond what a record may hold) —
+        and a field that was hashed but not compared would lose exactly those edits.
         (``kind`` and ``shape`` are strings: no collision can be written down.)"""
         a, b = record(**{field: one}), record(**{field: other})
         assert one != other
