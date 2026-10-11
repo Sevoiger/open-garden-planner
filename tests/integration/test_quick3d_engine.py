@@ -50,6 +50,7 @@ from tests.integration.quick3d_render_driver import largest_solids
 from tests.integration.quick3d_render_support import (
     failure_report,
     load_rgb,
+    private_dirs,
     render_tier,
     run_driver,
 )
@@ -69,10 +70,23 @@ def _recolour(item: Any, colour: QColor) -> ChangePropertyCommand:
     return ChangePropertyCommand(item, "fill color", QColor(item.fill_color), colour, apply)
 
 
+@pytest.fixture()
+def private_app_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Loading a plan creates the app's per-user data directory (smart symbols, plant
+    lists). This process must not create it in the developer's profile (review round
+    2, P2-9): the variables it hangs on point into ``tmp_path`` for the test."""
+    for name, target in private_dirs(tmp_path).items():
+        monkeypatch.setenv(name, target)
+    return tmp_path
+
+
 class TestAgainstARecordingEngine:
     """The default-tier twin: the real pipeline up to the engine boundary."""
 
-    def test_a_real_plan_and_an_edit_session(self, qtbot) -> None:
+    def test_a_real_plan_and_an_edit_session(self, qtbot, private_app_data: Path) -> None:
+        from open_garden_planner.services.plant_library import get_app_data_dir
+
+        assert private_app_data in get_app_data_dir().parents, "the app's data directory is redirected"
         scene = CanvasScene()
         ProjectManager().load(scene, PLAN)
         view = CanvasView(scene)

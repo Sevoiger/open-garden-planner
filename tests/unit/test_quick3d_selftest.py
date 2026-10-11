@@ -24,6 +24,7 @@ from open_garden_planner.core.shadow_geometry import compute_scene_shadows
 from open_garden_planner.ui.view3d.quick3d import selftest
 from open_garden_planner.ui.view3d.quick3d.adapter import Quick3DSink
 from open_garden_planner.ui.view3d.quick3d.shots import top_down_pixel
+from tests.integration.quick3d_render_support import isolated_env
 from tests.unit.test_quick3d_adapter import FakeScene
 
 GROUND = (20, 78, 12)
@@ -308,6 +309,18 @@ _DEFAULT_LOG = textwrap.dedent("""
     import tempfile
     from pathlib import Path
 
+    from PyQt6.QtCore import QStandardPaths
+
+    profile = Path(sys.argv[2]).resolve()
+    # BEFORE anything is created: does Qt resolve per-user paths inside the profile this
+    # test handed us? (writableLocation creates nothing.) If not, stop — never write
+    # into a real profile.
+    asked = Path(QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation)).resolve()
+    if profile not in asked.parents:
+        print("NOT_REDIRECTED", asked)
+        sys.exit(3)
+
     import open_garden_planner.app.settings as app_settings
     app_settings.ORGANIZATION_NAME = "cofade_test"
     app_settings.APPLICATION_NAME = sys.argv[1]
@@ -323,34 +336,47 @@ _DEFAULT_LOG = textwrap.dedent("""
     log = selftest.default_log_path()
     print("LOG", log)
     print("EXISTS", log.is_file())
-    print("UNDER_TEMP", Path(tempfile.gettempdir()).resolve() in log.resolve().parents)
+    print("UNDER_TEMP_ROOT", log.resolve().parent == Path(tempfile.gettempdir()).resolve())
     print("CODE", code)
-    log.unlink()
-    log.parent.rmdir()  # empty: nothing else was written under this throwaway identity
 """)
 
 
 def test_the_selftest_writes_its_log_beside_the_apps_logs_not_into_temp(tmp_path: Path) -> None:
-    """End to end, in a child with a THROWAWAY application identity (never the
-    developer's real store): ``main._run_selftest`` names the application before
-    anything resolves a path, and the log lands in ``<per-user app data>/<org>/<app>/``."""
+    """End to end, in a child, with the app's REAL log-directory helper:
+    ``main._run_selftest`` names the application before anything resolves a path, and
+    the log lands in ``<per-user app data>/<organisation>/<application>/`` — never
+    under a predictable name directly in the shared temp directory (CWE-377).
+
+    Review round 2, P2-8: this test used to run in the developer's real profile under a
+    throwaway identity, and left ``%APPDATA%\\cofade_test\\`` behind. The child now gets
+    a user profile of the test process's own (``isolated_env``); it first ASKS Qt where
+    per-user data would go — which creates nothing — and stops unless the answer is
+    inside that profile. Where a platform's Qt does not follow the environment, the
+    test skips instead of writing."""
+    from tests.integration.quick3d_render_support import session_profile
+
     identity = f"Open Garden Planner Selftest Probe {os.getpid()}"
-    src = Path(__file__).resolve().parents[2] / "src"
-    env = dict(os.environ, PYTHONPATH=str(src), QT_QPA_PLATFORM="offscreen")
+    env = isolated_env(tmp_path, QT_QPA_PLATFORM="offscreen")
     env.pop("OGP_SELFTEST_LOG", None)
+    # where Qt's per-user data root is inside the test's profile (Windows / Linux)
+    root = session_profile() if sys.platform == "win32" else tmp_path
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
-        [sys.executable, "-c", _DEFAULT_LOG, identity], env=env, capture_output=True, text=True,
-        timeout=170, cwd=tmp_path)
+        [sys.executable, "-c", _DEFAULT_LOG, identity, str(root)], env=env,
+        capture_output=True, text=True, timeout=170, cwd=tmp_path)
+    if proc.returncode == 3:
+        pytest.skip("Qt's per-user paths do not follow the environment here "
+                    f"({proc.stdout.strip()}): the test will not write into a real profile")
     assert proc.returncode == 0, proc.stdout[-1500:] + proc.stderr[-2000:]
     out = dict(line.split(" ", 1) for line in proc.stdout.splitlines()
-               if line.startswith(("LOG ", "EXISTS ", "UNDER_TEMP ", "CODE ")))
+               if line.startswith(("LOG ", "EXISTS ", "UNDER_TEMP_ROOT ", "CODE ")))
     log = Path(out["LOG"])
     assert log.name == "OpenGardenPlanner-selftest-3d.log"
     assert log.parent.name == identity and log.parent.parent.name == "cofade_test"
-    assert out["EXISTS"] == "True" and out["UNDER_TEMP"] == "False"
+    assert root.resolve() in log.resolve().parents, "the log is inside the test's own profile"
+    assert out["EXISTS"] == "True" and out["UNDER_TEMP_ROOT"] == "False"
     assert out["CODE"] == "1"  # the stand-in render failed: the verdict is still honest
     assert f"3D self-test log: {log}" in proc.stdout
-    assert not log.exists() and not log.parent.exists()  # the child cleaned up after itself
+    assert "FAIL" in log.read_text(encoding="utf-8")
 
 
 _HANG = textwrap.dedent("""
@@ -373,8 +399,7 @@ def test_a_hang_becomes_exit_code_1_with_the_stack_in_the_log(tmp_path: Path) ->
     thread's stack into the log and exits the process with code 1 — in a child here,
     because that exit is real."""
     log = tmp_path / "selftest.log"
-    src = Path(__file__).resolve().parents[2] / "src"
-    env = dict(os.environ, PYTHONPATH=str(src), QT_QPA_PLATFORM="offscreen")
+    env = isolated_env(tmp_path, QT_QPA_PLATFORM="offscreen")
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
         [sys.executable, "-c", _HANG, str(log)], env=env, capture_output=True, text=True,
         timeout=100)
@@ -406,10 +431,151 @@ def test_a_hang_ends_the_process_even_with_nowhere_to_write(tmp_path: Path) -> N
     """No log file and no stderr: the watchdog used to switch itself OFF there ("nothing
     to dump into") — an unbounded self-test in exactly the build that has no other
     channel. Now the stacks are lost and the exit is not."""
-    src = Path(__file__).resolve().parents[2] / "src"
-    env = dict(os.environ, PYTHONPATH=str(src), QT_QPA_PLATFORM="offscreen")
+    env = isolated_env(tmp_path, QT_QPA_PLATFORM="offscreen")
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
         [sys.executable, "-c", _NOWHERE], env=env, capture_output=True, text=True, timeout=100,
         cwd=tmp_path)
     assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
     assert "returned" not in proc.stdout
+
+
+# ── the second line of defence: a process that ends this one from outside ────
+#
+# Review round 2, P2-6. In a process deadlocked inside Qt and the graphics driver the
+# watchdog above wrote its dump and the process STAYED ALIVE (every run): on Windows
+# ``_exit`` is ``ExitProcess``, which waits in a DLL's detach code. That real deadlock
+# is the render tier's control (``test_the_supervised_watchdog_ends_the_deadlock``);
+# here the first line of defence is switched off instead, so that only the second one
+# can end the child — on every machine, without a GPU.
+
+windows_only = pytest.mark.skipif(sys.platform != "win32",
+                                  reason="the supervising process is Windows-only (runlog.py)")
+
+_SUPERVISED = textwrap.dedent("""
+    import faulthandler
+    import sys
+    import time
+    from pathlib import Path
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    mode, log_path = sys.argv[1], Path(sys.argv[2])
+    runlog.GRACE_S = 2.0
+    log = runlog.RenderLog(log_path, mirror=False)
+    if mode == "stuck":
+        # the in-process watchdog cannot end this process — as in the measured deadlock
+        faulthandler.dump_traceback_later = lambda *args, **kwargs: None
+        with runlog.watchdog(1.5, log, what="the supervised block", supervised=True):
+            time.sleep(120)
+    elif mode == "in-time":
+        # a block that is over before the supervising process is even up: the supervisor
+        # must not end a process that finished its block and simply lives on
+        with runlog.watchdog(1.5, log, what="the supervised block", supervised=True):
+            pass
+        time.sleep(6.0)   # past the deadline and the grace period
+    elif mode == "released":
+        supervisor = runlog.start_supervisor(60.0, log_path, "a released block")
+        print("STARTED", supervisor is not None, flush=True)
+        time.sleep(1.5)   # the supervisor is up and waiting
+        print("WAITING", supervisor.process.poll() is None, flush=True)
+        supervisor.release()
+        print("GONE", supervisor.process.wait(timeout=30), flush=True)
+    elif mode == "another-process":
+        import os
+        # the right pid with the wrong creation time: a process that reused the pid
+        print("CODE", runlog.supervisor_main([str(os.getpid()), "12345", "0.5", "-", "what:x"]),
+              flush=True)
+        time.sleep(1.5)
+    print("returned", flush=True)
+""")
+
+
+def _supervised(mode: str, tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], str]:
+    log = tmp_path / "supervised.log"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
+        [sys.executable, "-c", _SUPERVISED, mode, str(log)],
+        env=isolated_env(tmp_path, QT_QPA_PLATFORM="offscreen"), capture_output=True, text=True,
+        timeout=100, cwd=tmp_path)
+    return proc, log.read_text(encoding="utf-8") if log.is_file() else ""
+
+
+@windows_only
+def test_the_supervisor_ends_a_process_its_own_watchdog_cannot_end(tmp_path: Path) -> None:
+    proc, text = _supervised("stuck", tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
+    assert "returned" not in proc.stdout
+    armed = "[watchdog] armed=True seconds=1.5 what=the supervised block supervisor=process "
+    fired = "[supervisor] fired=True what=the supervised block"
+    assert armed in text and fired in text and text.index(armed) < text.index(fired)
+    assert "still alive 3.5 s after its watchdog was armed" in text  # 1.5 s + the grace period
+    assert "terminated from outside, exit code 1" in text
+
+
+@windows_only
+def test_the_supervisor_leaves_a_process_alone_whose_block_finished_first(tmp_path: Path) -> None:
+    """The block is over before the supervising process has started. It created the
+    release event, signalled and destroyed it; the late supervisor finds NO event. Had
+    it waited on the process alone, it would have ended — 3.5 s later — a process that
+    finished its block and simply lives on: a pytest run that called the bounded
+    self-test, 310 s after the test passed."""
+    proc, text = _supervised("in-time", tmp_path)
+    assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
+    assert "supervisor=process " in text and "[supervisor]" not in text
+
+
+@windows_only
+def test_a_released_supervisor_goes_at_once(tmp_path: Path) -> None:
+    proc, text = _supervised("released", tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:]
+    assert [line for line in proc.stdout.splitlines() if line] == [
+        "STARTED True", "WAITING True", "GONE 0", "returned"]
+    assert "[supervisor]" not in text
+
+
+@windows_only
+def test_the_supervisor_never_ends_another_process_that_got_the_pid(tmp_path: Path) -> None:
+    """A pid is reused. The supervisor knows its process by pid AND creation time."""
+    proc, _text = _supervised("another-process", tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:]
+    assert "CODE 0" in proc.stdout and "returned" in proc.stdout
+
+
+def test_the_supervisor_refuses_arguments_it_does_not_understand() -> None:
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    assert runlog.supervisor_main([]) == 2
+    assert runlog.supervisor_main(["not-a-pid", "1", "1", "-"]) == 2
+
+
+def test_the_supervisor_is_started_as_this_checkouts_own_file() -> None:
+    """From source it runs ``runlog.py`` itself — never ``-m open_garden_planner``, which
+    from a git worktree could start another checkout's application — and nothing but
+    the standard library is imported at the top of that file."""
+    import ast
+
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    command = runlog.self_command()
+    assert command[0] == sys.executable and "-m" not in command
+    assert Path(command[-1]).resolve() == Path(runlog.__file__).resolve()
+    tree = ast.parse(Path(runlog.__file__).read_text(encoding="utf-8"))
+    top_level = {alias.name.split(".")[0] for node in tree.body if isinstance(node, ast.Import)
+                 for alias in node.names}
+    top_level |= {(node.module or "").split(".")[0] for node in tree.body
+                  if isinstance(node, ast.ImportFrom)}
+    assert top_level <= {"__future__", "contextlib", "faulthandler", "os", "subprocess", "sys",
+                         "threading", "time", "collections", "pathlib", "typing"}, top_level
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the supervisor exists on Windows")
+def test_without_a_supervisor_the_log_says_so(tmp_path: Path) -> None:
+    """Elsewhere ``faulthandler``'s exit was measured to end even the deadlock (Linux)."""
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    assert runlog.start_supervisor(5.0, None, "x") is None
+    log = runlog.RenderLog(tmp_path / "plain.log", mirror=False)
+    try:
+        with runlog.watchdog(30.0, log, what="a block", supervised=True):
+            pass
+    finally:
+        log.close()
+    assert "supervisor=none (not available here)" in (tmp_path / "plain.log").read_text(encoding="utf-8")

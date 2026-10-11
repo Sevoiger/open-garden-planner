@@ -8,9 +8,7 @@ the render tier only has to prove that the engine does what they say.
 from __future__ import annotations
 
 import dataclasses
-import logging
 import math
-import os
 import subprocess
 import sys
 import textwrap
@@ -31,13 +29,13 @@ from open_garden_planner.ui.view3d.quick3d.qt_messages import (
     classify,
     graphics_adapter,
     graphics_info,
-    logging_sink,
 )
 from open_garden_planner.ui.view3d.quick3d.shots import (
     PerspectiveShot,
     TopDownShot,
     top_down_pixel,
 )
+from tests.integration.quick3d_render_support import isolated_env
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
@@ -192,7 +190,7 @@ class TestClassify:
         "Failed to compile fragment shader",
         "file:///x/Garden.qml:231:13: Unable to assign [undefined] to QObject*",
         "qt.rhi.general: shader cache: failed to open, error 2",
-        "TypeError in a debug line",
+        "file:///x/Garden.qml:40: TypeError: Cannot read property 'x' of null",
     ])
     def test_the_level_decides_first(self, kind: str, text: str) -> None:
         """Review P2-3: the error patterns used to run over debug and info lines too. The
@@ -201,6 +199,46 @@ class TestClassify:
         assert classify(kind, text) == "info"
         assert classify(kind, text, "qt.rhi.general") == "info"
         assert classify("warning", text) == "error", "the same text as a warning IS an error"
+
+    @pytest.mark.parametrize(("kind", "text", "category", "expected"), [
+        # an image a widget could not load — "Failed to load" alone used to be an error
+        ("warning", "QPixmap::scaled: Pixmap is a null pixmap", "", "warning"),
+        ("warning", "Failed to load image file:///x/icon.png", "", "warning"),
+        ("warning", "QFont::setPointSize: Point size <= 0 (-1), must be greater than 0", "", "warning"),
+        # a word of JavaScript without a QML location says nothing about the scene file
+        ("warning", "TypeError: something somewhere", "", "warning"),
+        ("warning", "ReferenceError: x is not defined", "", "warning"),
+        # QtWebEngine forwards a web page's console: category "js", or the prefix "js: "
+        ("warning", "Uncaught TypeError: map.fitBounds is not a function", "js", "info"),
+        ("warning", "js: Uncaught ReferenceError: L is not defined", "", "info"),
+        ("critical", "Uncaught (in promise) Error: tiles failed to load", "js", "info"),
+        ("warning", "js: https://tile.example/1/2/3.png Failed to load shader of the page", "", "info"),
+    ])
+    def test_messages_of_the_rest_of_the_process_are_not_engine_errors(
+            self, kind: str, text: str, category: str, expected: str) -> None:
+        """Review round 2, P2-1/2: the recorder listens to the WHOLE process, and its
+        error rules matched a pixmap a widget could not load and the JavaScript console
+        of the satellite-map page. Each error rule now names a shader, a pipeline or a
+        QML location; a web page's console is never a statement about the 3D frame."""
+        assert classify(kind, text, category) == expected
+
+    def test_the_error_rules_still_catch_what_they_are_for(self) -> None:
+        """The other direction of the tightening: nothing a shader or the scene file can
+        say got lost with the bare words."""
+        for text in (
+            SHADER_PARSE,
+            "Failed to compile fragment shader",
+            "Failed to link shader program: error X",
+            "Failed to create graphics pipeline",
+            "ERROR: :12: 'foo' : undeclared identifier in water.frag:12",
+            "file:///x/Garden.qml:231:13: Unable to assign [undefined] to QObject*",
+            "file:///x/Garden.qml:40: TypeError: Cannot read property 'x' of null",
+            "file:///x/Garden.qml:12: ReferenceError: groundColor is not defined",
+            "QQmlComponent: Component is not ready",
+            "file:///x/Garden.qml:7 Foo is not a type",
+            'Cannot assign to non-existent property "castsShadows"',
+        ):
+            assert classify("warning", text) == "error", text
 
     def test_a_debug_line_is_recorded_as_information_only(self) -> None:
         qt = QtMessages()
@@ -257,38 +295,36 @@ class TestRecorder:
         assert qt.report()["counts"]["warning"] == 1
 
 
-class TestLoggingSink:
-    """``Quick3DHost.watch_messages``: a live view's Qt messages go to the app's log."""
+class TestWhichThreadDelivered:
+    """Review round 2, P1-C: the recorder may only be installed where every message
+    arrives on the thread that created it — it counts the ones that did not, so the
+    render tier can assert the claim instead of assuming it."""
 
-    def test_errors_and_warnings_reach_the_logger_at_their_level(
-            self, caplog: pytest.LogCaptureFixture) -> None:
-        logger = logging.getLogger("ogp.tests.quick3d.sink")
-        qt = QtMessages(logging_sink(logger))
-        with caplog.at_level(logging.DEBUG, logger=logger.name):
-            qt.add("warning", SHADER_PARSE, "qt.shadertools")
-            qt.add("warning", "QStandardPaths: XDG_RUNTIME_DIR not set")
-            qt.add("warning", MONITOR, "qt.qpa.screen")
-            qt.add("debug", "Adapter 0: 'x'", "qt.rhi.general")   # information: not logged at all
-        levels = [(record.levelno, record.getMessage()[:12]) for record in caplog.records]
-        assert levels == [(logging.ERROR, "Qt: warning:"), (logging.WARNING, "Qt: warning:"),
-                          (logging.INFO, "Qt: warning:")]
-        assert SHADER_PARSE[:40] in caplog.records[0].getMessage()
+    def test_messages_on_the_recorders_own_thread_are_not_counted(self) -> None:
+        qt = QtMessages()
+        qt.add("warning", "on the thread that renders")
+        assert qt.other_threads == 0 and qt.report()["other_threads"] == 0
 
-    def test_a_logger_that_raises_cannot_abort_the_handler(self) -> None:
-        class Broken(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                raise OSError("log file gone")
+    def test_a_message_from_another_thread_is_counted_and_still_recorded(self) -> None:
+        import threading
 
-        logger = logging.getLogger("ogp.tests.quick3d.sink.broken")
-        logger.propagate = False
-        logger.addHandler(Broken())
-        previous, logging.raiseExceptions = logging.raiseExceptions, True
-        try:
-            qt = QtMessages(logging_sink(logger))
-            qt.add("warning", SHADER_PARSE)  # must not raise (it runs inside Qt's handler)
-        finally:
-            logging.raiseExceptions = previous
-        assert len(qt.errors) == 1
+        qt = QtMessages()
+        worker = threading.Thread(target=qt.add, args=("warning", SHADER_PARSE, "qt.shadertools"))
+        worker.start()
+        worker.join(10)
+        qt.add("debug", "back on the creating thread")
+        assert qt.other_threads == 1 and qt.report()["other_threads"] == 1
+        assert len(qt.errors) == 1, "counted AND recorded: an error is an error on any thread"
+
+
+def test_the_logging_sink_of_the_live_watch_is_gone() -> None:
+    """Nothing of the live message watch is left to be picked up again (review round 2):
+    a Python Qt message handler beside a shown window deadlocks the process."""
+    from open_garden_planner.ui.view3d.quick3d import qt_messages
+
+    assert not hasattr(qt_messages, "logging_sink")
+    source = Path(qt_messages.__file__).read_text(encoding="utf-8")
+    assert "import logging" not in source
 
 
 class TestGraphicsInfo:
@@ -380,7 +416,7 @@ def test_a_late_qt_message_cannot_abort_the_process(tmp_path: Path, mode: str) -
     """The spike reproduced exit 134: the handler wrote to a closed log, raised, and PyQt
     turned the exception into qFatal. The recorder never raises ("closed-log"), and a
     render detaches its handler before its log closes ("uninstall")."""
-    env = dict(os.environ, PYTHONPATH=str(SRC), QT_QPA_PLATFORM="offscreen")
+    env = isolated_env(tmp_path, QT_QPA_PLATFORM="offscreen")
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
         [sys.executable, "-c", _LATE_MESSAGE, str(tmp_path), mode],
         env=env, capture_output=True, text=True, timeout=120,

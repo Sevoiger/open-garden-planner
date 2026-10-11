@@ -5,7 +5,6 @@ failure from silently killing the process and discarding unsaved work.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import textwrap
@@ -15,6 +14,7 @@ from typing import Any
 import pytest
 
 from open_garden_planner.main import _install_excepthook, _run_selftest, _selftest_quick3d
+from tests.integration.quick3d_render_support import isolated_env
 
 
 class TestExceptHook:
@@ -207,6 +207,33 @@ class TestMainUtilities:
         monkeypatch.setattr(sys, "argv", ["ogp", "--selftest"])
         assert ogp_main.main() == 42
 
+    def test_the_supervisor_flag_is_dispatched_first_and_starts_nothing_else(self, monkeypatch) -> None:
+        """Review round 2, P2-6. The frozen exe is also the process that supervises a
+        running self-test (``<exe> --selftest-supervisor <pid> … what:--selftest``). Its
+        arguments NAME the self-test — and must never start one: a supervisor that ran
+        the self-test would start a supervisor that runs the self-test."""
+        import open_garden_planner.main as ogp_main
+        from open_garden_planner.ui.view3d.quick3d import runlog
+
+        assert ogp_main._SUPERVISOR_FLAG == runlog.SUPERVISOR_FLAG  # noqa: SLF001
+        handed: list[list[str]] = []
+        monkeypatch.setattr(runlog, "supervisor_main", lambda arguments: handed.append(arguments) or 7)
+        monkeypatch.setattr(ogp_main, "_run_selftest_bounded",
+                            lambda: pytest.fail("the supervisor must not run the self-test"))
+        arguments = ["4711", "133", "310", "C:/logs/selftest.log", "what:--selftest"]
+        monkeypatch.setattr(sys, "argv", ["ogp", runlog.SUPERVISOR_FLAG, *arguments])
+        assert ogp_main.main() == 7 and handed == [arguments]
+        # … also when a caller put the self-test flag itself on the command line
+        handed.clear()
+        monkeypatch.setattr(sys, "argv", ["ogp", "--selftest", runlog.SUPERVISOR_FLAG, *arguments])
+        assert ogp_main.main() == 7 and handed == [arguments]
+
+    def test_the_supervisor_is_the_frozen_exe_itself(self, monkeypatch) -> None:
+        from open_garden_planner.ui.view3d.quick3d import runlog
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        assert runlog.self_command() == [sys.executable, "--selftest-supervisor"]
+
 
 _HUNG_BLOCK = textwrap.dedent("""
     import sys
@@ -231,6 +258,40 @@ _HUNG_BLOCK = textwrap.dedent("""
 class TestBoundedSelfTest:
     """Review P1-4. The watchdog used to cover the 3D render only; the Qt3D imports and
     the Agent API block could hang a release job until GitHub's six-hour limit."""
+
+    @pytest.fixture(autouse=True)
+    def supervisors(self, monkeypatch) -> list[tuple[float, Any, str]]:
+        """The bounded self-test asks for a SUPERVISED watchdog — a second process that
+        ends this one from outside. In-process tests record the request instead of
+        starting one against the pytest process; the real one runs in children
+        (``test_a_hang_in_any_block…`` below, ``test_quick3d_selftest.py``)."""
+        from open_garden_planner.ui.view3d.quick3d import runlog
+
+        asked: list[tuple[float, Any, str]] = []
+
+        def recorded(seconds: float, log_path: Any, what: str) -> None:
+            asked.append((seconds, log_path, what))
+
+        monkeypatch.setattr(runlog, "start_supervisor", recorded)
+        return asked
+
+    def test_the_whole_selftest_is_supervised_from_outside(self, monkeypatch, tmp_path,
+                                                           supervisors) -> None:
+        """Review round 2, P2-6: in a process deadlocked inside Qt the watchdog wrote its
+        dump and the process stayed alive. The supervisor ends it ``GRACE_S`` after the
+        watchdog's deadline, and is told where the log is."""
+        import open_garden_planner.main as ogp_main
+        from open_garden_planner.ui.view3d.quick3d import runlog
+
+        log_file = tmp_path / "selftest.log"
+        monkeypatch.setenv("OGP_SELFTEST_LOG", str(log_file))
+        monkeypatch.setattr(ogp_main, "_run_selftest", lambda _log=None: 0)
+        assert ogp_main._run_selftest_bounded() == 0
+        assert supervisors == [(ogp_main.SELFTEST_WATCHDOG_S + runlog.GRACE_S, log_file, "--selftest")]
+        assert runlog.GRACE_S == 10.0
+        text = log_file.read_text(encoding="utf-8")
+        # the stand-in started none — and the log says so instead of claiming one
+        assert "what=--selftest supervisor=none (not available here)" in text
 
     def test_every_block_runs_under_one_watchdog_and_one_log(self, monkeypatch, tmp_path) -> None:
         import open_garden_planner.main as ogp_main
@@ -287,19 +348,19 @@ class TestBoundedSelfTest:
         blocker = tmp_path / "a-file"
         blocker.write_text("not a directory", encoding="utf-8")
         monkeypatch.setenv("OGP_SELFTEST_LOG", str(blocker / "selftest.log"))
-        armed: list[tuple[float, str]] = []
+        armed: list[tuple[float, str, dict[str, Any]]] = []
         real = runlog.watchdog
 
-        def spy(seconds: float, log: Any, what: str = "the run") -> Any:
-            armed.append((seconds, what))
-            return real(seconds, log, what)
+        def spy(seconds: float, log: Any, what: str = "the run", **options: Any) -> Any:
+            armed.append((seconds, what, options))
+            return real(seconds, log, what, **options)
 
         monkeypatch.setattr(runlog, "watchdog", spy)
         ran: list[Any] = []
         monkeypatch.setattr(ogp_main, "_run_selftest", lambda log=None: ran.append(log) or 0)
         assert ogp_main._run_selftest_bounded() == 1
         assert len(ran) == 1 and ran[0].path is None
-        assert armed == [(ogp_main.SELFTEST_WATCHDOG_S, "--selftest")]
+        assert armed == [(ogp_main.SELFTEST_WATCHDOG_S, "--selftest", {"supervised": True})]
         out = capsys.readouterr().out
         assert "FAIL self-test log ->" in out and "SELFTEST: FAIL (no log)" in out
 
@@ -308,9 +369,7 @@ class TestBoundedSelfTest:
         Exit code 1 after the watchdog's two seconds, and the log names the reason in
         words before faulthandler's stack dump — the frame that hangs is in it."""
         log_file = tmp_path / "selftest.log"
-        src = Path(__file__).resolve().parents[2] / "src"
-        env = dict(os.environ, PYTHONPATH=str(src), QT_QPA_PLATFORM="offscreen",
-                   OGP_SELFTEST_LOG=str(log_file))
+        env = isolated_env(tmp_path, QT_QPA_PLATFORM="offscreen", OGP_SELFTEST_LOG=str(log_file))
         proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
             [sys.executable, "-c", _HUNG_BLOCK], env=env, capture_output=True, text=True,
             timeout=100, cwd=tmp_path)
@@ -318,6 +377,8 @@ class TestBoundedSelfTest:
         assert "returned" not in proc.stdout, "the hang must end the process, not return a verdict"
         text = log_file.read_text(encoding="utf-8")
         assert "[watchdog] armed=True seconds=2.0 what=--selftest" in text
+        if sys.platform == "win32":  # the real supervisor was started, and had nothing to do
+            assert "what=--selftest supervisor=process " in text and "[supervisor]" not in text
         assert "[watchdog] fired=True what=--selftest" in text
         assert "--selftest did not finish within 2 s" in text
         assert text.index("[watchdog] fired=True") < text.index("Timeout (0:00:02")

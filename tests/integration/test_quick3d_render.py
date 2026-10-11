@@ -56,7 +56,8 @@ Run = tuple[dict[str, Any], Path]
 @pytest.fixture(scope="module")
 def run(tmp_path_factory: pytest.TempPathFactory) -> Run:
     out = tmp_path_factory.mktemp("quick3d_render")
-    proc, result = run_driver(out, "truth,materials,rest,states,edits,recovery,pick,sun")
+    proc, result = run_driver(
+        out, "truth,materials,rest,states,edits,recovery,pick,sun,shown_materials")
     assert proc.returncode == 0 and result.get("status") == "ok", failure_report(proc, out)
     return result, out
 
@@ -456,20 +457,71 @@ def test_our_projection_agrees_with_the_engines(run: Run) -> None:
 # ── G9: errors are loud; a clean run is silent ───────────────────────────────
 
 
+OFFSCREEN_SCENARIOS = ("truth", "materials", "rest")
+SHOWN_SCENARIOS = ("states", "edits", "recovery", "pick", "sun", "shown_materials")
+
+
+def _offscreen_frames(run: Run) -> list[tuple[str, dict[str, Any]]]:
+    return [(f"{group}/{key}", frame) for group in OFFSCREEN_SCENARIOS
+            for key, frame in run[0]["scenarios"][group].items()
+            if isinstance(frame, dict) and "qt" in frame]
+
+
 def test_a_clean_run_records_no_qt_warning(run: Run) -> None:
-    """Zero Qt errors AND zero Qt warnings over the whole run — every scenario, every
-    hidden render. (``environment`` messages are the machine's, listed in
-    ``qt_messages._ENVIRONMENT``; they are reported, not failures.)"""
+    """Zero Qt errors AND zero Qt warnings over the whole run. (``environment`` messages
+    are the machine's, listed in ``qt_messages._ENVIRONMENT``; reported, not failures.)
+
+    Two witnesses, because no single one may listen everywhere (``qt_messages.py``):
+    an OFFSCREEN frame is rendered on the calling thread and records its own messages
+    — its report comes with the frame; a SHOWN window is rendered on Qt's render
+    thread, where no Python may run — Qt prints its messages to the driver's stderr
+    and they are classified here, per scenario."""
     result = run[0]
-    counts = result["qt_messages"]["counts"]
-    assert counts["error"] == 0 and counts["warning"] == 0, result["qt_messages"]
-    for name, scenario in result["scenarios"].items():
-        assert scenario["qt_delta"]["error"] == 0 and scenario["qt_delta"]["warning"] == 0, name
-    for group in ("truth", "materials"):
-        for key, frame in result["scenarios"][group].items():
-            if isinstance(frame, dict) and "qt" in frame:
-                assert frame["qt"]["counts"]["error"] == 0, (group, key)
-                assert frame["qt"]["counts"]["warning"] == 0, (group, key)
+    frames = _offscreen_frames(run)
+    assert len(frames) >= 8
+    for where, frame in frames:
+        assert frame["qt"]["counts"]["error"] == 0 and frame["qt"]["counts"]["warning"] == 0, (
+            where, frame["qt"])
+    shown = result["qt_messages"]
+    assert shown["counts"]["error"] == 0 and shown["counts"]["warning"] == 0, shown
+    for name in SHOWN_SCENARIOS:
+        counts = shown["by_scenario"].get(name)
+        assert counts is not None and counts["info"] > 0, (
+            f"no Qt message at all was read for {name!r}: the judge is not listening")
+        assert counts["error"] == 0 and counts["warning"] == 0, (name, shown)
+    assert set(result["scenarios"]) == set(OFFSCREEN_SCENARIOS) | set(SHOWN_SCENARIOS)
+
+
+def test_every_message_of_an_offscreen_frame_arrives_on_the_calling_thread(run: Run) -> None:
+    """Review round 2, P1-C — the claim the offscreen recorder rests on, measured in
+    every frame of the run instead of assumed: a Python Qt message handler is safe only
+    where Qt calls it on the thread that installed it. A never-shown window is rendered
+    by ``grabWindow()`` on the calling thread; ``other_threads`` counts every message
+    that arrived on another one. (The same is asserted for the messages of a FAILED
+    render — the shader errors themselves — in ``test_a_broken_shader_fails_the_render``.)"""
+    frames = _offscreen_frames(run)
+    assert len(frames) >= 8
+    for where, frame in frames:
+        assert frame["qt"]["counts"]["info"] > 0, f"{where}: the recorder heard nothing at all"
+        assert frame["qt"]["other_threads"] == 0, (where, frame["qt"])
+
+
+def test_a_shown_window_draws_what_the_offscreen_frame_draws(run: Run) -> None:
+    """Why checking the shipped shaders BEFORE release is enough: the frame a shown
+    window presents — rendered on Qt's render thread — is the frame the offscreen path
+    renders, material for material. So the self-test and this tier, which compile every
+    shader on the calling thread under a recorder, speak for the shown view too (which
+    has no recorder: ``Quick3DHost.health()``)."""
+    scenario = run[0]["scenarios"]["shown_materials"]
+    shown, dpr = _frame(run, scenario["top"])
+    hidden, hidden_dpr = _frame(run, run[0]["scenarios"]["materials"]["top"])
+    assert scenario["parts"] == 6 and shown.shape == hidden.shape and dpr == hidden_dpr
+    for kind in driver.MATERIAL_KINDS_ORDER:
+        assert _swatch(shown, kind, dpr) == pytest.approx(_swatch(hidden, kind, dpr), abs=3.0), kind
+    health = scenario["health"]
+    assert health["ok"] is True and health["frames_presented"] >= 1, health
+    assert health["qml_warnings"] == [] and health["scene_graph_error"] is None
+    assert health["slots_off_gui_thread"] == 0, "no Python on Qt's render thread"
 
 
 def _swatch(rgb: np.ndarray, kind: str, dpr: float) -> np.ndarray:
@@ -544,8 +596,29 @@ def test_a_broken_shader_fails_the_render(tmp_path: Path, file: str, old: str, n
     proc, result = run_driver(out, "materials", qml_dir=qml, env=render_env(tmp_path))
     assert proc.returncode == QT_ERRORS_EXIT, failure_report(proc, out)
     assert result["status"] == "error" and result["error"].startswith("RenderError"), result.get("error")
-    assert result["qt_messages"]["counts"]["error"] >= 1
-    assert any("shader" in line.lower() for line in result["qt_messages"]["errors"])
+    heard = result["error_qt"]  # the report of the recorder that failed the render
+    assert heard["counts"]["error"] >= 1
+    assert any("shader" in line.lower() for line in heard["errors"])
+    # … and every message of it — the shader errors included — on the calling thread
+    assert heard["other_threads"] == 0, heard
+
+
+def test_a_broken_shader_in_a_shown_window_is_seen_by_the_judge(tmp_path: Path) -> None:
+    """Positive control for the OTHER witness. In a shown window nothing in the process
+    records Qt's messages (a Python handler there deadlocks it), so the driver cannot
+    fail by itself: the frame renders, in the wrong colours, exit code 0. The judge
+    reads the driver's stderr — and must find the shader error there, in the scenario
+    it belongs to. Without this the clean-run test above would be deaf on that side."""
+    qml = _broken_copy(tmp_path, "water.frag", "waterLuma(LIGHT_COLOR)",
+                       "waterLumaRenamed(LIGHT_COLOR)")
+    out = tmp_path / "out"
+    proc, result = run_driver(out, "shown_materials", qml_dir=qml, env=render_env(tmp_path))
+    assert proc.returncode == 0 and result["status"] == "ok", failure_report(proc, out)
+    heard = result["qt_messages"]
+    assert heard["by_scenario"]["shown_materials"]["error"] >= 1, heard
+    assert any("shader" in line.lower() for line in heard["errors"])
+    # the host's GUI-thread surface does NOT see it: shader errors are not QML warnings
+    assert result["scenarios"]["shown_materials"]["health"]["ok"] is True
 
 
 def test_a_qml_error_fails_the_render(tmp_path: Path) -> None:

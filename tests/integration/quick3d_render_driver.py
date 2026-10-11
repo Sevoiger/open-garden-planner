@@ -11,15 +11,24 @@ Division of labour — the reason the tier can be trusted:
 
 - the driver only DOES engine things: it drives ``SceneSync`` → ``Quick3DSink`` →
   ``Quick3DHost``, saves every frame as a PNG and writes raw engine answers
-  (picks, read-back Models, counters, timings, Qt messages) to ``result.json``;
+  (picks, read-back Models, counters, timings) to ``result.json``;
 - the tests JUDGE: they predict pixels with their own CPU projection and compare.
 
 So the scene definitions below are plain, engine-free functions both halves
 import, and nothing in this module asserts anything about a pixel.
 
+Qt's MESSAGES are not recorded in here. A Python message handler beside a shown
+window deadlocks against Qt's render thread (``qt_messages.py``), so this process
+installs none of its own: Qt prints its messages to stderr in the pattern the
+caller set (``quick3d_render_support.render_env``), a mark on stderr says which
+scenario runs, and the judge classifies them. Only ``render_records`` — a
+never-shown window, rendered on the calling thread — records its own frame's
+messages, and reports them with the frame.
+
 ``result.json`` is rewritten after every scenario; ``render.log`` is flushed per
 line; a watchdog dumps all stacks and exits 1 when the run takes too long.
-Exit codes: 0 ok · 1 watchdog · 2 an exception · 4 Qt errors (shader / QML).
+Exit codes: 0 ok · 1 watchdog · 2 an exception · 4 a render that failed on a Qt
+error (shader / QML).
 """
 
 from __future__ import annotations
@@ -329,11 +338,10 @@ def pick_plan(records: Mapping[str, Record]) -> list[dict[str, Any]]:
 class Context:
     """What every scenario gets: where to write, how to log, which QML to load."""
 
-    def __init__(self, out: Path, log: Any, qml_dir: Path | None, messages: Any) -> None:
+    def __init__(self, out: Path, log: Any, qml_dir: Path | None) -> None:
         self.out = out
         self.log = log
         self.qml_dir = qml_dir
-        self.messages = messages
 
     def save(self, name: str, image: Any) -> dict[str, Any]:
         path = self.out / f"{name}.png"
@@ -436,6 +444,31 @@ def scenario_materials(ctx: Context) -> dict[str, Any]:
             "materials_perspective", records, registry=registry, sun=SWATCH_SUN,
             shot=PerspectiveShot(eye=(-200.0, -800.0, 450.0), target=(0.0, 0.0, 30.0))),
     }
+
+
+def scenario_shown_materials(ctx: Context) -> dict[str, Any]:
+    """Every material kind — every shader — in a SHOWN window, the way the product will
+    draw it: rendered on Qt's render thread, with no recorder in this process. What Qt
+    says about it goes to stderr; what the host learned on the GUI thread is in
+    ``health``."""
+    from open_garden_planner.ui.view3d.quick3d.adapter import Quick3DSink
+
+    host = ctx.shown_host()
+    try:
+        sync = SceneSync(Quick3DSink(host), swatch_registry())
+        sync.apply(swatch_records(), sun=SWATCH_SUN, ground=GROUND)
+        host.set_shot(TOP)
+        info = ctx.save("shown_materials_top", host.grab("shown_materials_top"))
+        _pump(100)
+        health = host.health()
+        return {"top": info, "parts": len(host.engine_parts()), "graphics_api": host.graphics_api(),
+                "health": {"ok": health.ok, "frames_presented": health.frames_presented,
+                           "qml_warnings": list(health.qml_warnings),
+                           "scene_graph_error": health.scene_graph_error,
+                           "slots_off_gui_thread": host.slot_calls_off_the_gui_thread}}
+    finally:
+        host.close()
+        _pump()
 
 
 def scenario_sun(ctx: Context) -> dict[str, Any]:
@@ -980,6 +1013,7 @@ SCENARIOS: dict[str, Callable[[Context], dict[str, Any]]] = {
     "states": scenario_states,
     "rest": scenario_rest,
     "recovery": scenario_recovery,
+    "shown_materials": scenario_shown_materials,
     "integration": scenario_integration,
     "embed": scenario_embed,
 }
@@ -1019,7 +1053,7 @@ def main(argv: list[str]) -> int:
     started = time.perf_counter()
     import open_garden_planner.ui.view3d.quick3d.host  # noqa: F401 - timed: the engine import
     engine_import_ms = (time.perf_counter() - started) * 1000.0
-    from open_garden_planner.ui.view3d.quick3d import offscreen, qt_messages
+    from open_garden_planner.ui.view3d.quick3d import offscreen
 
     log = offscreen.RenderLog(args.out / "render.log")
     result: dict[str, Any] = {
@@ -1028,52 +1062,47 @@ def main(argv: list[str]) -> int:
         "qml_dir": str(args.qml_dir) if args.qml_dir else None,
         "env": {key: os.environ.get(key) for key in (
             "QT_QPA_PLATFORM", "QSG_RHI_BACKEND", "QSG_RHI_PREFER_SOFTWARE_RENDERER",
-            "LIBGL_ALWAYS_SOFTWARE", "QSG_RENDER_LOOP")},
+            "LIBGL_ALWAYS_SOFTWARE", "QSG_RENDER_LOOP", "QT_MESSAGE_PATTERN", "APPDATA",
+            "XDG_DATA_HOME")},
         "scenarios": {},
     }
 
     def write() -> None:
-        result["qt_messages"] = messages.report()
-        result["adapter"] = qt_messages.graphics_adapter(messages.info_lines())
         (args.out / "result.json").write_text(json.dumps(result, indent=1, default=str),
                                               encoding="utf-8")
 
-    messages = qt_messages.QtMessages(log)
-    previous = qt_messages.install(messages)
     code = 0
     try:
-        # the adapter's name for the whole run (shown hosts too); the rule is cleared after
-        with qt_messages.graphics_info(), offscreen.watchdog(args.watchdog_s, log):
+        # supervised: this process shows windows, and a deadlock between Qt's render thread
+        # and the GUI thread is exactly what the in-process watchdog cannot end on Windows
+        with offscreen.watchdog(args.watchdog_s, log, what="the render driver", supervised=True):
             offscreen.ensure_application()
-            context = Context(args.out, log, args.qml_dir.resolve() if args.qml_dir else None,
-                              messages)
+            context = Context(args.out, log, args.qml_dir.resolve() if args.qml_dir else None)
             log("start", scenarios=args.scenarios, qt=QT_VERSION_STR, platform=result["platform"])
             for name in wanted:
                 log("scenario", name=name)
+                # the judge reads Qt's messages from stderr: say which scenario they belong to
+                print(f"OGPQT|scenario|{name}", file=sys.stderr, flush=True)
                 t0 = time.perf_counter()
-                before = dict(messages.counts)
                 data = SCENARIOS[name](context)
                 data["seconds"] = round(time.perf_counter() - t0, 2)
-                data["qt_delta"] = {key: messages.counts[key] - before[key] for key in before}
                 result["scenarios"][name] = data
                 write()
+            print("OGPQT|scenario|", file=sys.stderr, flush=True)
             _clear_settings()
-        if messages.errors:
-            result["status"] = "qt_errors"
-            code = QT_ERRORS_EXIT
-        else:
-            result["status"] = "ok"
+        result["status"] = "ok"
     except Exception as error:  # noqa: BLE001 - a driver: record it, never lose it
         result["status"] = "error"
         result["error"] = f"{type(error).__name__}: {error}"
         result["traceback"] = traceback.format_exc()
+        # a render that failed on Qt's messages carries the recorder's report
+        result["error_qt"] = dict(getattr(error, "qt", None) or {})
         log("error", error=result["error"])
         code = QT_ERRORS_EXIT if type(error).__name__ == "RenderError" else 2
     finally:
         result["total_s"] = round(time.perf_counter() - started, 2)
         write()
         log("done", status=result["status"], total_s=result["total_s"])
-        qt_messages.uninstall(previous)
         log.close()
     return code
 

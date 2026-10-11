@@ -26,6 +26,14 @@ What it guarantees:
   solid; ``OffscreenFrame.build_failures`` names every such item.
 - **It leaves the process as it found it.** No output unless a ``log`` is passed;
   the message handler and Qt's logging rules are put back.
+- **Never beside a shown Qt Quick window.** The call installs a process-wide Qt
+  message recorder for its duration — safe only because everything it renders is
+  rendered on the calling thread (measured: every message of a one-shot frame,
+  shader errors included, arrives there; ``frame.qt["other_threads"]`` is the
+  count of those that did not, and the render tier asserts 0). A SHOWN Qt Quick
+  window renders on a thread of its own, and a Python message handler beside it
+  deadlocks the process (``qt_messages.py``). So the call refuses
+  (``RenderError``) while one is visible in this process.
 - **It cannot hang silently** when the caller bounds it: ``runlog.RenderLog`` is
   flushed per line, and ``runlog.watchdog`` (around the call) dumps every
   thread's stack into it and exits with a non-zero code when the time is up. A
@@ -57,7 +65,7 @@ from open_garden_planner.core.scene3d import (
 
 from . import qt_messages
 from .adapter import Quick3DSink
-from .host import Quick3DHost
+from .host import Quick3DHost, shown_quick_windows
 from .look import NEUTRAL_DAY, Look
 from .runlog import RenderLog, watchdog
 from .shots import Shot
@@ -67,7 +75,15 @@ __all__ = ["OffscreenFrame", "RenderError", "RenderLog", "ensure_application", "
 
 
 class RenderError(RuntimeError):
-    """An offscreen render that must not be trusted (QML or shader error, no image)."""
+    """An offscreen render that must not be trusted (QML or shader error, no image).
+
+    ``qt``: the recorder's report (``QtMessages.report()``) when Qt's messages are the
+    reason — the errors themselves, and on which thread they arrived; empty otherwise.
+    """
+
+    def __init__(self, message: str, qt: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.qt: Mapping[str, Any] = dict(qt) if qt is not None else {}
 
 
 _APPLICATION: list[QCoreApplication] = []  # keeps an application we had to create alive
@@ -154,7 +170,8 @@ def render_records(
     ``qt.rhi.general`` debug output on for the duration of the call).
 
     Raises ``RenderError`` on a QML or shader error, when this backend cannot
-    render 3D, and when no image comes back. A blank-looking frame is NOT judged
+    render 3D, when a Qt Quick window is shown in this process (module
+    docstring), and when no image comes back. A blank-looking frame is NOT judged
     here: the caller knows what the frame must contain. A failed BUILDER does not
     raise (the pipeline contains it): read ``build_failures``.
     """
@@ -162,6 +179,13 @@ def render_records(
     started = time.perf_counter()
     breakdown: dict[str, float] = {}
     ensure_application()
+    shown = shown_quick_windows()
+    if shown:
+        raise RenderError(
+            f"{shown} Qt Quick window(s) are shown in this process. An offscreen render records "
+            "Qt's messages with a process-wide Python handler, and beside a window's render "
+            "thread that deadlocks the process: close or hide the window first, or render in "
+            "another process")
     messages = qt_messages.QtMessages(emit)
     previous = qt_messages.install(messages)
     host: Quick3DHost | None = None
@@ -198,7 +222,8 @@ def render_records(
                 qt=messages.report(),
             )
             emit("rendered", open_ms=round(open_ms, 1), api=api, adapter=frame.adapter,
-                 px=f"{image.width()}x{image.height()}", qt=messages.report()["counts"])
+                 px=f"{image.width()}x{image.height()}", qt=messages.report()["counts"],
+                 other_threads=messages.other_threads)
     except Exception as error:
         emit("render_failed", error=f"{type(error).__name__}: {error}")
         raise
@@ -211,5 +236,5 @@ def render_records(
     if messages.errors:
         raise RenderError(
             f"{len(messages.errors)} Qt error(s) during the render — the frame is not the one "
-            f"the QML and its shaders describe. First: {messages.errors[0]}")
+            f"the QML and its shaders describe. First: {messages.errors[0]}", messages.report())
     return frame

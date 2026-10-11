@@ -11,15 +11,31 @@ Running the tier (opt-in; it opens windows on the desktop)::
     #                            python -m pytest <files>
 
     <files> = tests/integration/test_quick3d_render.py tests/integration/test_quick3d_engine.py
+
+TWO rules for every child process a test of the engine package starts:
+
+- **It never sees the developer's data, and leaves nothing in the developer's
+  profile.** ``isolated_env`` points the variables the app's data directory hangs on
+  at a directory of the test's own, and the user PROFILE itself (which Qt's standard
+  paths and the graphics driver's caches follow) at one of this test process's own —
+  whatever the parent's environment says.
+- **No Python Qt message handler beside a shown window.** Qt renders a shown window
+  on a thread of its own, and PyQt's handler trampoline needs the GIL: the two
+  deadlock (``qt_messages.py``). So the driver installs none for its shown-host
+  scenarios. Qt writes its messages to the child's stderr in a fixed pattern
+  (``QT_MESSAGE_PATTERN``), and ``driver_messages`` classifies them HERE, in the
+  test process — the render tier runs the render loop the product runs.
 """
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -28,6 +44,7 @@ import numpy as np
 import pytest
 
 from open_garden_planner.core.scene3d import Record, pose_ring
+from open_garden_planner.ui.view3d.quick3d.qt_messages import CLASSES, classify, graphics_adapter
 from open_garden_planner.ui.view3d.quick3d.shots import TopDownShot, top_down_pixel
 
 REPO = Path(__file__).resolve().parents[2]
@@ -35,6 +52,11 @@ DRIVER = Path(__file__).resolve().with_name("quick3d_render_driver.py")
 QML_SOURCE = REPO / "src" / "open_garden_planner" / "ui" / "view3d" / "quick3d" / "qml"
 DRIVER_TIMEOUT_S = 840
 QT_ERRORS_EXIT = 4
+#: How Qt prints a message on the child's stderr, and what the driver prints between
+#: scenarios — one prefix, so that everything else on stderr is recognisably not Qt's.
+QT_LINE = "OGPQT|"
+QT_MESSAGE_PATTERN = QT_LINE + "%{type}|%{category}|%{message}"
+SCENARIO_MARK = QT_LINE + "scenario|"
 
 
 def render_tier_skip_reason() -> str | None:
@@ -56,30 +78,145 @@ render_tier = [
 ]
 
 
+#: The variables the app derives its per-user data directory from
+#: (``services/plant_library.get_app_data_dir`` reads them on every call), and the
+#: folder each is pointed at under a test's own scratch directory.
+PRIVATE_DIRS = (("APPDATA", "appdata"), ("XDG_DATA_HOME", "data_home"),
+                ("XDG_CONFIG_HOME", "config_home"))
+
+
+def private_dirs(scratch: Path) -> dict[str, str]:
+    """``PRIVATE_DIRS`` as variable → directory under ``scratch`` (created here)."""
+    made = {}
+    for name, folder in PRIVATE_DIRS:
+        target = scratch / folder
+        target.mkdir(parents=True, exist_ok=True)
+        made[name] = str(target)
+    return made
+
+
+_SESSION_PROFILE: list[Path] = []
+
+
+def session_profile() -> Path:
+    """A user profile for the children of THIS test process — one per process, in an
+    unpredictable temp directory, removed at exit.
+
+    What hangs on the profile is not the app's data but what Qt and the graphics
+    driver keep per user: ``QStandardPaths`` (the app's log directory, Qt Quick's
+    shader cache) and the driver's shader caches. Per process and not per test, so
+    that the children of one run share warm caches as the processes of a real
+    session do — and none of it lands in the developer's profile.
+    """
+    if not _SESSION_PROFILE:
+        root = Path(tempfile.mkdtemp(prefix="ogp-quick3d-profile-"))
+        atexit.register(shutil.rmtree, root, True)  # ignore_errors: a child may still hold a file
+        _SESSION_PROFILE.append(root)
+    return _SESSION_PROFILE[0]
+
+
+def profile_dirs() -> dict[str, str]:
+    """The variables that move a child's user profile to ``session_profile()``.
+
+    Windows: ``USERPROFILE``. Measured (Qt 6.11): the shell expands its known folders
+    from it, so ``QStandardPaths`` answers ``<USERPROFILE>/AppData/Roaming`` and
+    ``…/AppData/Local`` — it does NOT read ``APPDATA``. ``LOCALAPPDATA`` goes along
+    for code that reads the variable. Elsewhere: ``XDG_CACHE_HOME`` (the data and
+    config homes are per test: ``private_dirs``).
+    """
+    profile = session_profile()
+    if sys.platform == "win32":
+        local = profile / "AppData" / "Local"
+        local.mkdir(parents=True, exist_ok=True)
+        (profile / "AppData" / "Roaming").mkdir(parents=True, exist_ok=True)
+        return {"USERPROFILE": str(profile), "LOCALAPPDATA": str(local)}
+    cache = profile / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    return {"XDG_CACHE_HOME": str(cache)}
+
+
+def isolated_env(scratch: Path, **extra: str) -> dict[str, str]:
+    """A child's environment that cannot reach the developer's data or profile, with
+    THIS checkout's code on its path — the base of every child a test of the engine
+    package starts.
+
+    ``APPDATA`` / ``XDG_DATA_HOME`` / ``XDG_CONFIG_HOME`` are set EXPLICITLY to
+    directories under ``scratch`` (``private_dirs``), whatever the parent has: the
+    app keeps custom plants, plant lists and smart symbols under the first two,
+    and a child that loads a plan creates them. The user profile is this test
+    process's own (``profile_dirs``): logs and caches. PYTHONPATH: a
+    ``python tests/…/driver.py`` child would otherwise import whatever the venv's
+    editable install points at — from a git worktree, the main checkout.
+    """
+    env = dict(os.environ)
+    env.update(private_dirs(scratch))
+    env.update(profile_dirs())
+    paths = [str(REPO / "src"), str(REPO), env.get("PYTHONPATH", "")]
+    env["PYTHONPATH"] = os.pathsep.join(p for p in paths if p)
+    env.update(extra)
+    return env
+
+
 def render_env(scratch: Path, **extra: str) -> dict[str, str]:
-    """The child's environment: a REAL Qt platform and THIS checkout's code.
+    """``isolated_env`` plus a REAL Qt platform, and Qt's messages on stderr.
 
     The test process runs ``QT_QPA_PLATFORM=offscreen`` (tests/conftest.py), which
     selects the software scene graph — no 3D. Windows: the default platform and
     Direct3D 11 (the real GPU, or WARP where there is none). Linux: xcb + OpenGL
-    (Mesa llvmpipe in a container) and a private settings home.
+    (Mesa llvmpipe in a container).
 
-    PYTHONPATH: a ``python tests/…/driver.py`` child would otherwise import whatever
-    the venv's editable install points at — from a git worktree, the main checkout.
+    Qt's own handler writes every message to stderr in ``QT_MESSAGE_PATTERN``
+    (forced: on Windows a process without a console logs to the debugger
+    otherwise), and ``qt.rhi.general`` debug output is on, so that the adapter is
+    named — all without a line of Python on Qt's render thread.
     """
-    env = dict(os.environ)
+    env = isolated_env(scratch)
     env.pop("QT_QPA_PLATFORM", None)
     if sys.platform.startswith("linux"):
         env["QT_QPA_PLATFORM"] = "xcb"
         env.setdefault("QSG_RHI_BACKEND", "opengl")
         env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
-        env["XDG_CONFIG_HOME"] = str(scratch / "config_home")
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             env["QTWEBENGINE_DISABLE_SANDBOX"] = "1"  # Chromium refuses root with a sandbox
-    paths = [str(REPO / "src"), str(REPO), env.get("PYTHONPATH", "")]
-    env["PYTHONPATH"] = os.pathsep.join(p for p in paths if p)
+    env["QT_FORCE_STDERR_LOGGING"] = "1"
+    env["QT_MESSAGE_PATTERN"] = QT_MESSAGE_PATTERN
+    env["QT_LOGGING_RULES"] = "qt.rhi.general.debug=true"
     env.update(extra)
     return env
+
+
+def driver_messages(stderr: str) -> dict[str, Any]:
+    """Qt's messages from a child's stderr, classified with the product's own rules.
+
+    Returns counts per class for the whole run and per scenario (the driver prints
+    a mark before each), the error / warning / environment lines, and the graphics
+    adapter Qt named. Lines without the pattern's prefix continue the message
+    before them (a shader error is several lines) or are not Qt's at all.
+    """
+    records: list[list[str]] = []  # scenario, kind, category, text
+    scenario = ""
+    continues = False  # the lines that follow belong to the last record
+    for line in stderr.splitlines():
+        if line.startswith(SCENARIO_MARK):
+            scenario, continues = line[len(SCENARIO_MARK):].strip(), False
+        elif line.startswith(QT_LINE):
+            kind, _, rest = line[len(QT_LINE):].partition("|")
+            category, _, text = rest.partition("|")
+            records.append([scenario, kind, "" if category == "default" else category, text])
+            continues = True
+        elif continues:
+            records[-1][3] += "\n" + line
+    counts = dict.fromkeys(CLASSES, 0)
+    by_scenario: dict[str, dict[str, int]] = {}
+    kept: dict[str, list[str]] = {name: [] for name in CLASSES}
+    for where, kind, category, text in records:
+        cls = classify(kind, text, category)
+        counts[cls] += 1
+        by_scenario.setdefault(where, dict.fromkeys(CLASSES, 0))[cls] += 1
+        kept[cls].append(f"{kind}: {category + ': ' if category else ''}{text}")
+    return {"counts": counts, "by_scenario": by_scenario, "errors": kept["error"],
+            "warnings": kept["warning"], "environment": kept["environment"],
+            "adapter": graphics_adapter(kept["info"]), "messages": len(records)}
 
 
 def run_driver(out: Path, scenarios: str, *, qml_dir: Path | None = None,
@@ -94,8 +231,22 @@ def run_driver(out: Path, scenarios: str, *, qml_dir: Path | None = None,
         timeout=DRIVER_TIMEOUT_S, cwd=REPO)
     result_file = out / "result.json"
     result = json.loads(result_file.read_text(encoding="utf-8")) if result_file.is_file() else {}
+    if result:
+        # what Qt said while windows were SHOWN — read from the child's stderr, judged here
+        shown = driver_messages(proc.stderr)
+        result["qt_messages"] = shown
+        result["adapter"] = shown["adapter"] or _offscreen_adapter(result)
     keep_artifacts(out, proc)
     return proc, result
+
+
+def _offscreen_adapter(result: dict[str, Any]) -> str | None:
+    """The adapter an offscreen frame of the run named (a run without a shown window)."""
+    for scenario in result.get("scenarios", {}).values():
+        for frame in scenario.values() if isinstance(scenario, dict) else ():
+            if isinstance(frame, dict) and frame.get("adapter"):
+                return str(frame["adapter"])
+    return None
 
 
 def keep_artifacts(out: Path, proc: subprocess.CompletedProcess[str]) -> None:

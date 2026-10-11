@@ -12,7 +12,9 @@ pixel, on every machine and in the required CI job:
 - the sun, the ground, the camera and the look are mapped into the scene's
   properties in the engine frame;
 - the host's state machine: which call is legal in which state, what a closed or
-  destroyed host answers, the sink's teardown in every order;
+  destroyed host answers, the sink's teardown in every order — also when the engine
+  REFUSES to destroy a Model;
+- ``health()``: what Qt reports about a host on the GUI thread;
 - that a backend which cannot render 3D says so instead of handing out a frame.
 
 What it cannot check — that any of it is DRAWN correctly, and that a wrong call
@@ -38,6 +40,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -63,6 +66,7 @@ from open_garden_planner.ui.view3d.quick3d.adapter import PartSpec, Quick3DSink
 from open_garden_planner.ui.view3d.quick3d.look import NEUTRAL_DAY, Look
 from open_garden_planner.ui.view3d.quick3d.shots import PerspectiveShot, TopDownShot
 from tests.integration import quick3d_lifecycle_child as lifecycle
+from tests.integration.quick3d_render_support import isolated_env
 
 REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "src"
@@ -134,17 +138,16 @@ print("canary ok", flush=True)
 '''
 
 
-def _child_env() -> dict[str, str]:
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
-    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(SRC), str(REPO), env.get("PYTHONPATH")) if p)
-    return env
+def _child_env(scratch: Path) -> dict[str, str]:
+    """A child that cannot reach the developer's data (``isolated_env``), offscreen."""
+    return isolated_env(scratch, QT_QPA_PLATFORM="offscreen")
 
 
 @pytest.fixture(scope="module", autouse=True)
-def quick3d_objects_can_be_created() -> None:
+def quick3d_objects_can_be_created(tmp_path_factory: pytest.TempPathFactory) -> None:
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
-        [sys.executable, "-c", _CANARY], env=_child_env(), capture_output=True, text=True,
-        timeout=170)
+        [sys.executable, "-c", _CANARY], env=_child_env(tmp_path_factory.mktemp("canary")),
+        capture_output=True, text=True, timeout=170)
     if proc.returncode == 0 and "canary ok" in proc.stdout:
         return
     message = ("bare Qt cannot create Qt Quick 3D objects under the offscreen platform here "
@@ -487,72 +490,133 @@ class TestSunGroundCamera:
             host.set_top_down((0.0, 0.0), 0.0)
 
 
-def _force(host: Any, *, scene_graph: bool, visible: bool, exposed: bool, spent: bool = False,
-           renders_3d: bool = True) -> None:
-    """Put Qt's predicates where a real window system would (the offscreen platform
-    cannot: its scene graph exists from birth and it renders no 3D). The state machine
-    is a pure function of them — which is what makes it testable here; that the
-    predicates DO take these values, and what happens then, is the render tier's."""
-    view = host._view  # noqa: SLF001
-    view.isSceneGraphInitialized = lambda: scene_graph
-    view.isVisible = lambda: visible
-    view.isExposed = lambda: exposed
+def _facts(**changes: Any) -> Any:
+    """Qt's facts as a live, answerable 320 x 240 window reports them — with ``changes``
+    (``size=(w, h)`` sets the WINDOW's size and leaves the scene's at 320 x 240)."""
+    from open_garden_planner.ui.view3d.quick3d.lifecycle import WindowFacts
+
+    width, height = changes.pop("size", (320, 240))
+    base = {"surface_created": True, "visible": True, "minimised": False, "width": width,
+            "height": height, "scene_graph": True, "exposed": True, "root_width": 320.0,
+            "root_height": 240.0}
+    return WindowFacts(**{**base, **changes})
+
+
+def _force(host: Any, *, spent: bool = False, renders_3d: bool = True, **changes: Any) -> None:
+    """Put Qt's facts where a real window system would (the offscreen platform cannot:
+    it renders no 3D, and nothing collapses or minimises there). The state is a pure
+    function of them (``lifecycle.state_of``; its whole truth table is in
+    ``tests/unit/test_quick3d_lifecycle_states.py``) — which is what makes the host
+    testable here; that Qt's facts DO take these values, and what happens then, is the
+    render tier's (``test_quick3d_lifecycle.py``)."""
+    forced = _facts(**changes)
+    host._facts = lambda: forced  # noqa: SLF001
     host._spent = spent  # noqa: SLF001
     if renders_3d:
         host.graphics_api = lambda: "Direct3D11"
 
 
+#: Facts → the state the host must report, and the words its refusal must contain.
+NO_FRAME = [
+    ({"scene_graph": False, "exposed": False}, "starting", r"would kill the process.*wait_ready\(\)"),
+    ({"scene_graph": False}, "starting", r"would kill the process.*wait_ready\(\)"),
+    ({"exposed": False}, "starting", r"shown again but not exposed yet.*wait_ready\(\)"),
+    ({"root_width": 0.0}, "starting", r"has not caught up.*scene 0 x 240.*wait_ready\(\)"),
+    ({"size": (200, 240)}, "starting", r"has not caught up.*window 200 x 240, scene 320 x 240"),
+    ({"visible": False}, "hidden", "not visible"),
+    ({"visible": False, "exposed": False}, "hidden", "not visible"),
+    ({"minimised": True}, "hidden", "minimised"),
+    ({"size": (0, 240)}, "hidden", r"no usable area \(0 x 240 px"),       # the collapsed pane
+    ({"size": (1, 240)}, "hidden", r"no usable area \(1 x 240 px.*Below 2 px"),
+    ({"size": (320, 1)}, "hidden", r"no usable area \(320 x 1 px"),
+]
+
+
 class TestStateMachine:
-    """Review P1-1. The states are derived from Qt on every call; no Python flag says
-    "shown" (the parent of an embedded container shows and hides it without asking)."""
+    """Review rounds 1 and 2. The state is derived from Qt on every call; no Python flag
+    says "shown" (the parent of an embedded container shows, hides, resizes and
+    collapses it without asking)."""
 
-    @pytest.mark.parametrize(("scene_graph", "visible", "exposed", "spent", "expected"), [
-        (False, False, False, False, "new"),
-        (False, True, False, False, "starting"),    # shown, first expose pending
-        (False, True, True, False, "starting"),     # no scene graph: never a frame
-        (True, True, True, False, "live"),
-        (True, False, True, False, "hidden"),       # right after hide(): Qt still says exposed
-        (True, True, False, False, "hidden"),       # minimised, or shown again a moment ago
-        (True, False, False, False, "hidden"),
-        (False, False, False, True, "spent"),
-        (False, True, False, True, "spent"),
-        (True, True, True, True, "spent"),
-    ])
-    def test_the_state_is_a_function_of_qts_predicates(
-            self, host, scene_graph: bool, visible: bool, exposed: bool, spent: bool,
-            expected: str) -> None:
-        _force(host, scene_graph=scene_graph, visible=visible, exposed=exposed, spent=spent)
-        assert host.state.value == expected
-        assert host.is_closed is False and host.is_visible() is visible
+    def test_the_host_reads_its_facts_from_qt(self, host) -> None:
+        """What the real window says here, under the offscreen platform — the plumbing
+        from Qt into ``WindowFacts``. (No fact is a Python flag: each changes because Qt
+        changed.)"""
+        born = host._facts()  # noqa: SLF001
+        assert (born.surface_created, born.visible, born.minimised) == (False, False, False)
+        assert (born.width, born.height, born.root_width, born.root_height) == (320, 240, 320.0, 240.0)
+        assert host.state.value == "new" and host.is_visible() is False
+        host.show()
+        assert host._facts().surface_created is True, "Qt created the platform window"  # noqa: SLF001
+        assert host.wait_ready(5.0) and host.state.value == "live"
+        shown = host._facts()  # noqa: SLF001
+        assert (shown.visible, shown.scene_graph, shown.exposed) == (True, True, True)
+        assert host.is_visible() is True
+        host._view.resize(200, 100)  # noqa: SLF001
+        assert host.wait_ready(5.0)
+        resized = host._facts()  # noqa: SLF001
+        assert (resized.width, resized.height, resized.root_width, resized.root_height) == (
+            200, 100, 200.0, 100.0)
+        host.hide()
+        assert host._facts().visible is False and host.state.value == "hidden"  # noqa: SLF001
 
-    def test_a_shown_window_without_a_scene_graph_refuses_a_frame(self, host) -> None:
-        """THE guard. ``show()`` then ``grab()`` before the first expose returned a good
-        image and killed the process (5 of 5 on a GPU, 3 of 3 on WARP, 4 of 4 embedded).
-        The old guard asked ``isVisible()`` — which is True there."""
+    def test_shown_and_hidden_again_before_any_event_is_not_new(self, host) -> None:
+        """Review round 2, P1-A — the red CI job. ``show(); hide()`` with no event in
+        between: no scene graph, not visible. The first state machine called that
+        ``new`` and took the offscreen frame; on xcb the process segfaulted in the
+        next event-loop pass. The platform window EXISTS — the host is hidden, has no
+        offscreen frame, and is not spent by the refusal."""
         from open_garden_planner.ui.view3d.quick3d.host import HostStateError
 
-        _force(host, scene_graph=False, visible=True, exposed=False)
-        for call in (lambda: host.grab("starting"), lambda: host.pick(1.0, 1.0),
-                     lambda: host.project(0.0, 0.0, 0.0)):
-            with pytest.raises(HostStateError, match=r"would kill the process.*wait_ready\(\)"):
-                call()
-        assert host.grabs == 0 and host.state.value == "starting"  # and it did not become spent
+        host.show()
+        host.hide()
+        assert host._facts().surface_created is True  # noqa: SLF001
+        assert host.state.value == "hidden"
+        host.graphics_api = lambda: "Direct3D11"  # past the "no 3D here" check, to the state's
+        with pytest.raises(HostStateError, match="not visible"):
+            host.grab("after show and hide")
+        assert host._spent is False and host.grabs == 0  # noqa: SLF001
+        assert host.wait_ready(5.0) is False
 
-    def test_a_hidden_host_refuses_a_frame(self, host) -> None:
+    def test_only_a_window_that_never_had_a_platform_window_is_new(self, host) -> None:
+        _force(host, surface_created=False, visible=False, exposed=False, scene_graph=False)
+        assert host.state.value == "new"
+        _force(host, surface_created=True, visible=False, exposed=False, scene_graph=False)
+        assert host.state.value == "hidden"
+
+    @pytest.mark.parametrize(("changes", "state", "_words"), NO_FRAME)
+    def test_the_state_follows_the_facts(self, host, changes: dict[str, Any], state: str,
+                                         _words: str) -> None:
+        _force(host)
+        assert host.state.value == "live"
+        _force(host, **changes)
+        assert host.state.value == state
+        assert host.is_closed is False and host.is_visible() is changes.get("visible", True)
+        _force(host, spent=True, **changes)
+        assert host.state.value == "spent"
+
+    @pytest.mark.parametrize(("changes", "_state", "words"), NO_FRAME)
+    def test_no_frame_no_pick_no_projection_unless_live(self, host, changes: dict[str, Any],
+                                                        _state: str, words: str) -> None:
+        """THE guard, in every state that is not live. Shown and grabbed before the first
+        expose: a good image and a dead process. A collapsed pane (review round 2,
+        P1-B): Qt calls the window visible and exposed, the grab is blank, the pick
+        bogus, the projection (0, 0). One pixel wide: no 3D is drawn. Resized a moment
+        ago: the scene still has the old size."""
         from open_garden_planner.ui.view3d.quick3d.host import HostStateError
 
-        _force(host, scene_graph=True, visible=False, exposed=False)
-        for call in (lambda: host.grab("hidden"), lambda: host.pick(1.0, 1.0),
+        _force(host, **changes)
+        for call in (lambda: host.grab("no"), lambda: host.pick(1.0, 1.0),
                      lambda: host.project(0.0, 0.0, 0.0)):
-            with pytest.raises(HostStateError, match="not exposed"):
+            with pytest.raises(HostStateError, match=words):
                 call()
+        assert host.grabs == 0 and host._spent is False, "a refusal must not spend the host"  # noqa: SLF001
 
     def test_a_spent_host_refuses_everything_that_would_kill_it(self, host) -> None:
         """One hidden grab, then ``show()`` — what the old message recommended — killed
         the process. A spent host says: build a new one."""
         from open_garden_planner.ui.view3d.quick3d.host import HostStateError
 
-        _force(host, scene_graph=False, visible=False, exposed=False, spent=True)
+        _force(host, spent=True, visible=False, exposed=False, scene_graph=False)
         for call in (host.show, host.container, lambda: host.grab("again"),
                      lambda: host.pick(1.0, 1.0)):
             with pytest.raises(HostStateError, match="Build a new host") as caught:
@@ -570,22 +634,25 @@ class TestStateMachine:
         parent = QWidget()
         qtbot.addWidget(parent)
         host.container(parent)
-        _force(host, scene_graph=False, visible=False, exposed=False)
+        _force(host, surface_created=False, visible=False, exposed=False, scene_graph=False)
         with pytest.raises(HostStateError, match="embedded host has no offscreen frame"):
             host.grab("embedded")
         assert host.state.value == "new", "the refusal must not spend the host"
 
-    def test_wait_ready_reports_instead_of_hanging(self, host) -> None:
-        assert host.wait_ready(5.0) is False, "a host nobody showed is not on its way"
-        host.show()
-        assert host.wait_ready(5.0) is True and host.state.value == "live"
-        host.hide()
-        assert host.state.value == "hidden", "hidden at once, whatever Qt still calls exposed"
-        assert host.wait_ready(5.0) is False
+    def test_a_frame_that_is_not_the_windows_size_is_refused(self, host) -> None:
+        """The last line of defence behind the state: an image that does not have the
+        window's size is not the current scene, whatever the state said."""
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError
 
-    def test_wait_ready_times_out_on_a_window_that_never_starts(self, host) -> None:
-        _force(host, scene_graph=False, visible=True, exposed=False)
-        assert host.wait_ready(0.15) is False and host.state.value == "starting"
+        host.show()
+        assert host.wait_ready(5.0)
+        _force(host)  # live, 320 x 240 — and "renders 3D", so that grab() gets as far as Qt
+        assert host.grab("right size").width() == round(320 * host.device_pixel_ratio())
+        assert host.grabs == 1
+        _force(host, size=(100, 80), root_width=100.0, root_height=80.0)  # Qt's window is 320 x 240
+        with pytest.raises(EngineError, match="for a 100 x 80 window.*not the current scene"):
+            host.grab("wrong size")
+        assert host.grabs == 1
 
     def test_request_frame_is_harmless_in_every_open_state(self, host) -> None:
         host.request_frame()
@@ -615,6 +682,92 @@ class TestStateMachine:
         assert host.wait_ready(5.0)
         host.hide()
         assert not container.isVisible()
+
+
+class TestWaitReady:
+    """``wait_ready()`` is True only when a ``grab()`` right after it is truthful; it
+    waits only for a host that is on its way, looks again in every pass, and blocks for
+    events instead of spinning (review round 2, P2-5)."""
+
+    def test_it_reports_instead_of_hanging(self, host) -> None:
+        assert host.wait_ready(5.0) is False, "a host nobody showed is not on its way"
+        host.show()
+        assert host.wait_ready(5.0) is True and host.state.value == "live"
+        host.hide()
+        assert host.state.value == "hidden", "hidden at once, whatever Qt still calls exposed"
+        assert host.wait_ready(5.0) is False
+
+    @pytest.mark.parametrize("changes", [
+        {"visible": False}, {"minimised": True}, {"size": (0, 240)}, {"size": (1, 240)},
+        {"surface_created": False, "visible": False},
+    ], ids=["hidden", "minimised", "collapsed", "one pixel", "new"])
+    def test_it_does_not_wait_for_a_host_that_is_not_on_its_way(self, host,
+                                                               changes: dict[str, Any]) -> None:
+        _force(host, **changes)
+        started = time.perf_counter()
+        assert host.wait_ready(5.0) is False
+        assert time.perf_counter() - started < 1.0
+
+    def test_it_times_out_without_spinning(self, host) -> None:
+        """A window that never starts: False when the time is up — after a few dozen
+        looks at Qt, not after the tens of thousands a busy loop takes."""
+        forced, looks = _facts(scene_graph=False, exposed=False), [0]
+
+        def facts() -> Any:
+            looks[0] += 1
+            return forced
+
+        host._facts = facts  # noqa: SLF001
+        started = time.perf_counter()
+        assert host.wait_ready(0.3) is False and host.state.value == "starting"
+        elapsed = time.perf_counter() - started
+        assert 0.28 <= elapsed < 2.0
+        assert looks[0] < 200, f"{looks[0]} looks at Qt in {elapsed:.2f} s: a busy loop"
+
+    @pytest.mark.parametrize(("later", "expected"), [
+        ({}, True),                              # the first expose arrived: live
+        ({"visible": False}, False),             # hidden during the wait
+        ({"minimised": True}, False),
+        ({"size": (0, 240)}, False),             # the pane was collapsed during the wait
+    ], ids=["becomes live", "hidden meanwhile", "minimised meanwhile", "collapsed meanwhile"])
+    def test_it_looks_again_in_every_pass(self, host, later: dict[str, Any],
+                                          expected: bool) -> None:
+        """It looked at visibility once and then span to its timeout (3.0 of 3.0 s)."""
+        from PyQt6.QtCore import QTimer
+
+        _force(host, scene_graph=False, exposed=False)
+        QTimer.singleShot(40, lambda: _force(host, **later))
+        started = time.perf_counter()
+        assert host.wait_ready(5.0) is expected
+        assert time.perf_counter() - started < 1.5
+
+    def test_it_comes_back_when_the_host_is_closed_or_destroyed_during_the_wait(
+            self, qtbot) -> None:  # noqa: ARG002
+        from PyQt6 import sip
+        from PyQt6.QtCore import QTimer
+
+        for kill in (lambda made: made.close(), lambda made: sip.delete(made._view)):  # noqa: SLF001
+            made = _new_host()
+            forced = _facts(scene_graph=False, exposed=False)
+            real = made._facts  # noqa: SLF001
+            made._facts = lambda forced=forced, real=real: forced if real() is not None else None  # noqa: SLF001
+            QTimer.singleShot(40, lambda made=made, kill=kill: kill(made))
+            started = time.perf_counter()
+            assert made.wait_ready(5.0) is False
+            assert time.perf_counter() - started < 1.5 and made.is_closed
+            made.close()
+
+    def test_it_gives_up_as_soon_as_qt_reports_no_graphics_device(self, host) -> None:
+        from PyQt6.QtCore import QTimer
+        from PyQt6.QtQuick import QQuickWindow
+
+        _force(host, scene_graph=False, exposed=False)
+        QTimer.singleShot(40, lambda: host._view.sceneGraphError.emit(  # noqa: SLF001
+            QQuickWindow.SceneGraphError.ContextNotAvailable, "no device today"))
+        started = time.perf_counter()
+        assert host.wait_ready(5.0) is False
+        assert time.perf_counter() - started < 1.5
+        assert host.health().scene_graph_error == "no device today"
 
 
 class TestABackendWithout3d:
@@ -674,6 +827,37 @@ class TestABackendWithout3d:
         assert not QLoggingCategory("qt.rhi.general").isDebugEnabled(), "the debug rule stayed on"
         captured = capsys.readouterr()
         assert captured.out == "" and captured.err == ""
+
+    def test_render_records_refuses_beside_a_shown_quick_window(self, host) -> None:
+        """Review round 2, P1-C. ``render_records`` records Qt's messages with a
+        process-wide Python handler; a SHOWN Qt Quick window renders on a thread of its
+        own, and the two deadlock the process. It refuses — before it installs
+        anything."""
+        from PyQt6.QtCore import qInstallMessageHandler
+
+        from open_garden_planner.ui.view3d.quick3d.host import shown_quick_windows
+        from open_garden_planner.ui.view3d.quick3d.offscreen import RenderError, render_records
+
+        def mine(*_args: object) -> None:
+            return None
+
+        def render() -> None:
+            render_records({"a": _record("a")}, shot=TopDownShot((0.0, 0.0), 0.5), qml_dir=_qml_dir())
+
+        assert shown_quick_windows() == 0
+        host.show()
+        assert host.wait_ready(5.0) and shown_quick_windows() == 1
+        before = qInstallMessageHandler(mine)
+        try:
+            with pytest.raises(RenderError, match=r"1 Qt Quick window\(s\) are shown.*deadlocks"):
+                render()
+            host.hide()
+            assert shown_quick_windows() == 0
+            with pytest.raises(RenderError, match="Software backend"):  # past the refusal now
+                render()
+        finally:
+            after = qInstallMessageHandler(before)
+        assert after is mine
 
     def test_render_records_reports_to_a_log_that_is_passed(self, qtbot) -> None:  # noqa: ARG002
         from open_garden_planner.ui.view3d.quick3d.offscreen import RenderError, render_records
@@ -747,7 +931,7 @@ class TestClosedAndDestroyedHosts:
         lifecycle._register_calls()  # noqa: SLF001
         public = {name for name in dir(Quick3DHost)
                   if not name.startswith("_") and callable(getattr(Quick3DHost, name))}
-        assert set(lifecycle.HOST_CALLS) == public - {"is_visible", "engine_errors"}
+        assert set(lifecycle.HOST_CALLS) == public - {"is_visible", "health"}
 
     def test_close_then_anything(self, qtbot) -> None:
         made, _sink, _sync, parent, part = self._embedded(qtbot)
@@ -869,60 +1053,315 @@ class TestClosedAndDestroyedHosts:
         made.close()  # a second close is a no-op, not an error on a deleted view
 
 
-class TestLiveErrors:
-    """Review P2-13: a seam for errors in a view that is SHOWN (nobody to raise to)."""
+def _failing_destroy_copy(tmp_path: Path) -> Path:
+    """The scene with a switch: ``failDestroy`` makes ``destroyPart()`` throw — an engine
+    that REFUSES to destroy a Model, on demand."""
+    return _broken_copy(
+        tmp_path, "    function destroyPart(part) {\n",
+        "    property bool failDestroy: false\n"
+        "    function destroyPart(part) {\n"
+        "        if (failDestroy)\n"
+        "            throw new Error(\"injected: the engine refuses to destroy this Model\")\n")
 
-    def test_without_a_watch_there_is_no_answer(self, host) -> None:
+
+class TestTeardownIsExceptionSafe:
+    """Review round 2, P2-3. With a ``destroyPart`` that fails, every ``reset()`` forgot
+    one more part and the FOURTH "succeeded" with three Models left in the engine and
+    the host's books empty. Now a Model leaves the books only when the engine confirms
+    it; teardown finishes whatever fails; and it can be tried again."""
+
+    @pytest.fixture()
+    def refusing(self, qtbot, tmp_path: Path) -> Iterator[Any]:  # noqa: ARG002
+        from open_garden_planner.ui.view3d.quick3d.host import Quick3DHost
+
+        made = Quick3DHost((64, 48), qml_dir=_failing_destroy_copy(tmp_path))
+        yield made
+        if not made.is_closed:
+            assert made._root.setProperty("failDestroy", False)  # noqa: SLF001
+        made.close()
+
+    @staticmethod
+    def _refuse(made: Any, on: bool) -> None:
+        assert made._root.setProperty("failDestroy", on)  # noqa: SLF001
+
+    def test_reset_never_succeeds_while_the_engine_keeps_its_models(self, refusing) -> None:
+        from open_garden_planner.core.scene3d import SyncStateError
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError
+
+        sink = Quick3DSink(refusing)
+        sync = SceneSync(sink)
+        records = {name: _record(name, 200.0 * k) for k, name in enumerate("abc")}
+        sync.apply(records, sun=SunState(40.0, 180.0), ground=GroundSpec(500.0, 500.0))
+        self._refuse(refusing, True)
+        for attempt in range(1, 6):  # the fourth used to "succeed"
+            with pytest.raises(EngineError, match=r"clear\(\): 3 of 5 steps failed.*still holds 3 Model"):
+                sync.reset()
+            assert sync.poisoned, f"reset() {attempt} must not report success"
+            assert refusing.part_count() == 3 == len(refusing.engine_parts()), (
+                f"after reset() {attempt}: books and engine must agree")
+        # the teardown FINISHED what it could: the sun is off and the ground is gone
+        assert refusing.scene_property("sunUp") is False
+        assert refusing.scene_property("groundVisible") is False
+        assert sink.item_ids() == () and not sink.in_transaction
+        with pytest.raises(SyncStateError):
+            sync.apply(records)
+        self._refuse(refusing, False)  # the engine recovers: the next reset() goes through
+        sync.reset()
+        assert not sync.poisoned and refusing.part_count() == 0 == len(refusing.engine_parts())
+        sync.apply(records)
+        assert sink.state() == sync.expected_state()
+        assert sorted(p.item_id for p in refusing.engine_parts()) == ["a", "b", "c"]
+
+    def test_a_sink_whose_clear_failed_builds_nothing_on_the_leftovers(self, refusing) -> None:
+        """Its books are empty and the engine is not: ``begin()`` refuses until a
+        ``clear()`` went through."""
+        from open_garden_planner.core.scene3d import SinkProtocolError
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError
+
+        sink = Quick3DSink(refusing)
+        SceneSync(sink).apply({"a": _record("a")})
+        self._refuse(refusing, True)
+        with pytest.raises(EngineError):
+            sink.clear()
+        assert sink.item_ids() == () and refusing.part_count() == 1
+        with pytest.raises(SinkProtocolError, match=r"the last clear\(\) failed"):
+            sink.begin()
+        with pytest.raises(SinkProtocolError, match="already holds 1 Model"):
+            Quick3DSink(refusing)  # and nobody else gets the scene either
+        self._refuse(refusing, False)
+        sink.clear()
+        sink.begin()
+        sink.commit()
+        assert refusing.part_count() == 0
+
+    def test_a_model_the_engine_did_not_destroy_stays_a_live_part(self, refusing) -> None:
+        from open_garden_planner.core.scene3d import engine_pose
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError
+
+        pose = engine_pose(Transform(east_cm=70.0))
+        buffers = engine_buffers(prism_mesh([SQUARE], 10.0))
+        handle = refusing.create_part(PartSpec("a", 0, "vc", buffers, True), pose, RED)
+        self._refuse(refusing, True)
+        with pytest.raises(EngineError, match=r"destroyPart\(\) did not retire the Model"):
+            refusing.destroy_part(handle)
+        assert handle.model is not None and handle.geometry is not None, "the buffers it draws stay"
+        refusing.pose_part(handle, pose)  # still a live part of this host
+        assert refusing.part_count() == 1 == len(refusing.engine_parts())
+        assert any("injected" in line for line in refusing.health().qml_warnings)
+        self._refuse(refusing, False)
+        refusing.destroy_part(handle)
+        assert refusing.part_count() == 0 and handle.model is None
+
+    def test_a_scene_without_the_destroy_function_is_an_error_not_a_forgotten_model(
+            self, qtbot, tmp_path: Path) -> None:  # noqa: ARG002
+        from open_garden_planner.core.scene3d import engine_pose
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError, Quick3DHost
+
+        made = Quick3DHost((64, 48), qml_dir=_broken_copy(
+            tmp_path, "    function destroyPart(part) {", "    function destroyPartRenamed(part) {"))
+        try:
+            buffers = engine_buffers(prism_mesh([SQUARE], 10.0))
+            handle = made.create_part(PartSpec("a", 0, "vc", buffers, True),
+                                      engine_pose(Transform()), RED)
+            with pytest.raises(EngineError, match=r"no function destroyPart\(\)"):
+                made.destroy_part(handle)
+            with pytest.raises(EngineError, match=r"clear\(\): 1 of 3 steps failed"):
+                made.clear()
+            assert made.part_count() == 1 == len(made.engine_parts())
+        finally:
+            made.close()
+        assert made.is_closed, "close() goes through: the Model dies with the view"
+
+    def test_close_goes_through_when_a_model_cannot_be_destroyed(
+            self, refusing, caplog: pytest.LogCaptureFixture) -> None:
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+
+        SceneSync(Quick3DSink(refusing)).apply({"a": _record("a"), "b": _record("b", 200.0)})
+        self._refuse(refusing, True)
+        with caplog.at_level(logging.WARNING, logger=host_module.__name__):
+            refusing.close()
+        assert refusing.is_closed and refusing.state.value == "closed"
+        assert sum("could not be destroyed" in r.getMessage() for r in caplog.records) == 2
+        refusing.close()  # and again: a no-op
+
+    def test_a_close_that_raised_can_be_called_again(self, qtbot) -> None:  # noqa: ARG002
+        """``close()`` used to set its flag first: a failure half way left a host that
+        called itself closed with its window still there. The flag is set last."""
+        made = _new_host()
+        SceneSync(Quick3DSink(made)).apply({"a": _record("a")})
+        view = made._view  # noqa: SLF001
+
+        def refuse() -> None:
+            raise RuntimeError("injected: hide() failed")
+
+        view.hide = refuse
+        with pytest.raises(RuntimeError, match="injected"):
+            made.close()
+        assert made.is_closed is False and made.state.value != "closed"
+        assert made.part_count() == 0, "the Models went before the window was touched"
+        del view.hide
+        made.close()
+        assert made.is_closed
+
+
+class TestOneSinkPerScene:
+    """Review round 2, P2-4: ``attach()`` accepted a host that already held Models — two
+    owners of one scene, and a teardown that destroys the other's Models. Refused."""
+
+    def test_a_sink_refuses_a_scene_that_already_holds_models(self, host, qtbot) -> None:  # noqa: ARG002
+        from open_garden_planner.core.scene3d import SinkProtocolError
+
+        first = Quick3DSink(host)
+        SceneSync(first).apply({"a": _record("a")})
+        with pytest.raises(SinkProtocolError, match=r"Quick3DSink\(\): .* already holds 1 Model"):
+            Quick3DSink(host)
+        other = _new_host()
+        try:
+            second = Quick3DSink(other)
+            with pytest.raises(SinkProtocolError, match=r"attach\(\): .* already holds 1 Model"):
+                second.attach(host)
+            assert second.scene is other, "a refused attach changes nothing"
+            first.clear()
+            second.attach(host)  # empty now: free to take
+            assert second.scene is host
+        finally:
+            other.close()
+
+    def test_a_closed_host_cannot_be_given_to_a_sink(self, qtbot) -> None:  # noqa: ARG002
         from open_garden_planner.ui.view3d.quick3d.host import HostStateError
 
-        with pytest.raises(HostStateError, match=r"watch_messages\(\) first"):
-            host.engine_errors()
+        made = _new_host()
+        made.close()
+        with pytest.raises(HostStateError, match="closed"):
+            Quick3DSink(made)
 
-    def test_a_shader_error_reaches_the_log_and_the_owner(
-            self, host, caplog: pytest.LogCaptureFixture) -> None:
-        from PyQt6.QtCore import qInstallMessageHandler, qWarning
 
-        logger = logging.getLogger("ogp.tests.quick3d.host.watch")
+class TestSceneFunctionsThatFail:
+    """A QML function that THROWS returns nothing to Python — silently; the QML engine
+    only warns. "No hit", "(0, 0)" and "no parts" must never mean "could not look"."""
 
-        def silencer(*_args: object) -> None:  # keeps the test's stderr clean
-            return None
+    @pytest.mark.parametrize(("function", "call"), [
+        ("pickAt(x, y)", lambda h: h.pick(5.0, 5.0)),
+        ("projectToView(x, y, z)", lambda h: h.project(0.0, 0.0, 0.0)),
+        ("listParts()", lambda h: h.engine_parts()),
+    ], ids=["pick", "project", "engine_parts"])
+    def test_a_throwing_function_is_an_engine_error(self, qtbot, tmp_path: Path, function: str,  # noqa: ARG002
+                                                    call: Any) -> None:
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError, Quick3DHost
 
-        quiet = qInstallMessageHandler(silencer)
+        name = function.split("(")[0]
+        made = Quick3DHost((64, 48), qml_dir=_broken_copy(
+            tmp_path, f"    function {function} {{\n",
+            f"    function {function} {{\n        throw new Error(\"injected: {name} broke\")\n"))
         try:
-            watch = host.watch_messages(logger)
-            assert host.watch_messages(logger) is watch, "one watch per host"
-            assert host.engine_errors() == []
-            with caplog.at_level(logging.DEBUG, logger=logger.name):
-                qWarning("QSpirvCompiler: Failed to parse shader")
-                qWarning("an ordinary Qt warning")
-            assert host.engine_errors() == ["warning: QSpirvCompiler: Failed to parse shader"]
-            assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
-                (logging.ERROR, "Qt: warning: QSpirvCompiler: Failed to parse shader"),
-                (logging.WARNING, "Qt: warning: an ordinary Qt warning")]
-            host.close()
-            qWarning("QSpirvCompiler: after close")   # nobody listens any more
-            assert len(host.engine_errors()) == 1, "readable after close(), and no longer recording"
+            _force(made, size=(64, 48), root_width=64.0, root_height=48.0)
+            with pytest.raises(EngineError, match=rf"{name}\(\) returned nothing — it failed"):
+                call(made)
+            assert any(f"injected: {name} broke" in line for line in made.health().qml_warnings)
         finally:
-            restored = qInstallMessageHandler(quiet)
-        assert restored is silencer, "close() must put the handler back that was there before"
+            made.close()
 
-    def test_the_default_logger_is_the_apps(self, host, caplog: pytest.LogCaptureFixture) -> None:
-        """No logger passed: the host's module logger — a child of the root logger that
-        ``core.logging_config`` gives the rotating ``app.log`` handler."""
-        from PyQt6.QtCore import qInstallMessageHandler, qWarning
+    def test_a_missing_function_is_an_engine_error(self, qtbot, tmp_path: Path) -> None:  # noqa: ARG002
+        from open_garden_planner.ui.view3d.quick3d.host import EngineError, Quick3DHost
+
+        made = Quick3DHost((64, 48), qml_dir=_broken_copy(
+            tmp_path, "    function listParts() {", "    function listPartsRenamed() {"))
+        try:
+            with pytest.raises(EngineError, match=r"no function listParts\(\)"):
+                made.engine_parts()
+        finally:
+            made.close()
+
+
+class TestHealth:
+    """Review round 2, P1-C: what a SHOWN host learns about itself — on the GUI thread,
+    from Qt's own signals. There is no Qt message recorder for a shown host: a Python
+    handler beside Qt's render thread deadlocks the process (the render tier's control:
+    ``test_a_python_message_handler_beside_a_shown_window_deadlocks``)."""
+
+    def test_a_healthy_host(self, host, qtbot) -> None:
+        from open_garden_planner.ui.view3d.quick3d.host import HostHealth
+
+        assert host.health() == HostHealth(0, (), 0, None) and host.health().ok
+        host.show()
+        assert host.wait_ready(5.0)
+        qtbot.waitUntil(lambda: host.health().frames_presented >= 1, timeout=5000)
+        assert host.health().ok and host.slot_calls_off_the_gui_thread == 0
+        host.close()
+        assert host.health().frames_presented >= 1, "health() answers on a closed host"
+
+    def test_the_host_installs_no_qt_message_handler_and_offers_no_watch(self, host) -> None:
+        """Structural: the removed API stays removed, in the host and in its module."""
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+        from open_garden_planner.ui.view3d.quick3d import qt_messages
+
+        source = Path(host_module.__file__).read_text(encoding="utf-8")
+        assert "qInstallMessageHandler" not in source and "import qt_messages" not in source
+        assert not hasattr(host, "watch_messages") and not hasattr(host, "engine_errors")
+        assert not hasattr(qt_messages, "logging_sink")
+
+    def test_qt_sees_a_slot_on_scene_graph_error(self, host) -> None:
+        """With NOTHING connected Qt answers a failed graphics initialisation with a modal
+        error box and then aborts the process (the render tier's control). Qt decides by
+        asking whether the signal is connected — this asks the same question."""
+        view = host._view  # noqa: SLF001
+        assert view.receivers(view.sceneGraphError) >= 1
+        assert view.receivers(view.frameSwapped) >= 1
+
+    def test_a_graphics_device_that_cannot_be_created_is_reported_and_logged(
+            self, host, qtbot, caplog: pytest.LogCaptureFixture) -> None:
+        from PyQt6.QtQuick import QQuickWindow
 
         from open_garden_planner.ui.view3d.quick3d import host as host_module
 
-        quiet = qInstallMessageHandler(lambda *_args: None)
+        with caplog.at_level(logging.ERROR, logger=host_module.__name__):
+            host._view.sceneGraphError.emit(  # noqa: SLF001
+                QQuickWindow.SceneGraphError.ContextNotAvailable,
+                "Failed to initialize graphics backend for D3D11.")
+            assert host.health().scene_graph_error is None, "queued: delivered by the event loop"
+            qtbot.waitUntil(lambda: host.health().scene_graph_error is not None, timeout=5000)
+        report = host.health()
+        assert report.scene_graph_error == "Failed to initialize graphics backend for D3D11."
+        assert report.ok is False
+        assert [(r.levelno, r.name) for r in caplog.records] == [(logging.ERROR, host_module.__name__)]
+        assert "graphics device could not be created" in caplog.records[0].getMessage()
+        assert host_module.__name__.startswith("open_garden_planner."), "a child of the app's logger"
+
+    def test_a_qml_warning_is_reported_and_logged(self, qtbot, tmp_path: Path,  # noqa: ARG002
+                                                  caplog: pytest.LogCaptureFixture) -> None:
+        """A binding that fails at run time raises nothing anywhere; the QML engine's
+        ``warnings`` signal carries it — file and line included."""
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+
+        marker = "    property real windTime: 0\n"
+        broken = _broken_copy(tmp_path, marker, marker + "    property real probe: nothingHere.value\n")
+        with caplog.at_level(logging.WARNING, logger=host_module.__name__):
+            made = host_module.Quick3DHost((64, 48), qml_dir=broken)
         try:
-            host.watch_messages()
-            with caplog.at_level(logging.WARNING, logger=host_module.__name__):
-                qWarning("Failed to compile fragment shader")
-            host.close()
+            report = made.health()
+            assert report.ok is False and report.qml_warning_count == len(report.qml_warnings) >= 1
+            assert re.search(r"Garden\.qml:\d+.*nothingHere", report.qml_warnings[0])
+            assert any(r.levelno == logging.WARNING and "nothingHere" in r.getMessage()
+                       for r in caplog.records)
         finally:
-            qInstallMessageHandler(quiet)
-        assert [r.name for r in caplog.records] == [host_module.__name__]
-        assert host_module.__name__.startswith("open_garden_planner.")
+            made.close()
+
+    def test_a_flood_of_qml_warnings_is_counted_not_kept(self, host) -> None:
+        from PyQt6.QtQml import QQmlError
+
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+
+        def error(k: int) -> QQmlError:
+            made = QQmlError()
+            made.setDescription(f"injected warning {k}")
+            return made
+
+        engine = host._view.engine()  # noqa: SLF001
+        engine.warnings.emit([error(k) for k in range(host_module._KEEP_WARNINGS + 25)])  # noqa: SLF001
+        report = host.health()
+        assert report.qml_warning_count == host_module._KEEP_WARNINGS + 25  # noqa: SLF001
+        assert len(report.qml_warnings) == host_module._KEEP_WARNINGS  # noqa: SLF001
+        assert "injected warning 0" in report.qml_warnings[0]
 
 
 class TestGeometry:
@@ -970,7 +1409,7 @@ def test_a_broken_scene_file_fails_the_tier_instead_of_skipping_it(tmp_path: Pat
     Now it must FAIL, and skip nothing."""
     broken = _broken_copy(tmp_path, "import QtQuick3D.Helpers\n",
                           "import QtQuick3D.Helpers\nimport NoSuchModule\n")
-    env = _child_env()
+    env = _child_env(tmp_path)
     env[QML_OVERRIDE] = str(broken)
     env.pop("CI", None)  # the canary's CI rule is not what is under test here
     this = Path(__file__).resolve()

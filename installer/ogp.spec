@@ -183,6 +183,7 @@ a = Analysis(
         "open_garden_planner.ui.view3d.quick3d.adapter",
         "open_garden_planner.ui.view3d.quick3d.geometry",
         "open_garden_planner.ui.view3d.quick3d.host",
+        "open_garden_planner.ui.view3d.quick3d.lifecycle",
         "open_garden_planner.ui.view3d.quick3d.look",
         "open_garden_planner.ui.view3d.quick3d.materials",
         "open_garden_planner.ui.view3d.quick3d.offscreen",

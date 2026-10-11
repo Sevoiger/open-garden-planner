@@ -106,6 +106,10 @@ class FakeScene:
         self.sun = None
         self.ground = None
 
+    def part_count(self) -> int:
+        self._alive()  # asked of a dead engine it raises, like the host
+        return len(self.parts)
+
     def create_part(self, spec: PartSpec, pose: EnginePose,
                     tint_rgba: tuple[int, int, int, int]) -> FakePart:
         self._alive("create_part")
@@ -455,6 +459,39 @@ class TestStateAndTeardown:
         sink.clear()  # asks the engine again, and this time it is clean
         assert scene.parts == [] and scene.calls[-1] == ("clear",)
 
+    def test_nothing_is_built_on_an_engine_that_failed_to_clear(self) -> None:
+        """Review round 2, P2-3: after a failed ``clear()`` the sink's books are empty and
+        the engine still holds Models. A sink that went on would draw the new scene ON
+        TOP of the leftovers while ``state()`` says everything is as told. ``begin()``
+        refuses until a ``clear()`` went through — or a fresh, empty scene is attached."""
+        scene = FakeScene(fail_on_clear=True)
+        sink = Quick3DSink(scene)
+        sink.begin()
+        sink.add("a", (_prism(),), Transform(), RED)
+        sink.commit()
+        for _attempt in range(3):
+            with pytest.raises(RuntimeError, match="could not clear"):
+                sink.clear()
+            assert len(scene.parts) == 1, "the engine still holds it"
+            with pytest.raises(SinkProtocolError, match=r"the last clear\(\) failed"):
+                sink.begin()
+            assert not sink.in_transaction
+        scene.fail_on_clear = False
+        sink.clear()
+        sink.begin()
+        sink.add("a", (_prism(),), Transform(), RED)
+        sink.commit()
+        assert len(scene.parts) == 1
+
+        scene.fail_on_clear = True
+        with pytest.raises(RuntimeError):
+            sink.clear()
+        fresh = FakeScene()
+        sink.attach(fresh)  # the other way out: an empty scene of its own
+        sink.begin()
+        sink.commit()
+        assert fresh.calls[-1] == ("frame",)
+
     @pytest.mark.parametrize("in_transaction", [False, True])
     def test_clear_on_an_engine_that_is_gone_raises_nothing(self, in_transaction: bool) -> None:
         """The host was closed, or Qt destroyed its window with the main window: there is
@@ -512,6 +549,34 @@ class TestStateAndTeardown:
         sink.clear()
         sink.attach(other)
         assert sink.scene is other
+
+    def test_one_sink_per_scene(self) -> None:
+        """Review round 2, P2-4: ``attach()`` accepted a scene that already held Models.
+        The engine then drew both sinks' items, and the next ``clear()`` of either
+        destroyed the other's. A scene that holds Models has an owner: a second sink is
+        refused at construction and at ``attach()`` — refused, not cleared: clearing
+        would destroy what somebody else is showing."""
+        scene = FakeScene()
+        owner = Quick3DSink(scene)
+        owner.begin()
+        owner.add("a", (_prism(), _prism(5.0)), Transform(), RED)
+        owner.commit()
+        with pytest.raises(SinkProtocolError, match=r"Quick3DSink\(\): .*already holds 2 Model"):
+            Quick3DSink(scene)
+        other = Quick3DSink(FakeScene())
+        with pytest.raises(SinkProtocolError, match=r"attach\(\): .*already holds 2 Model"):
+            other.attach(scene)
+        assert other.scene is not scene and len(scene.parts) == 2, "refused, and nothing destroyed"
+        owner.clear()
+        other.attach(scene)  # empty: free to take
+        assert other.scene is scene
+
+    def test_a_sink_cannot_be_given_an_engine_that_is_gone(self) -> None:
+        with pytest.raises(EngineGone):
+            Quick3DSink(FakeScene(dead=True))
+        sink = Quick3DSink(FakeScene())
+        with pytest.raises(EngineGone):
+            sink.attach(FakeScene(dead=True))
 
     def test_clear_is_legal_at_any_time(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
         sink, scene = rig

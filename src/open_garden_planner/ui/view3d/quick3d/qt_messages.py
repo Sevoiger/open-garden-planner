@@ -23,6 +23,23 @@ text. Debug and info output is never an error, whatever it says — the self-tes
 switches Qt's ``qt.rhi.general`` debug output on, and the wording of a Qt debug
 line must not be able to fail a release.
 
+WHERE THE RECORDER MAY BE INSTALLED — and where it must not (ADR-048 addendum
+L1.2, review round 2). Qt's message handler is process-wide, and PyQt calls a
+Python handler under the GIL on WHICHEVER thread Qt emits the message. Qt Quick
+renders a shown window on a thread of its own (the threaded render loop;
+measured on Direct3D 11, GPU and WARP). If that thread emits a message while
+the GUI thread sits in a Python-called Qt function that waits for it —
+``hide()`` does — both wait forever: 5 of 5. So:
+
+- ``install`` only around rendering that happens ON THE CALLING THREAD: the
+  one-shot offscreen frame of a never-shown window (``offscreen.render_records``,
+  the self-test). Measured there: every message, the shader errors included,
+  arrives on the calling thread. ``QtMessages.other_threads`` counts what did
+  not — it must stay 0, and the render tier asserts it on every platform.
+- Never beside a shown Qt Quick window. ``render_records`` refuses to run next
+  to one; a shown host reports through ``Quick3DHost.health()`` instead, which
+  only uses what Qt delivers on the GUI thread.
+
 The classifier and the recorder are Qt-free (unit-tested without a GPU); only
 ``install`` / ``uninstall`` / ``graphics_info`` touch Qt — ``QtCore``, which is
 not an engine module.
@@ -31,7 +48,6 @@ not an engine module.
 from __future__ import annotations
 
 import contextlib
-import logging
 import re
 import sys
 import threading
@@ -39,14 +55,23 @@ from collections.abc import Callable, Iterable, Iterator
 from typing import Any, Final
 
 # A message matching one of these means the frame on screen is not the frame the
-# QML and its shaders describe: a shader that did not compile, a QML error.
+# QML and its shaders describe: a shader that did not compile, a pipeline that
+# could not be built, a QML error. Each alternative names a shader, a pipeline or
+# a QML location — on purpose: the recorder listens to the whole process, and a
+# bare "Failed to load" or "TypeError" also matched an image a widget could not
+# load and the JavaScript console of a web page (review round 2).
 _ERROR: Final = re.compile(
-    r"QSpirvCompiler|QShaderBaker|Failed to (compile|parse|link|build|load)"
+    r"QSpirvCompiler|QShaderBaker"
+    r"|Failed to (compile|parse|link|build|load|create)[^\n]*(shader|pipeline|program)"
     r"|shader[^\n]*(fail|error)|\.(frag|vert|glsl):\d+"
-    r"|\.qml:\d+(:\d+)?: |QQmlComponent|ReferenceError|TypeError"
+    r"|\.qml:\d+(:\d+)?: |QQmlComponent"
     r"|is not a type|non-existent property|Cannot assign",
     re.IGNORECASE,
 )
+
+# Not ours at any level: QtWebEngine forwards a web page's JavaScript console under
+# the category "js" (its text starts with "js: " where the category was lost).
+_FOREIGN_CATEGORIES: Final = frozenset({"js"})
 
 # Warnings of the MACHINE, each measured, each (category, pattern) exact. Checked
 # AFTER the error rules, so nothing here can hide a broken shader. Do not widen an
@@ -72,6 +97,8 @@ def classify(kind: str, text: str, category: str = "") -> str:
     ``kind`` is the Qt message type in lower case (``debug``, ``info``,
     ``warning``, ``critical``, ``fatal``).
     """
+    if category in _FOREIGN_CATEGORIES or text.startswith("js: "):
+        return "info"  # a web page's console: never a statement about the 3D frame
     if kind in ("critical", "fatal"):
         return "error"
     if kind != "warning":
@@ -85,13 +112,21 @@ def classify(kind: str, text: str, category: str = "") -> str:
 
 
 class QtMessages:
-    """Thread-safe record of Qt messages (Qt may call from its render thread)."""
+    """A record of Qt messages. Create it on the thread that renders (module docstring).
+
+    It takes a lock, so a message from another thread cannot corrupt it — but such a
+    message is exactly what must not happen where a recorder is installed:
+    ``other_threads`` counts them.
+    """
 
     def __init__(self, log: Callable[..., None] | None = None) -> None:
         self._log = log
         self._lock = threading.Lock()
+        self._thread = threading.get_ident()
         self.counts: dict[str, int] = dict.fromkeys(CLASSES, 0)
         self.kept: dict[str, list[str]] = {name: [] for name in CLASSES}
+        #: Messages delivered on a thread other than the one that created the recorder.
+        self.other_threads = 0
 
     def add(self, kind: str, text: str, category: str = "") -> None:
         """Record one message. Never raises: it runs inside Qt's message handler,
@@ -101,6 +136,8 @@ class QtMessages:
             cls = classify(kind, text, category)
             line = f"{kind}: {category + ': ' if category else ''}{text}"
             with self._lock:
+                if threading.get_ident() != self._thread:
+                    self.other_threads += 1
                 self.counts[cls] += 1
                 n = self.counts[cls]
                 if len(self.kept[cls]) < _KEEP:
@@ -135,22 +172,8 @@ class QtMessages:
         with self._lock:
             return {"counts": dict(self.counts), "errors": list(self.kept["error"]),
                     "warnings": list(self.kept["warning"][:30]),
-                    "environment": list(self.kept["environment"][:30])}
-
-
-def logging_sink(logger: logging.Logger) -> Callable[..., None]:
-    """A recorder callback that writes to a Python logger — for a LIVE view, whose
-    Qt warnings and errors belong in the app's log (``Quick3DHost.watch_messages``).
-
-    An ``error`` becomes ``logger.error``, a ``warning`` ``logger.warning``, an
-    ``environment`` message ``logger.info``. Safe from any thread (``logging`` is).
-    """
-    levels = {"error": logging.ERROR, "warning": logging.WARNING}
-
-    def log(_phase: str, *, level: str = "info", msg: str = "", **_fields: Any) -> None:
-        logger.log(levels.get(level, logging.INFO), "Qt: %s", msg)
-
-    return log
+                    "environment": list(self.kept["environment"][:30]),
+                    "other_threads": self.other_threads}
 
 
 def graphics_adapter(info_lines: Iterable[str]) -> str | None:
@@ -201,7 +224,10 @@ def graphics_info() -> Iterator[None]:
 def install(messages: QtMessages) -> Any:
     """Route every Qt message through ``messages``, then on to whoever listened
     before (a recorder further out, the app's own handler) — or to stderr when
-    nobody did. Returns that previous handler: give it to ``uninstall``."""
+    nobody did. Returns that previous handler: give it to ``uninstall``.
+
+    ONLY around rendering on the calling thread, never beside a shown Qt Quick
+    window (module docstring: it deadlocks against the render thread)."""
     from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
 
     names = {QtMsgType.QtDebugMsg: "debug", QtMsgType.QtInfoMsg: "info",

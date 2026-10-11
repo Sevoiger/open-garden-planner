@@ -205,10 +205,12 @@ imports the Qt3D bindings and checks the Qt runtime against the Qt3D wheel versi
 a real `AgentApiServer` and asserts it binds; and — since Phase 17 L1.2 — it loads the Qt
 Quick 3D scene and its shaders FROM THE BUNDLE, renders one hidden 160 × 120 frame and checks
 its pixels (no GPU needed). One watchdog bounds the whole command: after 300 s it writes the
-reason into the self-test log and exits with code 1. `release.yml` runs it against the built
-exe *after* merge; `frozen-selftest.yml` runs the smoke and the self-test on pull requests
-that touch the bundle's inputs, but it is path-filtered and not a required check; running it
-here is what makes it a merge gate for every change.
+reason into the self-test log and exits with code 1 — and a second process (the exe itself,
+`--selftest-supervisor`) terminates the first ten seconds later if it is still there, because
+that exit does not end a Windows process deadlocked inside Qt. `release.yml` runs it against
+the built exe *after* merge; `frozen-selftest.yml` runs the smoke and the self-test on pull
+requests that change shipped code, but it is path-filtered and not a required check; running
+it here is what makes it a merge gate for every change.
 
 **The invocation form is load-bearing.** Use `Start-Process -Wait -PassThru` (what
 `release.yml` uses): PowerShell does **not** wait on a GUI-subsystem process, so a plain call
@@ -273,14 +275,18 @@ step 3 inspects; and after any merge you must wait for the tag **transition** (s
 `release.yml` tests the frozen exe only after the merge. This workflow builds the bundle with
 the SAME recipe (`python installer/build_installer.py --skip-nsis` — no second build recipe)
 on `windows-latest` and runs both checks of section 2.8: the 8-second smoke (exit code 124
-passes) and `--selftest`, with the same step script as `release.yml` (a test pins the two
-texts as identical). Triggers: `workflow_dispatch`, and pull requests to `master` that touch
-`installer/**`, the entry points (`main.py`, `__main__.py`), `src/open_garden_planner/ui/view3d/**`,
-`pyproject.toml`, `uv.lock`, `pylock.toml`, either gate workflow or the shared setup action.
-`permissions: contents: read`. **Not a required check** — a required check that a path filter
-skips never reports — so it does not replace section 2.8. In both gate workflows the verdict
-is printed first and the exit code alone decides; the log follows inside `try`/`catch`; the
-self-test step has a 10-minute limit and the job 45. Unproven until its first run on a runner.
+passes) and `--selftest`, with the same step scripts as `release.yml` (a test pins the texts
+as identical). Triggers: `workflow_dispatch`, and pull requests to `master` that change
+shipped code — `src/open_garden_planner/**`, `installer/**`, `pyproject.toml`, `uv.lock`,
+`pylock.toml`, either gate workflow or the shared setup action. It costs one Windows build per
+push to such a pull request. `permissions: contents: read`. **Not a required check** — a
+required check that a path filter skips never reports — so it does not replace section 2.8.
+The smoke only proves that the process starts: it also passes a process blocked in an error
+dialog, and the pull-request bundle, built without `--version`, runs as v1.0.0 and shows its
+update bar. In both gate workflows the self-test step only decides — the exit code alone —
+and the NEXT step prints the self-test log: it runs `always()`, also after a step that was cut
+off by its time limit, reads inside `try`/`catch` and cannot fail. Limits: build step 30
+minutes, smoke 5, self-test 10, the job 45. Unproven until its first run on a runner.
 
 Those three are the only workflows in the repo. Another, `add-to-project.yml`, auto-added
 newly opened issues to project board 1 and was **deleted in #293** — it had failed on all

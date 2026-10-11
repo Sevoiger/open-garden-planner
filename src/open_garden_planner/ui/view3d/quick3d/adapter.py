@@ -24,6 +24,10 @@ What the sink guarantees:
   forgets. ``SceneSync.reset()`` calls it — the recovery after a sink failure —
   and the next ``apply`` re-sends everything; ``attach`` points the emptied
   sink at a fresh engine scene.
+- **One sink per engine scene.** A scene that already holds Models belongs to
+  somebody else: the constructor and ``attach`` refuse it
+  (``SinkProtocolError``). Two sinks on one scene would draw both sinks' items,
+  and the first ``clear()`` would destroy the other one's Models.
 - **One Model per mesh part, one geometry per Model lifetime.** ``add`` creates
   the Models, ``remove`` destroys them, ``replace_geometry`` destroys and
   creates. A geometry object is never handed to a second Model: the L0 spike
@@ -97,7 +101,12 @@ class EngineScene(Protocol):
 
     def clear(self) -> None:
         """Destroy every Model, no sun, no plan ground. A no-op when the engine is gone
-        — it must not raise then: a sync whose engine died still has to be reset."""
+        — it must not raise then: a sync whose engine died still has to be reset. A
+        LIVE engine that cannot destroy a Model finishes the rest, keeps that Model
+        in its own books and raises: the next ``clear()`` tries again."""
+
+    def part_count(self) -> int:
+        """How many Models the engine holds (raises when the engine is gone)."""
 
     def pose_part(self, handle: object, pose: EnginePose) -> None:
         """Move / turn the Model."""
@@ -127,11 +136,13 @@ class Quick3DSink:
     """An ``EngineSink`` that drives an ``EngineScene`` (module docstring)."""
 
     def __init__(self, scene: EngineScene) -> None:
+        _require_empty("Quick3DSink()", scene)
         self._scene = scene
         self._items: dict[str, _Held] = {}
         self._sun: SunState | None = None
         self._ground: GroundSpec | None = None
         self._open = False
+        self._engine_unknown = False  # the last clear() failed: see clear() and begin()
         self.transactions = 0
         #: Vertex/index buffers handed to the engine so far. A move or a recolour
         #: must leave it unchanged — the instrument behind that gate.
@@ -187,11 +198,16 @@ class Quick3DSink:
 
         Exception-safe and idempotent: the books are emptied in a ``finally``. An
         engine that is gone raises nothing; a LIVE engine that fails to clear
-        propagates its error (the sync stays poisoned), and the next ``clear()``
-        asks it again.
+        propagates its error (the sync stays poisoned) and still holds, in ITS
+        books, the Models it could not destroy — so the next ``clear()`` asks it
+        again, and it tries them again. Until one succeeds the sink refuses
+        ``begin()``: its books are empty and the engine is not, and nothing may be
+        built on that.
         """
+        self._engine_unknown = True
         try:
             self._scene.clear()  # the ONE owner of the Models destroys them all
+            self._engine_unknown = False
         finally:  # the books are empty whatever the engine said: a second clear() is clean
             self._items.clear()
             self._sun = None
@@ -199,18 +215,26 @@ class Quick3DSink:
             self._open = False
 
     def attach(self, scene: EngineScene) -> None:
-        """Point an EMPTY sink at another engine scene — a fresh host after the old one
-        died. ``SinkProtocolError`` while the sink still holds anything: ``clear()``
-        first (``SceneSync.reset()`` does)."""
+        """Point an EMPTY sink at another, EMPTY engine scene — a fresh host after the
+        old one died. ``SinkProtocolError`` while the sink still holds anything
+        (``clear()`` first — ``SceneSync.reset()`` does), and for a scene that
+        already holds Models (it has an owner; module docstring)."""
         if self._items or self._open or self._sun is not None or self._ground is not None:
             raise SinkProtocolError("attach(): the sink is not empty — clear() it first")
+        _require_empty("attach()", scene)
         self._scene = scene
+        self._engine_unknown = False
 
     # ── EngineSink ───────────────────────────────────────────────────────────
 
     def begin(self) -> None:
         if self._open:
             raise SinkProtocolError("begin(): a transaction is already open")
+        if self._engine_unknown:
+            raise SinkProtocolError(
+                "begin(): the last clear() failed, so the engine still holds Models these "
+                "books do not know — clear() again (SceneSync.reset() does), or attach() a "
+                "fresh host")
         self._open = True
 
     def commit(self) -> None:
@@ -302,6 +326,14 @@ class Quick3DSink:
         if held is None:
             raise SinkProtocolError(f"{op}(): unknown item {item_id!r}")
         return held
+
+
+def _require_empty(call: str, scene: EngineScene) -> None:
+    held = scene.part_count()
+    if held:
+        raise SinkProtocolError(
+            f"{call}: the engine scene already holds {held} Model(s) — it belongs to another "
+            "sink. One sink per scene: use a fresh host")
 
 
 def _checked(parts: Sequence[MeshPart]) -> tuple[MeshPart, ...]:

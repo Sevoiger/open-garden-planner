@@ -379,44 +379,73 @@ def test_a_gate_workflow_runs_selftest_in_the_one_shape(workflow: str) -> None:
         f"{workflow} must ASSIGN the process object, or $p.ExitCode is null and "
         "the check passes whatever the selftest found"
     )
-    # … and the exit code must be able to FAIL the step: compared, and acted on.
+    # … and the exit code must be able to FAIL the step: compared, and acted on — as
+    # the very next thing, with nothing in between that could end the step first.
     after = [ln.strip() for ln in lines[lines.index(command) + 1:]]
-    assert "$failed = $p.ExitCode -ne 0" in after, f"{workflow} never inspects the exit code"
-    assert "if ($failed) { exit 1 }" in after, f"{workflow} does not fail on a failed self-test"
+    assert after[0] == "if ($p.ExitCode -ne 0) {", f"{workflow} never inspects the exit code"
+    failed_branch = after[1:after.index("}")]
+    assert failed_branch[-1] == "exit 1", f"{workflow} does not fail on a failed self-test"
+    assert all(ln.startswith("Write-Host ") for ln in failed_branch[:-1]), failed_branch
+
+
+def _steps(workflow: str) -> list[list[str]]:
+    """The workflow's steps, each as its stripped lines (comment lines dropped)."""
+    steps: list[list[str]] = []
+    for line in _workflow_code(workflow):
+        if line.startswith("      - "):
+            steps.append([])
+        if steps and line.startswith("      "):
+            steps[-1].append(line.strip())
+    return steps
 
 
 @pytest.mark.parametrize("workflow", _GATE_WORKFLOWS)
-def test_a_gate_workflow_cannot_hang_and_decides_before_it_prints(workflow: str) -> None:
-    """L1.2 review, P1-4. Three ways the step used to be able to go wrong:
+def test_a_gate_workflow_cannot_hang_and_never_loses_its_log(workflow: str) -> None:
+    """L1.2 review, P1-4 and round 2 P2-6. The ways the step used to be able to go wrong:
 
     * no limit — a self-test that hung held the job for GitHub's six hours;
     * the log was printed BEFORE the verdict by a bare ``Get-Content``: under
       GitHub's pwsh (``$ErrorActionPreference = 'stop'``) a log that cannot be read
       ends the step there — a passing build goes red, a failing one fails with the
       wrong error;
-    * ``Write-Error`` for the verdict: it ends the step at once, so nothing after
-      it (the log) is ever printed.
+    * ``Write-Error`` for the verdict: it ends the step at once;
+    * the log was printed by the SAME step, after the verdict: a step that is cut
+      off by its time limit prints nothing after the cut — and that is exactly the
+      run whose log is needed.
+
+    So: the self-test step only decides; the step right after it prints the log, runs
+    ``always()``, reads inside try/catch and cannot fail.
     """
     lines = _workflow_code(workflow)
-    start = next(i for i, ln in enumerate(lines) if "- name: Verify frozen subsystems" in ln)
-    end = next((i for i, ln in enumerate(lines[start + 1:], start + 1)
-                if ln.lstrip().startswith("- name:")), len(lines))
-    step = [ln.strip() for ln in lines[start:end]]
-    assert "timeout-minutes: 10" in step, f"{workflow}: the self-test step has no time limit"
     job_limits = [ln for ln in lines if re.fullmatch(r"    timeout-minutes: \d+", ln)]
     assert len(job_limits) == 1, f"{workflow}: the job has no time limit"
-    assert not [ln for ln in step if "Write-Error" in ln], (
-        f"{workflow}: Write-Error ends the step before the log is printed")
-    verdict = step.index("$failed = $p.ExitCode -ne 0")
-    reading = next(i for i, ln in enumerate(step) if "Get-Content" in ln)
-    assert verdict < step.index("try {") < reading < step.index("} catch {"), (
-        f"{workflow}: the log must be read after the verdict, inside try/catch")
-    assert step.index("} catch {") < step.index("if ($failed) { exit 1 }"), workflow
-    # the only ways out: the missing exe, and the verdict
-    assert [ln for ln in step if "exit " in ln and not ln.startswith("Write-Host")] == [
+    steps = _steps(workflow)
+    index = next(i for i, step in enumerate(steps)
+                 if step[0].startswith("- name: Verify frozen subsystems"))
+    verify, log = steps[index], steps[index + 1]
+
+    assert "timeout-minutes: 10" in verify, f"{workflow}: the self-test step has no time limit"
+    assert not [ln for ln in verify + log if "Write-Error" in ln], (
+        f"{workflow}: Write-Error ends a step at once")
+    assert not [ln for ln in verify if "Get-Content" in ln], (
+        f"{workflow}: the self-test step does not read the log — the next step does")
+    # the only ways out of the self-test step: the missing exe, and the verdict
+    assert [ln for ln in verify if "exit " in ln and not ln.startswith("Write-Host")] == [
         'if (-not (Test-Path $exe)) { Write-Host "::error::Frozen exe not found: $exe"; exit 1 }',
-        "if ($failed) { exit 1 }",
+        "exit 1",
     ]
+
+    assert log[0] == "- name: Print the self-test log", f"{workflow}: {log[0]}"
+    condition = next(ln for ln in log if ln.startswith("if: "))
+    assert condition.startswith("if: always()"), f"{workflow}: the log step must always run"
+    reading = next(i for i, ln in enumerate(log) if "Get-Content" in ln)
+    assert log.index("try {") < reading < log.index("} catch {"), (
+        f"{workflow}: the log must be read inside try/catch")
+    assert log[-1] == "exit 0" and not [ln for ln in log if "exit 1" in ln], (
+        f"{workflow}: the log step can fail nothing")
+    # both steps mean the same file: the exe writes where the next step reads
+    path = "OGP_SELFTEST_LOG: ${{ runner.temp }}/ogp-selftest-3d.log"
+    assert path in verify and path in log, f"{workflow}: the two steps disagree about the log"
 
 
 def test_the_pull_request_gate_also_runs_the_smoke_test() -> None:

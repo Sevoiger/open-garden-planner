@@ -1821,8 +1821,119 @@ first expose then meets what the grab tore down. The condition is
 / spent / closed); every call answers for the state or raises `HostStateError`; `wait_ready()`
 pumps to the first expose and reports. The tests run one call order per child process and take
 "the last line is `END`" as survival; two controls do the forbidden thing on the raw view and
-must die (`tests/integration/test_quick3d_lifecycle.py`).
+must die (`tests/integration/test_quick3d_lifecycle.py`). *This fix was itself incomplete —
+three predicates were too few, and the tests judged the host by its own word: the case study
+"a state machine that was right on Windows" below.*
 
 **Lesson**: **when the failure is a dead process, the evidence channel must be another
 process** — and a control must keep alive the thing whose death it demonstrates. And print the
 engine's own predicates before choosing one by its name.
+
+## Case study: a `hide()` that never returned — a Python Qt message handler, Qt's render thread and the GIL (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: found by the second independent review, not by the suite. The engine host had a
+"watch" for a shown view's errors: a recorder installed with `qInstallMessageHandler` for the
+host's lifetime. With it, `host.hide()` — and so `close()` — sometimes never came back; with a
+debug category switched on, 5 of 5. And the self-test's watchdog, armed for exactly this kind
+of hang, wrote its stack dump and **the process stayed alive**.
+
+**Wrong theories** — the first is in the round-1 code and docs, in my words:
+
+1. *"The recorder takes a lock and never raises, so it is safe to call from Qt's render
+   thread."* Thread-safe is not the question. The question is which lock the CALLER holds.
+2. *"`faulthandler.dump_traceback_later(exit=True)` needs no GIL, so the exit is certain."* The
+   dump needs no GIL. The exit is `_exit`, which on Windows is `ExitProcess`.
+3. *(while fixing)* "Then end the process from a native timer thread." `ExitProcess` from
+   there hangs the same way; `TerminateProcess` on itself works, with an exit code that is
+   not ours.
+4. *(in my own fix)* "A supervising process that waits on the process and on a release
+   event." It would have killed a process that had FINISHED its block (below).
+
+**Key evidence**: the watchdog's own dump of the control that reproduces it — two threads,
+and the one that is NOT in Python is the telling one:
+
+```
+Timeout (0:00:04)!
+Thread 0x00001dd0 (most recent call first):
+  <no Python frame>                         <- Qt's render thread: about to call the Python
+                                               handler, waiting for the GIL — no frame yet
+Thread 0x0000c45c (most recent call first):
+  File "…/ui/view3d/quick3d/host.py", line 550 in hide     <- the GUI thread: inside
+  File "…/quick3d_lifecycle_child.py", line 771 in deadlock   QWindow.hide(), holding the GIL,
+  …                                                           waiting for the render thread
+```
+
+and one line of Qt's own log, read from stderr (`QT_FORCE_STDERR_LOGGING=1`,
+`QT_LOGGING_RULES=qt.scenegraph.general.debug=true`): `threaded render loop` — on Direct3D 11
+(GPU and WARP) and on xcb + OpenGL. For theory 2: the process list, a minute after the dump.
+For theory 4: a child whose block is `pass`, sleeping six seconds after it — exit code 1.
+
+**Root cause**: Qt Quick renders a shown window on its own thread. Qt's message handler is
+process-wide; PyQt calls a Python handler under the GIL on whichever thread emits. The GUI
+thread holds the GIL while it is inside a Python-called Qt function; `hide()` waits there for
+the render thread; the render thread emits a message and waits for the GIL. Then: `_exit` =
+`ExitProcess` runs DLL detach code that waits for those threads. And the supervisor: a block
+that ends before the supervising process has started signals and DESTROYS the release event;
+the late supervisor found no event, waited on the process alone, and terminated it at the
+deadline.
+
+**Fix**: no message handler beside a shown window, ever — the watch is gone; a shown host
+reports what Qt delivers on the GUI thread (`Quick3DHost.health()`: the QML engine's
+`warnings`, the window's `sceneGraphError`, a frame count, the latter two connected queued).
+A recorder only around rendering on the calling thread, and it counts messages that arrive
+elsewhere. The watchdog got a second line of defence — another process that calls
+`TerminateProcess(handle, 1)` — for which a missing release event means "released", and which
+identifies its process by pid and creation time. Pinned by controls that must fail the old
+way: `test_a_python_message_handler_beside_a_shown_window_deadlocks`,
+`test_the_supervised_watchdog_ends_the_deadlock`,
+`test_the_supervisor_leaves_a_process_alone_whose_block_finished_first`.
+
+**Lesson**: **the GIL is a lock, and a callback from a foreign thread acquires it** — before
+handing Python to another thread's callback, ask what the thread that holds the GIL may be
+waiting for. And a watchdog is only as good as its exit: test it against the hang it is for,
+not against `time.sleep`. And every "wait for A or B" needs an answer for "B is already
+gone".
+
+## Case study: a state machine that was right on Windows, and a judge that asked the suspect (Phase 17 L1.2, fixed 2026-10-11)
+
+**Symptom**: two findings of the same review. (1) The Linux CI job was red: a call order the
+lifecycle matrix PINNED AS SAFE — `show(); hide(); grab()` — segfaulted one event-loop pass
+after a correct grab. (2) In a splitter pane dragged shut the host said "live" and handed out
+a blank frame, a bogus pick and a projection of (0, 0) — and the matrix was green.
+
+**Wrong theories**:
+
+1. *"No scene graph and not visible means never shown."* Measured on Direct3D 11, where that
+   order survives. On xcb the window has a platform window by then, and that is what counts.
+2. *"Scene graph, visible and exposed means a frame can be had."* A collapsed pane is all
+   three and 0 px wide.
+3. *"The matrix checks every answer."* It checked every answer against the state THE HOST
+   reported. A host that reports the wrong state passes.
+
+**Key evidence**: Qt's facts printed per step — this time with the geometry, and with the
+platform-window event:
+
+```
+                              surface visible exposed scene-graph  window   root item
+show(); hide() (no event)        1       F       F       F        320x240   320x240   <- "new"? xcb says no
+pane collapsed                   1       T       T       T          0x500   447x500   <- visible AND exposed
+pane reopened (no event)         1       T       T       T        447x500     0x500   <- the scene lags one pass
+1 px wide                        1       T       T       T          1x500     1x500   <- draws no 3D at all
+```
+
+and the same matrix run in a container with the CI job's stack: the four killing orders die 5
+of 5 on xcb.
+
+**Root cause**: three predicates named after what they sound like, chosen on one platform; and
+a test that derived its expectation from the output of the code under test.
+
+**Fix**: the state is a pure function of nine facts (`quick3d/lifecycle.py`): "new" = Qt never
+created a platform window (the `PlatformSurface` event; PyQt6 does not bind
+`QWindow.handle()`); "live" also needs an area of 2 × 2 px and a root item that has the
+window's size. The judge has a table of what a TRUTHFUL host must answer per step and checks
+the pixels; a control hands it the raw view's blank frames and requires it to reject them.
+
+**Lesson**: **a measurement belongs to the platform it was made on** — "harmless, also
+measured" needs the platform's name next to it, and the other platform's control. And **an
+oracle must not be computed from the answer it judges**: if the expected value comes out of
+the code under test, the test can only fail when the code disagrees with itself.

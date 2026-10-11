@@ -256,13 +256,58 @@ are §12, and rows it added to the tables below say "(L1.2)".
   Direct3D 11 (L1.2, review round 1):** new F F F · after `show()` T F F · after one
   `processEvents()` T T T · right after `hide()` F **T** T, then F F T · shown again T F T ·
   minimised **T** F T. Under `QT_QPA_PLATFORM=offscreen` the scene graph reports initialised
-  from the window's birth and draws no 3D. `Quick3DHost.state` derives new / starting / live /
-  hidden / spent / closed from these on every call (§12); there is no "was shown" flag, because
-  the parent of an embedded container shows and hides it without asking.
-- **Harmless, also measured:** `show()` + `hide()` before any event, then the one offscreen grab
-  (the scene graph never came up); a grab while hidden WITH a scene graph (a correct frame, 2
-  of 2 — the host refuses it all the same: unmeasured on OpenGL); wrapping a view that is
-  live, starting or hidden in a window container.
+  from the window's birth and draws no 3D. These three are NOT enough to know whether a frame
+  can be had (the next three bullets); `Quick3DHost.state` derives new / starting / live /
+  hidden / spent / closed from nine facts on every call (§12). There is no "was shown" flag,
+  because the parent of an embedded container shows and hides it without asking.
+- **"Never shown" means "no platform window was ever created" (L1.2, review round 2).**
+  `show()` + `hide()` before any event leaves a window with no scene graph that is not visible
+  — and that HAS a platform window. The one offscreen grab taken then is a correct image;
+  on **xcb the process segfaults in the next event-loop pass** (5 of 5; it was the red CI
+  job), on Direct3D 11 it survives. A window the user closed with its X button: platform
+  window destroyed, scene graph kept; a raw grab is an access violation (Direct3D 11) or a
+  segfault (xcb). The fact to ask is Qt's `PlatformSurface` / `SurfaceCreated` event, latched
+  by an event filter: `QWindow.handle()` is not bound by PyQt6 6.11, and `winId()` creates
+  the window it asks about.
+- **A collapsed splitter pane is visible, exposed and 0 px wide (L1.2, review round 2).** A
+  raw grab there returns an image of the OLD size without a pixel of the scene, a raw pick
+  returns a hit, `mapFrom3DScene` (0, 0). After EVERY change of size the QML root item keeps
+  the old size for one event-loop pass (reopened from 0, the scene is still 0 wide — a blank
+  frame). A window 1 px wide or high draws no 3D (the bare clear colour); 2 px does. A pane
+  re-shown in a splitter keeps its stale empty geometry until the pending layout request is
+  delivered. "A frame can be had" = platform window created, visible, not minimised, at least
+  2 × 2 px, scene graph, exposed, AND root item size == window size.
+- **Harmless, also measured:** a grab while hidden WITH a scene graph (a correct frame, 2 of 2
+  on Direct3D 11 — the host refuses it all the same); wrapping a view that is live, starting
+  or hidden in a window container.
+- **NEVER install a Python Qt message handler while a Qt Quick window is shown (L1.2, review
+  round 2).** Qt Quick renders a shown window on a thread of its own — `qt.scenegraph.general`
+  says "threaded render loop" on Direct3D 11 (GPU and WARP) and on xcb + OpenGL (llvmpipe).
+  `qInstallMessageHandler` is process-wide, and PyQt calls a Python handler under the GIL on
+  whichever thread emits. The GUI thread holds the GIL inside a Python-called `hide()` and
+  waits for the render thread; the render thread emits a message and waits for the GIL:
+  **deadlock, every run**, on all three. A recorder is safe only around rendering on the
+  calling thread — the one-shot offscreen grab of a never-shown window, where every message
+  (shader errors included) was measured to arrive on that thread. To read a shown window's
+  messages in a TEST, let Qt print them: `QT_FORCE_STDERR_LOGGING=1` (on Windows a process
+  without a console logs to the debugger otherwise) + `QT_MESSAGE_PATTERN`, and parse the
+  child's stderr. To see which loop runs: `QT_LOGGING_RULES=qt.scenegraph.general.debug=true`.
+- **A Windows process deadlocked inside Qt survives `_exit` (L1.2, review round 2).**
+  `faulthandler.dump_traceback_later(exit=True)` writes the stacks and the process stays alive:
+  `_exit` is `ExitProcess`, which waits in DLL detach code. On Linux `_exit` ends it. Only
+  `TerminateProcess` from ANOTHER process ends it with a chosen exit code —
+  `runlog.watchdog(…, supervised=True)`.
+- **Connect `sceneGraphError`, or a missing graphics device takes the app down (L1.2, review
+  round 2).** With a slot: `(ContextNotAvailable, "Failed to initialize graphics backend for
+  D3D11.")`, the process lives, the window never gets a scene graph. With none: a native modal
+  error box, then abort (`0xC0000409`). Force it with `QT_D3D_ADAPTER_INDEX=9`.
+  (`QSG_RHI_BACKEND=bogus` just falls back.)
+- **A QML function that throws returns `None` to `QMetaObject.invokeMethod`, silently** (L1.2,
+  review round 2); a missing one raises `RuntimeError`. Check the return, and read the QML
+  engine's `warnings` signal — it arrives on the GUI thread, with file and line.
+- **On Windows `QStandardPaths` follows `USERPROFILE`, not `APPDATA`** (L1.2, review round 2):
+  to keep a child process out of the real profile set `USERPROFILE` (Qt's shader cache and the
+  driver's caches go with it); `APPDATA` alone redirects only code that reads the variable.
 - **Do not wait for `frameSwapped` to be sure of a frame (L1.2).** On Windows, Qt 6.11
   delivers update requests from a thread that waits for the display's vertical blank. With the
   monitor asleep, a visible, exposed, active window presented its first frame and then none
@@ -427,6 +472,13 @@ triangles (`scripts/bench_view3d.py`).
 | `io.UnsupportedOperation: fileno` when a watchdog is armed (L1.2) | `faulthandler` writes to a descriptor; stderr was captured or replaced | dump into the log's own handle, else into the null device — the exit still happens |
 | A CI step prints its verdict and nothing after it (L1.2) | `Write-Error` under GitHub's pwsh (`$ErrorActionPreference = 'stop'`) ends the step | `Write-Host "::error::…"`, the log in `try`/`catch`, `exit 1` at the end |
 | Two identical frames around an edit (L1.2) | the edited item was hidden behind another | edit something the camera sees |
+| `hide()` (or `close()`) never returns; the watchdog's stack dump is in the log and the process is still there (L1.2 r2) | a Python Qt message handler + Qt's render thread + the GIL | no Python message handler beside a shown Qt Quick window; `health()` for a shown host |
+| A segfault on Linux one event-loop pass after an offscreen grab that worked on Windows (L1.2 r2) | the window had been shown and hidden: it has a platform window | only a window whose platform window was NEVER created has the offscreen frame |
+| A blank frame of the old size, a pick that hits nothing real, `project()` == (0, 0) (L1.2 r2) | the pane is collapsed (0 px wide), or was resized a moment ago | `wait_ready()` after every resize; the host refuses until the scene has the window's size |
+| A modal "Failed to initialize graphics backend" box, then the app is gone (L1.2 r2) | nothing connected to `QQuickWindow.sceneGraphError` | connect it; read `health().scene_graph_error` |
+| `reset()` "succeeds" and the old Models are still drawn (L1.2 r2) | a QML function that threw returned `None`, taken for success | a Model leaves the books only when the engine confirms it; `None` is an `EngineError` |
+| A test run is killed minutes after a watchdog test passed (L1.2 r2) | a supervising process that found its release event already gone and waited on the process alone | a missing event means "released" |
+| An empty folder appears in the real `%APPDATA%` after a test (L1.2 r2) | the test set `APPDATA`; Qt's standard paths follow `USERPROFILE` | give the child a profile of its own; ask `writableLocation` before anything is created |
 
 ## 12. The production package — `ui/view3d/quick3d/` (L1.2)
 
@@ -439,37 +491,49 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   `host.container()` embeds it; `host.pick(x, y)` returns a `PickHit` in the SCENE frame;
   `host.engine_parts()` reads the Models back from the QML scene (what the engine holds, not
   what the sink believes).
-- **The host's states — which call is legal when** (`host.state`, derived from Qt on every
-  call; anything else raises `HostStateError` with what to do instead):
+- **The host's states — which call is legal when** (`host.state`: `lifecycle.state_of` over
+  the facts Qt reports on every call; anything else raises `HostStateError` with what to do
+  instead). Facts: S a platform window was ever created · V visible · M minimised · A at
+  least 2 × 2 px · G scene graph · E exposed · R root item size == window size. First match:
 
-  | State | Qt says | `grab()` | `pick()` | `show()` | `container()` |
+  | State | Exactly when | `grab()` | `pick()` | `show()` | `container()` |
   |---|---|---|---|---|---|
-  | `new` | no scene graph, not visible | once (offscreen), then `spent`; not when embedded | no | yes | yes |
-  | `starting` | visible, no scene graph yet | **no — fatal** | no | yes | yes |
-  | `live` | scene graph, visible, exposed | yes | yes | yes | yes |
-  | `hidden` | scene graph, not both | no | no | yes | yes |
+  | `closed` | `close()` ran, or Qt destroyed the view | no | no | no | no |
   | `spent` | its one offscreen frame is taken | no | no | **no — fatal** | no |
-  | `closed` | `close()`, or Qt destroyed the view | no | no | no | no |
+  | `new` | not S | once (offscreen), then `spent`; not when embedded | no | yes | yes |
+  | `hidden` | not (V and not M and A) | no | no | yes | yes |
+  | `live` | G and E and R | yes | yes | yes | yes |
+  | `starting` | everything else: shown with an area, not live yet | **no — fatal, or the old size** | no | yes | yes |
 
-  After `show()`: `if not host.wait_ready(): …` — it pumps the event loop to the first expose,
-  bounded, and answers; `grab()` never pumps. On a closed host `destroy_part`, `clear` and
-  `close` do nothing, `state` / `is_closed` / `is_visible` answer, everything else raises.
-  Under the software scene graph `host.renders_3d()` is False and `grab` / `pick` raise
-  `EngineError`.
+  After `show()` AND after every resize / re-show: `if not host.wait_ready(): …`. True means
+  live — a grab right after it is the current scene. It waits only while `starting`, looks
+  again in every pass, blocks for events (no busy spin), and answers False at once for a
+  host that is not on its way (new, hidden, minimised, collapsed, spent, no graphics device).
+  `grab()` never pumps. On a closed host `destroy_part`, `clear` and `close` do nothing,
+  `state` / `is_closed` / `is_visible` / `health` answer, everything else raises. Under the
+  software scene graph `host.renders_3d()` is False and `grab` / `pick` raise `EngineError`.
 - **Recovery.** After a sink call raised: `sync.reset()` (it calls `Quick3DSink.clear()`, which
   is legal in a half-applied transaction and on a dead host), then `sync.apply(...)`. When the
   host itself died: `sink.attach(fresh_host)` in between. Check with
-  `sink.state() == sync.expected_state()`.
-- **Errors in a SHOWN view** raise nothing (a broken shader is a Qt warning and the frame still
-  renders, without that material): `host.watch_messages()` once, then poll
-  `host.engine_errors()` on the GUI thread; warnings and errors also go to the app's log, from
-  Qt's render thread.
+  `sink.state() == sync.expected_state()` AND against the engine: `host.part_count()`,
+  `host.engine_parts()`. A LIVE engine that cannot destroy a Model keeps it in the host's
+  books and raises — `reset()` stays poisoned and the next one tries again; the sink refuses
+  `begin()` until a `clear()` went through. One sink per host: a host that holds Models is
+  refused by `Quick3DSink(host)` and by `attach`.
+- **Trouble in a SHOWN view: `host.health()`** — poll it on the GUI thread (a timer). It
+  returns `HostHealth(frames_presented, qml_warnings, qml_warning_count, scene_graph_error)`
+  with `.ok`, in every state; each item was also logged when it arrived. There is NO message
+  watch (`watch_messages` / `engine_errors` were removed: they deadlock, §6). A shader of a
+  shipped material that does not compile is NOT in it — that is checked before release: the
+  render tier and `--selftest` compile every shipped shader under a recorder.
 - **One frame without a window:** `offscreen.render_records(records, shot=TopDownShot(...),
   sun=SunState(...), ground=GroundSpec(...), size=(w, h))` → `OffscreenFrame` (`.image`,
   `.rgba()`, `.open_ms`, `.build_failures`, `.adapter` with `graphics_info=True`). A QML or
   shader error, or a backend without 3D, raises `RenderError`. For processes that own
   themselves — a tool, a test, the self-test — NOT for the running app: it blocks 0.4–1.3 s
-  and builds and destroys a graphics device per call. Silent unless `log=` is passed.
+  and builds and destroys a graphics device per call. Silent unless `log=` is passed. It
+  records Qt's messages with a Python handler, so it REFUSES (`RenderError`) while a Qt Quick
+  window is shown in the process; `frame.qt["other_threads"]` must be 0.
 - **The engine boundary without a GPU.** Under the offscreen platform `Garden.qml` loads and
   Models are created, posed and read back — no pixels, but every sink call, the state rules,
   the teardown orders and the recovery are checkable: `tests/ui/test_quick3d_host.py` (default
@@ -491,6 +555,14 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
     tests/integration/test_quick3d_render.py tests/integration/test_quick3d_engine.py
   ```
 
+  No Linux machine? The CI job's stack fits in a container: `ubuntu:24.04`, the job's apt
+  packages plus what a bare image lacks for Qt (fontconfig, dbus, nss, the X11 and xcb
+  libraries), `uv sync --locked --python 3.11 --all-extras --group build`, then the Linux
+  command above inside it. That is how xcb was measured before a push in review round 2 —
+  the Windows numbers had said nothing about it. The matrix's children get their environment
+  from `quick3d_render_support.isolated_env` / `render_env` only: never hand a child the
+  developer's `APPDATA` or profile.
+
   The driver alone, to look at frames (`<out>/*.png`, `result.json`, `render.log`):
   `venv/Scripts/python.exe tests/integration/quick3d_render_driver.py --out <out> --scenarios
   truth,materials,rest,states,edits,recovery,pick,sun,integration,embed`. One call order of the
@@ -502,13 +574,19 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   `OpenGardenPlanner-selftest-3d.log` in the app's log directory (beside `app.log`), or
   `OGP_SELFTEST_LOG`. The whole `--selftest` runs under ONE watchdog (300 s, the reason in the
   log before the exit) — `faulthandler` has a single timer per process, so never nest
-  `runlog.watchdog`. Never run `--selftest` under `QT_QPA_PLATFORM=offscreen`.
+  `runlog.watchdog`. It is SUPERVISED: a second process (`<exe> --selftest-supervisor …`, from
+  source `python runlog.py …`) terminates the first at 310 s if it is still there; the log's
+  `[watchdog] armed=True … supervisor=process <pid>` line says it started, a `[supervisor]
+  fired=True` line that it had to act. Never run `--selftest` under
+  `QT_QPA_PLATFORM=offscreen`.
 - **Numbers** (RTX 4070 / WARP, 2026-10-11): open of `bench_small.ogp` (98 records, 87 Models)
   to the first finished readback 0.40–1.11 s / 0.17–0.39 s (the device creation varies);
   edit → finished readback median 7.1–7.5 ms (p95 18.0) / 23.2–26.5 ms; pick 0.01–0.2 ms;
   shadow IoU vs the analytic 2D shadow 0.976–0.978 at 35° and 480 × 360; engine import 17 ms
-  on top of 17 ms for `core/scene3d`. The render tier: 79 tests, 114 s / 112 s.
-- **Not measured:** on Linux everything added in review round 1 — the lifecycle matrix above
-  all (the first three render files ran once on GitHub's ubuntu runner: 47 passed, 4 skipped
-  by design, 1 failed on the API name); `frozen-selftest.yml` on any runner; an integrated
-  GPU; a display scale other than 100 %.
+  on top of 17 ms for `core/scene3d`. The render tier after review round 2: 96 tests, about
+  four and a half minutes on either adapter; on xcb + llvmpipe in a container 88 passed and
+  8 skipped in 136 s.
+- **Not measured:** the round-2 tree on GitHub's own runners (xcb was measured in a container
+  on the developer's machine); `frozen-selftest.yml` on any runner, and the supervising
+  process inside a GitHub job; macOS; an integrated GPU; a display scale other than 100 %; a
+  failed device creation on OpenGL or Vulkan.

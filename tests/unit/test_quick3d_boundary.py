@@ -15,12 +15,13 @@ until it retires in L1.10.
 from __future__ import annotations
 
 import ast
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from tests.integration.quick3d_render_support import isolated_env
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 PRODUCT = SRC / "open_garden_planner"
@@ -133,33 +134,57 @@ def test_the_scan_sees_imports_by_name(tmp_path: Path) -> None:
     assert engine_names(probe) == {"PyQt6.QtQuick3D", "PyQt6.QtQml"}
 
 
-def _child(code: str) -> subprocess.CompletedProcess[str]:
+# What ``tests/conftest.py`` does for the test process, for a child that builds the app:
+# its settings go to a throwaway store (never the developer's), which it empties again.
+_OWN_SETTINGS = (
+    "import os\n"
+    "import open_garden_planner.app.settings as app_settings\n"
+    "app_settings.ORGANIZATION_NAME = 'cofade_test'\n"
+    "app_settings.APPLICATION_NAME = f'Open Garden Planner Boundary Probe {os.getpid()}'\n"
+)
+_DROP_SETTINGS = "app_settings.create_qsettings().clear()\n"
+
+
+def _child(code: str, scratch: Path) -> subprocess.CompletedProcess[str]:
     """A fresh interpreter importing THIS checkout's src: ``sys.modules`` of the shared
-    test process proves nothing (other tests import the engine)."""
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
-    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(SRC), env.get("PYTHONPATH")) if p)
+    test process proves nothing (other tests import the engine). Its app data and its
+    user profile are the test's own (``isolated_env``)."""
     return subprocess.run(  # noqa: S603 - fixed argv, our own code
-        [sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=170)
+        [sys.executable, "-c", code], env=isolated_env(scratch, QT_QPA_PLATFORM="offscreen"),
+        capture_output=True, text=True, timeout=170, cwd=scratch)
 
 
-def test_app_start_loads_neither_the_engine_nor_its_package() -> None:
+def test_app_start_loads_neither_the_engine_nor_its_package(tmp_path: Path) -> None:
     """G2. Constructing the real main window imports no Qt Quick binding and nothing of
     ``ui/view3d/`` — the 3D engine costs a normal start nothing (measured on the dev
     box: the package 1 ms, its engine-free half 17 ms, the engine itself 17 ms, all
-    of it paid when 3D is first opened)."""
+    of it paid when 3D is first opened).
+
+    The child builds the REAL main window, so it gets what the test process gets from
+    ``tests/conftest.py``: a settings store of its own (review round 2 found this
+    child reading the developer's), and app data and a user profile under
+    ``tmp_path``."""
     proc = _child(
-        "import sys\n"
+        _OWN_SETTINGS
+        + "import sys\n"
         "from PyQt6.QtWidgets import QApplication\n"
         "app = QApplication([])\n"
         "from open_garden_planner.app.application import GardenPlannerApp\n"
         "window = GardenPlannerApp()\n"
-        "print(sorted(m for m in sys.modules if m.startswith(("
-        "'PyQt6.QtQuick', 'PyQt6.QtQml', 'open_garden_planner.ui.view3d.quick3d'))))\n")
+        "loaded = sorted(m for m in sys.modules if m.startswith(("
+        "'PyQt6.QtQuick', 'PyQt6.QtQml', 'open_garden_planner.ui.view3d.quick3d')))\n"
+        "store = app_settings.create_qsettings()\n"
+        "print('STORE', store.organizationName(), '|', store.applicationName())\n"
+        + _DROP_SETTINGS
+        + "print(loaded)\n", tmp_path)
     assert proc.returncode == 0, proc.stderr[-2000:]
-    assert proc.stdout.strip().splitlines()[-1] == "[]"
+    lines = proc.stdout.strip().splitlines()
+    assert lines[-1] == "[]"
+    (store,) = [line for line in lines if line.startswith("STORE ")]
+    assert store.startswith("STORE cofade_test | Open Garden Planner Boundary Probe ")
 
 
-def test_importing_the_package_is_free() -> None:
+def test_importing_the_package_is_free(tmp_path: Path) -> None:
     """Naming the package loads the package and nothing else — no Qt, no numpy core,
     no engine: ``__init__`` is a docstring."""
     proc = _child(
@@ -167,21 +192,24 @@ def test_importing_the_package_is_free() -> None:
         "import open_garden_planner.ui.view3d\n"
         "before = set(sys.modules)\n"
         "import open_garden_planner.ui.view3d.quick3d\n"
-        "print(sorted(set(sys.modules) - before))\n")
+        "print(sorted(set(sys.modules) - before))\n", tmp_path)
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert proc.stdout.strip().splitlines()[-1] == "['open_garden_planner.ui.view3d.quick3d']"
     tree = ast.parse((PACKAGE / "__init__.py").read_text(encoding="utf-8"))
     assert [type(node).__name__ for node in tree.body] == ["Expr"], "__init__ is a docstring only"
 
 
-def test_the_engine_free_modules_load_without_the_engine() -> None:
-    """Everything the GPU-less test tier imports — the sink, the look, the shots, the
-    self-test's scene and judge — works in a process that never loads Qt Quick."""
+def test_the_engine_free_modules_load_without_the_engine(tmp_path: Path) -> None:
+    """Everything the GPU-less test tier imports — the sink, the host's state table, the
+    look, the shots, the self-test's scene and judge — works in a process that never
+    loads Qt Quick."""
     proc = _child(
         "import sys\n"
-        "from open_garden_planner.ui.view3d.quick3d import (adapter, look, materials, qt_messages,\n"
-        "                                                    runlog, selftest, shots)\n"
+        "from open_garden_planner.ui.view3d.quick3d import (adapter, lifecycle, look, materials,\n"
+        "                                                    qt_messages, runlog, selftest, shots)\n"
         "assert selftest.judge_frame is not None and adapter.Quick3DSink is not None\n"
-        "print(sorted(m for m in sys.modules if m.startswith(('PyQt6.QtQuick', 'PyQt6.QtQml'))))\n")
+        "assert lifecycle.state_of(None) is lifecycle.HostState.CLOSED\n"
+        "print(sorted(m for m in sys.modules if m.startswith(('PyQt6.QtQuick', 'PyQt6.QtQml'))))\n",
+        tmp_path)
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert proc.stdout.strip().splitlines()[-1] == "[]"

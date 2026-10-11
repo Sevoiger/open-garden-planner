@@ -7,19 +7,22 @@ are written down:
 - ``installer/ogp.spec`` ships the QML and shader files and names the lazily
   imported package (a missing data file only fails when a Model uses the shader);
 - ``release.yml`` still runs ``--selftest`` the one way that tests the shipping
-  condition, gives the log a path it can print, decides before it prints and
-  cannot hang;
+  condition, decides by the exit code alone, cannot hang, and prints the log in a
+  step of its own that always runs;
 - ``frozen-selftest.yml`` runs the same gate on pull requests, with the release
-  recipe and the same step script, when a path that can break the bundle changes;
+  recipe and the same step scripts, whenever shipped code changes;
 - ``ci.yml`` has the ``render3d`` job on both platforms, running files that
   exist and are opt-in, and the job is not a required check.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 PACKAGE = REPO / "src" / "open_garden_planner" / "ui" / "view3d" / "quick3d"
@@ -71,11 +74,24 @@ class TestSpec:
         assert "L1.10" in SPEC
 
 
-def _selftest_step(workflow: str) -> str:
-    """The ``Verify frozen subsystems`` step of a workflow, up to the next step."""
-    start = workflow.index("- name: Verify frozen subsystems")
+def _step(workflow: str, name: str) -> str:
+    """One step of a workflow — from its ``- name:`` up to the next step (or the comment
+    block that introduces the next step)."""
+    start = workflow.index(f"- name: {name}")
     end = workflow.find("\n      - name:", start + 10)
-    return workflow[start:] if end < 0 else workflow[start:end]
+    step = workflow[start:] if end < 0 else workflow[start:end]
+    lines = step.rstrip().splitlines()
+    while lines and (not lines[-1].strip() or lines[-1].lstrip().startswith("#")):
+        lines.pop()  # the next step's comment block is not part of this one
+    return "\n".join(lines) + "\n"
+
+
+def _selftest_step(workflow: str) -> str:
+    return _step(workflow, "Verify frozen subsystems")
+
+
+def _log_step(workflow: str) -> str:
+    return _step(workflow, "Print the self-test log")
 
 
 def _script(step: str) -> str:
@@ -92,11 +108,11 @@ class TestReleaseWorkflow:
         assert "Qt Quick 3D" in step.splitlines()[0]
         failure = next(line for line in step.splitlines() if "Frozen self-test failed" in line)
         assert failure.strip().startswith('Write-Host "::error::Frozen self-test failed (exit ')
-        for covered in ("#277", "#291", "Qt Quick 3D", "WARP", "watchdog"):
+        for covered in ("#277", "#291", "Qt Quick 3D", "WARP", "watchdog", "The next step prints"):
             assert covered in failure, covered
 
     def test_the_verdict_is_still_the_exit_code_alone(self) -> None:
-        """The log is printed for a human; nothing but ``$p.ExitCode`` decides."""
+        """Nothing but ``$p.ExitCode`` decides — and the step does nothing else."""
         step = self._step()
         assert step.count("exit 1") == 2  # the missing exe, the failed self-test — as before
         assert re.search(r"\$p = Start-Process -FilePath \$exe -ArgumentList \"--selftest\" "
@@ -104,28 +120,44 @@ class TestReleaseWorkflow:
         decisions = [line.strip() for line in step.splitlines() if line.strip().startswith("if (")]
         assert decisions == [
             'if (-not (Test-Path $exe)) { Write-Host "::error::Frozen exe not found: $exe"; exit 1 }',
-            "if ($failed) {",
-            "if (Test-Path -LiteralPath $env:OGP_SELFTEST_LOG) {",
-            "if ($failed) { exit 1 }",
+            "if ($p.ExitCode -ne 0) {",
         ]
-        assert "$failed = $p.ExitCode -ne 0" in step
-
-    def test_the_log_gets_a_path_the_step_can_print(self) -> None:
-        step = self._step()
-        setting = step.index('$env:OGP_SELFTEST_LOG = Join-Path $env:RUNNER_TEMP "ogp-selftest-3d.log"')
-        assert setting < step.index("$p = Start-Process"), "the child must inherit the variable"
-        assert "Get-Content -LiteralPath $env:OGP_SELFTEST_LOG -ErrorAction Stop" in step
-
-    def test_the_verdict_comes_first_and_the_log_cannot_change_it(self) -> None:
-        """Review P1-4 (3). The step used to print the log BEFORE the verdict with a bare
-        ``Get-Content``; under GitHub's pwsh an unreadable log ended the step there."""
-        script = _script(self._step())
+        script = _script(step)
         order = [script.index(marker) for marker in (
-            "$p = Start-Process", "$failed = $p.ExitCode -ne 0", "Frozen self-test failed",
-            "Frozen self-test passed", "try {", "Get-Content", "} catch {",
-            "The verdict above stands", "if ($failed) { exit 1 }")]
+            "$p = Start-Process", "if ($p.ExitCode -ne 0) {", "Frozen self-test failed",
+            "            exit 1\n", "Frozen self-test passed")]
         assert order == sorted(order), order
-        assert "Write-Error" not in script, "Write-Error ends the step before the log is printed"
+        assert "Write-Error" not in script, "Write-Error ends the step at once"
+        assert "Get-Content" not in script, "the log is the next step's business"
+
+    def test_the_exe_writes_its_log_where_the_next_step_reads_it(self) -> None:
+        """The exe has no stdout; ``OGP_SELFTEST_LOG`` is the only way to its log. Both
+        steps get the SAME path, from the step's own ``env`` (the child inherits it)."""
+        path = "          OGP_SELFTEST_LOG: ${{ runner.temp }}/ogp-selftest-3d.log\n"
+        for step in (self._step(), _log_step(RELEASE)):
+            assert step.count(path) == 1 and step.index("        env:\n") < step.index(path) < step.index(
+                "        run: |\n")
+        assert "Get-Content -LiteralPath $env:OGP_SELFTEST_LOG -ErrorAction Stop" in _log_step(RELEASE)
+
+    def test_the_log_is_printed_by_a_step_that_always_runs_and_cannot_fail(self) -> None:
+        """Review round 2, P2-6. The self-test step used to print the log itself, after
+        the verdict: a step cut off by its time limit prints nothing after the cut —
+        and that is the run whose log says where it hung. The log step comes right
+        after, runs ``always()`` (in a release run: when a release is being built at
+        all), reads inside try/catch and ends with ``exit 0``."""
+        after = RELEASE[RELEASE.index("      - name: Verify frozen subsystems"):]
+        names = re.findall(r"^      - name: (.+)$", after, re.MULTILINE)
+        assert names[:2] == ["Verify frozen subsystems (Qt3D #277, Agent API #291, Qt Quick 3D render)",
+                             "Print the self-test log"]
+        step = _log_step(RELEASE)
+        assert "        if: always() && steps.check_tag.outputs.exists == 'false'\n" in step
+        script = _script(step)
+        order = [script.index(marker) for marker in (
+            "try {", "Get-Content", "} catch {", "The verdict of the self-test step stands",
+            "          exit 0\n")]
+        assert order == sorted(order), order
+        assert "exit 1" not in script and "Write-Error" not in script
+        assert script.rstrip().endswith("exit 0")
 
     def test_neither_the_step_nor_the_job_can_run_for_six_hours(self) -> None:
         """Review P1-4 (1): the step and the job are bounded — and so is the exe itself
@@ -148,17 +180,19 @@ class TestFrozenSelftestWorkflow:
     def _triggers(self) -> str:
         return _code(FROZEN[FROZEN.index("\non:\n"):FROZEN.index("\npermissions:")])
 
-    def test_it_runs_on_demand_and_on_pull_requests_that_can_break_the_bundle(self) -> None:
+    def test_it_runs_on_demand_and_on_every_pull_request_that_changes_shipped_code(self) -> None:
+        """Review round 2, P2-11: the first filter named the 3D package and ``main.py`` —
+        but ``--selftest`` also exercises ``core/scene3d`` and the Agent API, and the
+        project's rule is "build and verify the exe before every merge". The whole
+        package, then."""
         triggers = self._triggers()
         assert "  workflow_dispatch:\n" in triggers
         assert "  pull_request:\n    branches: [master]\n    paths:\n" in triggers
         assert "push:" not in triggers, "not on every push: the build takes minutes"
         paths = re.findall(r'^      - "([^"]+)"$', triggers, re.MULTILINE)
         assert paths == [
+            "src/open_garden_planner/**",
             "installer/**",
-            "src/open_garden_planner/main.py",
-            "src/open_garden_planner/__main__.py",
-            "src/open_garden_planner/ui/view3d/**",
             "pyproject.toml",
             "uv.lock",
             "pylock.toml",
@@ -172,7 +206,9 @@ class TestFrozenSelftestWorkflow:
         for pattern in re.findall(r'^      - "([^"]+)"$', self._triggers(), re.MULTILINE):
             target = REPO / pattern.removesuffix("/**")
             assert target.exists(), pattern
-        assert (REPO / "src/open_garden_planner/ui/view3d/quick3d/selftest.py").is_file()
+        for shipped in ("ui/view3d/quick3d/selftest.py", "core/scene3d/sync.py",
+                        "agent_api/__init__.py", "main.py"):
+            assert (REPO / "src/open_garden_planner" / shipped).is_file(), shipped
 
     def test_it_can_only_read_the_repository(self) -> None:
         assert "\npermissions:\n  contents: read\n" in FROZEN
@@ -192,11 +228,48 @@ class TestFrozenSelftestWorkflow:
         script = (REPO / "installer" / "build_installer.py").read_text(encoding="utf-8")
         assert '"--skip-nsis"' in script and '"--noconfirm"' in script and '"--clean"' in script
 
-    def test_it_runs_the_same_selftest_step_as_the_release(self) -> None:
-        """One script, two workflows: a fix to the release step that is not made here (or
-        the other way round) would leave the pull-request gate testing something else."""
+    def test_the_build_step_has_a_limit_of_its_own(self) -> None:
+        """Review round 2, P2-10: only the job's 45 minutes bounded the build."""
+        step = _step(FROZEN, "Build the bundle")
+        assert "        timeout-minutes: 30\n" in step
+        limits = [int(n) for n in re.findall(r"^        timeout-minutes: (\d+)$", _code(FROZEN), re.MULTILINE)]
+        job = int(re.search(r"^    timeout-minutes: (\d+)$", FROZEN, re.MULTILINE).group(1))  # type: ignore[union-attr]
+        assert limits == [30, 5, 10] and max(limits) < job, "each step ends before the job does"
+
+    def test_the_comments_say_what_the_bundle_and_the_smoke_really_are(self) -> None:
+        """Review round 2, P2-7 / P2-10. The workflow said "no ``_version.py`` is written"
+        — the build script always writes one, with its default ``1.0.0`` when no version
+        is passed, so the pull-request exe runs the update check as v1.0.0 during the
+        smoke. And "survived 8 seconds" is also true of a process blocked in an error
+        dialog. Pinned against the files the statements are about."""
+        script = (REPO / "installer" / "build_installer.py").read_text(encoding="utf-8")
+        assert 'APP_VERSION = "1.0.0"' in script
+        assert re.search(r"if not args\.skip_pyinstaller:\n\s+_write_version_module\(APP_VERSION\)", script)
+        application = (REPO / "src/open_garden_planner/app/application.py").read_text(encoding="utf-8")
+        start = application.index("    def _start_update_check(self) -> None:")
+        body = application[start:application.index("\n    def ", start + 10)]
+        assert 'if not getattr(sys, "frozen", False):' in body
+        assert "environ" not in body and "argv" not in body, (
+            "the app has a switch for the update check now: use it for the smoke, and say so")
+        checker = (REPO / "src/open_garden_planner/services/update_checker.py").read_text(encoding="utf-8")
+        assert "except Exception:  # noqa: BLE001" in checker[checker.index("class UpdateChecker"):]
+        comments = "\n".join(line for line in FROZEN.splitlines() if line.lstrip().startswith("#"))
+        assert "no _version.py" not in comments.lower()
+        for statement in ("writes _version.py with its default", "calls itself v1.0.0",
+                          "blocked in an error dialog", "The self-test below is the real gate",
+                          "the app has no switch to turn", "swallows every network error"):
+            assert " ".join(statement.split()) in " ".join(comments.replace("#", " ").split()), statement
+
+    def test_it_runs_the_same_two_steps_as_the_release(self) -> None:
+        """One script each, two workflows: a fix to a release step that is not made here
+        (or the other way round) would leave the pull-request gate testing something
+        else."""
         assert _script(_selftest_step(FROZEN)) == _script(_selftest_step(RELEASE))
+        assert _script(_log_step(FROZEN)) == _script(_log_step(RELEASE))
         assert "        shell: pwsh\n        timeout-minutes: 10\n" in _selftest_step(FROZEN)
+        assert "        if: always()\n" in _log_step(FROZEN)
+        after = FROZEN[FROZEN.index("      - name: Verify frozen subsystems"):]
+        assert re.findall(r"^      - name: (.+)$", after, re.MULTILINE)[1:] == ["Print the self-test log"]
 
     def test_the_job_is_bounded_and_not_a_required_check(self) -> None:
         job = FROZEN[FROZEN.index("\njobs:\n"):FROZEN.index("    steps:\n")]
@@ -291,3 +364,70 @@ def test_the_driver_gets_a_real_platform_and_this_checkouts_code(monkeypatch, tm
         assert Path(first) == REPO / "src" and Path(second) == REPO
     forced = support.render_env(tmp_path, QT_QPA_PLATFORM="offscreen")
     assert forced["QT_QPA_PLATFORM"] == "offscreen"  # a test may ask for the no-3D platform
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_no_child_of_an_engine_test_can_reach_the_developers_data_or_profile(
+        monkeypatch, tmp_path: Path, platform: str) -> None:
+    """Review round 2, P2-8 / P2-9: the environment HANDED TO THE CHILD, inspected.
+
+    The render driver loads a plan through ``ProjectManager`` — which creates the app's
+    data directory — and it inherited the developer's real ``APPDATA``. Every child a
+    test of the engine package starts now gets, whatever the parent's environment
+    says: its data directories under the test's own scratch directory, and a user
+    profile of the test process's own (``QStandardPaths`` and the graphics driver's
+    caches follow the profile, not ``APPDATA`` — measured)."""
+    from tests.integration import quick3d_render_support as support
+
+    data = [name for name, _folder in support.PRIVATE_DIRS]
+    moved = ["USERPROFILE", "LOCALAPPDATA"] if platform == "win32" else ["XDG_CACHE_HOME"]
+    assert data == ["APPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]
+    for name in (*data, "USERPROFILE", "LOCALAPPDATA", "XDG_CACHE_HOME"):
+        monkeypatch.setenv(name, str(tmp_path / "the-developers-own" / name))
+    monkeypatch.setattr(support.sys, "platform", platform)
+    scratch = tmp_path / "scratch"
+    profile = support.session_profile()
+    for build in (support.isolated_env, support.render_env):
+        env = build(scratch)
+        for name, folder in support.PRIVATE_DIRS:
+            assert Path(env[name]) == scratch / folder and Path(env[name]).is_dir(), (build, name)
+        for name in moved:
+            assert Path(env[name]).is_dir(), (build, name)
+            assert profile == Path(env[name]) or profile in Path(env[name]).parents, (build, name)
+        assert not [name for name in (*data, *moved) if "the-developers-own" in env[name]]
+    assert profile.is_dir() and profile.name.startswith("ogp-quick3d-profile-")
+    assert support.session_profile() == profile, "one profile per test process"
+    assert tmp_path not in profile.parents and profile != Path.home()
+
+
+def test_every_child_environment_of_the_engine_tests_is_built_by_the_helper() -> None:
+    """…and nobody builds a child's environment by hand again: the tests of the engine
+    package never copy ``os.environ`` themselves, and every ``env=`` they pass names a
+    variable — which the two tests above show can only come from the helper."""
+    files = [*sorted((REPO / "tests").glob("*/test_quick3d_*.py")),
+             *sorted((REPO / "tests" / "integration").glob("quick3d_*.py")),
+             REPO / "tests" / "unit" / "test_main_hardening.py"]
+    assert len(files) >= 14
+    children = 0
+    for path in files:
+        if path.name == "quick3d_render_support.py":
+            continue  # the helper itself
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                call = ast.unparse(node)
+                assert not call.startswith(("dict(os.environ", "os.environ.copy(")), (
+                    f"{path.name}:{node.lineno} copies the parent's environment: {call[:60]}")
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("run", "Popen")
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"):
+                continue
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            if path.name == "quick3d_lifecycle_child.py" or "taskkill" in ast.unparse(node):
+                continue  # not a child of the tests' own code (the tree kill)
+            children += 1
+            assert "env" in keywords, f"{path.name}:{node.lineno} starts a child with the parent's environment"
+            value = ast.unparse(keywords["env"])
+            assert value == "env" or value.startswith(("isolated_env(", "render_env(", "_child_env(")), (
+                f"{path.name}:{node.lineno}: env={value}")
+    assert children >= 10

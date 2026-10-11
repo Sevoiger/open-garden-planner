@@ -1,33 +1,50 @@
-"""The host's lifecycle as a matrix of call orders (Phase 17 L1.2, fix round 1).
+"""The host's lifecycle as a matrix of call orders (Phase 17 L1.2, review rounds 1 and 2).
 
 Render tier (``OGP_RENDER3D=1``). Each test starts ``quick3d_lifecycle_child.py``
 with ONE order in a process of its own and judges what the process reported —
-because the failure the matrix exists for is not an exception: a Qt Quick window
-grabbed at the wrong moment hands back a perfectly good image, and the process
-dies in the next pass of the event loop (``Quick3DHost``'s module docstring).
+because the failures the matrix exists for are not exceptions: a Qt Quick window
+grabbed at the wrong moment hands back a perfectly good image and the process
+dies in the next pass of the event loop; a collapsed pane hands back a blank
+image and a bogus pick; a Python Qt message handler beside a shown window
+deadlocks the process.
 
-The rule every order is judged by — the host's whole contract in one sentence:
+THE JUDGE DOES NOT ASK THE HOST. Round 1 judged every frame by the state the host
+reported for it — and was therefore blind to a host that reported the wrong state
+(``live`` for a collapsed pane, ``new`` for a window xcb had already created).
+``TRUTH`` below says, per order and per step, what a truthful host must answer:
 
-    a call returns a CORRECT answer or raises the DOCUMENTED error, and the
-    process survives.
+- ``FRAME``   the caller did everything right (``wait_ready()`` said yes): the
+              answer must be a frame of the window's size that contains the red
+              probe box at the predicted pixels, a pick that hits it, and a
+              projection onto the view's centre;
+- ``REFUSED`` no truthful frame can be had there — nothing shows, or taking one is
+              fatal: ``grab``, ``pick`` and ``project`` must each raise
+              ``HostStateError``;
+- ``EITHER``  it depends on how fast the platform delivers an event (is a window
+              exposed right after ``show()``?): a correct frame or a refusal —
+              NEVER a frame without the box. What Windows was measured to do is
+              pinned on Windows (``ON_WINDOWS``).
 
-"Correct" for a frame: the red probe box covers the pixels its size predicts
-(100 x 100 cm at 0.5 px/cm = 2,500 px, times the device pixel ratio squared).
-Which of the two a state allows is ``EXPECTED_GRAB`` below, the table of
-``host.py`` restated — so an order whose timing differs on another platform (is
-the window exposed right after ``show()``?) is still judged, by the state the
-host itself reported. What Windows was MEASURED to do is pinned on Windows.
+The pixels are predicted here: the box is 100 x 100 cm, the view is centred on it
+at 0.5 px per cm, so it is a 50 px square in the middle of the frame, whatever the
+frame's size.
 
-Two orders are controls: they do what the guard forbids, on the raw view, and
-must die. Without them a matrix that cannot see a death would pass as well.
+Controls do on the raw ``QQuickView`` what the host forbids and must fail the way
+that was measured: die, hang, or return a frame the judge finds wrong. A control
+is asserted on the platforms it was measured on and reported (``xfail``, not
+strict) on any other.
 
-Measured 2026-10-11, Qt 6.11, Direct3D 11 on an RTX 4070 and on WARP: every
-order survives and answers as pinned; both controls die (3 of 3 each).
+Measured 2026-10-11, Qt 6.11: Direct3D 11 on an RTX 4070 and on WARP; xcb + OpenGL
+on llvmpipe (Mesa 25.2, Ubuntu 24.04 under xvfb — the CI job's stack, in a
+container). The four killing orders die 5 of 5 on xcb; three of them 3 of 3 on
+Direct3D 11, where ``show(); hide(); grab()`` survives. The message-handler
+deadlock is 5 of 5 on both.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -37,27 +54,114 @@ from typing import Any
 import pytest
 
 from tests.integration import quick3d_lifecycle_child as child
-from tests.integration.quick3d_render_support import QML_SOURCE, REPO, render_env, render_tier
+from tests.integration.quick3d_render_support import (
+    QML_SOURCE,
+    REPO,
+    isolated_env,
+    render_env,
+    render_tier,
+)
 
 pytestmark = render_tier
 
 CHILD = Path(child.__file__).resolve()
 WINDOWS = sys.platform == "win32"
-#: The answer a grab must give in each state (``host.py``'s table). ``new`` is the one
-#: offscreen frame of a standalone host; an embedded one has none (see the order).
-EXPECTED_GRAB = {"live": "frame", "new": "frame", "starting": "refused", "hidden": "refused",
-                 "spent": "refused", "closed": "refused"}
+LINUX = sys.platform.startswith("linux")
+FRAME, REFUSED, EITHER = "frame", "refused", "either"
 #: The three releases: legal on a closed host, where they do nothing.
 RELEASES = ("destroy_part", "clear", "close")
+#: Asked of a closed host they still answer (asserted where they are used).
+ANSWERS_WHEN_CLOSED = {"is_visible", "health"}
+
+# What a truthful host must answer — per order, per step (module docstring).
+TRUTH: dict[str, dict[str, str]] = {
+    "show_grab": {"at_once": EITHER, "after_wait": FRAME, "later": FRAME},
+    "show_wait_grab": {"live": FRAME, "later": FRAME},
+    "hide_grab": {"live": FRAME, "hidden_at_once": REFUSED, "hidden": REFUSED},
+    "show_hide_show_grab": {"first": FRAME, "reshown_at_once": EITHER, "reshown": FRAME},
+    # the xcb killer: no scene graph, not visible — and a platform window. No frame.
+    "show_hide_before_expose_grab": {"hidden_at_once": REFUSED, "hidden": REFUSED, "shown": FRAME},
+    "grab_twice_hidden": {"second": REFUSED, "third": REFUSED},
+    "user_closes_window": {"live": FRAME, "closed_by_user_at_once": REFUSED,
+                           "closed_by_user": REFUSED, "shown_again": FRAME},
+    "embedded_splitter": {
+        "at_once": EITHER, "live": FRAME, "parent_hid_at_once": REFUSED, "parent_hid": REFUSED,
+        "parent_showed_at_once": EITHER, "parent_showed": FRAME,
+        "window_hidden_at_once": REFUSED, "window_hidden": REFUSED,
+        "window_shown_at_once": EITHER, "window_shown": FRAME},
+    # a pane of no width shows nothing; one of ONE pixel renders no 3D (measured); after
+    # every change of size the scene lags the window by one pass of the event loop
+    "collapsed_pane": {
+        "open": FRAME, "collapsed_at_once": REFUSED, "collapsed": REFUSED,
+        "reopened_at_once": EITHER, "reopened": FRAME,
+        "one_pixel_at_once": EITHER, "one_pixel": REFUSED,
+        "narrow_at_once": EITHER, "narrow": FRAME, "narrow_later": FRAME},
+    "minimised_window": {"open": FRAME, "minimised": REFUSED, "restored": FRAME,
+                         "alone_minimised": REFUSED, "alone_restored": FRAME},
+    "embedded_never_shown_grab": {"before_parent": REFUSED, "parent_shown_at_once": EITHER,
+                                  "live": FRAME},
+    "embed_after_show": {"standalone": FRAME, "embedded_at_once": EITHER, "embedded": FRAME},
+    "health": {"shown": FRAME},
+    "render_loop": {"live": FRAME},
+}
+#: What Windows was measured to do at the EITHER steps: no window is exposed, and no
+#: scene has caught up, before the event loop ran.
+ON_WINDOWS = REFUSED
+#: ``wait_ready()`` answers per order: True where the host was on its way, False where
+#: nothing was (at once — the seconds are bounded in the tests that measure them).
+READY: dict[str, dict[str, bool]] = {
+    "show_grab": {"ready": True},
+    "show_wait_grab": {"ready": True},
+    "hide_grab": {"ready": True, "wait_hidden": False},
+    "show_hide_show_grab": {"ready": True, "ready_again": True},
+    "show_hide_before_expose_grab": {"wait": False, "ready": True},
+    "user_closes_window": {"ready": True, "ready_again": True},
+    "embedded_splitter": {"ready": True, "ready_again": True, "ready_window": True},
+    "collapsed_pane": {"ready": True, "wait_collapsed": False, "ready_reopened": True,
+                       "ready_one_pixel": False, "ready_narrow": True},
+    "minimised_window": {"ready": True, "wait_minimised": False, "ready_restored": True,
+                         "alone_ready": True, "alone_ready_restored": True},
+    "embedded_never_shown_grab": {"wait_before_parent": False, "ready": True},
+    "embed_after_show": {"ready_standalone": True, "ready": True},
+    "health": {"ready": True},
+    "render_loop": {"ready": True},
+}
 
 
-def run_order(order: str, tmp_path: Path, qml_dir: Path | None = None
-              ) -> subprocess.CompletedProcess[str]:
-    command = [sys.executable, str(CHILD), order]
-    if qml_dir is not None:
-        command.append(str(qml_dir))
-    return subprocess.run(  # noqa: S603 - fixed argv, our own code
-        command, env=render_env(tmp_path), capture_output=True, text=True, timeout=170, cwd=REPO)
+def run_order(order: str, tmp_path: Path, *arguments: str, timeout: float = 170.0,
+              **environment: str) -> subprocess.CompletedProcess[str]:
+    """One order in a child with a real Qt platform and nothing of the developer's data.
+    A child that is still running when ``timeout`` is up is killed, with its children;
+    ``returncode`` is then None-like (``"timeout"`` in ``args``)."""
+    command = [sys.executable, str(CHILD), order, *arguments]
+    env = render_env(tmp_path, **environment)
+    for name in ("QT_MESSAGE_PATTERN", "QT_LOGGING_RULES"):  # the matrix reads no Qt messages
+        if name not in environment:
+            env.pop(name, None)
+    process = subprocess.Popen(  # noqa: S603 - fixed argv, our own code
+        command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace", cwd=REPO)
+    try:
+        out, err = process.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(command, process.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        _kill_tree(process)
+        out, err = process.communicate(timeout=30)
+        return subprocess.CompletedProcess([*command, "timeout"], -999, out, err)
+
+
+def _kill_tree(process: subprocess.Popen[str]) -> None:
+    """End a child that will not end by itself — and what it started (on Windows the
+    venv's ``python.exe`` is a launcher whose child is the interpreter)."""
+    if WINDOWS:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],  # noqa: S603, S607
+                       capture_output=True, check=False)
+    else:
+        process.kill()
+
+
+def timed_out(proc: subprocess.CompletedProcess[str]) -> bool:
+    return proc.args[-1] == "timeout"
 
 
 def survived(proc: subprocess.CompletedProcess[str]) -> bool:
@@ -66,12 +170,13 @@ def survived(proc: subprocess.CompletedProcess[str]) -> bool:
 
 
 def report(proc: subprocess.CompletedProcess[str]) -> str:
-    return f"exit {proc.returncode}\n--- stdout ---\n{proc.stdout[-3000:]}\n--- stderr ---\n{proc.stderr[-3000:]}"
+    return (f"exit {proc.returncode}{' (killed at the timeout)' if timed_out(proc) else ''}\n"
+            f"--- stdout ---\n{proc.stdout[-3000:]}\n--- stderr ---\n{proc.stderr[-3000:]}")
 
 
-def observed(order: str, tmp_path: Path, qml_dir: Path | None = None) -> dict[str, Any]:
+def observed(order: str, tmp_path: Path, *arguments: str, **environment: str) -> dict[str, Any]:
     """Run one order; the process must survive, and its observations come back."""
-    proc = run_order(order, tmp_path, qml_dir)
+    proc = run_order(order, tmp_path, *arguments, **environment)
     assert survived(proc), f"{order}: the process did not survive\n{report(proc)}"
     results = [line for line in proc.stdout.splitlines() if line.startswith("RESULT ")]
     assert len(results) == 1, report(proc)
@@ -79,125 +184,170 @@ def observed(order: str, tmp_path: Path, qml_dir: Path | None = None) -> dict[st
     return answer
 
 
-def is_frame(answer: Any) -> bool:
-    return isinstance(answer, dict) and "red" in answer
+# ── the judge's own idea of a correct frame ──────────────────────────────────
 
 
-def assert_scene(answer: Any, what: str) -> None:
-    """The answer is a frame, and the frame is the scene: the red box, at its size."""
-    assert is_frame(answer), f"{what}: expected a frame, got {answer!r}"
-    expected = child.BOX_PIXELS * answer["dpr"] ** 2
-    assert abs(answer["red"] - expected) <= 0.04 * expected, (what, answer, expected)
+def frame_problem(frame: Any, window: list[float] | None = None) -> str | None:
+    """None when ``frame`` shows the probe where it must be — else what is wrong with it.
+
+    ``window``: the logical size the frame must have (the view's, when the host was
+    asked). Predicted here, from the probe's definition alone: a red square of
+    ``BOX_SIDE_PX`` logical pixels centred in the frame.
+    """
+    if not (isinstance(frame, dict) and "red" in frame):
+        return f"not a frame: {frame!r}"
+    width, height, ratio = frame["w"], frame["h"], frame["dpr"]
+    if window is not None and (abs(width - window[0] * ratio) > 2 or abs(height - window[1] * ratio) > 2):
+        return f"a {width} x {height} px frame for a {window[0]:g} x {window[1]:g} window"
+    if frame["box"] is None:
+        return "no red pixel: the box is not in the frame"
+    side = child.BOX_SIDE_PX * ratio
+    predicted = [width / 2 - side / 2, height / 2 - side / 2, width / 2 + side / 2, height / 2 + side / 2]
+    if any(abs(got - want) > 1.5 for got, want in zip(frame["box"], predicted, strict=True)):
+        return f"the box is at {frame['box']}, predicted {predicted}"
+    if abs(frame["red"] - side * side) > 0.06 * side * side:
+        return f"{frame['red']} red pixels, predicted {side * side:g}"
+    return None
 
 
-def assert_refused(answer: Any, what: str, *needles: str, error: str = "HostStateError") -> None:
-    assert isinstance(answer, str) and answer.startswith(f"{error}: "), (
-        f"{what}: expected {error}, got {answer!r}")
-    for needle in needles:
-        assert needle in answer, (what, needle, answer)
+def is_refusal(answer: Any) -> bool:
+    return isinstance(answer, str) and answer.startswith("HostStateError: ")
 
 
-def assert_grab_fits_state(state: str, answer: Any, what: str) -> None:
-    """THE rule: what the host says its state is decides what a grab must answer."""
-    if EXPECTED_GRAB[state] == "frame":
-        assert_scene(answer, f"{what} (state {state})")
+def judge_step(order: str, step: str, look: dict[str, Any], expected: str) -> None:
+    """One step of one order against ``TRUTH`` — by the answers, not by the state."""
+    where = f"{order} / {step}"
+    grab, pick, project, view = look["grab"], look["pick"], look["project"], look["view"]
+    if expected == EITHER:  # elsewhere: whichever it is, it must be a truthful one
+        expected = ON_WINDOWS if WINDOWS else (REFUSED if is_refusal(grab) else FRAME)
+    if expected == FRAME:
+        problem = frame_problem(grab, view if isinstance(view, list) else None)
+        assert problem is None, f"{where}: must be a frame of the scene — {problem}"
+        assert isinstance(pick, dict) and pick.get("hit") == "w", f"{where}: pick {pick!r}"
+        assert pick["point"] == pytest.approx([0.0, 0.0, 20.0], abs=0.6), f"{where}: {pick!r}"
+        assert isinstance(project, list), f"{where}: project {project!r}"
+        assert project == pytest.approx([view[0] / 2, view[1] / 2], abs=0.6), f"{where}: {project!r}"
+        assert look["state"] == "live", f"{where}: a host that answers must say it is live"
     else:
-        assert_refused(answer, f"{what} (state {state})")
+        for name, answer in (("grab", grab), ("pick", pick), ("project", project)):
+            assert is_refusal(answer), (
+                f"{where}: {name}() must raise HostStateError, got {str(answer)[:160]!r}")
+        assert look["state"] != "live", f"{where}: a host that refuses must not say it is live"
 
 
-def assert_hit(answer: Any, what: str) -> None:
-    assert isinstance(answer, dict) and answer.get("hit") == "w", (what, answer)
+def judge(order: str, out: dict[str, Any]) -> None:
+    for step, expected in TRUTH[order].items():
+        judge_step(order, step, out[step], expected)
+    for key, expected_answer in READY.get(order, {}).items():
+        assert out[key] is expected_answer, f"{order}: wait_ready() at {key!r} said {out[key]!r}"
+
+
+# ── the table itself ─────────────────────────────────────────────────────────
+
+
+def test_the_truth_table_covers_every_guarded_order() -> None:
+    """An order the table does not know would run unjudged (``special``: the orders with
+    a test of their own below)."""
+    special = {"grab_show", "close_anything", "parent_destroyed_anything", "wait_while_it_goes",
+               "sink_clear_orders"}
+    guarded = {name for name in child.ORDERS
+               if not name.startswith(("unguarded_", "deadlock_"))}
+    assert guarded == set(TRUTH) | special
+    assert set(READY) <= set(TRUTH)
+
+
+def test_the_judge_knows_a_wrong_frame_when_it_sees_one() -> None:
+    """The judge's own controls, no engine involved: a blank frame, a frame of the old
+    size, a box in the wrong place, a box of the wrong size — each must be named."""
+    good = {"w": 447, "h": 500, "dpr": 1.0, "red": 2550, "box": [198, 225, 249, 275]}
+    assert frame_problem(good, [447.0, 500.0]) is None
+    assert frame_problem({**good, "w": 670, "h": 750, "dpr": 1.5, "red": 5625,
+                          "box": [297, 337, 373, 413]}, [447.0, 500.0]) is None
+    assert "no red pixel" in str(frame_problem({**good, "red": 0, "box": None}))
+    assert "window" in str(frame_problem(good, [0.0, 500.0]))            # the collapsed pane's lie
+    assert "predicted" in str(frame_problem({**good, "box": [100, 225, 151, 275]}))
+    assert "red pixels" in str(frame_problem({**good, "red": 900}))
+    assert "not a frame" in str(frame_problem("HostStateError: no"))
 
 
 # ── the orders ───────────────────────────────────────────────────────────────
 
+PORTABLE = ["show_grab", "show_wait_grab", "hide_grab", "show_hide_show_grab",
+            "show_hide_before_expose_grab", "grab_twice_hidden", "embedded_splitter",
+            "collapsed_pane", "embedded_never_shown_grab", "embed_after_show"]
 
-def test_show_then_grab_at_once_is_refused_and_works_after_waiting(tmp_path: Path) -> None:
-    """P1-1, the first killer: ``show()`` then ``grab()`` before the first expose killed
-    the process (5 of 5). The host is ``STARTING`` there and refuses; ``wait_ready()``
-    brings it to ``LIVE``, and then the frame is the scene."""
-    out = observed("show_grab", tmp_path)
-    assert out["state_after_show"] in ("starting", "live")
-    assert_grab_fits_state(out["state_after_show"], out["grab_at_once"], "grab right after show()")
-    if WINDOWS:  # measured: a shown window has no scene graph before the first event-loop pass
-        assert out["state_after_show"] == "starting"
-        assert_refused(out["grab_at_once"], "grab while starting", "wait_ready()")
-        assert_refused(out["pick_at_once"], "pick while starting", "wait_ready()")
-    assert out["ready"] is True and out["state_ready"] == "live"
-    assert_scene(out["grab_ready"], "grab after wait_ready()")
-    assert_hit(out["pick_ready"], "pick after wait_ready()")
-    assert_scene(out["grab_later"], "a later grab")
+
+@pytest.mark.parametrize("order", PORTABLE)
+def test_a_call_order_is_answered_truthfully(tmp_path: Path, order: str) -> None:
+    """Every step of the order against ``TRUTH`` — and the process survives.
+
+    What the orders are, in the words of the defects behind them:
+    ``show_grab`` — the first killer (5 of 5 before the guard); ``grab_twice_hidden`` —
+    the second offscreen frame is the bare background; ``show_hide_before_expose_grab``
+    — the xcb killer, the red CI job of review round 2; ``embedded_splitter`` — L1.3's
+    first open, with the PARENT hiding and showing the container and the window;
+    ``collapsed_pane`` — the pane dragged shut, reopened, squeezed to one pixel and
+    opened again (review round 2, P1-B); ``embedded_never_shown_grab`` — an embedded
+    host has no offscreen frame; ``embed_after_show`` — only a spent host cannot be
+    embedded.
+    """
+    out = observed(order, tmp_path)
+    judge(order, out)
+    if order == "grab_twice_hidden":
+        assert frame_problem(out["first"], [float(child.SIZE[0]), float(child.SIZE[1])]) is None
 
 
 def test_the_offscreen_frame_then_show_is_refused(tmp_path: Path) -> None:
-    """P1-1, the second killer: one hidden grab, then ``show()`` — what the old error
+    """The second killer: one hidden grab, then ``show()`` — what the first error
     message RECOMMENDED — killed the process. A spent host refuses to be shown or
     embedded, and its message sends the caller to a new host."""
     out = observed("grab_show", tmp_path)
     assert out["state_new"] == "new"
-    assert_scene(out["offscreen"], "the one offscreen frame")
+    assert frame_problem(out["offscreen"], [float(child.SIZE[0]), float(child.SIZE[1])]) is None
     assert out["state_after"] == "spent" and out["state_end"] == "spent"
-    assert_refused(out["show"], "show() on a spent host", "Build a new host")
+    for call in ("show", "container"):
+        assert is_refusal(out[call]) and "Build a new host" in out[call], out[call]
     assert "show() it" not in out["show"], "the message must not send the caller to show()"
-    assert_refused(out["container"], "container() on a spent host", "Build a new host")
-    assert_refused(out["second_grab"], "a second offscreen grab", "Build a new host")
+    judge_step("grab_show", "second", out["second"], REFUSED)
     assert out["wait_ready"] is False, "nothing is on its way: no waiting, no hang"
     assert out["hide"] is None  # hiding what is not shown is harmless
 
 
-def test_show_wait_grab_is_the_normal_path(tmp_path: Path) -> None:
-    out = observed("show_wait_grab", tmp_path)
-    assert out["ready"] is True and out["state"] == "live"
-    assert_scene(out["grab"], "grab")
-    assert_hit(out["pick"], "pick")
-    assert_scene(out["second_grab"], "second grab")
-    assert out["renders_3d"] is True
-    assert out["api"] in ("Direct3D11", "OpenGL", "Vulkan", "Metal", "Direct3D12")
+def test_a_window_the_user_closed_is_hidden_not_new(tmp_path: Path) -> None:
+    """The X button of a standalone window destroys its platform window and keeps the
+    scene graph. Raw, a grab of it is an access violation (the control below); a host
+    that read "no platform window" as "new" would take the offscreen frame."""
+    out = observed("user_closes_window", tmp_path)
+    judge("user_closes_window", out)
+    assert out["closed_by_user"]["state"] == "hidden"
+    assert out["show"] is None
 
 
-def test_a_hidden_host_refuses_a_frame(tmp_path: Path) -> None:
-    out = observed("hide_grab", tmp_path)
-    assert out["ready"] is True
-    assert_scene(out["live_grab"], "grab while live")
-    assert out["state_hidden"] == "hidden"
-    assert_refused(out["grab_hidden"], "grab while hidden", "not exposed")
-    assert_refused(out["pick_hidden"], "pick while hidden", "not exposed")
-    assert out["wait_hidden"] is False, "a hidden host is not on its way to live"
+@pytest.mark.skipif(not WINDOWS, reason="minimising needs a window manager; measured on Windows")
+def test_a_minimised_window_refuses_and_does_not_keep_the_caller_waiting(tmp_path: Path) -> None:
+    """Minimised — the main window around an embedded host, and a standalone host: Qt
+    still calls a minimised window visible. No frame, and ``wait_ready()`` says no AT
+    ONCE (it used to pump to its timeout)."""
+    out = observed("minimised_window", tmp_path)
+    if not (out["platform_minimised"] and out["platform_minimised_alone"]):
+        # asked of Qt, not of the host — a session without a window manager (a CI runner)
+        pytest.skip("the window system did not minimise the window")
+    judge("minimised_window", out)
+    assert out["wait_minimised_s"] < 1.0, "wait_ready() must not wait for a minimised window"
 
 
-def test_show_hide_show_grab_brings_the_scene_back(tmp_path: Path) -> None:
-    out = observed("show_hide_show_grab", tmp_path)
-    assert out["ready"] is True
-    assert_scene(out["first"], "first grab")
-    assert out["state_reshown"] in ("hidden", "live")
-    assert_grab_fits_state(out["state_reshown"], out["grab_at_once"], "grab right after re-show")
-    if WINDOWS:  # measured: re-shown, the window is not exposed before the next event-loop pass
-        assert out["state_reshown"] == "hidden"
-    assert out["ready_again"] is True and out["state"] == "live"
-    assert_scene(out["grab"], "grab after the re-show")
-    assert_hit(out["pick"], "pick after the re-show")
-
-
-def test_shown_and_hidden_before_any_event_is_still_new(tmp_path: Path) -> None:
-    """The edge between the states: ``show()`` + ``hide()`` with no event in between
-    never gave the window a scene graph, so the offscreen frame is still to be had —
-    and, taken, the host is spent like any other."""
-    out = observed("show_hide_before_expose_grab", tmp_path)
-    assert_grab_fits_state(out["state"], out["offscreen"], "grab after show()+hide()")
-    if WINDOWS:
-        assert out["state"] == "new"
-    if out["state"] == "new":
-        assert out["state_after"] == "spent"
-        assert_refused(out["show"], "show() after the offscreen frame", "Build a new host")
-
-
-def test_a_never_shown_host_renders_exactly_one_frame(tmp_path: Path) -> None:
-    """Measured: the second hidden grab is the bare background (mean abs difference 161
-    on the probe frame) — so it is refused, and so is every one after it."""
-    out = observed("grab_twice_hidden", tmp_path)
-    assert_scene(out["first"], "the offscreen frame")
-    assert_refused(out["second"], "the second hidden grab", "one offscreen frame")
-    assert_refused(out["third"], "the third hidden grab", "one offscreen frame")
+def test_wait_ready_comes_back_when_the_window_goes_during_the_wait(tmp_path: Path) -> None:
+    """Review round 2, P2-5: the window is hidden, closed or destroyed while
+    ``wait_ready()`` runs its event loop. It looked at visibility once and then spun
+    to its timeout (3.0 of 3.0 s). Now: False, well inside a second, and no frame."""
+    out = observed("wait_while_it_goes", tmp_path)
+    assert set(out) == {"hide", "close", "delete"}
+    for how, row in out.items():
+        assert row["wait_ready"] is False, (how, row)
+        assert row["seconds"] < 1.0, f"{how}: wait_ready() took {row['seconds']} s of its 5 s"
+        assert is_refusal(row["grab"]), (how, row)
+    assert (out["hide"]["state"], out["close"]["state"], out["delete"]["state"]) == (
+        "hidden", "closed", "closed")
 
 
 def _assert_closed_host_contract(calls: dict[str, Any], what: str) -> None:
@@ -205,7 +355,7 @@ def _assert_closed_host_contract(calls: dict[str, Any], what: str) -> None:
         if name in RELEASES:
             assert answer is None, f"{what}: {name}() must be a silent no-op, got {answer!r}"
         else:
-            assert_refused(answer, f"{what}: {name}()", "closed")
+            assert is_refusal(answer) and "closed" in answer, f"{what}: {name}() → {answer!r}"
 
 
 def test_the_closed_host_table_covers_every_public_call() -> None:
@@ -215,16 +365,15 @@ def test_the_closed_host_table_covers_every_public_call() -> None:
     child._register_calls()  # noqa: SLF001 - the child's own table
     public = {name for name in dir(Quick3DHost)
               if not name.startswith("_") and callable(getattr(Quick3DHost, name))}
-    # answered on a closed host, asserted separately: is_visible (False), engine_errors
-    assert set(child.HOST_CALLS) == public - {"is_visible", "engine_errors"}
+    assert set(child.HOST_CALLS) == public - ANSWERS_WHEN_CLOSED
 
 
 def test_close_then_anything(tmp_path: Path) -> None:
-    """P1-3's rule from the host's side: after ``close()`` the three releases do nothing,
-    the state answers, and EVERY other call raises ``HostStateError`` — at once, and
-    still after the event loop has delivered the deferred delete."""
+    """After ``close()`` the three releases do nothing, the state and the health answer,
+    and EVERY other call raises ``HostStateError`` — at once, and still after the event
+    loop has delivered the deferred delete."""
     out = observed("close_anything", tmp_path)
-    assert out["ready"] is True
+    assert out["ready"] is True and out["health_ok"] is True
     assert (out["state"], out["is_closed"], out["is_visible"]) == ("closed", True, False)
     _assert_closed_host_contract(out["calls"], "right after close()")
     _assert_closed_host_contract(out["calls_after_events"], "after the deferred delete")
@@ -232,90 +381,27 @@ def test_close_then_anything(tmp_path: Path) -> None:
 
 def test_parent_destroyed_then_anything(tmp_path: Path) -> None:
     """Qt destroys the view with the widget that parents its container (what closing the
-    main window does). The host notices by asking Qt — no flag was set — and behaves
-    exactly like a closed one. Before: ``TypeError`` / ``RuntimeError`` from sip."""
+    main window does). The host notices by asking Qt — nobody told it — and behaves
+    exactly like a closed one."""
     out = observed("parent_destroyed_anything", tmp_path)
     assert out["ready"] is True
     assert (out["state"], out["is_closed"], out["is_visible"]) == ("closed", True, False)
     _assert_closed_host_contract(out["calls"], "after the parent was destroyed")
 
 
-def test_embedded_in_a_splitter_the_parent_shows_and_hides(tmp_path: Path) -> None:
-    """L1.3's first open: created with the app up, embedded beside a widget, shown, and
-    asked for a frame at once (4 of 4 deaths before). Then the PARENT hides and shows
-    the container and the window — ``host.hide()`` / ``show()`` are never called, so
-    no Python flag could know; the state is Qt's."""
-    out = observed("embedded_splitter", tmp_path)
-    assert out["state_after_show"] in ("starting", "hidden", "live")
-    assert_grab_fits_state(out["state_after_show"], out["grab_at_once"], "grab right after show()")
-    if WINDOWS:
-        assert out["state_after_show"] == "starting"
-    assert out["ready"] is True and out["state"] == "live"
-    assert_scene(out["grab"], "embedded grab")
-    assert_hit(out["pick"], "embedded pick")
-    assert out["state_parent_hid"] == "hidden"
-    assert_refused(out["grab_parent_hid"], "grab while the parent hid the container")
-    at_once = out["grab_parent_showed_at_once"]
-    assert is_frame(at_once) or str(at_once).startswith("HostStateError: "), at_once
-    if is_frame(at_once):
-        assert_scene(at_once, "grab right after the parent showed the container")
-    assert out["ready_again"] is True
-    assert_scene(out["grab_again"], "grab after the parent showed the container")
-    assert out["state_window_hidden"] == "hidden"
-    assert_refused(out["grab_window_hidden"], "grab while the window is hidden")
-    assert out["ready_window"] is True
-    assert_scene(out["grab_window"], "grab after the window came back")
+# ── the sink's teardown in every order ───────────────────────────────────────
 
 
-def test_an_embedded_host_has_no_offscreen_frame(tmp_path: Path) -> None:
-    """Embedded but not shown yet: an offscreen frame now would kill the process the
-    moment the parent shows the container (2 of 2). The host has none to give — and
-    is alive and correct once the parent did show it."""
-    out = observed("embedded_never_shown_grab", tmp_path)
-    assert out["state"] == "new"
-    assert_refused(out["grab_before_parent"], "offscreen grab of an embedded host", "embedded")
-    assert out["wait_before_parent"] is False
-    assert out["state_parent_shown"] in ("starting", "hidden", "live")
-    assert_grab_fits_state(out["state_parent_shown"], out["grab_at_once"],
-                           "grab right after the parent showed the window")
-    assert out["ready"] is True
-    assert_scene(out["grab"], "grab once live")
-    assert_hit(out["pick"], "pick once live")
-
-
-def test_a_shown_host_can_be_embedded_afterwards(tmp_path: Path) -> None:
-    """Only a SPENT host cannot be embedded (measured: embedding a view that is live,
-    starting or hidden is fine) — so ``container()`` is not limited to new hosts."""
-    out = observed("embed_after_show", tmp_path)
-    assert out["ready_standalone"] is True
-    assert_scene(out["standalone"], "standalone grab")
-    assert out["ready"] is True
-    assert_scene(out["grab"], "grab after embedding")
-    assert_hit(out["pick"], "pick after embedding")
-
-
-@pytest.mark.skipif(not WINDOWS, reason="minimising needs a window manager; measured on Windows")
-def test_a_minimised_host_refuses_a_frame(tmp_path: Path) -> None:
-    """Minimised: Qt still calls the window visible, and it is not exposed. A guard on
-    ``isVisible()`` would grab; the state machine reads ``isExposed()``."""
-    out = observed("minimised_grab", tmp_path)
-    assert out["ready"] is True
-    assert_scene(out["live"], "grab while live")
-    assert out["state_minimised"] == "hidden" and out["is_visible"] is True
-    assert_refused(out["grab_minimised"], "grab while minimised", "not exposed")
-    assert_refused(out["pick_minimised"], "pick while minimised", "not exposed")
-    assert out["ready_again"] is True
-    assert_scene(out["grab_restored"], "grab after restoring")
-
-
-# ── P1-3: the sink's teardown in every order ─────────────────────────────────
+@pytest.fixture(scope="module")
+def clear_orders(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    return observed("sink_clear_orders", tmp_path_factory.mktemp("clear_orders"))
 
 
 @pytest.mark.parametrize("order", ["parent_destroyed_then_clear",
                                    "parent_destroyed_close_then_clear", "close_then_clear"])
 def test_clear_is_clean_whenever_the_host_died(clear_orders: dict[str, Any], order: str) -> None:
-    """Before: ``TypeError``, ``ValueError``, and ``EngineError`` with the books left
-    dirty — one per order. Now ``clear()`` returns in each, empties the books, is
+    """Before round 1: ``TypeError``, ``ValueError``, and ``EngineError`` with the books
+    left dirty — one per order. ``clear()`` returns in each, empties the books, is
     idempotent, and ``SceneSync.reset()`` works after it."""
     row = clear_orders[order]
     assert row["first_clear"] is None, row
@@ -334,87 +420,226 @@ def test_reset_alone_recovers_from_a_dead_engine_and_a_fresh_host_renders(
     fresh host (``Quick3DSink.attach``) and applied again: the scene is back, and
     the sink holds what a from-scratch apply would."""
     dead = clear_orders["reset_alone_on_a_dead_engine"]
-    assert_refused(dead["apply_on_dead_engine"], "apply on a dead engine", "closed")
+    assert is_refusal(dead["apply_on_dead_engine"]) and "closed" in dead["apply_on_dead_engine"]
     assert dead["poisoned"] is True
     assert dead["reset"] is None, "reset() must not raise on an engine that is gone"
     assert dead["poisoned_after_reset"] is False
     assert dead["items"] == [] and dead["in_transaction"] is False and dead["state"] == "closed"
     fresh = clear_orders["fresh"]
     assert fresh["ready"] is True
-    assert_scene(fresh["grab"], "the fresh host's frame")
-    assert_hit(fresh["pick"], "the fresh host's pick")
+    judge_step("sink_clear_orders", "fresh", fresh["look"], FRAME)
     assert fresh["parts"] == 1 and fresh["items"] == ["w"]
     assert fresh["state_equals_expected"] is True
 
 
-@pytest.fixture(scope="module")
-def clear_orders(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
-    return observed("sink_clear_orders", tmp_path_factory.mktemp("clear_orders"))
+# ── what a shown host learns about itself, on the GUI thread ─────────────────
 
 
-# ── P2-13: errors in a live view ─────────────────────────────────────────────
+def test_a_healthy_host_says_so_and_counts_its_frames_on_the_gui_thread(tmp_path: Path) -> None:
+    """``health()`` with the shipped scene: nothing to report, at least one frame
+    presented — and the slots that count them ran on the GUI thread although Qt renders
+    (and emits ``frameSwapped``) on a thread of its own: the host's own slots (it
+    counts every call that arrived elsewhere), and a second one this test connects the
+    same way. No Python ever runs on Qt's render thread."""
+    out = observed("health", tmp_path)
+    judge("health", out)
+    assert out["before_show"] == {"ok": True, "frames_presented": 0, "qml_warnings": [],
+                                  "qml_warning_count": 0, "scene_graph_error": None,
+                                  "slots_off_gui_thread": 0}
+    assert out["health"]["ok"] is True and out["health"]["frames_presented"] >= 1
+    assert out["health"]["slots_off_gui_thread"] == 0
+    assert out["frame_slot_on_gui_thread"] is True
+    assert out["health_after_close"] == out["health"], "health() still answers on a closed host"
 
 
-def test_a_live_view_with_the_shipped_shaders_reports_nothing(tmp_path: Path) -> None:
-    out = observed("watch", tmp_path)
-    assert_refused(out["errors_without_a_watch"], "engine_errors() before a watch", "watch_messages()")
-    assert out["watch_is_idempotent"] is True
-    assert out["ready"] is True
-    assert_scene(out["grab"], "the watched frame")
-    assert out["engine_errors"] == []
-    assert out["counts"]["error"] == 0 and out["counts"]["warning"] == 0, out["counts"]
-    assert [row for row in out["logged"] if row["level"] in ("ERROR", "WARNING")] == []
-    assert out["errors_after_close"] == 0
-
-
-def test_a_broken_shader_in_a_live_view_reaches_the_log_and_the_owner(tmp_path: Path) -> None:
-    """Positive control. In a SHOWN view a shader that does not compile raises nothing:
-    the frame renders (without the leaf) and Qt prints a warning to a stderr a frozen
-    exe does not have. With ``watch_messages()`` it is an ERROR record in the app's
-    log — written from Qt's render thread where the platform has one — and
-    ``engine_errors()`` tells the owner on the GUI thread."""
+def test_a_failing_qml_binding_reaches_health(tmp_path: Path) -> None:
+    """A binding in the scene file that fails at run time: no exception anywhere, the
+    frame still renders. The QML engine's ``warnings`` signal — delivered on the GUI
+    thread — puts it into ``health()`` (and the log)."""
     qml = tmp_path / "qml"
     shutil.copytree(QML_SOURCE, qml)
-    shader = qml / "foliage.frag"
-    text = shader.read_text(encoding="utf-8")
-    assert "vColor.rgb * uTint" in text, "the control no longer finds its line in foliage.frag"
-    shader.write_text(text.replace("vColor.rgb * uTint", "vColor.rgb * uTintMissing"),
-                      encoding="utf-8")
-    out = observed("watch", tmp_path, qml)
-    assert out["ready"] is True
-    assert out["engine_errors"], "the owner must learn of the broken shader"
-    assert any("shader" in line.lower() for line in out["engine_errors"])
-    errors = [row for row in out["logged"] if row["level"] == "ERROR"]
-    assert errors and all(row["message"].startswith("Qt: ") for row in errors), out["logged"]
-    assert out["errors_after_close"] == len(out["engine_errors"]), "readable after close()"
-    assert is_frame(out["grab"]) and out["grab"]["red"] == 0, "the leaf is NOT drawn — silently"
+    scene = qml / "Garden.qml"
+    text = scene.read_text(encoding="utf-8")
+    marker = "    property real windTime: 0\n"
+    assert marker in text
+    scene.write_text(text.replace(marker, marker + "    property real probe: nothingHere.value\n"),
+                     encoding="utf-8")
+    out = observed("health", tmp_path, str(qml))
+    judge("health", out)  # the scene itself is intact: the frame is right
+    assert out["health"]["ok"] is False and out["health"]["qml_warning_count"] >= 1
+    assert any("nothingHere" in line for line in out["health"]["qml_warnings"]), out["health"]
 
 
-# ── the controls: what the guard forbids must really kill ────────────────────
+@pytest.mark.skipif(not WINDOWS, reason="QT_D3D_ADAPTER_INDEX forces the failure on Direct3D only")
+def test_a_graphics_device_that_cannot_be_created_is_reported_not_fatal(tmp_path: Path) -> None:
+    """The window's ``sceneGraphError`` is CONNECTED (queued). With an adapter index
+    that does not exist Qt cannot create the device: the host never becomes live,
+    ``wait_ready()`` gives up as soon as Qt said so, ``health()`` carries the message,
+    no frame was presented, nothing can be grabbed — and the process is alive. The
+    control below is the same failure with nothing connected."""
+    out = observed("health", tmp_path, QT_D3D_ADAPTER_INDEX="9")
+    assert out["ready"] is False and out["wait_s"] < 3.0, "no waiting for a device that will not come"
+    judge_step("health", "shown", out["shown"], REFUSED)
+    assert "graphics backend" in str(out["health"]["scene_graph_error"]), out["health"]
+    assert out["health"]["ok"] is False and out["health"]["frames_presented"] == 0
+    assert out["health"]["slots_off_gui_thread"] == 0, "the error arrived on the GUI thread"
 
 
-@pytest.mark.skipif(not WINDOWS, reason="measured on Windows (Direct3D 11, GPU and WARP) only")
-@pytest.mark.parametrize("order", ["unguarded_show_grab", "unguarded_grab_show"])
-def test_without_the_guard_the_process_dies(tmp_path: Path, order: str) -> None:
-    """Positive control for the whole matrix. The same two call orders, on the raw
-    ``QQuickView`` behind the host's back: the grab RETURNS — a correct image, no
-    exception — and the process is dead a moment later (abort, access violation or
-    heap corruption; 3 of 3 for each, 14 of 14 over both measuring sessions). If the
-    crash ever stopped happening, the guard would be folklore and this test says so.
+@pytest.mark.skipif(not WINDOWS, reason="QT_D3D_ADAPTER_INDEX forces the failure on Direct3D only")
+def test_without_a_slot_on_scene_graph_error_qt_blocks_and_would_abort(tmp_path: Path) -> None:
+    """CONTROL. The same failure on a raw ``QQuickView`` with NOTHING connected to
+    ``sceneGraphError``: Qt opens a modal error box ("Failed to initialize graphics
+    backend for D3D11.") and the process sits in it; dismissed, Qt aborts (measured on
+    a desktop: blocked until killed, and exit ``0xC0000409`` once OK is clicked). In
+    the app that would be the whole 2D application. Either way the order never
+    reaches its end: blocked (killed here after 8 s) or dead."""
+    proc = run_order("unguarded_device_failure", tmp_path, timeout=8.0, QT_D3D_ADAPTER_INDEX="9")
+    assert "SHOWN" in proc.stdout, report(proc)
+    assert not survived(proc) and "RESULT" not in proc.stdout, (
+        f"Qt neither blocked nor aborted: the slot would be folklore\n{report(proc)}")
 
-    Up to three attempts: the claim is "it kills", and a single lucky survival of an
-    undefined-behaviour crash must not turn the control red.
-    """
-    deaths, attempts = 0, []
-    for attempt in range(3):
+
+def test_which_thread_renders_a_shown_window(tmp_path: Path) -> None:
+    """The fact the whole message-recorder rule rests on: a SHOWN window is rendered
+    on a thread of its own. Qt names its render loop in ``qt.scenegraph.general``
+    (read from the child's stderr — no Python ran there). Measured: ``threaded`` on
+    Direct3D 11, GPU and WARP. On other platforms the answer is recorded with the
+    run's artifacts; the rule holds either way (the basic loop has no such thread)."""
+    proc = run_order("render_loop", tmp_path, QT_FORCE_STDERR_LOGGING="1",
+                     QT_LOGGING_RULES="qt.scenegraph.general.debug=true")
+    assert survived(proc), report(proc)
+    loops = [name for name in ("threaded", "basic") if f"{name} render loop" in proc.stderr]
+    assert len(loops) == 1, f"Qt did not name its render loop\n{report(proc)}"
+    artifacts = os.environ.get("OGP_RENDER3D_ARTIFACTS")
+    if artifacts:
+        Path(artifacts).mkdir(parents=True, exist_ok=True)
+        (Path(artifacts) / "render-loop.txt").write_text(
+            f"{sys.platform}: {loops[0]} render loop\n", encoding="utf-8")
+    if WINDOWS:
+        assert loops == ["threaded"]
+
+
+# ── controls: what the host forbids must really fail ─────────────────────────
+
+
+def _dies(order: str, tmp_path: Path, attempts: int = 3) -> tuple[bool, str]:
+    """Does the raw call order kill the process? Up to ``attempts`` runs: the claim is
+    "it kills", and one lucky survival of an undefined-behaviour crash must not turn a
+    control red. Also returns what the last run left behind."""
+    last = ""
+    for attempt in range(attempts):
         proc = run_order(order, tmp_path / f"attempt{attempt}")
-        attempts.append(proc)
-        grabbed = [line for line in proc.stdout.splitlines() if line.startswith("GRABBED ")]
-        assert grabbed, f"the control never reached its grab\n{report(proc)}"
-        frame = json.loads(grabbed[0][len("GRABBED "):])["grab"]
-        assert frame["red"] > 0.9 * child.BOX_PIXELS, "the fatal grab returns a GOOD image"
+        last = report(proc)
         if not survived(proc):
-            deaths += 1
-            break
-    assert deaths == 1, (f"{order}: the unguarded call order no longer kills the process "
-                         f"({len(attempts)} attempts)\n{report(attempts[-1])}")
+            return True, last
+    return False, last
+
+
+def _unmeasured_elsewhere(*platforms: str) -> pytest.MarkDecorator:
+    """Asserted where it was measured; reported (xfail, not strict) everywhere else —
+    the CI log of the other platform then says ``XFAIL`` or ``XPASS``, and that is
+    the measurement."""
+    measured = any(sys.platform.startswith(name) for name in platforms)
+    return pytest.mark.xfail(not measured, strict=False,
+                             reason=f"measured on {' and '.join(platforms)} only")
+
+
+@_unmeasured_elsewhere("win32", "linux")
+@pytest.mark.parametrize("order", ["unguarded_show_grab", "unguarded_grab_show",
+                                   "unguarded_user_close_grab"])
+def test_without_the_guard_the_process_dies(tmp_path: Path, order: str) -> None:
+    """The killing call orders, on the raw ``QQuickView`` behind the host's back: shown
+    and grabbed before the first expose; the offscreen frame and then shown; a window
+    the user closed, grabbed. In the first two the grab RETURNS — a correct image, no
+    exception — and the process is dead a moment later (abort, access violation, heap
+    corruption; on xcb a segfault, a bus error or an abort). Direct3D 11: 3 of 3 each
+    on the GPU and on WARP; xcb: 5 of 5 each. If the crash ever stopped happening the
+    guard would be folklore, and this test says so."""
+    died, last = _dies(order, tmp_path)
+    assert died, f"{order}: the unguarded call order no longer kills the process\n{last}"
+    if order != "unguarded_user_close_grab":
+        assert "GRABBED " in last, f"the control never reached its grab\n{last}"
+
+
+@_unmeasured_elsewhere("linux")
+def test_the_xcb_killer_dies_without_the_guard(tmp_path: Path) -> None:
+    """``show(); hide(); grab()`` on the raw view: the round-1 host read "no scene graph,
+    not visible" as ``new``, took the offscreen frame, and on xcb the process
+    segfaulted in the next event-loop pass (exit −11, the red CI job; 5 of 5 here).
+    On Direct3D 11 the same order was measured to survive — which is why the matrix
+    needs this control on Linux, and why it is only reported on Windows."""
+    died, last = _dies("unguarded_show_hide_grab", tmp_path, attempts=5)
+    assert died, f"the xcb killer no longer kills\n{last}"
+
+
+@_unmeasured_elsewhere("win32", "linux")
+def test_the_raw_view_lies_in_a_collapsed_pane_and_the_judge_sees_it(tmp_path: Path) -> None:
+    """CONTROL for the judge (P1-B). In a pane collapsed to width 0 Qt calls the window
+    visible and exposed; a raw grab returns a blank image of the OLD size, and right
+    after the pane reopened it is blank still. The judge must reject both — by their
+    pixels — and accept the frame taken one event-loop pass later."""
+    out = observed("unguarded_collapsed_pane", tmp_path)
+    collapsed, reopened = out["collapsed"], out["reopened_at_once"]
+    assert (collapsed["visible"], collapsed["exposed"]) == (True, True), "what Qt says there"
+    assert frame_problem(collapsed["grab"], collapsed["window"]) is not None
+    assert frame_problem(reopened["grab"], reopened["window"]) is not None
+    assert reopened["root"][0] != reopened["window"][0], "the scene lags the window"
+    assert frame_problem(out["reopened_later"]["grab"], reopened["window"]) is None
+
+
+@_unmeasured_elsewhere("win32", "linux")
+def test_a_python_message_handler_beside_a_shown_window_deadlocks(tmp_path: Path) -> None:
+    """CONTROL (review round 2, P1-C) — so nobody re-adds a message watch to the host.
+
+    A Python Qt message handler, one message from Qt's render thread, and the GUI
+    thread inside a Python-called ``hide()``: the render thread waits for the GIL, the
+    GUI thread waits for the render thread. The order never comes back from
+    ``hide()`` (every run: Direct3D 11 on the GPU and on WARP, and xcb + OpenGL). The
+    twin without the handler returns in milliseconds.
+
+    It also carries the measurement behind the supervised watchdog. The child arms
+    ``faulthandler`` with ``exit=True`` for 4 s and the stack dump IS written. On
+    Linux that ends the process (exit 1). On Windows the process is still alive at
+    12 s: ``_exit`` is ``ExitProcess`` there, which waits in a DLL's detach code."""
+    twin = observed("deadlock_without_handler", tmp_path)
+    assert twin["ready"] is True and twin["returned_after_s"] < 2.0, twin
+    proc = run_order("deadlock_with_handler", tmp_path, timeout=12.0)
+    assert "HIDING " in proc.stdout, report(proc)
+    assert "RESULT" not in proc.stdout, f"hide() came back: no deadlock\n{report(proc)}"
+    assert "Timeout (0:00:04)" in proc.stderr, "faulthandler's dump must have been written"
+    if WINDOWS:
+        assert timed_out(proc), (
+            f"the process ended by itself: faulthandler's exit works here after all\n{report(proc)}")
+    if LINUX:
+        assert not timed_out(proc) and proc.returncode == 1, (
+            f"on Linux faulthandler's exit must end the deadlocked process\n{report(proc)}")
+
+
+@pytest.mark.skipif(not WINDOWS, reason="the supervising process is Windows-only (runlog.py)")
+def test_the_supervised_watchdog_ends_the_deadlock(tmp_path: Path) -> None:
+    """Review round 2, P2-6. The same deadlock under ``runlog.watchdog(supervised=True)``:
+    the in-process watchdog dumps the stacks and cannot end the process (``_exit`` is
+    ``ExitProcess``, which waits in a DLL's detach code); the supervising process
+    terminates it from outside — exit code 1, with the reason in the log."""
+    log = tmp_path / "deadlock.log"
+    proc = run_order("deadlock_supervised", tmp_path, str(log), timeout=40.0)
+    assert not timed_out(proc), f"nothing ended the deadlocked process\n{report(proc)}"
+    assert proc.returncode == 1, report(proc)
+    assert "RESULT" not in proc.stdout
+    text = log.read_text(encoding="utf-8")
+    order = [text.index(marker) for marker in (
+        "[watchdog] armed=True seconds=4.0 what=the deadlock control supervisor=process ",
+        "Timeout (0:00:04)", "[supervisor] fired=True what=the deadlock control")]
+    assert order == sorted(order), text
+    assert "terminated from outside, exit code 1" in text
+
+
+def test_a_child_of_the_matrix_cannot_see_the_developers_data(tmp_path: Path) -> None:
+    """Review round 2, P2-9: every child gets ``APPDATA`` / ``XDG_DATA_HOME`` /
+    ``XDG_CONFIG_HOME`` set explicitly to directories of the test's own, whatever the
+    parent's environment says."""
+    for build in (isolated_env, render_env):
+        env = build(tmp_path)
+        for name in ("APPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME"):
+            assert Path(env[name]).is_dir() and tmp_path in Path(env[name]).parents, (build, name)
+            assert env[name] != os.environ.get(name), (build, name)

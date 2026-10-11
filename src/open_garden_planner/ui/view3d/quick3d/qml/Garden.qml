@@ -32,7 +32,9 @@ Item {
     property real windStrength: 2.5
     // the shaders' clock, in seconds; nothing animates it before L1.4. At 0 the wind is
     // at REST: every vertex is exactly where its mesh puts it (the shaders ease the sway
-    // in over the first two seconds), so what is drawn is what the CPU measured
+    // in over the first two seconds), so what is drawn is what the CPU measured.
+    // ONLY at 0: a clock paused anywhere else leaves the sway in the frame. A truth
+    // probe pins windTime to 0 (or windStrength to 0); "paused" is not "at rest".
     property real windTime: 0
 
     // ---- sun (Quick3DSink.set_sun): direction only, from core/solar ----

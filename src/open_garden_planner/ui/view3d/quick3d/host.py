@@ -10,40 +10,51 @@ Host choice (ADR-048 criterion 3): a ``QQuickView`` in a
 whole top-level window onto RHI composition. Create it once and keep it: hide
 and show it, never rebuild it per open.
 
-THE STATE MACHINE (ADR-048 addendum L1.2, fix round 1). A Qt Quick window can be
-asked for a frame in situations where answering kills the process, so the host
-never guesses: ``state`` is derived from Qt's own predicates on every call, and
-every public method either answers truthfully or raises.
+THE STATE MACHINE (ADR-048 addendum L1.2). A Qt Quick window can be asked for a
+frame in situations where answering kills the process or returns a picture that
+is not the scene, so the host never guesses. ``state`` is derived on every call
+from what Qt reports (``_facts()`` → ``lifecycle.state_of``, a pure function with
+the whole truth table in the unit tests), and every public method either answers
+truthfully or raises ``HostStateError``.
 
-==========  ===========================================================  =====================
-state       what Qt says                                                 a frame?
-==========  ===========================================================  =====================
-``NEW``     no scene graph, not visible, the offscreen frame not taken   ONE, offscreen
-``STARTING``  visible, no scene graph yet (shown, first expose pending)  no — grabbing kills
-``LIVE``    scene graph up, visible and exposed                          yes: ``grab``, ``pick``
-``HIDDEN``  scene graph up, not both (hidden, minimised, just re-shown)  no (refused)
-``SPENT``   took its one offscreen frame                                 never again
-``CLOSED``  ``close()`` was called, or Qt destroyed the view             —
-==========  ===========================================================  =====================
+==========  ============================================================  ===================
+state       what Qt says                                                  a frame?
+==========  ============================================================  ===================
+``NEW``     no platform window was ever created                           ONE, offscreen
+``STARTING``  shown, with an area, not live yet (first expose pending,    no — ``wait_ready()``
+            or the next one, or the root item is catching up a resize)
+``LIVE``    shown, with an area, scene graph up, exposed, root item at    yes: ``grab``, ``pick``
+            the window's size
+``HIDDEN``  it has (had) a platform window and shows nothing: not          no
+            visible, minimised, or no area (a collapsed splitter pane)
+``SPENT``   took its one offscreen frame                                   never again
+``CLOSED``  ``close()`` ran, or Qt destroyed the view                      —
+==========  ============================================================  ===================
 
-Measured, Qt 6.11, Direct3D 11 on an RTX 4070 and on WARP:
+Measured, Qt 6.11 (Direct3D 11 on an RTX 4070 and on WARP; the xcb fact on
+GitHub's Linux runner):
 
 - ``grabWindow()`` on a window WITHOUT a scene graph renders one frame offscreen
-  and tears everything down. For a window that was never shown that is the one
-  offscreen frame (correct, pixel-identical to a shown grab); a second one is
-  the bare background. For a window that IS shown and waits for its first
-  expose — or is shown afterwards — the process dies in the next event-loop
-  pass (abort, access violation or heap corruption; 5 of 5). Hence ``STARTING``
-  refuses to grab, ``SPENT`` refuses ``show()`` and ``container()``, and an
-  embedded host has no offscreen frame at all (its parent may show it any time).
-- One ``processEvents()`` after ``show()`` brings the scene graph up
-  (``wait_ready`` pumps until then, bounded).
-- A grab while ``HIDDEN`` returned a correct frame on Direct3D 11. It is refused
-  all the same: unmeasured on OpenGL, and no caller needs it.
+  and tears everything down. For a window whose platform window was never
+  created that is the one offscreen frame (correct, pixel-identical to a shown
+  grab); a second one is the bare background. For a window that IS shown and
+  waits for its first expose — or is shown afterwards — the process dies in the
+  next event-loop pass (abort, access violation or heap corruption). On xcb the
+  same death follows a window that was shown and hidden again before any event.
+  Hence: only ``NEW`` has the offscreen frame, ``STARTING`` refuses to grab,
+  ``SPENT`` refuses ``show()`` and ``container()``, and an embedded host has no
+  offscreen frame at all (its parent may show it at any time).
+- A window closed by the user keeps its scene graph and loses its platform
+  window; a raw grab of it is an access violation. It reads ``HIDDEN``.
+- A ``QSplitter`` pane collapsed to width 0 leaves the window visible, exposed
+  and 0 px wide: a raw grab returns a blank image of the OLD size and a pick
+  returns a bogus hit. After every resize the QML root item lags the window by
+  one pass of the event loop. ``LIVE`` therefore needs an area and a root item
+  that has caught up; ``wait_ready()`` pumps until then.
 - Under the SOFTWARE scene graph (``QT_QPA_PLATFORM=offscreen``) Qt Quick 3D
-  draws nothing and reports a scene graph from birth. ``renders_3d()`` is False
-  there, and ``grab`` / ``pick`` / ``project`` raise ``EngineError``: a frame
-  without the garden must not pass for one.
+  draws nothing. ``renders_3d()`` is False there, and ``grab`` / ``pick`` /
+  ``project`` raise ``EngineError``: a frame without the garden must not pass
+  for one.
 
 Do not wait for ``frameSwapped`` to be sure of a frame: on Windows, update
 requests come from a display-vblank thread, and with the monitor asleep a live
@@ -51,21 +62,32 @@ window presents its first frame and then none. ``grab()`` on a ``LIVE`` host
 renders the current state synchronously — it is the synchronisation point.
 
 A closed host: ``destroy_part``, ``clear`` and ``close`` are no-ops (they release
-what is gone already), ``state`` / ``is_closed`` / ``is_visible`` answer, and
-every other call raises ``HostStateError``.
+what is gone already), ``state`` / ``is_closed`` / ``is_visible`` / ``health``
+answer, and every other call raises ``HostStateError``.
 
-Errors in a LIVE view (a shader that does not compile is only a Qt warning, and
-a frozen exe has no stderr): ``watch_messages()`` records every Qt message until
-``close()``, writes warnings and errors to the app's log, and ``engine_errors()``
-tells the owner on the GUI thread. L1.3 turns that into a notice.
+TROUBLE IN A LIVE VIEW — ``health()``, on the GUI thread. A shown view has
+nobody to raise to, and a frozen exe has no stderr. What Qt itself reports on
+the GUI thread is collected and logged (Python ``logging``, hence ``app.log``):
+QML warnings (the engine's ``warnings`` signal), a graphics device that could
+not be created (``sceneGraphError`` — the host CONNECTS it: with nothing
+connected Qt shows a modal error box and then aborts the process, measured:
+exit ``0xC0000409``), and how many frames were presented.
+
+There is deliberately NO Qt message recorder for a shown host. Qt renders on a
+thread of its own (the threaded render loop — measured on Direct3D 11, GPU and
+WARP); PyQt's message-handler trampoline needs the GIL; and a render-thread
+message that arrives while the GUI thread sits in a Python-called ``hide()``
+deadlocks the process for good (5 of 5). Shader compile errors of the shipped
+shaders are therefore caught BEFORE release — the render tier and the frozen
+self-test compile every one — not at run time.
 
 No input handling and no orbit camera here: L1.3.
 """
 
 from __future__ import annotations
 
-import enum
 import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -78,14 +100,24 @@ from PyQt6.QtCore import (
     Q_ARG,
     Q_RETURN_ARG,
     QCoreApplication,
+    QEvent,
     QEventLoop,
     QMetaObject,
     QObject,
     Qt,
+    QTimer,
     QUrl,
 )
-from PyQt6.QtGui import QColor, QImage, QQuaternion, QVector3D
-from PyQt6.QtQuick import QQuickItem, QQuickView, QSGRendererInterface
+from PyQt6.QtGui import (
+    QColor,
+    QGuiApplication,
+    QImage,
+    QPlatformSurfaceEvent,
+    QQuaternion,
+    QVector3D,
+    QWindow,
+)
+from PyQt6.QtQuick import QQuickItem, QQuickView, QQuickWindow, QSGRendererInterface
 
 from open_garden_planner.core.scene3d import (
     EnginePose,
@@ -94,9 +126,9 @@ from open_garden_planner.core.scene3d import (
     scene_to_engine_points,
 )
 
-from . import qt_messages
 from .adapter import GroundPlacement, PartSpec
 from .geometry import BufferGeometry
+from .lifecycle import HostState, WindowFacts, state_of, why_no_frame
 from .look import NEUTRAL_DAY, Look
 from .materials import PART_COMPONENTS, tint_uniform
 from .shots import PerspectiveShot, Shot, TopDownShot
@@ -108,8 +140,11 @@ QML_DIR: Final = Path(__file__).resolve().parent / "qml"
 SCENE_FILE: Final = "Garden.qml"
 
 _DIRECT: Final = Qt.ConnectionType.DirectConnection
+_QUEUED: Final = Qt.ConnectionType.QueuedConnection
 _LIGHT_FORWARD: Final = (0.0, 0.0, -1.0)  # a DirectionalLight shines down its local -Z
 _LOG: Final = logging.getLogger(__name__)
+_KEEP_WARNINGS: Final = 50  # QML warnings kept for health(); the rest are counted and logged
+_WAIT_STEP_MS: Final = 5    # wait_ready(): how long one pass of its event loop may block
 
 _API: Final = QSGRendererInterface.GraphicsApi
 #: Our names for Qt's graphics APIs — keyed by the enum MEMBER, never by its
@@ -124,25 +159,20 @@ GRAPHICS_API_NAMES: Final = {
 #: The APIs Qt Quick 3D draws with (RHI-based, and not the null backend).
 RENDERING_APIS: Final = frozenset({"OpenGL", "Direct3D11", "Vulkan", "Metal", "Direct3D12"})
 
+__all__ = [
+    "GRAPHICS_API_NAMES", "QML_DIR", "RENDERING_APIS", "SCENE_FILE", "EngineError", "EnginePart",
+    "HostHealth", "HostState", "HostStateError", "PickHit", "Quick3DHost", "shown_quick_windows",
+]
+
 
 class EngineError(RuntimeError):
     """The engine could not do what it was asked (QML did not load, a part was
-    refused, a property is missing, this backend cannot render 3D)."""
+    refused or could not be destroyed, a property is missing, a scene function
+    failed, this backend cannot render 3D)."""
 
 
 class HostStateError(RuntimeError):
     """A call the host cannot answer truthfully in its current state."""
-
-
-class HostState(enum.Enum):
-    """Where a host is in its life (module docstring: the table and the measurements)."""
-
-    NEW = "new"
-    STARTING = "starting"
-    LIVE = "live"
-    HIDDEN = "hidden"
-    SPENT = "spent"
-    CLOSED = "closed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +201,33 @@ class EnginePart:
     visible: bool
 
 
+@dataclass(frozen=True, slots=True)
+class HostHealth:
+    """What Qt reported about a host on the GUI thread (``Quick3DHost.health``).
+
+    Poll it — a timer in the workspace (L1.3) turns it into a notice. Everything
+    in it was also written to the log when it arrived.
+    """
+
+    #: Frames Qt presented so far. 0 some time after ``wait_ready()`` returned
+    #: True means nothing reaches the screen. (With the display asleep it stays
+    #: at 1: never wait for a particular count.)
+    frames_presented: int
+    #: The QML engine's warnings since the host was built — a binding that
+    #: failed, a scene function that threw. The first ones; ``qml_warning_count``
+    #: counts all.
+    qml_warnings: tuple[str, ...]
+    qml_warning_count: int
+    #: Qt could not create the graphics device for this window
+    #: (``QQuickWindow.sceneGraphError``); the host will never become live.
+    scene_graph_error: str | None
+
+    @property
+    def ok(self) -> bool:
+        """No QML warning and no graphics failure (says nothing about frames)."""
+        return self.scene_graph_error is None and self.qml_warning_count == 0
+
+
 class _Part:
     """The handle of one engine Model: the Model and the geometry only it uses.
 
@@ -187,6 +244,33 @@ class _Part:
     def forget(self) -> None:
         self.model = None
         self.geometry = None
+
+
+class _SurfaceWatch(QObject):
+    """Latches "a platform window was created" from Qt's ``PlatformSurface`` event.
+
+    ``QWindow.handle()`` is the same fact and PyQt6 does not bind it; ``winId()``
+    would CREATE the window. The event is sent synchronously by
+    ``QWindow::create()``, on the GUI thread.
+    """
+
+    def __init__(self, parent: QObject) -> None:
+        super().__init__(parent)
+        self.created = False
+
+    def eventFilter(self, _watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802 - Qt's name
+        if (isinstance(event, QPlatformSurfaceEvent) and event.surfaceEventType()
+                == QPlatformSurfaceEvent.SurfaceEventType.SurfaceCreated):
+            self.created = True
+        return False
+
+
+def _connect_queued(signal: Any, slot: Callable[..., None]) -> None:
+    """``signal.connect(slot, QueuedConnection)``: the slot runs in the event loop of the
+    thread that connected — the GUI thread — wherever Qt emits the signal. (PyQt takes
+    the connection type as a second argument; its type stubs do not declare it, hence
+    the untyped ``signal``.)"""
+    signal.connect(slot, _QUEUED)
 
 
 def _js_object(value: Any) -> Any:
@@ -225,19 +309,33 @@ class Quick3DHost:
         self._parts: set[_Part] = set()  # THE owner of every Model and geometry
         self._container: QWidget | None = None
         self._spent = False   # the one offscreen frame was taken (Qt cannot tell us)
-        self._closed = False  # close() was called (Qt deletes the view only later)
-        self._watch: qt_messages.QtMessages | None = None
-        self._watch_previous: Any = None
+        self._closed = False  # close() ran to its end (Qt deletes the view only later)
+        self._qml_warnings: list[str] = []
+        self._qml_warning_count = 0
+        self._scene_graph_error: str | None = None
+        self._gui_thread = threading.get_ident()
+        #: Slot calls that arrived on another thread than the one that built the host.
+        #: Must stay 0 — the render tier asserts it: no Python on Qt's render thread.
+        self.slot_calls_off_the_gui_thread = 0
         self.frames_presented = 0
         self.grabs = 0
         started = time.perf_counter()
         self._view = QQuickView()
+        self._surface = _SurfaceWatch(self._view)
+        self._view.installEventFilter(self._surface)
         self._view.setResizeMode(QQuickView.ResizeMode.SizeRootObjectToView)
-        # The state machine reads "has a scene graph" as "was live": keep Qt from
-        # dropping the scene graph of a hidden window (both are Qt's defaults).
+        # A hidden window keeps its scene graph (both are Qt's defaults; said out loud
+        # because "scene graph up" must not flicker with visibility).
         self._view.setPersistentSceneGraph(True)
         self._view.setPersistentGraphics(True)
         self._view.resize(*size)
+        # What Qt tells the GUI thread — connected BEFORE the scene loads. Queued where
+        # Qt may emit from its render thread: no Python ever runs there (module docstring).
+        engine = self._view.engine()
+        if engine is not None:
+            engine.warnings.connect(self._on_qml_warnings)
+        _connect_queued(self._view.sceneGraphError, self._on_scene_graph_error)
+        _connect_queued(self._view.frameSwapped, self._on_frame_swapped)
         source = (qml_dir if qml_dir is not None else QML_DIR) / SCENE_FILE
         self._view.setSource(QUrl.fromLocalFile(str(source)))
         root = self._view.rootObject()
@@ -247,7 +345,6 @@ class Quick3DHost:
             self._closed = True
             raise EngineError(f"{source} did not load: {errors or 'no root object'}")
         self._root: QQuickItem = root
-        self._view.frameSwapped.connect(self._on_frame_swapped)
         self.qml_load_ms = (time.perf_counter() - started) * 1000.0
         self._log("qml_loaded", ms=round(self.qml_load_ms, 1), source=source.name)
         try:
@@ -258,19 +355,26 @@ class Quick3DHost:
 
     # ── state ────────────────────────────────────────────────────────────────
 
+    def _facts(self) -> WindowFacts | None:
+        """What Qt says right now — the ONLY input of the state (None: the view is gone)."""
+        view = self._view
+        if sip.isdeleted(view):
+            return None
+        minimised = view.visibility() == QWindow.Visibility.Minimized
+        container = self._container
+        if not minimised and container is not None and not sip.isdeleted(container):
+            top_level = container.window()
+            minimised = top_level is not None and top_level.isMinimized()
+        return WindowFacts(
+            surface_created=self._surface.created, visible=bool(view.isVisible()),
+            minimised=bool(minimised), width=int(view.width()), height=int(view.height()),
+            scene_graph=bool(view.isSceneGraphInitialized()), exposed=bool(view.isExposed()),
+            root_width=float(self._root.width()), root_height=float(self._root.height()))
+
     @property
     def state(self) -> HostState:
-        """Derived from Qt on every call (module docstring)."""
-        if self._closed or sip.isdeleted(self._view):
-            return HostState.CLOSED
-        if self._spent:
-            return HostState.SPENT
-        visible = self._view.isVisible()
-        if self._view.isSceneGraphInitialized():
-            # both: right after hide() Qt still calls the window exposed until the event
-            # loop ran, and a minimised window stays "visible"
-            return HostState.LIVE if visible and self._view.isExposed() else HostState.HIDDEN
-        return HostState.STARTING if visible else HostState.NEW
+        """Derived from Qt on every call (module docstring; ``lifecycle.state_of``)."""
+        return state_of(self._facts(), closed=self._closed, spent=self._spent)
 
     @property
     def is_closed(self) -> bool:
@@ -279,14 +383,19 @@ class Quick3DHost:
         return self.state is HostState.CLOSED
 
     def is_visible(self) -> bool:
-        return self.state is not HostState.CLOSED and bool(self._view.isVisible())
+        facts = self._facts()
+        return facts is not None and not self._closed and facts.visible
+
+    def _look(self, call: str) -> tuple[HostState, WindowFacts]:
+        """State and facts of an OPEN host — ``HostStateError`` when it is closed."""
+        facts = self._facts()
+        state = state_of(facts, closed=self._closed, spent=self._spent)
+        if facts is None or state is HostState.CLOSED:
+            raise HostStateError(f"{call}(): the host is closed (or Qt destroyed its view)")
+        return state, facts
 
     def _open(self, call: str) -> HostState:
-        """The state — or ``HostStateError`` when the host is closed."""
-        state = self.state
-        if state is HostState.CLOSED:
-            raise HostStateError(f"{call}(): the host is closed (or Qt destroyed its view)")
-        return state
+        return self._look(call)[0]
 
     # ── EngineScene (driven by Quick3DSink) ──────────────────────────────────
 
@@ -322,16 +431,43 @@ class Quick3DHost:
             return
         self._destroy(self._part(handle))
 
+    def part_count(self) -> int:
+        """How many Models the engine holds for this host (its own books — which a failed
+        destroy keeps in step with the engine: ``_destroy``)."""
+        self._open("part_count")
+        return len(self._parts)
+
     def clear(self) -> None:
         """Destroy EVERY Model, switch the sun off, drop the plan ground. On a closed
-        host: a no-op. This is the sink's teardown (``Quick3DSink.clear``)."""
+        host: a no-op. This is the sink's teardown (``Quick3DSink.clear``).
+
+        It finishes whatever fails: every Model is tried, then the sun, then the
+        ground, and only then the first failure is raised (``EngineError``). A Model
+        the engine did not destroy STAYS in the host's books — books and engine agree
+        after a failure, and the next ``clear()`` tries it again.
+        """
         if self.state is HostState.CLOSED:
             self._forget_parts()
             return
+        total = len(self._parts)
+        failures: list[Exception] = []
         for part in list(self._parts):
-            self._destroy(part)
-        self.set_sun(None)
-        self.set_ground(None)
+            try:
+                self._destroy(part)
+            except Exception as error:  # noqa: BLE001 - finish the teardown, then report
+                failures.append(error)
+        steps: tuple[Callable[[], None], ...] = (
+            lambda: self.set_sun(None), lambda: self.set_ground(None))
+        for step in steps:
+            try:
+                step()
+            except Exception as error:  # noqa: BLE001 - as above
+                failures.append(error)
+        if failures:
+            raise EngineError(
+                f"clear(): {len(failures)} of {total + 2} steps failed; the engine still holds "
+                f"{len(self._parts)} Model(s), and so do the host's books. First: "
+                f"{failures[0]}") from failures[0]
 
     def pose_part(self, handle: object, pose: EnginePose) -> None:
         self._open("pose_part")
@@ -378,10 +514,11 @@ class Quick3DHost:
 
         It wraps a NATIVE window: sibling widgets do not paint over it. After
         this call ``show()`` / ``hide()`` act on the container, the parent may
-        show and hide it as it likes, and the host has no offscreen frame any
-        more. Legal in every open state but ``SPENT`` — a host whose scene is gone
-        would die when its parent shows it (measured: embedding a view that is
-        already shown, starting or hidden is fine).
+        show, hide, resize and collapse it as it likes — the state follows Qt —
+        and the host has no offscreen frame any more. Legal in every open state
+        but ``SPENT``: a host whose scene is gone would die when its parent
+        shows it (measured: embedding a view that is live, starting or hidden is
+        fine).
         """
         state = self._open("container")
         if self._container is None:
@@ -413,22 +550,33 @@ class Quick3DHost:
             self._view.hide()
 
     def wait_ready(self, timeout_s: float = 10.0) -> bool:
-        """Pump events until the host is ``LIVE`` (exposed, scene graph up); True then.
+        """Run the event loop until the host is ``LIVE``; True then — and only then is a
+        ``grab()`` issued right after it truthful.
 
-        After ``show()`` the window has no scene graph until its first expose is
-        delivered — one pass of the event loop on Windows — and ``grab()`` refuses
-        until then. Returns False at once when nothing is on its way (the host is
-        not visible, or spent), and False on timeout: a finding to act on, never a
-        hang. It runs the event loop; call it where re-entrancy is acceptable.
+        It waits while the host is ``STARTING`` (shown, on its way: the first expose
+        after ``show()``, the next one after a re-show, the root item after a resize
+        or a reopened pane — one pass each, on Windows). It returns False without
+        waiting when nothing is on its way — the host is new, hidden, minimised,
+        collapsed, spent, or Qt reported that the graphics device could not be
+        created — and False when ``timeout_s`` is up, when the host is closed or
+        its window is destroyed or hidden meanwhile. The state is looked at again
+        in every pass, and a pass BLOCKS for events (a few milliseconds at most):
+        no busy loop. It runs the event loop; call it where re-entrancy is
+        acceptable.
+
+        A visible host is first given what is ALREADY pending in the event loop:
+        a pane that was re-shown in a splitter a moment ago still has its old,
+        empty geometry until the layout request is delivered — it reads
+        ``HIDDEN`` (no area), and one delivery later it is on its way.
         """
-        state = self._open("wait_ready")
+        self._open("wait_ready")
         started = time.perf_counter()
-        if state is not HostState.LIVE and state is not HostState.SPENT and self._view.isVisible():
-            deadline = started + timeout_s
-            while self.state not in (HostState.LIVE, HostState.CLOSED):
-                if time.perf_counter() >= deadline:
-                    break
-                QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 20)
+        deadline = started + timeout_s
+        if self.is_visible() and self.state is not HostState.LIVE:
+            QCoreApplication.processEvents()  # what is pending, without waiting
+        while (self.state is HostState.STARTING and self._scene_graph_error is None
+               and time.perf_counter() < deadline):
+            self._run_events(_WAIT_STEP_MS)
         ready = self.state is HostState.LIVE
         self._log("ready", ok=ready, state=self.state.value,
                   ms=round((time.perf_counter() - started) * 1000.0, 1))
@@ -438,25 +586,33 @@ class Quick3DHost:
         """Destroy every Model, then the view (and its container). The host is dead after.
 
         Safe when Qt got there first (the container's parent widget was destroyed, and
-        the window with it): then only the Python side is released.
+        the window with it): then only the Python side is released. Exception-safe
+        and retryable: the window goes whatever a Model's teardown said (a Model that
+        could not be destroyed dies with the view; its geometry stays referenced
+        until then), and the host counts as closed only once hiding and deleting the
+        window went through — a ``close()`` that raised can simply be called again.
         """
         if self._closed:
             return
-        dead = sip.isdeleted(self._view)
-        self._stop_watch()
-        self._closed = True
-        if dead:
+        if sip.isdeleted(self._view):
             self._forget_parts()  # the Models died with the scene
             self._container = None
+            self._closed = True
             return
         for part in list(self._parts):
-            self._destroy(part)
+            try:
+                self._destroy(part)
+            except Exception as error:  # noqa: BLE001 - the Model dies with the view
+                _LOG.warning("close(): a Model could not be destroyed (%s); it goes with the view",
+                             error)
         self._view.hide()
-        if self._container is not None:
-            self._container.deleteLater()  # owns the window
-            self._container = None
+        self._view.removeEventFilter(self._surface)
+        container, self._container = self._container, None
+        if container is not None and not sip.isdeleted(container):
+            container.deleteLater()  # owns the window
         else:
             self._view.deleteLater()
+        self._closed = True
 
     # ── frames ───────────────────────────────────────────────────────────────
 
@@ -482,16 +638,18 @@ class Quick3DHost:
         Legal on a ``LIVE`` host, and ONCE on a ``NEW`` host that is not embedded
         (the offscreen frame; the host is ``SPENT`` after). Every other state
         raises ``HostStateError`` — in ``STARTING`` because a grab would kill the
-        process, elsewhere because the answer would not be the current scene.
-        ``EngineError`` when this backend cannot render 3D at all.
+        process or show the old size, elsewhere because there is nothing to show.
+        ``EngineError`` when this backend cannot render 3D at all, and when the
+        image that comes back is not the window's size.
         """
-        state = self._open("grab")
+        state, facts = self._look("grab")
         self._require_3d("grab")
         if state is HostState.NEW and self._container is None:
             self._spent = True  # before the grab: whatever happens, never a second one
             self._view.create()
         elif state is not HostState.LIVE:
-            raise HostStateError(f"grab(): {self._why_no_frame(state)}")
+            raise HostStateError(
+                f"grab(): {why_no_frame(state, facts, embedded=self._container is not None)}")
         started = time.perf_counter()
         image = self._view.grabWindow()
         elapsed = (time.perf_counter() - started) * 1000.0
@@ -499,6 +657,12 @@ class Quick3DHost:
                   px=f"{image.width()}x{image.height()}")
         if image.isNull() or image.width() == 0 or image.height() == 0:
             raise EngineError(f"grab({label!r}) returned no image")
+        ratio = float(image.devicePixelRatio())
+        if (abs(image.width() - facts.width * ratio) > 2.0
+                or abs(image.height() - facts.height * ratio) > 2.0):
+            raise EngineError(
+                f"grab({label!r}) returned a {image.width()} x {image.height()} px image for a "
+                f"{facts.width} x {facts.height} window at ratio {ratio:g}: not the current scene")
         self.grabs += 1
         return image
 
@@ -555,14 +719,13 @@ class Quick3DHost:
         """The item under view position ``(x, y)`` (LOGICAL pixels), or None for
         empty space — for the frame rendered last.
 
-        ``LIVE`` hosts only; anything else raises ``HostStateError`` (and a backend
-        that renders no 3D ``EngineError``): "no hit" must never mean "could not look".
+        ``LIVE`` hosts only; anything else raises ``HostStateError`` (a backend
+        that renders no 3D, or a scene whose pick function failed,
+        ``EngineError``): "no hit" must never mean "could not look".
         """
         self._require_live("pick")
-        result = _js_object(QMetaObject.invokeMethod(
-            self._root, "pickAt", _DIRECT, Q_RETURN_ARG("QVariant"),
-            Q_ARG("QVariant", float(x)), Q_ARG("QVariant", float(y))))
-        if not result or not result.get("hit"):
+        result = self._call("pickAt", float(x), float(y))
+        if not result.get("hit"):
             return None
         point = engine_to_scene_points(
             np.array([result["x"], result["y"], result["z"]], dtype=np.float64))
@@ -574,18 +737,14 @@ class Quick3DHost:
         by the ENGINE's projection of the frame rendered last. ``LIVE`` hosts only."""
         self._require_live("project")
         engine = _engine_vector((east_cm, north_cm, up_cm))
-        result = _js_object(QMetaObject.invokeMethod(
-            self._root, "projectToView", _DIRECT, Q_RETURN_ARG("QVariant"),
-            Q_ARG("QVariant", engine.x()), Q_ARG("QVariant", engine.y()),
-            Q_ARG("QVariant", engine.z())))
+        result = self._call("projectToView", engine.x(), engine.y(), engine.z())
         return float(result["x"]), float(result["y"])
 
     def engine_parts(self) -> list[EnginePart]:
         """Every Model of the QML scene that was not destroyed — what the engine holds,
         read from it (a Model a later story hides is still listed, ``visible=False``)."""
         self._open("engine_parts")
-        rows = _js_object(QMetaObject.invokeMethod(
-            self._root, "listParts", _DIRECT, Q_RETURN_ARG("QVariant"))) or []
+        rows = self._call("listParts")
         return [EnginePart(
             item_id=str(row["id"]), part_index=int(row["part"]), kind=str(row["kind"]),
             position=(float(row["x"]), float(row["y"]), float(row["z"])),
@@ -601,48 +760,62 @@ class Quick3DHost:
         self._open("scene_property")
         return _get(self._root, name)
 
-    # ── errors in a live view ────────────────────────────────────────────────
+    # ── trouble in a live view (GUI thread; module docstring) ────────────────
 
-    def watch_messages(self, logger: logging.Logger | None = None) -> qt_messages.QtMessages:
-        """Listen to every Qt message from now until ``close()`` (idempotent).
-
-        ``offscreen.render_records`` raises on a shader or QML error; a LIVE view
-        has nobody to raise to — a shader that does not compile is a Qt warning,
-        the frame still renders, in the wrong colours, and a frozen exe has no
-        stderr. With a watch, warnings and errors go to ``logger`` (default: this
-        module's, hence the app's ``app.log`` once ``core.logging_config`` is set
-        up) and are counted; poll ``engine_errors()`` on the GUI thread.
-
-        The recorder is called from Qt's render thread too: it only takes a lock
-        and logs (both thread-safe), and never raises. Handlers chain — a recorder
-        installed later and removed before ``close()`` (an offscreen render)
-        nests cleanly; remove in reverse order of installation.
-        """
-        self._open("watch_messages")
-        if self._watch is None:
-            self._watch = qt_messages.QtMessages(
-                qt_messages.logging_sink(logger if logger is not None else _LOG))
-            self._watch_previous = qt_messages.install(self._watch)
-        return self._watch
-
-    def engine_errors(self) -> list[str]:
-        """The shader / QML errors recorded since ``watch_messages()`` — empty means
-        "none was reported", so it raises ``HostStateError`` when nobody listened."""
-        if self._watch is None:
-            raise HostStateError("engine_errors(): call watch_messages() first — without a "
-                                 "watch nothing was recorded, which is not the same as no error")
-        return self._watch.errors
+    def health(self) -> HostHealth:
+        """What Qt reported so far: frames presented, QML warnings, a graphics device
+        that could not be created. Answers in every state, also on a closed host."""
+        return HostHealth(self.frames_presented, tuple(self._qml_warnings),
+                          self._qml_warning_count, self._scene_graph_error)
 
     # ── internals ────────────────────────────────────────────────────────────
 
+    def _on_gui_thread(self) -> None:
+        if threading.get_ident() != self._gui_thread:
+            self.slot_calls_off_the_gui_thread += 1
+
     def _on_frame_swapped(self) -> None:
+        self._on_gui_thread()
         self.frames_presented += 1
 
-    def _stop_watch(self) -> None:
-        if self._watch is not None:
-            qt_messages.uninstall(self._watch_previous)
-            self._watch_previous = None
-            # the recorder stays readable: engine_errors() after close() still answers
+    def _on_qml_warnings(self, warnings: Any) -> None:
+        self._on_gui_thread()
+        for warning in warnings:
+            text = str(warning.toString())
+            self._qml_warning_count += 1
+            if len(self._qml_warnings) < _KEEP_WARNINGS:
+                self._qml_warnings.append(text)
+                _LOG.warning("3D view: QML warning: %s", text)
+        self._log("qml_warnings", count=self._qml_warning_count)
+
+    def _on_scene_graph_error(self, _error: Any, message: str) -> None:
+        self._on_gui_thread()
+        self._scene_graph_error = str(message) or "the graphics device could not be created"
+        _LOG.error("3D view: the graphics device could not be created: %s",
+                   self._scene_graph_error)
+        self._log("scene_graph_error", message=self._scene_graph_error)
+
+    @staticmethod
+    def _run_events(milliseconds: int) -> None:
+        """One pass of a local event loop that BLOCKS for events — never a busy spin."""
+        loop = QEventLoop()
+        QTimer.singleShot(milliseconds, loop.quit)
+        loop.exec()
+
+    def _call(self, function: str, *arguments: object) -> Any:
+        """Call a function of ``Garden.qml`` that returns an object. A function that is
+        missing raises in PyQt; one that THROWS returns nothing, silently (the QML
+        engine only warns) — both are an ``EngineError`` here, never an empty answer."""
+        try:
+            result = _js_object(QMetaObject.invokeMethod(
+                self._root, function, _DIRECT, Q_RETURN_ARG("QVariant"),
+                *(Q_ARG("QVariant", argument) for argument in arguments)))
+        except RuntimeError as error:
+            raise EngineError(f"the scene has no function {function}() ({error})") from error
+        if result is None:
+            raise EngineError(f"the scene's {function}() returned nothing — it failed "
+                              f"(see health().qml_warnings)")
+        return result
 
     def _require_3d(self, call: str) -> None:
         api = self.graphics_api()
@@ -652,32 +825,31 @@ class Quick3DHost:
                 "nothing (QT_QPA_PLATFORM=offscreen selects the software scene graph)")
 
     def _require_live(self, call: str) -> None:
-        state = self._open(call)
+        state, facts = self._look(call)
         self._require_3d(call)
         if state is not HostState.LIVE:
-            raise HostStateError(f"{call}(): {self._why_no_frame(state)}")
-
-    def _why_no_frame(self, state: HostState) -> str:
-        if state is HostState.STARTING:
-            return ("the window is shown but not exposed yet — it has no scene graph, and a "
-                    "frame taken now would kill the process. Call wait_ready() first")
-        if state is HostState.HIDDEN:
-            return ("the host is not exposed (hidden, minimised, or shown again a moment "
-                    "ago): make it visible and call wait_ready()")
-        if state is HostState.SPENT:
-            return ("this host took its one offscreen frame and its scene is gone. "
-                    "Build a new host (offscreen.render_records does, per frame)")
-        if state is HostState.NEW:
-            return ("an embedded host has no offscreen frame (its parent may show it at any "
-                    "time): show its container and wait_ready()" if self._container is not None
-                    else "the host was never shown: show() it and wait_ready()")
-        return f"the host is {state.value}"
+            raise HostStateError(
+                f"{call}(): {why_no_frame(state, facts, embedded=self._container is not None)}")
 
     def _destroy(self, part: _Part) -> None:
-        self._parts.discard(part)
+        """Destroy one Model in the engine. The part leaves the host's books ONLY when the
+        engine confirms it — the Model is retired (or already deleted). After a failure
+        books and engine still agree: both hold it, and the caller may try again."""
+        model = part.model
+        if model is None or sip.isdeleted(model):
+            self._parts.discard(part)
+            part.forget()
+            return
         # The Model lets go of the geometry before either dies: the geometry is
         # owned by Python, and a Model must never outlive the buffers it draws.
-        QMetaObject.invokeMethod(self._root, "destroyPart", _DIRECT, Q_ARG("QVariant", part.model))
+        try:
+            QMetaObject.invokeMethod(self._root, "destroyPart", _DIRECT, Q_ARG("QVariant", model))
+        except RuntimeError as error:
+            raise EngineError(f"the scene has no function destroyPart() ({error})") from error
+        if not sip.isdeleted(model) and model.property("retired") is not True:
+            raise EngineError("the scene's destroyPart() did not retire the Model — it failed "
+                              "(see health().qml_warnings); the engine still holds it")
+        self._parts.discard(part)
         part.forget()
 
     def _forget_parts(self) -> None:
@@ -695,6 +867,14 @@ class Quick3DHost:
         if model is None:  # _part() checked it; this narrows the type
             raise EngineError(f"not a live part of this host: {handle!r}")
         return model
+
+
+def shown_quick_windows() -> int:
+    """How many Qt Quick windows are visible in this process right now. Each renders on
+    a thread of its own (the threaded render loop), beside which no process-wide Qt
+    message recorder may be installed (``qt_messages.py``)."""
+    return sum(1 for window in QGuiApplication.allWindows()
+               if isinstance(window, QQuickWindow) and window.isVisible())
 
 
 def _engine_vector(point_scene: tuple[float, float, float]) -> QVector3D:

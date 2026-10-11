@@ -10,6 +10,9 @@ void MAIN()
     // At rest (uTime 0) the vertex is EXACTLY the mesh's: the sway eases in over the
     // first two seconds. Without it a leaf with a wind weight sat up to uWind cm off
     // the mesh the CPU measures heights, spreads and picks with, even with no wind.
+    // "At rest" means uTime == 0 and nothing else: a clock PAUSED at any other value
+    // leaves every weighted vertex displaced. Whoever needs the mesh's own positions
+    // (a truth probe, a measurement) sets the clock to 0 or the wind strength to 0.
     float rest = smoothstep(0.0, 2.0, uTime);
     VERTEX.x += sin(uTime * 2.3 + ph + wp.x * 0.02) * uWind * w * gust * rest;
     VERTEX.z += cos(uTime * 1.7 + ph + wp.z * 0.02) * uWind * 0.5 * w * gust * rest;

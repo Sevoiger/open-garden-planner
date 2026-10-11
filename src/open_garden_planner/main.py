@@ -51,6 +51,11 @@ def get_icon_path() -> Path:
 #: 3-7 s in the frozen exe on a GPU and on WARP.
 SELFTEST_WATCHDOG_S = 300.0
 
+#: The flag of the process that supervises a running ``--selftest`` (the same
+#: string as ``runlog.SUPERVISOR_FLAG``; pinned by a test — not imported here, so
+#: that a normal start loads nothing of the 3D package).
+_SUPERVISOR_FLAG = "--selftest-supervisor"
+
 
 def _run_selftest(log: "RenderLog | None" = None) -> int:
     """Headless self-test for lazily-imported subsystems (issue #277).
@@ -201,6 +206,12 @@ def _run_selftest_bounded() -> int:
     only the 3D render. The log also records the overall exit code, so a log
     whose 3D part passed and whose exit code is 1 points at the first two blocks.
 
+    The watchdog is SUPERVISED: a second, tiny process (this exe with
+    ``--selftest-supervisor``) ends this one from outside when it is still alive
+    ten seconds after the deadline. The in-process exit alone was measured not
+    to end a process that is deadlocked inside Qt and the graphics driver
+    (``runlog.py``).
+
     If the log cannot be opened the blocks still run, still under the watchdog
     (it ends a hang without a file to dump into), and the result is FAIL: a
     self-test that cannot say why it failed has failed.
@@ -223,7 +234,7 @@ def _run_selftest_bounded() -> int:
     try:
         log("selftest_start", frozen=bool(getattr(sys, "frozen", False)),
             python=sys.version.split()[0])
-        with watchdog(SELFTEST_WATCHDOG_S, log, what="--selftest"):
+        with watchdog(SELFTEST_WATCHDOG_S, log, what="--selftest", supervised=True):
             code = _run_selftest(log)
         if log_error is not None:
             print(f"  FAIL self-test log -> {log_error!r}")
@@ -353,6 +364,13 @@ def _install_excepthook() -> None:
 
 def main() -> int:
     """Run the Open Garden Planner application."""
+    # The process that supervises a running self-test (runlog.py). FIRST: its
+    # arguments name what it supervises, and nothing of them may start anything else.
+    if _SUPERVISOR_FLAG in sys.argv:
+        from open_garden_planner.ui.view3d.quick3d.runlog import supervisor_main
+
+        return supervisor_main(sys.argv[sys.argv.index(_SUPERVISOR_FLAG) + 1:])
+
     # Headless subsystem self-test (issue #277) — before any Qt UI is created.
     if "--selftest" in sys.argv:
         return _run_selftest_bounded()
