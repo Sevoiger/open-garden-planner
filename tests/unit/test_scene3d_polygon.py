@@ -31,10 +31,7 @@ from open_garden_planner.core.scene3d import (
 )
 from open_garden_planner.core.scene3d import legacy as legacy_module
 from open_garden_planner.core.scene3d import polygon as polygon_module
-from open_garden_planner.core.shadow_geometry import (
-    polyline_footprint,
-    resolve_self_intersections,
-)
+from open_garden_planner.core.shadow_geometry import polyline_footprint
 
 SQUARE = ((0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0))
 L_SHAPE = ((0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (50.0, 50.0), (50.0, 100.0), (0.0, 100.0))
@@ -250,16 +247,6 @@ class TestGroupRings:
         assert sum(len(h) for _o, h in regions) == holes, label
         assert len(rings) == outers + holes
 
-    def test_resolving_a_bow_tie_gives_its_two_lobes(self) -> None:
-        rings = [tuple(r) for r in resolve_self_intersections(list(BOW_TIE))]
-        regions = group_rings(rings)
-        assert len(regions) == 2 and all(not holes for _outer, holes in regions)
-        assert regions_area(regions) == pytest.approx(60000.0)  # 2 x (400 x 300 / 4)
-        assert all(is_simple_ring(outer) for outer, _holes in regions)
-        # a pentagram keeps its centre: the non-zero rule, the 2D shadow's
-        star = group_rings([tuple(r) for r in resolve_self_intersections(list(PENTAGRAM))])
-        assert len(star) == 1 and len(star[0][0]) == 10
-        assert resolve_self_intersections([(0.0, 0.0), (1.0, 1.0)]) == []
 
 
 # ── triangulation ─────────────────────────────────────────────────────────────

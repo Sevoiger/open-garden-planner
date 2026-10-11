@@ -2488,10 +2488,14 @@ it stands after that round.
      every tick while a ring is being edited, so from 32 vertices on it prunes edge pairs by
      bounding box and runs on arrays (500 vertices: 72 ms in a plain loop, 2.9 ms now; 1,000:
      262 ms → 10.8 ms) — with a test that both versions agree.
-   - **`verify_builder` looks at the solid from above.** Beside determinism, purity, mesh validity
-     and the height, it refuses a builder that covers more than half of a HOLE of the footprint
-     (a hole sampled on a lattice of its own points) or puts more than 1 % of the footprint's area
-     as top surface further than `plan_margin_cm` (default 50 cm, for eaves) outside it. The
+   - **`verify_builder` looks at the solid from above — and bounds EXCESS only.** Beside
+     determinism, purity, mesh validity and the height, it refuses a builder that covers more
+     than `hole_cover_limit` (default one half) of a HOLE of the footprint (a hole sampled on a
+     lattice of its own points), or puts more than 1 % of the footprint's area as top surface
+     further than `plan_margin_cm` (default 50 cm, for eaves) outside it. Each bound is a
+     keyword the caller tunes or switches off with `None`. Neither asks a mesh to *cover* its
+     footprint: a flower, a grass tuft, the posts and pickets of a fence fill a fraction of
+     theirs and are right — a lower bound would have rejected every honest sparse mesh. The
      height tolerance is a fraction of the height by default (1 % built, 3 % plants) or, with
      `height_tolerance_cm`, absolute centimetres (L1.6's gate is ±0.5 cm).
    - **A registry may change after the first apply.** `SceneSync` remembers which builder built
@@ -2527,13 +2531,17 @@ it stands after that round.
     enumeration in item coordinates, from which both the scene-space footprints (2D shadows,
     heatmap, Qt 3D) and the item-local records are made. Closes TD-036.
 12. **The snapshot never lets one item blank the view** (`ui/view3d/snapshot.py`).
-    `snapshot_records` returns a `Snapshot` — a `dict`, as before, with one attribute: `skipped`.
-    An item whose record cannot be built (malformed metadata, geometry that is not finite: any
-    exception is contained to that item) is left out, listed in `skipped` with its exception, and
-    logged once per item and kind of failure (the exception's type) — not once per edit. A
-    second item carrying an id already taken is skipped the same way, with a warning; the lower
-    one wins. Items left out by design (invisible, without an object type, covering no ground,
-    a roof ridge) are not in `skipped`.
+    `snapshot_records` returns the plain `dict` it always did; what it had to leave out is
+    reported through an optional keyword-only out-parameter, `skipped=` — a list the caller
+    passes and the snapshot appends `SkippedItem`s to. An item whose record cannot be built
+    (malformed metadata, geometry that is not finite: any exception is contained to that item) is
+    left out, appended with its exception, and logged once per item and kind of failure (the
+    exception's type) — not once per edit. A second item carrying an id already taken is skipped
+    the same way, with a warning; the lower one wins. Items left out by design (invisible,
+    without an object type, covering no ground, a roof ridge) are not reported. (An
+    out-parameter rather than a richer return type: a dict subclass carrying the report was
+    written first, and loses it in the first `dict(...)` or comprehension a later step applies —
+    the very silence the report exists to prevent.)
 13. **The truth principle: a beautiful wrong frame is a P0.** The contract is the gate table of
     `ogp-lush-cinematic` §1, and from this story on each gate that does not need pixels is a test
     a builder cannot pass by looking good:
@@ -2576,7 +2584,8 @@ it stands after that round.
   contract still reads the outer rings.
 - **Letting the snapshot raise.** One plant with `plant_species = {"scientific_name": None}` took
   the 3D view of the whole plan with it. And **swallowing it silently**: the user would see a
-  plan with a hole in it and no one would know why — hence `skipped` plus one log line.
+  plan with a hole in it and no one would know why — hence the `skipped=` report plus one log
+  line.
 - **Aborting the whole apply when a builder fails.** One broken archetype would freeze the 3D
   view for the whole plan. Containment keeps the plan visible; running builders before the sink
   keeps the transaction whole either way.
@@ -2618,8 +2627,8 @@ it stands after that round.
   canopy resolvers.
 - **Open for later stories**: L1.2 implements `EngineSink` — all ten methods, `clear()` included —
   and proves `engine_pose` against the engine (one geometry per Model lifetime); L1.3 owns the
-  debounced tick, sends sun and records in one `apply`, shows `Snapshot.skipped` and
-  `SceneSync.failures` somewhere a user can find them, and calls `reset()` only after a sink
+  debounced tick, sends sun and records in one `apply`, passes a `skipped=` list to the snapshot
+  and shows it and `SceneSync.failures` somewhere a user can find them, and calls `reset()` only after a sink
   failure or a rebuilt engine scene — not on project load; L1.4 extends `SunState` with the look;
   L1.5 extends `GroundSpec`, consumes `reordered` and paints `Record.regions`, not `footprints`;
   L1.6 fills `transform.base_cm` from `parent_id` and registers built-world builders; L1.7
@@ -2656,7 +2665,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 57 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 60 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record …), each
   run against the tests that must notice. Not part of the suite (it rewrites source files); run by

@@ -1103,7 +1103,7 @@ building on.
   with nothing but the interface.*
 - **One malformed plant blanked the whole plan.** `plant_species = {"scientific_name": None}` on
   one item raised `AttributeError` out of `snapshot_records`, so no record reached the engine.
-  The snapshot now contains any exception to its item, lists the item in `Snapshot.skipped` and
+  The snapshot now contains any exception to its item, reports the item through `skipped=` and
   logs it once per item and kind of failure (the exception's type, not its message — a message
   can carry a value that changes with every mouse move, and the pipeline snapshots on every edit). *A loop
   over user data needs its `try` inside the loop — and a place where what it swallowed can be

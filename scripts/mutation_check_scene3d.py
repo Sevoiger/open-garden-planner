@@ -172,11 +172,23 @@ MUTANTS: tuple[Mutant, ...] = (
            (MESH + "::TestDefaultBuilder::test_a_bow_tie_is_refused_not_built_wrong",)),
     Mutant("verify_builder does not look at holes from above",
            SRC + "core/scene3d/build.py",
-           "        if hole_cover > HOLE_COVER_LIMIT:\n", "        if False:\n",
+           "        if hole_cover_limit is not None and hole_cover > hole_cover_limit:\n",
+           "        if False:\n",
            (MESH, SNAPSHOT)),
     Mutant("verify_builder does not look beyond the footprint",
            SRC + "core/scene3d/build.py",
-           "        if beyond > max(PLAN_AREA_TOLERANCE * plan_area, 1.0):\n", "        if False:\n",
+           "        if plan_margin_cm is not None and beyond > max(PLAN_AREA_TOLERANCE * plan_area, 1.0):\n",
+           "        if False:\n",
+           (MESH,)),
+    Mutant("switching the overreach bound off silently switches the hole bound off too",
+           SRC + "core/scene3d/build.py",
+           "    if (plan_margin_cm is not None or hole_cover_limit is not None) and parts and record.footprints:\n",
+           "    if plan_margin_cm is not None and parts and record.footprints:\n",
+           (MESH,)),
+    Mutant("the hole bound cannot be tuned (the keyword is ignored)",
+           SRC + "core/scene3d/build.py",
+           "        if hole_cover_limit is not None and hole_cover > hole_cover_limit:\n",
+           "        if hole_cover > HOLE_COVER_LIMIT:\n",
            (MESH,)),
     Mutant("verify_builder ignores the tolerance in centimetres",
            SRC + "core/scene3d/build.py",
@@ -313,10 +325,13 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant("of two items with one id the upper one wins, silently (review P2-5)",
            SRC + "ui/view3d/snapshot.py",
            "        if item_id in records:\n"
-           "            skipped.append(SkippedItem(item_id, kind, \"another item already has this id\"))\n"
-           "            _report(skipped[-1])\n"
+           "            _report(SkippedItem(item_id, kind, \"another item already has this id\"), skipped)\n"
            "            continue\n",
            "",
+           (SNAPSHOT,)),
+    Mutant("a skipped item is logged but never handed to the caller's list",
+           SRC + "ui/view3d/snapshot.py",
+           "    if into is not None:\n        into.append(skipped)\n", "",
            (SNAPSHOT,)),
 )
 

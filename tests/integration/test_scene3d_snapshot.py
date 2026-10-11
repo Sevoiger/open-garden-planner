@@ -94,7 +94,6 @@ from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
 from open_garden_planner.ui.view3d import snapshot as snapshot_module
 from open_garden_planner.ui.view3d.snapshot import (
     SkippedItem,
-    Snapshot,
     collect_scene3d_records,
     snapshot_records,
 )
@@ -108,6 +107,14 @@ SPECIES = {
     "min_height_cm": 100.0, "max_height_cm": 500.0,
     "min_spread_cm": 50.0, "max_spread_cm": 400.0,
 }
+
+
+def snapshot_with_report(scene: Any, at_date: date | None = None,
+                         ) -> tuple[dict[str, Record], list[SkippedItem]]:
+    """A snapshot and what it had to leave out — ``snapshot_records``'s optional
+    ``skipped`` out-parameter, as a pair."""
+    skipped: list[SkippedItem] = []
+    return snapshot_records(scene, at_date, skipped=skipped), skipped
 
 
 # ── the six footprint shapes of the gate ──────────────────────────────────────
@@ -835,9 +842,9 @@ class TestRecordContent:
         scene.addItem(dot)
         assert item_outline(degenerate) is None
         assert item_footprints(dot) == [[]] and item_footprints(stub) == []  # nothing in 2D either
-        snapshot = snapshot_records(scene)
-        assert snapshot == {} and isinstance(snapshot, Snapshot)
-        assert snapshot.skipped == ()  # left out by design — nothing is wrong with them
+        snapshot, skipped = snapshot_with_report(scene)
+        assert snapshot == {} and type(snapshot) is dict  # the return type never changed
+        assert skipped == []  # left out by design — nothing is wrong with them
 
     def test_a_circle_turned_about_another_pivot_moves_and_still_does_not_rotate(
         self, canvas: CanvasView
@@ -871,10 +878,10 @@ class TestRecordContent:
         item = _rectangle()
         canvas.scene().addItem(item)
         item.setPos(float("nan"), 0.0)
-        snapshot = snapshot_records(canvas.scene())
+        snapshot, skipped = snapshot_with_report(canvas.scene())
         assert snapshot == {}
-        assert [(s.item_id, s.kind) for s in snapshot.skipped] == [(str(item.item_id), "TOOL_SHED")]
-        assert isinstance(snapshot.skipped[0].error, ValueError)
+        assert [(s.item_id, s.kind) for s in skipped] == [(str(item.item_id), "TOOL_SHED")]
+        assert isinstance(skipped[0].error, ValueError)
 
 
 # ── P1-1: a stroke that closes on itself ──────────────────────────────────────
@@ -915,9 +922,9 @@ class TestClosedStrokes:
         apply_rotation(item, rotation)
         item.setPos(140.5, 60.25)
         item.metadata[METADATA_KEY] = 120.0
-        snapshot = snapshot_records(canvas.scene())
+        snapshot, skipped = snapshot_with_report(canvas.scene())
         record = snapshot[str(item.item_id)]
-        assert snapshot.skipped == ()
+        assert skipped == []
 
         # structure: outer rings counter-clockwise, their holes clockwise
         assert len(record.footprints) == outers
@@ -1006,9 +1013,9 @@ class TestSelfCrossingPolygon:
         bow = PolygonItem([QPointF(100.0, 100.0), QPointF(500.0, 400.0), QPointF(500.0, 100.0),
                            QPointF(100.0, 400.0)], object_type=ObjectType.HOUSE)
         canvas.scene().addItem(bow)
-        snapshot = snapshot_records(canvas.scene())
+        snapshot, skipped = snapshot_with_report(canvas.scene())
         record = snapshot[str(bow.item_id)]
-        assert snapshot.skipped == ()
+        assert skipped == []
         assert len(item_footprints(bow)) == 1  # 2D: the ring as drawn
         assert len(record.footprints) == 2 and record.holes == ()
         assert all(is_simple_ring(ring) and len(ring) == 3 for ring in record.footprints)
@@ -1023,6 +1030,33 @@ class TestSelfCrossingPolygon:
         sync = SceneSync(RecordingSink(), validate=True)
         sync.apply(snapshot)
         assert sync.failures == {}
+
+    def test_a_pentagram_keeps_its_centre(self, canvas: CanvasView) -> None:
+        """The non-zero rule, the 2D shadow's: the star is one ring of ten corners,
+        centre included (the canvas paints it odd-even, centre open — ADR-054)."""
+        star = PolygonItem([QPointF(500.0 + 300.0 * math.sin(4.0 * math.pi * k / 5.0),
+                                    500.0 + 300.0 * math.cos(4.0 * math.pi * k / 5.0))
+                            for k in range(5)], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(star)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        record = snapshot[str(star.item_id)]
+        assert skipped == [] and len(record.footprints) == 1 and record.holes == ()
+        assert len(record.footprints[0]) == 10 and is_simple_ring(record.footprints[0])
+        assert point_in_regions(0.0, 0.0, record.regions)  # the centre is built on
+        from open_garden_planner.core.shadow_geometry import compute_scene_shadows
+
+        vertical_sun = compute_scene_shadows([(item_footprints(star)[0], 300.0)], 89.999, 180.0)
+        # to pyclipper's grid: the crossing points are snapped in two different frames
+        assert _signed_area_sum(vertical_sun) == pytest.approx(record.plan_area_cm2, rel=1e-5)
+        verify_builder(default_builder, record)
+
+    def test_a_polygon_with_no_area_left_gets_no_record(self, canvas: CanvasView) -> None:
+        flat = PolygonItem([QPointF(0.0, 0.0), QPointF(100.0, 100.0), QPointF(200.0, 200.0)],
+                           object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(flat)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {} and skipped == []  # it covers no ground: left out by design
+        assert snapshot_module._resolved(((0.0, 0.0), (1.0, 1.0))) == []
 
     def test_it_still_moves_and_turns_as_transform_only(self, canvas: CanvasView) -> None:
         bow = PolygonItem([QPointF(100.0, 100.0), QPointF(500.0, 400.0), QPointF(500.0, 100.0),
@@ -1090,23 +1124,24 @@ class TestContainment:
         also_good = _rectangle()
         for item in (good, bad, also_good):
             scene.addItem(item)
-        healthy = snapshot_records(scene)
-        assert len(healthy) == 3 and healthy.skipped == ()
+        healthy, nothing = snapshot_with_report(scene)
+        assert len(healthy) == 3 and nothing == []
 
         breaker(bad)
         with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
-            snapshot = snapshot_records(scene)
-            again = snapshot_records(scene)  # the pipeline snapshots on every edit
+            snapshot, report = snapshot_with_report(scene)
+            _again, report_again = snapshot_with_report(scene)  # the pipeline snapshots on every edit
+            assert snapshot_records(scene) == snapshot  # and without a list it still does not raise
 
         bad_id = str(bad.item_id)
         assert set(snapshot) == {str(good.item_id), str(also_good.item_id)}  # the rest is there
         assert diff(healthy, snapshot) == SceneDiff(removed=(bad_id,))
-        (skipped,) = snapshot.skipped
+        (skipped,) = report
         assert isinstance(skipped, SkippedItem)
         assert (skipped.item_id, skipped.kind) == (bad_id, "TREE")
         assert skipped.reason == "its record could not be built"
         assert isinstance(skipped.error, error_type)
-        assert [s.item_id for s in again.skipped] == [bad_id]  # observable every time …
+        assert [s.item_id for s in report_again] == [bad_id]  # observable every time …
         mine = [r for r in caplog.records if bad_id in r.getMessage()]
         assert len(mine) == 1  # … logged once
         assert mine[0].levelno == logging.ERROR and mine[0].exc_info is not None
@@ -1119,8 +1154,8 @@ class TestContainment:
         tree.metadata["plant_species"] = {"scientific_name": None}
         assert snapshot_records(scene) == {}
         tree.metadata["plant_species"] = {"scientific_name": "Malus domestica"}
-        snapshot = snapshot_records(scene)
-        assert list(snapshot) == [str(tree.item_id)] and snapshot.skipped == ()
+        snapshot, skipped = snapshot_with_report(scene)
+        assert list(snapshot) == [str(tree.item_id)] and skipped == []
 
     def test_the_log_is_keyed_by_item_and_kind_of_failure_not_by_message(
         self, canvas: CanvasView, caplog: pytest.LogCaptureFixture
@@ -1134,14 +1169,14 @@ class TestContainment:
         scene.addItem(tree)
         with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
             _break_species(tree)  # AttributeError: 'NoneType' object has no attribute 'strip'
-            first = snapshot_records(scene).skipped[0].error
+            first = snapshot_with_report(scene)[1][0].error
             _break_species_name(tree)  # AttributeError again, another message
-            second = snapshot_records(scene).skipped[0].error
+            second = snapshot_with_report(scene)[1][0].error
             assert str(first) != str(second) and type(first) is type(second)
             assert len(caplog.records) == 1
             tree.metadata.pop("plant_species")
             _break_position(tree)  # ValueError: another kind of failure
-            assert isinstance(snapshot_records(scene).skipped[0].error, ValueError)
+            assert isinstance(snapshot_with_report(scene)[1][0].error, ValueError)
         assert len(caplog.records) == 2
 
     def test_the_memory_of_what_was_logged_is_bounded(
@@ -1157,19 +1192,33 @@ class TestContainment:
             scene.addItem(tree)
             _break_species(tree)
         with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
-            assert len(snapshot_records(scene).skipped) == 3
+            assert len(snapshot_with_report(scene)[1]) == 3
         assert len(caplog.records) == 3 and len(snapshot_module._reported) <= 2
 
-    def test_the_snapshot_is_a_dict_to_every_consumer(self, canvas: CanvasView) -> None:
+    def test_the_report_is_an_out_parameter_and_the_return_type_is_what_it_was(
+        self, canvas: CanvasView
+    ) -> None:
+        """The signature other stories call is unchanged — ``snapshot_records(scene)``
+        and ``snapshot_records(scene, at_date)`` return a plain ``dict`` — and the
+        report is opt-in: a keyword-only list the caller owns, appended to, never
+        cleared (two scenes can report into one list)."""
+        import inspect
+
+        signature = inspect.signature(snapshot_records)
+        assert list(signature.parameters) == ["scene", "at_date", "skipped"]
+        assert signature.parameters["skipped"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert signature.parameters["skipped"].default is None
         scene = canvas.scene()
-        shed = _rectangle()
+        shed, tree = _rectangle(), CircleItem(300.0, 100.0, 30.0, object_type=ObjectType.TREE)
         scene.addItem(shed)
-        snapshot = snapshot_records(scene)
-        assert isinstance(snapshot, dict) and snapshot == dict(snapshot)
-        assert snapshot == {str(shed.item_id): snapshot[str(shed.item_id)]}
+        scene.addItem(tree)
+        _break_species(tree)
+        report: list[SkippedItem] = [SkippedItem("earlier", "X", "kept")]
+        snapshot = snapshot_records(scene, None, skipped=report)
+        assert type(snapshot) is dict and list(snapshot) == [str(shed.item_id)]
+        assert [s.item_id for s in report] == ["earlier", str(tree.item_id)]
         sync = SceneSync(RecordingSink())
         assert sync.apply(snapshot) == SceneDiff(added=(str(shed.item_id),))
-        assert type(sync.records[str(shed.item_id)]) is Record
 
     def test_the_fill_pattern_enum_is_what_the_healthy_path_reads(self, canvas: CanvasView) -> None:
         """The guard for the breaker above: a real ``FillPattern`` is the normal
@@ -1202,10 +1251,10 @@ class TestDuplicateIds:
         high._item_id = low.item_id
         shared = str(low.item_id)
         with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
-            snapshot = snapshot_records(scene)
+            snapshot, report = snapshot_with_report(scene)
             snapshot_records(scene)
         assert list(snapshot) == [shared] and snapshot[shared].kind == "TOOL_SHED"  # first wins
-        (skipped,) = snapshot.skipped
+        (skipped,) = report
         assert (skipped.item_id, skipped.kind, skipped.error) == (shared, "RAISED_BED", None)
         assert skipped.reason == "another item already has this id"
         (logged,) = caplog.records  # once, though snapshotted twice
@@ -1243,9 +1292,9 @@ class TestHouseRidge:
         its points: measured on 400 of 400 rotations) — a rebuild for a line the
         house's own builder draws."""
         canvas, house, ridge = house_stage
-        snapshot = snapshot_records(canvas.scene())
+        snapshot, skipped = snapshot_with_report(canvas.scene())
         assert list(snapshot) == [str(house.item_id)]
-        assert snapshot.skipped == ()  # by design, not a fault
+        assert skipped == []  # by design, not a fault
         assert len(collect_scene3d_records(canvas.scene())) == 2  # the Qt 3D view still draws the line
         ridge.setVisible(False)  # … and hiding the line does not take the ridge off the roof
         assert "ridge" in snapshot_records(canvas.scene())[str(house.item_id)].params
@@ -1379,9 +1428,9 @@ def test_unchanged_scene_snapshots_identically_100_times(qtbot, plan: str) -> No
     diff empty. Deterministic by construction — nothing here depends on the grid."""
     scene = CanvasScene()
     ProjectManager().load(scene, PLANS / plan)
-    first = snapshot_records(scene, JUNE)
+    first, skipped = snapshot_with_report(scene, JUNE)
     assert len(first) == (98 if plan == "bench_small.ogp" else 424)  # every item but the roof ridge
-    assert first.skipped == ()
+    assert skipped == []
     for _ in range(100):
         again = snapshot_records(scene, JUNE)
         assert again == first

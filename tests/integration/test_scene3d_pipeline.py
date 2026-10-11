@@ -69,7 +69,7 @@ from open_garden_planner.ui.canvas.geometry_apply import (
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
-from open_garden_planner.ui.view3d.snapshot import snapshot_records
+from open_garden_planner.ui.view3d.snapshot import SkippedItem, snapshot_records
 
 # the real-item rig of the snapshot matrix: one stage, one set of app-command edits
 from tests.integration.test_scene3d_snapshot import (
@@ -107,18 +107,25 @@ class Pipeline:
         """One pipeline pass: (diff, the sink calls it caused, the items it built)."""
         self.sink.clear_calls()
         self.built.clear()
-        records = snapshot_records(self.scene, self.at)
-        assert records.skipped == ()
+        skipped: list[SkippedItem] = []
+        records = snapshot_records(self.scene, self.at, skipped=skipped)
+        assert skipped == []
         result = self.sync.apply(records, sun=sun, ground=ground)
-        calls, built = self.sink.ops(), list(self.built)  # before the reference rebuilds below
+        calls, built = self.sink.ops(), list(self.built)
         self.assert_equals_full_rebuild(records)
         return result, calls, built
 
     def assert_equals_full_rebuild(self, records: dict[str, Record]) -> None:
+        """Incremental == full rebuild. The reference runs this pipeline's own
+        registry (so a builder a later story registered is compared too) — and
+        leaves ``built`` as the tick left it: what the reference builds is not
+        what the pipeline built."""
+        built = list(self.built)
         fresh = SceneSync(RecordingSink(), self.sync.registry, validate=True)
         fresh.apply(records, sun=self.sync.sun, ground=self.sync.ground)
         assert isinstance(fresh.sink, RecordingSink)
         assert self.sink.state() == fresh.sink.state() == self.sync.expected_state()
+        self.built[:] = built
         assert dict(self.sync.records) == records and list(self.sync.records) == list(records)
         assert self.sync.failures == {} and not self.sink.in_transaction
 

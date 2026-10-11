@@ -23,6 +23,7 @@ from datetime import date
 from functools import lru_cache
 from typing import Any
 
+import pyclipper
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsScene
 
@@ -56,9 +57,9 @@ from open_garden_planner.core.scene3d import (
     ring_area,
 )
 from open_garden_planner.core.shadow_geometry import (
+    CLIPPER_SCALE,
     circle_footprint,
     polyline_footprint,
-    resolve_self_intersections,
 )
 from open_garden_planner.models.plant_data import species_key
 from open_garden_planner.ui.canvas.footprints import (
@@ -146,18 +147,18 @@ class SkippedItem:
     error: Exception | None = None
 
 
-class Snapshot(dict[str, Record]):
-    """``{item_id: Record}``, bottom to top — and what could not be snapshotted.
+class _Lookup:
+    """Items by id, built on first use (only a HOUSE with a ridge asks today)."""
 
-    A plain ``dict`` for every consumer (``SceneSync.apply`` takes it as it is,
-    and it compares equal to a dict with the same records); ``skipped`` lists
-    the items left out because turning them into a record failed — one bad item
-    must not blank the 3D view, but it must not vanish silently either.
-    """
+    def __init__(self, items: list[Any]) -> None:
+        self._items = items
+        self._by_id: dict[str, Any] | None = None
 
-    #: Items left out because something is wrong with them (never the ones left
-    #: out by design). Empty on a healthy plan.
-    skipped: tuple[SkippedItem, ...] = ()
+    def get(self, item_id: object) -> Any:
+        if self._by_id is None:
+            self._by_id = {str(other.item_id): other for other in self._items
+                           if hasattr(other, "item_id")}
+        return self._by_id.get(str(item_id))
 
 
 #: What has been logged already — one line per item and KIND of failure (the
@@ -168,7 +169,10 @@ _reported: set[tuple[str, str, str]] = set()
 _REPORTED_MAX = 2048
 
 
-def _report(skipped: SkippedItem) -> None:
+def _report(skipped: SkippedItem, into: list[SkippedItem] | None) -> None:
+    """Hand a skipped item to the caller's list (every time) and to the log (once)."""
+    if into is not None:
+        into.append(skipped)
     key = (skipped.item_id, skipped.reason, type(skipped.error).__name__)
     if key in _reported:
         return
@@ -206,6 +210,15 @@ def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...]:
     return group_rings([_quantized(ring) for ring in polyline_footprint(list(path), width_cm)])
 
 
+def _resolved(ring: Ring) -> list[Ring]:
+    """A self-crossing ring as simple rings (outers counter-clockwise, holes
+    clockwise), by pyclipper's NON-ZERO rule on the 2D shadow's integer grid.
+    ``[]`` when nothing with an area is left."""
+    scaled = [(round(x * CLIPPER_SCALE), round(y * CLIPPER_SCALE)) for x, y in ring]
+    return [_quantized((x / CLIPPER_SCALE, y / CLIPPER_SCALE) for x, y in path)
+            for path in pyclipper.SimplifyPolygon(scaled, pyclipper.PFT_NONZERO) if len(path) >= 3]
+
+
 @lru_cache(maxsize=2048)
 def _polygon_regions(ring: Ring) -> tuple[Region, ...]:
     """A drawn polygon as simple rings. A simple one is itself, turned
@@ -219,7 +232,7 @@ def _polygon_regions(ring: Ring) -> tuple[Region, ...]:
         return ()
     if is_simple_ring(ring):
         return ((ccw(ring), ()),)
-    return group_rings([_quantized(simple) for simple in resolve_self_intersections(list(ring))])
+    return group_rings(_resolved(ring))
 
 
 @lru_cache(maxsize=1024)
@@ -307,9 +320,10 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
 
 
 def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
-               items: list[Any], by_id: dict[str, Any]) -> Record | None:
+               lookup: _Lookup) -> Record | None:
     """One item → its record; None when it covers no ground (not an error).
-    Anything it raises is contained by ``snapshot_records``."""
+    Anything it raises is contained by ``snapshot_records``. ``lookup`` finds
+    another item by id (a HOUSE's ridge)."""
     outline = item_outline(item, at_date)
     if outline is None:
         return None
@@ -345,10 +359,7 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     if kind == "HOUSE":
         ridge_id = metadata.get("ridge_item_id")
         if ridge_id:
-            if not by_id:
-                by_id.update((str(other.item_id), other) for other in items
-                             if hasattr(other, "item_id"))
-            ridge = _ridge_param(frame, by_id.get(str(ridge_id)))
+            ridge = _ridge_param(frame, lookup.get(ridge_id))
             if ridge is not None:
                 params[PARAM_RIDGE] = ridge
     stroke = getattr(item, "stroke_color", None)
@@ -379,21 +390,28 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
 
 
 def snapshot_records(
-    scene: QGraphicsScene, at_date: date | None = None
-) -> Snapshot:
+    scene: QGraphicsScene,
+    at_date: date | None = None,
+    *,
+    skipped: list[SkippedItem] | None = None,
+) -> dict[str, Record]:
     """Every visible item with a footprint → one contract-v2 ``Record``.
 
-    Returns a ``Snapshot`` — a ``dict`` keyed by item id, insertion-ordered
-    BOTTOM TO TOP (paint order). Runs on the GUI thread; the records are plain
-    immutable data.
+    Returns a dict keyed by item id, insertion-ordered BOTTOM TO TOP (paint
+    order). Runs on the GUI thread; the records are plain immutable data.
+
+    ``skipped``: pass a list to learn what had to be left out because something
+    is WRONG with it — one ``SkippedItem`` is appended per such item, in paint
+    order (the list is not cleared first; without one the report goes to the log
+    only). It stays empty on a healthy plan.
 
     Left out by design, silently: invisible items (as ``collect_scene3d_records``
     does), items without an ``object_type``, items that cover no ground (text,
     groups, arcs, a polyline shorter than two points, a shape without an area),
     and ``ROOF_RIDGE`` items (a ridge reaches 3D as its HOUSE's ``ridge`` param).
 
-    Left out because something is wrong, and REPORTED — in ``Snapshot.skipped``
-    every time, and in the log once per item and kind of failure: an item whose
+    Left out because something is wrong, and REPORTED — in ``skipped`` every
+    time, and in the log once per item and kind of failure: an item whose
     record could not be built
     (malformed metadata, geometry that is not finite — any exception is
     contained to that item) and a second item carrying an id already taken (the
@@ -417,9 +435,8 @@ def snapshot_records(
     - ``at_date`` (US-E8) grows dated plants: canopy radius and height.
     """
     items: list[Any] = scene.items()  # top-first; garden items are duck-typed below
-    by_id: dict[str, Any] = {}
-    records = Snapshot()
-    skipped: list[SkippedItem] = []
+    lookup = _Lookup(items)
+    records: dict[str, Record] = {}
     for item in reversed(items):
         if not item.isVisible():
             continue
@@ -432,17 +449,14 @@ def snapshot_records(
             continue
         item_id = str(item_uuid)
         try:
-            record = _record_of(item, object_type, item_id, at_date, items, by_id)
+            record = _record_of(item, object_type, item_id, at_date, lookup)
         except Exception as error:  # one bad item must not blank the view (docstring)
-            skipped.append(SkippedItem(item_id, kind, "its record could not be built", error))
-            _report(skipped[-1])
+            _report(SkippedItem(item_id, kind, "its record could not be built", error), skipped)
             continue
         if record is None:
             continue
         if item_id in records:
-            skipped.append(SkippedItem(item_id, kind, "another item already has this id"))
-            _report(skipped[-1])
+            _report(SkippedItem(item_id, kind, "another item already has this id"), skipped)
             continue
         records[item_id] = record
-    records.skipped = tuple(skipped)
     return records

@@ -50,9 +50,12 @@ Builder: TypeAlias = Callable[[Record], tuple[MeshPart, ...]]
 #: shadow-casting item is its resolved height to this fraction. Plants are held
 #: to 0.03 — L1.7 passes it to ``verify_builder``.
 BUILT_HEIGHT_TOLERANCE: Final = 0.01
-#: ``verify_builder``'s default reach: a top surface may lie this far outside
-#: the footprint (eaves, a post wider than its fence line). A net for gross
-#: errors, not a style rule — pass 0.0 for a builder that must stay inside.
+# ``verify_builder``'s plan-view check bounds EXCESS only — geometry where the
+# plan has none. It never asks a mesh to cover its footprint: a flower, a grass
+# tuft, the posts and pickets of a fence fill a fraction of theirs and are right.
+#: Its default reach: a top surface may lie this far outside the footprint
+#: (eaves, a post wider than its fence line, a canopy a few percent over its
+#: circle). Pass 0.0 for a builder that must stay inside, None to switch it off.
 PLAN_MARGIN_CM: Final = 50.0
 #: The share of the footprint's area that may lie beyond that reach.
 PLAN_AREA_TOLERANCE: Final = 0.01
@@ -371,6 +374,7 @@ def verify_builder(
     height_tolerance: float = BUILT_HEIGHT_TOLERANCE,
     height_tolerance_cm: float | None = None,
     plan_margin_cm: float | None = PLAN_MARGIN_CM,
+    hole_cover_limit: float | None = HOLE_COVER_LIMIT,
 ) -> tuple[MeshPart, ...]:
     """Run ``builder`` on ``record`` and assert the seam's contract; return the parts.
 
@@ -387,12 +391,22 @@ def verify_builder(
       ``height_tolerance`` (a fraction of the height; truth gate "built
       heights"), or — when ``height_tolerance_cm`` is given — within that many
       centimetres instead (issue #385's L1.6 gate is ±0.5 cm absolute);
-    - builds where the plan has nothing, seen from above: more than
-      ``PLAN_AREA_TOLERANCE`` of the footprint's area as top surface further than
-      ``plan_margin_cm`` outside the footprint, or more than ``HOLE_COVER_LIMIT``
-      of any HOLE covered (a closed fence extruded with its inside filled).
-      ``plan_margin_cm=0.0`` holds a builder to its footprint, a larger value
-      allows eaves, ``None`` switches the plan-view check off.
+    - builds where the plan has NOTHING, seen from above — two upper bounds on
+      excess, each with its own keyword:
+
+      * ``plan_margin_cm`` (default ``PLAN_MARGIN_CM``): at most
+        ``PLAN_AREA_TOLERANCE`` of the footprint's area (and at least 1 cm²)
+        may be upward-facing surface lying further than this outside the
+        footprint (the outer rings minus their holes). ``0.0`` holds a builder
+        to its footprint, a larger value allows wider eaves, ``None`` switches
+        this bound off.
+      * ``hole_cover_limit`` (default ``HOLE_COVER_LIMIT``): at most this share
+        of any HOLE of the footprint may be covered from above (a closed fence
+        extruded with its inside filled covers all of it). ``None`` switches
+        this bound off.
+
+      Neither bound asks for coverage: a mesh that fills a fraction of its
+      footprint — a flower, a tuft, pickets inside a fence's stroke — passes.
     """
     parts = checked_parts(builder(record))
     if checked_parts(builder(record)) != parts:
@@ -432,15 +446,15 @@ def verify_builder(
                 f"the mesh top is {top:g} cm but the plan's resolved height is "
                 f"{record.height_cm:g} cm (tolerance {rule}): truth before beauty"
             )
-    if plan_margin_cm is not None and parts and record.footprints:
-        beyond, hole_cover = plan_overreach(parts, record.regions, plan_margin_cm)
+    if (plan_margin_cm is not None or hole_cover_limit is not None) and parts and record.footprints:
+        beyond, hole_cover = plan_overreach(parts, record.regions, plan_margin_cm or 0.0)
         plan_area = record.plan_area_cm2
-        if hole_cover > HOLE_COVER_LIMIT:
+        if hole_cover_limit is not None and hole_cover > hole_cover_limit:
             raise BuilderContractError(
                 f"the solid covers {hole_cover:.0%} of a hole of the footprint: holes are not "
                 "built over (iterate record.regions, or pass record.holes to prism_mesh)"
             )
-        if beyond > max(PLAN_AREA_TOLERANCE * plan_area, 1.0):
+        if plan_margin_cm is not None and beyond > max(PLAN_AREA_TOLERANCE * plan_area, 1.0):
             raise BuilderContractError(
                 f"{beyond:,.0f} cm² of top surface lie more than {plan_margin_cm:g} cm outside a "
                 f"footprint of {plan_area:,.0f} cm²: the solid stands where the plan has nothing"

@@ -640,6 +640,85 @@ class TestVerifyBuilder:
         verify_builder(with_eaves(120.0), record(), plan_margin_cm=130.0)
         verify_builder(with_eaves(120.0), record(), plan_margin_cm=None)  # switched off
 
+    # ── the plan view bounds EXCESS, never coverage ──────────────────────────
+
+    def test_a_sparse_plant_inside_its_canopy_passes(self) -> None:
+        """A flower, a grass tuft: a few blades standing in the canopy circle cover
+        a fraction of a percent of it. The plan view asks no mesh to fill its
+        footprint — checked with the very call the plant builders make."""
+        canopy = tuple((60.0 * math.cos(2.0 * math.pi * k / 24), 60.0 * math.sin(2.0 * math.pi * k / 24))
+                       for k in range(24))
+        plant = record(kind="PERENNIAL", shape="circle", footprints=(canopy,), height_cm=80.0)
+
+        def tuft(rec: Record) -> tuple[MeshPart, ...]:
+            assert rec.height_cm is not None
+            blades = [((x - 1.0, y - 1.0), (x + 1.0, y - 1.0), (x + 1.0, y + 1.0), (x - 1.0, y + 1.0))
+                      for x, y in ((0.0, 0.0), (20.0, 10.0), (-25.0, 5.0), (5.0, -30.0), (-10.0, -15.0))]
+            return (MeshPart(prism_mesh(blades, rec.height_cm), name="blades"),)
+
+        parts = verify_builder(tuft, plant, height_tolerance=0.03)
+        assert cap_area(parts[0].mesh) < 0.002 * plant.plan_area_cm2  # 20 cm² of 11,000
+        assert plan_overreach(parts, plant.regions, PLAN_MARGIN_CM) == (0.0, 0.0)
+        verify_builder(tuft, plant, plan_margin_cm=0.0)  # … and it is strictly inside as well
+
+    def test_a_canopy_a_few_percent_wider_than_its_circle_passes(self) -> None:
+        """Foliage whose hull is 102.3 % of the canopy circle (L1.7's measured upper
+        end) reaches 1.1 % of the radius past it — far inside the default reach."""
+        def ring(radius: float) -> tuple[tuple[float, float], ...]:
+            return tuple((radius * math.cos(2.0 * math.pi * k / 24), radius * math.sin(2.0 * math.pi * k / 24))
+                         for k in range(24))
+
+        tree = record(kind="TREE", shape="circle", footprints=(ring(250.0),), height_cm=600.0)
+
+        def crown(rec: Record) -> tuple[MeshPart, ...]:
+            assert rec.height_cm is not None
+            return (MeshPart(prism_mesh((ring(250.0 * math.sqrt(1.023)),), rec.height_cm), name="crown"),)
+
+        verify_builder(crown, tree, height_tolerance=0.03)
+
+    def test_posts_and_pickets_inside_a_closed_fence_pass(self) -> None:
+        """A closed fence built the way a fence is built — a post every metre along
+        the centre line, each wider than the stroke — covers a sliver of the
+        stroke and next to nothing of the hole. With the call L1.6 makes."""
+        fence = record(kind="FENCE", shape="polyline", footprints=(FRAME,), holes=((FRAME_HOLE,),),
+                       height_cm=120.0)
+        centres = ([(float(x), y) for x in range(-500, 501, 100) for y in (-400.0, 400.0)]
+                   + [(x, float(y)) for y in range(-300, 301, 100) for x in (-500.0, 500.0)])
+
+        def posts(rec: Record) -> tuple[MeshPart, ...]:
+            assert rec.height_cm is not None
+            squares = [((x - 6.0, y - 6.0), (x + 6.0, y - 6.0), (x + 6.0, y + 6.0), (x - 6.0, y + 6.0))
+                       for x, y in centres]
+            return (MeshPart(prism_mesh(squares, rec.height_cm), name="posts"),)
+
+        parts = verify_builder(posts, fence)
+        beyond, hole_cover = plan_overreach(parts, fence.regions, PLAN_MARGIN_CM)
+        assert beyond == 0.0 and hole_cover < 0.01
+        assert cap_area(parts[0].mesh) < 0.2 * fence.plan_area_cm2  # 36 posts of 144 cm² on 36,000
+
+    def test_each_plan_bound_has_its_own_switch(self) -> None:
+        fence = record(footprints=(FRAME,), holes=((FRAME_HOLE,),))
+
+        def slab(rec: Record) -> tuple[MeshPart, ...]:
+            assert rec.height_cm is not None
+            return (MeshPart(prism_mesh(rec.footprints, rec.height_cm)),)  # the hole filled
+
+        with pytest.raises(BuilderContractError, match="of a hole"):
+            verify_builder(slab, fence)
+        with pytest.raises(BuilderContractError, match="of a hole"):
+            verify_builder(slab, fence, plan_margin_cm=None)  # the hole bound stands alone
+        # the other bound sees it too: the middle of an 8 m hole is far outside the footprint
+        with pytest.raises(BuilderContractError, match="more than 50 cm outside"):
+            verify_builder(slab, fence, hole_cover_limit=None)
+        with pytest.raises(BuilderContractError, match="more than 50 cm outside"):
+            verify_builder(slab, fence, hole_cover_limit=1.0)  # tuned, not off
+        verify_builder(slab, fence, plan_margin_cm=None, hole_cover_limit=None)  # both off: on the caller
+        small = record(footprints=(((-40.0, -40.0), (40.0, -40.0), (40.0, 40.0), (-40.0, 40.0)),),
+                       holes=((((-30.0, -30.0), (-30.0, 30.0), (30.0, 30.0), (30.0, -30.0)),),))
+        with pytest.raises(BuilderContractError, match="of a hole"):
+            verify_builder(slab, small)  # a 60 cm hole: only the hole bound can see this one
+        verify_builder(slab, small, hole_cover_limit=None)
+
     def test_plan_overreach_numbers(self) -> None:
         fence = record(footprints=(FRAME,), holes=((FRAME_HOLE,),))
         good = default_builder(fence)

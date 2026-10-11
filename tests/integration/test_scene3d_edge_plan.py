@@ -26,6 +26,7 @@ import pytest
 from open_garden_planner.core import ProjectManager
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.scene3d import (
+    Record,
     RecordingSink,
     SceneDiff,
     SceneSync,
@@ -38,7 +39,7 @@ from open_garden_planner.core.scene3d import (
 )
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.footprints import item_footprints
-from open_garden_planner.ui.view3d.snapshot import Snapshot, snapshot_records
+from open_garden_planner.ui.view3d.snapshot import SkippedItem, snapshot_records
 from tests.integration.test_scene3d_snapshot import (
     JUNE,
     _assert_walls_face_away_from_the_solid,
@@ -54,13 +55,19 @@ PLAN = REPO / "tests" / "fixtures" / "plans" / "scene3d_edge_cases.ogp"
 BENCH_PLANS = ("bench_small.ogp", "bench_large.ogp")
 
 
+Snapshot = dict[str, Record]
+
+
 @pytest.fixture
 def plan(qtbot) -> tuple[CanvasScene, Snapshot, dict[str, Any]]:  # noqa: ARG001
     scene = CanvasScene()
     ProjectManager().load(scene, PLAN)
     items = {str(i.item_id): i for i in scene.items()
              if getattr(i, "object_type", None) is not None and hasattr(i, "item_id")}
-    return scene, snapshot_records(scene, JUNE), items
+    skipped: list[SkippedItem] = []
+    snapshot = snapshot_records(scene, JUNE, skipped=skipped)
+    assert skipped == []  # nothing in this plan is malformed
+    return scene, snapshot, items
 
 
 def _by_name(snapshot: Snapshot, name: str):
@@ -148,7 +155,6 @@ def test_same_plan_forgives_the_last_bit_and_nothing_else(qtbot) -> None:  # noq
 def test_what_the_plan_contains(plan) -> None:
     """The cases, by name — so a regenerated plan cannot quietly lose one."""
     _scene, snapshot, items = plan
-    assert snapshot.skipped == ()
     assert len(items) == 12 and len(snapshot) == 11  # every item but the roof ridge
     kinds = sorted(record.kind for record in snapshot.values())
     assert kinds == ["CONTAINER_ROUND", "FENCE", "FENCE", "FENCE", "HEDGE_POLYGON", "HOUSE",
@@ -190,7 +196,7 @@ def test_g8_the_untouched_plan_snapshots_identically_100_times(plan) -> None:
     scene, first, _items = plan
     for _ in range(100):
         again = snapshot_records(scene, JUNE)
-        assert again == first and list(again) == list(first) and again.skipped == ()
+        assert again == first and list(again) == list(first)
         assert diff(first, again).is_empty and diff(again, first).is_empty
 
 
