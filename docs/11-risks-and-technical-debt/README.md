@@ -298,6 +298,13 @@ Hard-won lessons from implementation. Read these before modifying the related su
 
 - **`UiStateStore` builds its own `QSettings`, so it escapes the conftest isolation — full-app tests read *and overwrite* the developer's real window state** (#283 test-infra finding — **Closed (#285)**): `tests/conftest.py::isolate_qsettings` redirects `AppSettings` only, but `app/ui_state.py` constructs `QSettings("cofade", "Open Garden Planner")` directly. Every `GardenPlannerApp()` in a test therefore restored whatever geometry and toolbar layout the developer's own app last saved — and wrote it back at teardown, because pytest-qt closes registered widgets and `closeEvent` → `_save_ui_state()` persists. Symptom while writing #283's regression tests: a toolbar-visibility assertion passed under pristine settings and failed locally with the *fix applied*, purely because an earlier experiment had left a different toolbar layout in the real store — an hour lost to "the fix doesn't work" when the test harness was the variable. First patched by an autouse `_isolate_ui_state` fixture pointing `ui_state.QSettings` at the test key; local runs then also matched CI, where the store is always pristine (so `_geometry_restored` is False and the window maximizes). Lesson: a store that bypasses the settings chokepoint also bypasses the test isolation built on it. **Closed by #285 / ADR-041**, which made the tourniquet unnecessary rather than permanent: `app/settings.create_qsettings()` is the only place that constructs — or even names — a settings store, `UiStateStore` takes its backend from there, `_isolate_ui_state` is deleted, and `tests/conftest.py` redirects the whole app by rebinding two module names *at its own import time*. **The mechanism is specified once, in §8.8 — read it there, and change it there.** Do not re-derive it in this entry: three earlier attempts to summarise it here, in ADR-041 and in `CLAUDE.md` each drifted out of sync with the code within one commit, which is how reviews 2, 3 and 4 all found a doc/code mismatch. What belongs here is the evidence: reverting the chokepoint makes `tests/integration/test_settings_isolation.py` fail with exactly 3 reads + 3 writes to the real key, and hashing the real store's 29 values around a 47-test full-app file leaves them byte-identical.
 
+- **The test suite wrote into the developer's real plant library — isolating one store is not isolating the process** (found 2026-10-11 during Phase 17 L1; fixed in `tests/conftest.py`, §8.10 "Test isolation"):
+  - **Symptom.** The developer's own `%APPDATA%/OpenGardenPlanner/custom_plants.json` held 209 custom plants, 207 of them the same "Walnut (Juglans regia)"; `plant_lists.json` in the same folder had been rewritten that morning by nobody. Every full run of the suite, by any agent on the machine, added one more Walnut. (Counted by whoever found it; the fix was written and tested without opening that folder.)
+  - **Root cause.** `tests/conftest.py` isolated the settings store (#285, the entry above) and nothing else. `services.plant_library.get_app_data_dir()` resolves `%APPDATA%/OpenGardenPlanner` (or `$XDG_DATA_HOME/…`) on every call and was never redirected, so every store built on it — the custom plant library, plant lists, seed inventory, companion rules, smart symbols, the weather cache — was the user's real one in a test process. `tests/ui/test_plant_database_panel.py::…::test_sparse_species_saves_back_as_none` calls `panel._on_field_changed()`, whose last step saves the edited species through `get_plant_library()`: a correct test of the panel, and a write into the real library. Two test files had even noted the gap in a docstring ("isn't isolated by `tests/conftest.py`") and stubbed their own way around it; nobody closed it.
+  - **Fix.** The conftest sets `APPDATA` and `XDG_DATA_HOME` to a per-process temporary directory at import time — the same place and for the same reason as the settings redirection. No production code changed. The real directory was not cleaned by this change: what to do with the 207 entries is the owner's decision.
+  - **The same search found three more writers outside the test root**, none of them into the user's own app folder, all through `QStandardPaths.writableLocation`: (1) `tests/unit/test_main_hardening.py::TestExceptHook` appended a traceback to `%APPDATA%/pytest-qt-qapp/crash.log` on every run — 331 of them, 82 kB, when counted; (2) the companion, climate and thumbnail caches under `%LOCALAPPDATA%/pytest-qt-qapp/`, which survive from run to run, so a test could pass on a cache an earlier run had filled; (3) `tests/unit/test_paths.py::test_get_projects_dir_falls_back_to_home` created `~/Documents/Open Garden Planner` on every machine it ran on, because `get_projects_dir()` creates what it returns. (1) and (2) are closed by redirecting the Python-level function, (3) by giving that test a home of its own.
+  - **Lessons.** *List every place the app writes* (`get_app_data_dir`, `QStandardPaths`, `Path.home()`, the temp directory) and decide each one — redirected, or left with a reason. *A test that is correct about the unit can still be wrong about the world:* the Walnut test asserts what it should and has passed since it was written. *A known gap written into a docstring is a defect with a comment on it.* And the pin must not need the thing it protects: the end-to-end test never reads the real directory — it watches what the process opens (`tests/integration/test_app_data_isolation.py`).
+
 - **A "nobody may use X" gate belongs in the AST, not in a regex — and it must be falsified twice** (#285, gate-design lesson): `test_settings_chokepoint.py` started as a line-anchored regex for `QSettings\s*\(`. Falsifying it by restoring the pre-#285 code as `from PyQt6.QtCore import QSettings as _Q` … `_Q("cofade", …)` — a two-line edit anyone could make while "just fixing an import cycle" — sailed through, so an **import** pattern was added. A senior review then broke *that* in one experiment: `from PyQt6.QtCore import (\n    QSettings as _Q,\n)` names the class on a line with no `import` keyword, so both regexes passed and only the behavioural test caught the bug. Rewritten as an `ast` walk over `Import`/`ImportFrom`/`Name`/`Attribute`, all spellings collapse into one check — and the same walk cheaply expresses a rule no regex could ("no `create_qsettings()` call that is evaluated at import time", distinguishing a function *body* from a decorator or default argument). Lessons for every textual gate in this repo (QSS colors, icon conformance, texture tileability): match the **name binding**, not just the use, because you cannot use what you have not first named; prefer the AST when the language has one; give every detector a **positive control** fed the exact escape it exists to catch, since a detector that stops matching anything reads as a green gate forever; and treat "my falsification passed" as one data point, not proof — the second reviewer found the second hole in one try.
 
 - **`QGraphicsScene.changed` feedback loops: a slot driven by `scene.changed` that itself mutates the scene runs forever while the app is idle** (issue #305 — a macOS user's OGP process reached **134 GB** after ~1 h in the background; the whole system froze). Measured on Windows (offscreen, real `GardenPlannerApp`, counting `scene.changed` emissions and `QGraphicsScene.render` calls per fixed window after a 1.5 s settle — the probes are now the tests in `tests/integration/test_idle_scene_quiescence.py`), **four independent loops** existed, each of the same shape: (A) `MinimapWidget._do_update()` hides every overlay item (`ItemIgnoresTransformations` or z ≥ `_OVERLAY_Z_MIN`) for the thumbnail render and re-shows them afterwards; for a **transformable** overlay item each `setVisible()` makes the scene emit `changed`, which restarted the 100 ms throttle → `_do_update` again. With one such item the minimap re-rendered the **whole scene ~9×/s forever** (13–14 renders per 1.5 s vs 1 with none). Measured in senior review: `setVisible()` on an `ItemIgnoresTransformations` item emits **no** `changed` at all — and every handle, label and badge in this app carries that flag — so selection handles were *not* a Loop-A trigger; in production only the curve-edit connector lines (transformable, z ≥ 10000) are, and the reporter's idle churn came from B–D below — and a minimap the user had toggled *off* still rasterised the scene on every change into a widget nobody could see. (B) `CanvasView._update_soil_mismatches()` (500 ms debounce on `changed`) called `item.update()` **unconditionally** for every bed — one never-selected `GARDEN_BED` on an otherwise empty plan: 16 `changed` + 8 renders per 4 s, forever. (C) `_update_spacing_overlaps()` (150 ms) and (D) `_update_companion_highlights()` (60 ms) both did a *clear pass* (`set_spacing_overlap(None)` / `set_companion_highlight(None)` + `set_antagonist_warning(False)` on every plant) followed by a *set pass* — so although the item setters have an early-return guard for unchanged values, the handlers forced every value through None each tick: **one gallery-dropped plant with database spacing** (`max_spread_cm`, which FR-PLANT-15 populates on every drop) → 19 `changed` + 20 renders per 3 s forever; tomato + fennel 60 cm apart → 47 `changed` per 3 s. **This one was missed by the first fix and caught in senior review**: the "companion/spacing quiesce" claim had been measured with a `GENERIC_RECTANGLE`, which those handlers skip entirely — a measurement that tests nothing about them. Every loop feeds **every** `changed` subscriber (companion, spacing, plant-search 150 ms, snap dirty flag, sun-shadow debounce, minimap): a full-scene `render()` into fresh `QPixmap`s plus O(n²) scans per cycle with nobody at the keyboard. **Two subtleties that make this class hard to see:** `setVisible()`/`update()` do **not** emit `changed` synchronously — Qt queues the emissions for later event-loop turns (measured: a single hide already yields `[rect]` then `[]` on **two separate turns**, both after the mutating method returned — the empty one is Qt's trailing emission), so a naive in-call re-entrancy flag is **not** enough — and neither is a single `singleShot(0)`, which a first cut used and which was measured to clear the flag between the two emissions; and the emission carries only *rects*, not the item that changed, so a subscriber cannot tell its own churn from a user edit by identity. **Fix**: the minimap's `changed` slot is **content-based** — it records the scene rects of the overlay items it just toggled and ignores an emission iff every rect lies inside one of them (an empty rect list is Qt's trailing no-op; measured, every genuine mutation carries ≥ 1 rect) — no timing window, so a genuine change sharing the same turn is still rendered; a toggled-off minimap no longer renders at all; the soil handlers became **idempotent** (write the tooltip / call `update()` only when the level or text actually changed; `SoilBadgeItem.update_position()` no-ops on unchanged pos — measured: `setPos`/`setToolTip` with an unchanged value do *not* emit `changed`, `update()` does); spacing and companion compute the **final state per item first and call each setter exactly once** — no clear pass — the discipline `_update_container_capacity()` already had. **Rule for every `scene.changed` slot** (and any slot on a timer that `changed` restarts): it must be idempotent — compute the target state, then apply it once; never call `update()`, `setVisible()`, `prepareGeometryChange()` or add/remove items unless the value really changed, and never "clear then set". **How to check for a new loop**: put one bed, one DB-spacing plant and one selected object on the plan, settle 1.5 s, then count `scene.changed` emissions and `QGraphicsScene.render` calls over the next 2 s — both must be 0; the positive control (move a plant → ≥ 1) proves the counters work. Pinned by `tests/integration/test_idle_scene_quiescence.py` and `tests/unit/test_minimap_widget.py::TestMinimapIdleQuiescence` (including the "genuine change in the same turn is not dropped" and "toggled-off minimap does not render" cases). Not measured: the macOS-side accumulation path from "10 Hz pixmap churn" to 134 GB (Windows RSS stayed flat at ~59 MB over 20 s of the loop) — the loop itself is a defect regardless, and the reporter (macOS 26.6.1, self-built PyInstaller `.app`, plan with constraints on screen, minimap state uncertain) has been asked for an Activity Monitor graph should it recur.
@@ -1065,8 +1072,15 @@ building on.
   a default builder that cuts holes out and checks its own cap area, a plan-view check in
   `verify_builder`, and a third committed plan made of the shapes the bench plans lack
   (ADR-054 decision 3 and 9; `tests/integration/test_scene3d_snapshot.py::TestClosedStrokes`,
-  `test_scene3d_edge_plan.py`). A 2 cm gap does not help: a stroke wider than the gap closes on
-  itself anyway (35,952 cm², one hole).
+  `test_scene3d_edge_plan.py`). A 2 cm gap **at a corner** does not help: the strokes of the two
+  sides overlap there, and the loop closes anyway (35,952 cm², one hole).
+  - **"A gap narrower than the stroke closes it" — written here first, and false.** A stroke
+    has butt ends: it reaches half its width sideways and nothing past its end points. So a
+    10 cm stroke closes a corner gap up to 5.000 cm, a 6 cm corner gap stays open, and a gap in
+    the middle of a straight run stays open at 0.01 cm (the re-review measured all three). The
+    sentence had been generalised from the one 2 cm fixture; the edge-case plan now holds a fence
+    of each kind. *One measured case is one case — say what was measured, not the rule it
+    suggests.*
   - **The same defect is live in the 2D shadow, and is NOT fixed here.** `item_footprints` hands
     both rings to `compute_scene_shadows` as solids, so the hole ring casts the shadow of a slab.
     Reproduction with `core/shadow_geometry` alone (no Qt): `polyline_footprint([(0, 0), (1000, 0),
@@ -1113,6 +1127,56 @@ building on.
   *geometry* on 400 of 400 rotations. The test that should have seen it took its baseline after
   the rotation. Ridge items now get no record (the ridge is its house's param), and the test
   takes its baseline first.
+- **(Re-review.) "Always simple rings a builder can triangulate" was written down and never
+  checked.** Four HOUSE outlines, each five to seven vertices, each drawn crossing itself: one
+  resolved into a single ring of ten vertices (so "several rings means resolved" was false and
+  the house kept a ridge that belonged to another shape), one into an outer ring with a pocket
+  the default builder could not cut ("only strokes have holes" was false), one into a ring that
+  touched itself, one into nothing at all — its hole began on its outer ring, and ownership was
+  decided by a point test at that very vertex. Over random such outlines 2–9 % got no record and
+  4–14 % no solid. Fix: one predicate, `polygon.is_buildable_region` — the default builder's own
+  triangulation, proven by area and orientation — asked for every region before it is handed on;
+  `params["outline_resolved"]`; no ridge for a resolved house. Pinned at 0 of 7,500 random
+  outlines and 0 of 4,500 random strokes (`test_random_self_crossing_outlines`,
+  `test_random_strokes`). *A sentence that begins "a consumer can rely on …" needs a test that
+  ends in a number.*
+  - **The library the fix leaned on was wrong too.** The ruling said: take the ring hierarchy
+    from pyclipper's `PolyTree`. For an outline that retraces one of its own edges, the strict
+    tree handed a solid triangle of 357 cm² out as a hole, and the plain union returned rings
+    whose signed areas sum to 33,133 cm² where the outline fills 36,704. Neither is a wrong
+    *shape* at a glance. They were found because the check compared against a raster of the
+    drawn outline's winding number — a dozen lines of numpy that know nothing of the clipper —
+    and not against a second call into the same library. Every reading is now held to that
+    raster (`_matches_outline`). *When the tool's answer is the thing in doubt, verify it with
+    something that does not share its code.* (And then the mutation check let "the reading is
+    taken on trust" SURVIVE: in every sampled outline — 19,500 — the wrong reading was also not
+    buildable, so the other check had already turned it down. The safeguard is kept for the
+    reading that is wrong and buildable, and pinned with a simulated one. *A safeguard nobody
+    can trigger with real input still needs a test, or the next refactoring removes it.*)
+  - **Zero-area triangles are not harmless in float32.** Along the edge of a diagonal stroke
+    that other strokes cross, vertices of several rings lie on one line; an "ear" of three of
+    them has a doubled area of 1e-14 cm² — float noise around zero, positive by luck. Rounded to
+    float32 thirteen of them came out wound downwards and `Mesh.validate` refused the fence.
+    The ear clipper now emits no triangle for a flat corner, and `prism_mesh` none below
+    float32 resolution. Found by this round's own ladder test; the first round had no diagonal
+    stroke crossed by another.
+  - **The cost cliff was worse than reported, and elsewhere.** The reviewer measured 2.6 s for a
+    ladder of 58 holes. One hole is enough: a closed fence along an outline traced with 400
+    vertices took 12.6 s to triangulate, with 750 vertices 150 s — on every geometry tick. The
+    bridge search tried boundary vertices one by one in Python against every edge. It is one
+    array pass per hole now (45 ms and 89 ms for those two), with stated bounds beyond which
+    the region is refused instead of built slowly.
+- **(Re-review.) A finite number is not a usable number.** `"object_height_cm": 1e300` in a
+  hand-edited plan is positive and finite; it passed the record's check, and became infinity in
+  the mesh's float32 — which a sink that does not validate hands to the engine. Fix: a domain
+  bound in the record (`MAX_LENGTH_CM`, 10 km) for every length, and a mesh constructor that
+  refuses what is not finite once it is float32. *Validate in the units and the precision of
+  the place the number ends up, not of the place it came from.*
+- **(Re-review.) A report object that holds an exception holds the world.** `SkippedItem`
+  carried the exception it reported, and the caller is told to keep the list: the traceback
+  keeps its frames alive, the frames hold the scene and the item. It holds two strings and a
+  code now. The test that pins it had to switch pytest's own log capture off first — pytest
+  keeps every log record, traceback included, which is the same leak one layer up.
 - **A safeguard on the hot path costs what it costs at the size nobody tested.** Refusing a
   ring that crosses itself needs `is_simple_ring`, which compares every pair of edges. The bench
   plans' largest ring has 24 vertices (0.1 ms), so every budget stayed green — and a 500-vertex
@@ -1129,45 +1193,6 @@ building on.
   generating the edge-case plan; not changed). `core/project.py` restores `stroke_width` only
   when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the
   preset's width whatever was saved. The edge-case plan therefore uses fences without a preset.
-
-### 11.4.9 The test suite wrote into the developer's real plant library (found 2026-10-11, during Phase 17 L1)
-
-- **Symptom.** The developer's own `%APPDATA%/OpenGardenPlanner/custom_plants.json` held 209
-  custom plants, 207 of them the same "Walnut (Juglans regia)"; `plant_lists.json` in the same
-  folder had been rewritten that morning by nobody. Every full run of the suite, by any agent on
-  the machine, added one more Walnut. (Counted by whoever found it; the fix below was written and
-  tested without opening that folder.)
-- **Root cause.** `tests/conftest.py` isolated the settings store (#285) and nothing else.
-  `services.plant_library.get_app_data_dir()` resolves `%APPDATA%/OpenGardenPlanner` (or
-  `$XDG_DATA_HOME/…`) on every call and was never redirected, so every store built on it — the
-  custom plant library, plant lists, seed inventory, companion rules, smart symbols, the weather
-  cache — was the user's real one in a test process.
-  `tests/ui/test_plant_database_panel.py::…::test_sparse_species_saves_back_as_none` calls
-  `panel._on_field_changed()`, whose last step saves the edited species through
-  `get_plant_library()`: a correct test of the panel, and a write into the real library. Two test
-  files had even noted the gap in a docstring ("isn't isolated by `tests/conftest.py`") and
-  stubbed their own way around it; nobody closed it.
-- **Fix.** The conftest sets `APPDATA` and `XDG_DATA_HOME` to a per-process temporary directory
-  at import time (§8.10.4) — the same place and for the same reason as the settings redirection.
-  No production code changed. The real directory was not cleaned by this change: what to do with
-  the 207 entries is the owner's decision.
-- **The same search found three more writers outside the test root**, none of them into the
-  user's own app folder, all through `QStandardPaths.writableLocation`: (1)
-  `tests/unit/test_main_hardening.py::TestExceptHook` appended a traceback to
-  `%APPDATA%/pytest-qt-qapp/crash.log` on every run — 331 of them, 82 kB, when counted; (2) the
-  companion, climate and thumbnail caches under `%LOCALAPPDATA%/pytest-qt-qapp/`, which survive
-  from run to run, so a test could pass on a cache an earlier run had filled; (3)
-  `tests/unit/test_paths.py::test_get_projects_dir_falls_back_to_home` created
-  `~/Documents/Open Garden Planner` on every machine it ran on, because `get_projects_dir()`
-  creates what it returns. (1) and (2) are closed by redirecting the Python-level function
-  (§8.10.4), (3) by giving that test a home of its own.
-- **Lessons.** *Isolating one store is not isolating the process:* list every place the app
-  writes (`get_app_data_dir`, `QStandardPaths`, `Path.home()`, the temp directory) and decide
-  each one — redirected, or left with a reason. *A test that is correct about the unit can still
-  be wrong about the world:* the Walnut test asserts what it should and has passed since it was
-  written. *A known gap written into a docstring is a defect with a comment on it.* And the pin
-  must not need the thing it protects: the end-to-end test never reads the real directory — it
-  watches what the process opens.
 
 ### CI/release hardening: locked metadata also contains the application version
 

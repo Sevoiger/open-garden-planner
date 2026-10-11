@@ -406,6 +406,57 @@ All integration tests live in `tests/integration/`. Shared fixtures are in `test
 
 Every test runs under `pytest-timeout` (`timeout = 180` in `pyproject.toml`; dev dependency). A hung full-app test therefore fails loudly instead of silently freezing the battery (§11.4, 2026-08-17). If a legitimate test needs longer, mark it `@pytest.mark.timeout(N)` with a comment saying why — do not raise the global value.
 
+### Test isolation: the user's data directory and the locations Qt hands out
+
+A test process must not read or write anything the user owns. Three stores are redirected, all
+three in `tests/conftest.py` at its **import time** — module scope, not a fixture. pytest imports
+the root conftest before it collects any test module, so a store that is built while a module is
+being *imported* already lands in the test location; a fixture runs after collection and cannot
+cover that. (The settings store is the first of the three; §8.8 is its specification.)
+
+| What | Production location | How the suite redirects it |
+| ---- | ------------------- | -------------------------- |
+| Settings (`QSettings`) | organisation / application of `app.settings` | the two names are rebound to a per-process test key (§8.8, ADR-041) |
+| The app-data directory, `services.plant_library.get_app_data_dir()`: custom plants, plant lists, seed inventory, companion rules, smart symbols, weather cache | `%APPDATA%/OpenGardenPlanner` (Windows), `$XDG_DATA_HOME/OpenGardenPlanner` or `~/.local/share/…` (Linux), `~/Library/Application Support/…` (macOS) | `APPDATA` and `XDG_DATA_HOME` are set to a directory of this process, `TEST_DATA_ROOT` (a `tempfile.mkdtemp` named with the pid), removed by `atexit` |
+| What the app asks `QStandardPaths.writableLocation` for: `crash.log` and `app.log` (AppDataLocation), the companion, climate and thumbnail caches (AppLocalDataLocation), the default project folder under Documents — which `app.paths.get_projects_dir()` creates | the user's profile, named after the Qt application | the Python-level function is replaced for five locations (`REDIRECTED_QT_LOCATIONS`) and answers with a folder under `TEST_DATA_ROOT`; every other location is passed through |
+
+- **The environment is the whole mechanism for the app-data directory** on Windows and Linux:
+  `get_app_data_dir()` reads the variable on every call, so no production override exists or is
+  needed, and a **child process** a test starts (a script, the app itself) inherits the
+  redirection. That is why it is not a patched function.
+- **macOS reads no variable.** There `conftest._rebind_get_app_data_dir` replaces the function
+  itself, in the defining module and in every module that bound the name with `from … import`.
+  No Mac runs this suite (CI is Linux and Windows): the replacement is exercised by hand in a
+  test, the `sys.platform == "darwin"` condition is not. A child process on macOS is not covered.
+- **Qt's locations cannot be moved by the environment on Windows** (Qt asks the shell for the
+  folders). Hence the Python-level replacement; a test that needs another answer monkeypatches
+  `QStandardPaths.writableLocation` as before, and gets the suite's version back afterwards.
+  What Qt itself writes from C++ — its shader and QML disk caches — still goes to the folder Qt
+  derives from the application name (`pytest-qt-qapp` in a test process): not the user's app
+  folder, but not under `TEST_DATA_ROOT` either. A child process is not covered: it does not
+  import conftest.
+- **Not redirected, by decision:** the temp directory (`tempfile.gettempdir()`), which the
+  autosave of an untitled plan and the stylesheet's two arrow images use. Redirecting it would
+  move pytest's own `tmp_path` and every library's scratch space. A test that lets an untitled
+  plan autosave must sandbox it itself (`tests/integration/test_dynamic_input_overlay.py` shows
+  how) — otherwise the real app offers that file for recovery at its next start.
+- **Per process, not per test.** Every test of one run shares the redirected directories, as the
+  whole suite used to share the real ones. A test that needs an empty library builds its own
+  store on `tmp_path` (`PlantListStore(storage_path=…)`) or resets the singleton.
+
+Pinned by `tests/integration/test_app_data_isolation.py`: the two variables are assigned at
+conftest module scope before the first import of the app (an AST check, the counterpart of
+`TestTheRedirectionMechanismItself` for the settings); the directory resolves under
+`TEST_DATA_ROOT` and not where it pointed before; a child process inherits it; the root is gone
+when the interpreter has exited; and — end to end — building the whole `GardenPlannerApp`,
+running the plant database panel's save path and the plant-list store opens, creates, renames
+and lists **nothing** under the place the directory used to be. That last test never touches
+the real directory, not even to read it: it computes where it was from what the environment said
+before the redirection (`conftest.PRODUCTION_DATA_ENV`) and watches the process's file access
+through a `sys.addaudithook` hook (inert outside the test: an audit hook cannot be removed
+again). A positive control points the variable at a stand-in directory and shows that the save
+is seen there.
+
 ### Minimum requirement per US
 
 Each US must have at least one test that exercises its **primary workflow** end to end:
@@ -621,62 +672,11 @@ suite (ADR-054, "What the first version got wrong").
   turning" test turned the item *before* taking its baseline, one named for `reset()` never called
   it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
   fails if the named behaviour breaks?"
-- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 60
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 89
   single-rule mutations to the pipeline, each against the tests that must notice; its first run
   found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
   with every rule.
-
-### 8.10.4 Test isolation: the user's data directory and the locations Qt hands out
-
-A test process must not read or write anything the user owns. Three stores are redirected, all
-three in `tests/conftest.py` at its **import time** — module scope, not a fixture. pytest imports
-the root conftest before it collects any test module, so a store that is built while a module is
-being *imported* already lands in the test location; a fixture runs after collection and cannot
-cover that. (The settings store is the first of the three; §8.8 is its specification.)
-
-| What | Production location | How the suite redirects it |
-| ---- | ------------------- | -------------------------- |
-| Settings (`QSettings`) | organisation / application of `app.settings` | the two names are rebound to a per-process test key (§8.8, ADR-041) |
-| The app-data directory, `services.plant_library.get_app_data_dir()`: custom plants, plant lists, seed inventory, companion rules, smart symbols, weather cache | `%APPDATA%/OpenGardenPlanner` (Windows), `$XDG_DATA_HOME/OpenGardenPlanner` or `~/.local/share/…` (Linux), `~/Library/Application Support/…` (macOS) | `APPDATA` and `XDG_DATA_HOME` are set to a directory of this process, `TEST_DATA_ROOT` (a `tempfile.mkdtemp` named with the pid), removed by `atexit` |
-| What the app asks `QStandardPaths.writableLocation` for: `crash.log` and `app.log` (AppDataLocation), the companion, climate and thumbnail caches (AppLocalDataLocation), the default project folder under Documents — which `app.paths.get_projects_dir()` creates | the user's profile, named after the Qt application | the Python-level function is replaced for five locations (`REDIRECTED_QT_LOCATIONS`) and answers with a folder under `TEST_DATA_ROOT`; every other location is passed through |
-
-- **The environment is the whole mechanism for the app-data directory** on Windows and Linux:
-  `get_app_data_dir()` reads the variable on every call, so no production override exists or is
-  needed, and a **child process** a test starts (a script, the app itself) inherits the
-  redirection. That is why it is not a patched function.
-- **macOS reads no variable.** There `conftest._rebind_get_app_data_dir` replaces the function
-  itself, in the defining module and in every module that bound the name with `from … import`.
-  No Mac runs this suite (CI is Linux and Windows): the replacement is exercised by hand in a
-  test, the `sys.platform == "darwin"` condition is not. A child process on macOS is not covered.
-- **Qt's locations cannot be moved by the environment on Windows** (Qt asks the shell for the
-  folders). Hence the Python-level replacement; a test that needs another answer monkeypatches
-  `QStandardPaths.writableLocation` as before, and gets the suite's version back afterwards.
-  What Qt itself writes from C++ — its shader and QML disk caches — still goes to the folder Qt
-  derives from the application name (`pytest-qt-qapp` in a test process): not the user's app
-  folder, but not under `TEST_DATA_ROOT` either. A child process is not covered: it does not
-  import conftest.
-- **Not redirected, by decision:** the temp directory (`tempfile.gettempdir()`), which the
-  autosave of an untitled plan and the stylesheet's two arrow images use. Redirecting it would
-  move pytest's own `tmp_path` and every library's scratch space. A test that lets an untitled
-  plan autosave must sandbox it itself (`tests/integration/test_dynamic_input_overlay.py` shows
-  how) — otherwise the real app offers that file for recovery at its next start.
-- **Per process, not per test.** Every test of one run shares the redirected directories, as the
-  whole suite used to share the real ones. A test that needs an empty library builds its own
-  store on `tmp_path` (`PlantListStore(storage_path=…)`) or resets the singleton.
-
-Pinned by `tests/integration/test_app_data_isolation.py`: the two variables are assigned at
-conftest module scope before the first import of the app (an AST check, the counterpart of
-`TestTheRedirectionMechanismItself` for the settings); the directory resolves under
-`TEST_DATA_ROOT` and not where it pointed before; a child process inherits it; the root is gone
-when the interpreter has exited; and — end to end — building the whole `GardenPlannerApp`,
-running the plant database panel's save path and the plant-list store opens, creates, renames
-and lists **nothing** under the place the directory used to be. That last test never touches
-the real directory, not even to read it: it computes where it was from what the environment said
-before the redirection (`conftest.PRODUCTION_DATA_ENV`) and watches the process's file access
-through a `sys.addaudithook` hook (inert outside the test: an audit hook cannot be removed
-again). A positive control points the variable at a stand-in directory and shows that the save
-is seen there.
 
 ## 8.11 Security Scanning (SAST)
 
@@ -2598,8 +2598,8 @@ untangle `core/__init__.py`.
 |---|---|---|
 | `kind` | ObjectType name; picks the builder | geometry |
 | `shape` | `circle` / `ellipse` / `rectangle` / `polygon` / `polyline` | geometry |
-| `footprints` | the OUTER ring(s) of the ground the item covers, item-local cm: simple polygons, counter-clockwise. More than one only for a stroke or a self-crossing polygon that falls into several pieces | geometry |
-| `holes` | `holes[i]` = the clockwise rings cut out of `footprints[i]`; `()` when there are none | geometry |
+| `footprints` | the OUTER ring(s) of the ground the item covers, item-local cm: simple polygons, counter-clockwise. How many there are says nothing about how the item was drawn (a self-crossing polygon can resolve into one ring) — `params["outline_resolved"]` does | geometry |
+| `holes` | `holes[i]` = the clockwise rings cut out of `footprints[i]`; `()` when there are none. A stroke that closes has them, and so can a polygon drawn crossing itself | geometry |
 | `path`, `path_width_cm` | a polyline's centre line and stroke width (fences and walls are built from these) | geometry |
 | `height_cm` | `effective_height_cm(..., at_date)`; `None` = decoration, casts no shadow | geometry |
 | `params` | sorted immutable mapping — see below | geometry |
@@ -2616,36 +2616,87 @@ L1.6 stands plants on their bed.
 
 **Outer rings and holes — read `regions`, not `footprints` alone.** The ground an item covers is
 its outer rings *minus* their holes: `record.regions` yields `(outer, holes)` pairs and
-`record.plan_area_cm2` the area. Only strokes have holes today — a fence that closes on itself, or
-nearly (a gap narrower than the stroke), is one outer ring with one hole; a figure of eight has
-several. `Record` enforces both orientations, so a ring cannot be put on the wrong side by
+`record.plan_area_cm2` the area. A fence that closes on itself is one outer ring with one hole, a
+figure of eight or a ladder drawn as one stroke has several — and a polygon drawn crossing itself
+can enclose a pocket, so holes are not a stroke's alone. `Record` enforces both orientations, so a
+ring cannot be put on the wrong side by
 accident. Whoever turns `footprints` into something with area — a builder, the ground bake, a
 picker — iterates `regions`; extruding the outer ring alone turns a 3.6 m² fence into a slab over
 the 80 m² it encloses (that was the first version's defect, and `verify_builder` now refuses it).
-A polygon that crosses itself (a bow-tie) arrives already resolved into simple rings, by the
-non-zero rule — the rule the 2D shadow fills a caster's own footprint with (a bow-tie's two lobes,
-60,000 cm² both ways). The canvas *paints* such a polygon with Qt's odd-even rule, which agrees
-for a bow-tie and not for a pentagram (its centre: filled by the shadow and so by the solid, left
-open by the paint).
+
+*When a stroke that almost closes does close.* A stroke has butt ends: it reaches half its width
+to either side of the centre line and not at all past its end points. Two ends that stop short of
+each other **at a corner** close the loop while the gap is at most half the stroke's width (a
+10 cm stroke: up to 5 cm; at 6 cm it stays open, one ring, no hole); a gap in the middle of a
+straight run never closes. `scene3d_edge_cases.ogp` holds one fence of each kind.
+
+**Every region can be built — the one predicate.** `polygon.is_buildable_region(outer, holes)` is
+true exactly when `polygon.cut_region` — the triangulation `prism_mesh` itself uses — cuts the
+region and proves the cut (every triangle counter-clockwise, the areas summing to the region's).
+The snapshot hands on only regions for which it holds, so for every record
+`all(is_buildable_region(o, h) for o, h in record.regions)` is a fact, and
+`prism_mesh(record.footprints, h, record.holes)` never raises. What it implies for a builder of
+its own: each outer ring is a simple counter-clockwise polygon, each hole a simple clockwise one
+inside it, holes do not overlap, and a triangulation exists — `cut_region(outer, holes)` returns
+it (`(vertices, triangles)`, cached). Rings may *touch* in a point; a region whose rings touch so
+that it cannot be cut never arrives. A region with holes is cut up to 8,000 vertices and
+holes × vertices = 500,000 (about 0.3 s; `MAX_HOLED_REGION_VERTICES`, `MAX_BRIDGE_WORK`); a
+stroke beyond that is not buildable and its item is reported, not built slowly.
+
+**A resolved outline says so.** A polygon that crosses or touches itself does not arrive as it
+was drawn: the snapshot resolves it by the non-zero rule — the rule the 2D shadow fills a
+caster's own footprint with (a bow-tie's two lobes, 60,000 cm² both ways) — into buildable
+regions. Such a record carries `params["outline_resolved"] = True` (`PARAM_OUTLINE_RESOLVED`; the
+key is absent otherwise), and **if it is a HOUSE it carries no `ridge`**: the ridge item was
+drawn for the outline as drawn. Do not guess from the ring count — one resolved outline is a
+single ring of ten vertices, another three rings, another an outer ring with a hole. The
+recipe for a builder that needs ONE plain outline (a gable roof, a bed's frame): build your shape
+only when the record has one footprint, no holes, and no `outline_resolved`; otherwise build
+`record.regions` as a block — `prism_mesh(record.footprints, height, record.holes)` — never
+`footprints[:1]`. The resolved vertices sit on pyclipper's 1/1000 cm grid, and parts that met in
+a single point stand 0.002 cm apart where the region could not be cut otherwise. A vertex placed
+twice in a row (a double click, a closing vertex equal to the first) is dropped and resolves
+nothing. The canvas *paints* a self-crossing polygon with Qt's odd-even rule, which agrees with
+the non-zero rule for a bow-tie and not for a pentagram (its centre: filled by the shadow and so
+by the solid, left open by the paint).
 
 **What the snapshot leaves out.** By design, silently: invisible items, items without an object
 type, items that cover no ground (text, groups, a one-point polyline), and `ROOF_RIDGE` items —
 a ridge is its HOUSE's `ridge` param, and the Qt 3D view's decal for the ridge line is not carried
 over. Because something is wrong, and **reported**: an item whose record cannot be built
-(malformed metadata, non-finite geometry — any exception is contained to that item) and a second
-item carrying an id already taken (the lower one wins). The return type is the plain
+(malformed metadata, non-finite geometry — any exception is contained to that item), a second
+item carrying an id already taken (the lower one wins), and an outline that cannot be made into
+buildable regions, and one with a length beyond `MAX_LENGTH_CM`. The return type is the plain
 `dict[str, Record]` it always was; the report is an optional keyword-only out-parameter:
 `snapshot_records(scene, at_date, skipped=my_list)` appends one
-`SkippedItem(item_id, kind, reason, error)` per such item (the list is the caller's and is not
-cleared). Each is also logged once per item and kind of failure (the exception's type), not once
-per edit. The wiring (L1.3) is expected to pass a list and show it — and `SceneSync.failures` —
-where a user can find them.
+`SkippedItem(item_id, kind, reason, error_type, error_message)` per such item (the list is the
+caller's and is not cleared). A `SkippedItem` is plain data and safe to keep: `reason` is a
+`SkipReason` code — `record_failed`, `duplicate_id`, `outline_unbuildable`, `out_of_range` (a
+length beyond 10 km, a height of 1e300) — which the UI maps to
+a translated text (never show the value); `error_type` and `error_message` are the exception's
+class name and message as strings, empty when nothing was raised. It does not hold the exception
+(its traceback would keep the scene and the item alive), and two reports of one failure are
+equal. Each is also logged once per item and kind of failure (the exception's type), not once
+per edit, with the traceback; after 2,048 different failures one line says that further ones are
+not logged, and none are. The wiring (L1.3) is expected to pass a list and show it — and
+`SceneSync.failures` — where a user can find them.
 
 Where the local frame hangs: the circle's centre; `rect().center()` of an ellipse or rectangle;
 the centre of the vertex bounding box of a polygon or polyline (`ui/canvas/footprints.item_outline`).
 Two consequences worth knowing before reading a diff: a resize that keeps a corner fixed moves the
 centre, so it is geometry *and* transform; and a **measured** plant's footprint is its canopy, not
 the circle the user drew, so resizing that circle changes nothing.
+
+**The range of a length.** No length of a record exceeds `MAX_LENGTH_CM` = 1e6 cm (10 km): the
+height, a stroke width, every coordinate of `footprints` / `holes` / `path`, the transform's
+position and base, every float in `params`. `Record`, `Transform` and `Params` refuse anything
+beyond it (`RecordRangeError`), an infinite value included, and the snapshot reports such an item
+with the code `out_of_range` instead of making a record. A builder may therefore take every
+number it reads for a finite float32 with centimetre resolution to spare — a plan edited by hand
+can hold a height of 1e300, and no builder has to know. Two things follow for builders:
+`Mesh.from_arrays` raises `MeshError` for a value that is not finite once it is float32 (build an
+invalid mesh for a test with `dataclasses.replace(mesh, positions=…)`, not through it), and
+`prism_mesh` raises for a height or coordinate beyond float32 before computing with it.
 
 **The record grid.** Lengths are snapped to 1e-7 cm, angles to 1e-9° (`quantize_cm`,
 `quantize_deg`), so the same geometry reached along two float paths is one record. This is
@@ -2691,6 +2742,11 @@ handed to the same `apply` travels in that transaction, so a clock tick that mov
 grows the plants is one commit; `set_sun` / `set_ground` send one alone, once per change. A
 builder that raises is contained (no parts for that item, listed in `failures`, logged). A builder
 registered or replaced after an item was built is noticed: the next `apply` rebuilds that item.
+The match is by identity, which is a contract on the registry: `builder_for(kind)` returns the
+SAME object for the same kind until a `register` changes it, and every `register` moves
+`BuilderRegistry.version`. `SceneSync` looks for items to rebuild only when the version moved, so
+an idle `apply` asks the registry nothing (a registry without a `version` is compared on every
+apply, as before).
 
 *Failure and recovery.* A sink that raises leaves the engine in an unknown state with its
 transaction open; the sync is then *poisoned* and every call raises `SyncStateError`.
@@ -2707,7 +2763,10 @@ re-sends sun and ground. If `clear()` raises, the sync stays poisoned.
 
 `sync.expected_state()` returns what a protocol-abiding sink holds right now (one from-scratch
 apply into an empty `RecordingSink`). Tests compare it with the sink's own state — it is the only
-way to catch a sink that silently *ignores* a call, `clear()` above all.
+way to catch a sink that silently *ignores* a call, `clear()` above all. **Precondition:** nothing
+was registered in the registry since the last `apply`. The reference is built with the registry
+as it is when asked; between a registration and the next `apply` the sink still holds what the
+old builders made, and the two differ until that `apply` has run.
 
 **How to write a builder.** A builder is `Callable[[Record], tuple[MeshPart, ...]]` — a pure
 function of the record's *geometry part*.
@@ -2726,7 +2785,8 @@ function of the record's *geometry part*.
 4. Register it: `registry.register("HOUSE", build_house)` on the `BuilderRegistry` instance the
    wiring hands to your package. Kinds without a builder get `default_builder` (a prism of the
    outer rings minus their holes up to the height; nothing without one; a `ValueError` — which
-   `SceneSync` contains — for a ring that crosses itself).
+   `SceneSync` contains — for a ring that crosses itself, which no record from the snapshot has).
+   Register the same function object once; do not hand out a new callable per lookup.
 
 **How to test a builder** — no GPU, no Qt:
 
@@ -2739,7 +2799,8 @@ parts = verify_builder(build_house, record)          # the contract, one call
 # tuple of MeshPart · deterministic · ignores transform, material, id, name, parent ·
 # every mesh validates · mesh top == record.height_cm (±1 %; height_tolerance=0.03 for plants,
 # height_tolerance_cm=0.5 for an absolute gate) · seen from above, two bounds on EXCESS:
-# no hole of the footprint built over (hole_cover_limit, default 0.5; None = off) and nothing
+# no hole of the footprint built over (hole_cover_limit, default 0.5; None = off; a hole is
+# judged on its core, 5 cm in from its edge — one narrower than 10 cm is not judged) and nothing
 # further than plan_margin_cm outside it (default 50; 0.0 = strictly inside; None = off).
 # Neither asks for coverage: a flower, a tuft, the pickets of a fence fill a fraction of their
 # footprint and pass.
@@ -2760,7 +2821,9 @@ assert sync.build_count == len(records)               # … built nothing
 Run `verify_builder` over every record your builder handles in all THREE committed plans —
 `bench_small.ogp`, `bench_large.ogp` and `scene3d_edge_cases.ogp`, which holds the shapes the bench
 plans lack: a closed fence, a nearly closed one, an open U, a turned house with its ridge, an
-ellipse, a turned raised bed with plants, a pot, a concave polygon
+ellipse, a turned raised bed with plants, a pot, a concave polygon, a ladder drawn as one stroke
+(four holes), a fence that stays open, and a house whose outline crosses itself (resolved: three
+rings, no ridge)
 (`tests/integration/test_scene3d_edge_plan.py` is the template). Assert the invariant that makes
 diffs safe after each step of an edit sequence: the sink's `state()` equals
 `sync.expected_state()` (`tests/integration/test_scene3d_pipeline.py::Pipeline`). And add a mutant

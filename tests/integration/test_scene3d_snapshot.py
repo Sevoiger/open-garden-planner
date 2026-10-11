@@ -1447,6 +1447,43 @@ class TestWhatPyclipperGetsWrong:
         assert sum(pyclipper.Area(ring) for ring in rings) / 1e6 == pytest.approx(33133.1, abs=0.1)
         assert area - 33133.1 > 3500.0
 
+    def test_a_reading_that_is_buildable_and_wrong_is_not_taken(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The check against the drawn outline, shown to DECIDE. In the outlines
+        above the clipper's wrong reading also happens not to be buildable, so
+        buildability alone already turns it down (the mutation check let "the
+        reading is taken on trust" survive until this test existed; a search over
+        12,000 more random outlines found no natural case). The safeguard is for
+        the reading that is wrong AND buildable — simulated here: the strict tree
+        answers with the outline's whole bounding box, a perfectly good rectangle."""
+        import pyclipper
+
+        class Node:
+            def __init__(self, contour: list[tuple[int, int]]) -> None:
+                self.Contour, self.Childs = contour, []
+
+        bow = ((0.0, 0.0), (400.0, 300.0), (400.0, 0.0), (0.0, 300.0))  # two lobes, 60,000 cm²
+        box = Node([(0, 0), (400_000, 0), (400_000, 300_000), (0, 300_000)])
+        real = snapshot_module._clip_tree
+
+        def lying(subject: Any, fill: int, *, strictly_simple: bool = False, band: Any = None) -> Any:
+            if strictly_simple:
+                tree = Node([])
+                tree.Childs = [box]
+                return tree
+            return real(subject, fill, strictly_simple=strictly_simple, band=band)
+
+        monkeypatch.setattr(snapshot_module, "_clip_tree", lying)
+        lie = snapshot_module._tree_regions(lying([], pyclipper.PFT_NONZERO, strictly_simple=True))
+        assert snapshot_module._buildable(lie) and regions_area(lie) == 120000.0  # buildable, and wrong
+        assert not snapshot_module._matches_outline(bow, lie)
+        regions = snapshot_module._resolved_regions(
+            [snapshot_module._to_grid(bow)], pyclipper.PFT_NONZERO, outline=bow)
+        assert regions is not None and regions != lie
+        assert regions_area(regions) == pytest.approx(60000.0, rel=1e-3)
+        assert snapshot_module._matches_outline(bow, regions)
+
     def test_matches_outline_tells_a_lost_piece_and_a_filled_hole(self) -> None:
         square = ((0.0, 0.0), (300.0, 0.0), (300.0, 300.0), (0.0, 300.0))
         pocket = ((100.0, 100.0), (100.0, 200.0), (200.0, 200.0), (200.0, 100.0))  # clockwise

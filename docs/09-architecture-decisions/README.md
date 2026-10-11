@@ -2422,17 +2422,74 @@ it stands after that round.
      simple polygon, counter-clockwise (positive signed area); `holes[i]` are the clockwise rings
      inside `footprints[i]`; both orientations are enforced by `Record` itself. The ground an item
      covers is the outers minus the holes (`Record.regions`, `Record.plan_area_cm2`). A polyline's
-     stroke is sorted into both — a fence that closes on itself, or nearly (a gap narrower than
-     the stroke), is one outer ring and one hole. `holes` is part of `geometry_sig`.
-   - **A polygon that crosses itself is resolved in the snapshot** into simple rings by the
-     non-zero rule, so a builder never receives a ring it cannot triangulate. (Its vertices then
-     sit on pyclipper's grid.) Non-zero because it is the rule the 2D shadow fills a caster's own
+     stroke is sorted into both — a fence that closes on itself is one outer ring and one hole, a
+     ladder drawn as one stroke one outer ring and a hole per cell. `holes` is part of
+     `geometry_sig`. Holes are not a stroke's alone: a polygon drawn crossing itself can enclose
+     a pocket.
+   - **When a stroke that almost closes does close.** A stroke has butt ends
+     (`polyline_footprint`: `ET_OPENBUTT`): it reaches half its width to either side of the centre
+     line and not at all past its end points. Two ends that stop short of each other AT A CORNER
+     therefore close the loop only while the gap is at most half the stroke's width — a 10 cm
+     stroke closes a corner gap of up to 5 cm, and one of 6 cm stays open — and a gap in the
+     middle of a straight run never closes, however small. (The first version of this text said
+     "a gap narrower than the stroke"; measured, that is wrong by a factor of two at a corner and
+     altogether in a straight run.)
+   - **Every region of a record is one a builder can build — as a checked fact.** ONE predicate
+     says what that means: `polygon.is_buildable_region(outer, holes)`, true exactly when
+     `polygon.cut_region` — the triangulation the default builder itself uses — cuts the region
+     and proves the cut (every triangle counter-clockwise, their areas summing to the region's).
+     The snapshot asks it for every outline it turns into rings and hands on nothing for which
+     it does not hold; `prism_mesh` calls the same cached function, so "the predicate holds" and
+     "the default builder builds it" cannot come apart. An outline for which no reading holds
+     gets no record and is reported (decision 12): measured over 7,500 random self-crossing
+     polygons and 4,500 random strokes, none.
+   - **A polygon that crosses itself is resolved in the snapshot, and the record says so.** It
+     becomes buildable regions by the non-zero rule: one ring, several, or rings with holes —
+     the ring COUNT says nothing (measured: one outline of five vertices resolves into a single
+     ring of ten). What says it is `params["outline_resolved"]` (`PARAM_OUTLINE_RESOLVED`), True
+     and present only for such a record — and **a HOUSE resolved this way carries no `ridge`**:
+     the drawn ridge belongs to the drawn outline, not to the regions that replace it, so a
+     house builder's "no usable ridge" path fires and builds `record.regions`. Its vertices sit
+     on pyclipper's 1/1000 cm grid; where two parts of it meet in a single point and the region
+     cannot be cut as it stands, they are drawn apart by 0.002 cm (11 % of random outlines; the
+     rest keep the clipper's exact coordinates). A vertex placed twice in a row — a double click,
+     a closing vertex that repeats the first — is dropped first and resolves nothing: such an
+     outline stays the drawn ring, vertex for vertex.
+   - **pyclipper's reading of such an outline is checked, not trusted.** The ring hierarchy is
+     taken from its `PolyTree` (who is whose hole is the clipper's answer, not a point test on a
+     boundary vertex), and every reading is held against the DRAWN outline: its winding number
+     on a 48 × 48 lattice must agree with what the regions cover. Needed, because for an outline
+     that retraces one of its own edges the clipper's answer is sometimes wrong — measured: a
+     solid triangle of 357 cm² handed out as a hole (`StrictlySimple`), and a plain union whose
+     signed ring areas sum to 33,133 cm² for an outline that fills 36,704. Three readings are
+     tried in order (the strict tree; the union with a 0.002 cm band cut away along its rings;
+     the drawn rings with that band cut away along every edge), and the first that is buildable
+     AND matches the outline is taken. Stated as measured: in 19,500 random outlines every wrong
+     reading of the clipper's was also not buildable, so the buildability check alone turned it
+     down and the outline check never decided — the mutation check showed that by letting "the
+     reading is taken on trust" survive. The outline check stays as the safeguard for a reading
+     that is wrong AND buildable, and is pinned with a simulated one.
+   - Non-zero because it is the rule the 2D shadow fills a caster's own
      footprint with — measured at a vertical sun: both lobes of a bow-tie, the whole star of a
      pentagram — and the solid must stand where its shadow starts. It is *not* what the canvas
      paints for every such polygon: Qt fills by odd-even, which leaves a pentagram's centre open
      (7,757 against 11,226 cm² for a star of radius 1 m); for a bow-tie the two rules agree. A
      drawn self-crossing polygon is an accident more often than a plan, and of the two readings
      the shadow's is the one a truth gate compares against.
+   - **No length beyond what a plan can hold.** `record.MAX_LENGTH_CM` = 1e6 cm (10 km): a
+     height, a stroke width, a radius, every coordinate of `footprints`, `holes` and `path`, the
+     position and base of the transform, and every float param is held to it by `Record`,
+     `Transform` and `Params` themselves (`RecordRangeError`, a `ValueError`). The bound is from
+     the domain — nothing in a garden plan is taller, wider or farther from its origin — and it
+     is decided in the record, once, because of what it prevents: a plan file edited by hand can
+     hold `"object_height_cm": 1e300`, a positive finite float that is infinity in a mesh's
+     float32. It passed "positive and finite" and reached a sink that does not validate as
+     non-finite positions, for the default prism and for every other builder alike (found by the
+     plant story's review, at the pipeline level). An infinite height falls under the same rule
+     (the first version turned it into "no height", silently). The mesh layer refuses the same
+     thing on its own: `Mesh.from_arrays` raises for a value that is not finite once it is
+     float32, and `prism_mesh` for such a height or coordinate before computing with it — so a
+     hand-made call cannot emit one either.
    - **A ROOF_RIDGE item has no record.** The ridge reaches the pipeline as its HOUSE's `ridge`
      param. As a record of its own it changed *geometry* whenever the house turned (the app
      re-derives the ridge item's points: measured on 400 of 400 rotations), which would have made
@@ -2484,14 +2541,31 @@ it stands after that round.
    - **The default builder never emits a wrong solid.** `prism_mesh` refuses a ring that is not a
      simple polygon (`ValueError`: `SceneSync` then shows the item without a solid and reports it)
      and checks its own cap before returning it: every triangle faces up and their areas sum to
-     the region's. The simplicity test is quadratic in the vertex count and misses its cache on
+     the region's (`polygon.cut_region`, the function behind `is_buildable_region`). Two kinds of
+     triangle are left out because they are nothing: an ear whose three corners lie on one line
+     (vertices of different rings along the edge of a diagonal stroke — its area is float noise
+     around zero), and a cap triangle below the resolution of the engine's float32 coordinates
+     (a doubled area under 5e-7 · the largest coordinate · its two edges). Either would come out
+     wound downwards in the mesh as often as not — measured on a ladder drawn as one stroke:
+     13 of 239 cap triangles. `prism_mesh` takes any sequence of `(x, y)` pairs for a ring —
+     tuples, lists, numpy rows.
+   - **Cutting a region with holes is bounded.** Each hole is joined to the boundary by a bridge
+     found in one pass over the edges (holes × vertices), then the merged ring is ear-clipped in
+     array passes. Measured (the first version in brackets): a closed fence along 400 traced
+     vertices, one hole, 1,201 ring vertices 45 ms (12.6 s); a ladder of 58 holes 43 ms (2.5 s);
+     400 holes in a mesh 0.31 s. Beyond `MAX_HOLED_REGION_VERTICES` (8,000) or `MAX_BRIDGE_WORK`
+     (holes × vertices = 500,000) — about 0.3 s — `triangulate_region` refuses instead of holding
+     the GUI thread; such a region is not buildable and its item is reported.
+   - The simplicity test is quadratic in the vertex count and misses its cache on
      every tick while a ring is being edited, so from 32 vertices on it prunes edge pairs by
      bounding box and runs on arrays (500 vertices: 72 ms in a plain loop, 2.9 ms now; 1,000:
      262 ms → 10.8 ms) — with a test that both versions agree.
    - **`verify_builder` looks at the solid from above — and bounds EXCESS only.** Beside
      determinism, purity, mesh validity and the height, it refuses a builder that covers more
      than `hole_cover_limit` (default one half) of a HOLE of the footprint (a hole sampled on a
-     lattice of its own points), or puts more than 1 % of the footprint's area as top surface
+     lattice of its own points — of its CORE: the points at least 5 cm from the hole's own edge,
+     so a hole narrower than `HOLE_MIN_WIDTH_CM` = 10 cm is not judged; a 12 cm panel on a 10 cm
+     stroke covers the 2 cm sliver between two runs and is right), or puts more than 1 % of the footprint's area as top surface
      further than `plan_margin_cm` (default 50 cm, for eaves) outside it. Each bound is a
      keyword the caller tunes or switches off with `None`. Neither asks a mesh to *cover* its
      footprint: a flower, a grass tuft, the posts and pickets of a fence fill a fraction of
@@ -2501,11 +2575,17 @@ it stands after that round.
    - **A registry may change after the first apply.** `SceneSync` remembers which builder built
      each item; the next `apply` rebuilds the items whose builder is no longer that one. Freezing
      the registry was the alternative; it would have made the order in which builder packages
-     register a correctness condition.
+     register a correctness condition. The comparison is IDENTITY, and that is a contract on the
+     registry: `builder_for(kind)` returns the same object for the same kind until a `register`
+     changes it, and every `register` moves `BuilderRegistry.version`. `SceneSync` looks for
+     items to rebuild only when the version moved — so a registry that hands out a fresh
+     callable per call no longer rebuilds every item on every idle apply (measured before), and
+     an idle apply asks the registry nothing.
 10. **`SceneSync` keeps the sink in step** (`sync.py`). All builders run **before** the sink is
     touched; then one `begin`/`commit` — or no call at all. Invariant: after any sequence of
     applies the sink holds exactly what one apply of the latest snapshot puts into an empty sink
-    (`SceneSync.expected_state()` is that reference).
+    (`SceneSync.expected_state()` is that reference — built with the registry as it is at the
+    moment of asking, so between a registration and the next `apply` it is ahead of the sink).
     - *One transaction per tick.* `apply(records, sun=…, ground=…)` sends the records, the ground
       and the sun in the same `begin`/`commit`: a sim-clock tick that moves the sun and grows the
       plants never shows a frame with the new sun over the old plants. `set_sun` / `set_ground`
@@ -2535,8 +2615,14 @@ it stands after that round.
     reported through an optional keyword-only out-parameter, `skipped=` — a list the caller
     passes and the snapshot appends `SkippedItem`s to. An item whose record cannot be built
     (malformed metadata, geometry that is not finite: any exception is contained to that item) is
-    left out, appended with its exception, and logged once per item and kind of failure (the
-    exception's type) — not once per edit. A second item carrying an id already taken is skipped
+    left out, appended, and logged once per item and kind of failure (the exception's type) — not
+    once per edit. A `SkippedItem` is plain data a caller may keep: the item's id and kind, a
+    `SkipReason` CODE (`record_failed`, `duplicate_id`, `outline_unbuildable`, `out_of_range` —
+    a UI maps a code to a translated text; the value is never shown as it is), and the exception's type name and
+    message as strings. It never holds the exception: a traceback keeps its frames alive, and
+    they hold the scene and the item. The exception goes to the log, and the log is bounded in
+    volume as well as memory — after 2,048 different failures one line says that further ones
+    are not logged, and none are. A second item carrying an id already taken is skipped
     the same way, with a warning; the lower one wins. Items left out by design (invisible,
     without an object type, covering no ground, a roof ridge) are not reported. (An
     out-parameter rather than a richer return type: a dict subclass carrying the report was
@@ -2609,7 +2695,11 @@ it stands after that round.
   `item_footprints` hands a closed fence's two rings to `compute_scene_shadows` as two solids, so
   a 10 m × 8 m fence 1.2 m high shades 88.8 m² at a 60° sun where its stroke shades 17.5 m². The
   golden footprint fixture pins `item_footprints` byte for byte, so the fix is a follow-up of its
-  own (§11.4.8 has the reproduction).
+  own (§11.4.8 has the reproduction). Until it lands, 2D and 3D disagree ON PURPOSE for a closed
+  stroke and for a polygon that crosses itself: the 3D record is the stroke, or the resolved
+  regions; the 2D footprint is every ring as a solid, or the ring as drawn. That follow-up should
+  also move "resolve an outline" and "sort rings into regions" into one `core` function both
+  views call — today `ui/view3d/snapshot.py` is a second place that knows the clipper's scale.
 - No `.ogp` change, no `FILE_VERSION` bump, no user-visible string, no new dependency, no app
   wiring (L1.3) and nothing rendered.
 - `SceneDiff` has a sixth field, `reordered`, beyond the five the issue names.
@@ -2654,22 +2744,35 @@ it stands after that round.
   record through `verify_builder`; 100 identical snapshots on both bench plans; a closed fence, a
   nearly closed one and an open U (cap area = stroke area; walls face away from the solid; the
   first default builder, reconstructed, is refused); a bow-tie house; one malformed item per
-  record field group; two items with one id; a house turned with its ridge.
+  record field group; two items with one id; a house turned with its ridge; the four outlines of
+  the re-review, each with a ridge item; 7,500 random self-crossing outlines on three grids
+  (0 without regions, 0 the default builder cannot build, every mesh valid in float32, the ground
+  covered equal to the outline's winding-number raster); 4,500 random strokes the same way; two
+  outlines pyclipper itself misreads; a vertex placed twice; a height of 1e300, one just over
+  the bound and an infinite one, each through snapshot → `SceneSync` → an unvalidated sink.
 - **`tests/integration/test_scene3d_edge_plan.py`** over the third committed plan,
   `tests/fixtures/plans/scene3d_edge_cases.ogp` (`scripts/make_scene3d_edge_plan.py`): the same
   gates — 100 identical snapshots, every mesh valid with its cap area equal to the footprint's,
-  `transform ∘ local == item_footprints` over every ring — on the shapes the bench plans lack.
+  `transform ∘ local == item_footprints` over every ring — on the shapes the bench plans lack:
+  16 items, among them a closed fence, a ladder drawn as one stroke (four holes), a fence whose
+  ends stop 2 cm apart at a corner (closes) and one whose ends stop 6 cm apart (does not), and
+  a house whose outline crosses itself around a pocket.
 - **`tests/integration/test_scene3d_pipeline.py`** (§8.10): draw with the real tools, then move,
   rotate, recolour, resize, select, delete, undo, redo — the exact sink calls and incremental ==
   full rebuild after every step; the same on a real `GardenPlannerApp` with the sim clock; and
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 60 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 89 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
-  ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record …), each
-  run against the tests that must notice. Not part of the suite (it rewrites source files); run by
-  hand after changing the pipeline or its tests. Every mutant is killed.
+  ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
+  resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to
+  the island inside it, a height of 1e300 taken for a height …), each run against the tests that must notice. Not part of the suite
+  (it rewrites source files); run by hand after changing the pipeline or its tests. Every mutant
+  is killed — and "killed" means pytest ran the tests and one failed (exit code 1), not that it
+  exited with anything but zero. What CAN rot between two runs is in the suite
+  (`tests/unit/test_scene3d_mutation_script.py`): every pattern still matches its file exactly
+  once, and every test a mutant names exists.
 
 ### What the first version got wrong (independent review, same day)
 
@@ -2687,6 +2790,27 @@ Recorded because each of these passed every gate the story had set itself:
   already open". The tests passed because they called the recording double's own `reset()` first —
   a method no real engine has. The fix is `clear()`; the lesson is that a recovery test may only
   use what the protocol offers.
+- **(Re-review, one round later.) "Simple rings a builder can always triangulate" was a
+  promise, not a fact.** The snapshot handed pyclipper's output on unchecked, and four HOUSE
+  outlines measured through `snapshot_records` showed what that is worth: one became a single
+  ring of ten vertices that passed for an ordinary house, with a ridge that belonged to another
+  shape; one an outer ring with a pocket the default builder could not cut; one a ring that
+  touched itself; one got no record at all — its hole started on the outer ring, and `group_rings`
+  asked a point test, documented as undefined on a boundary, who owned it. Every failure was
+  honest (reported, or a build failure) and every one contradicted a sentence other stories were
+  coding against. The fix is the predicate of decision 3; the lesson is that *a statement about
+  what a consumer may rely on is a gate to write, not a sentence to write* — and that "0 of N
+  random inputs" is a number a test can hold (N = 7,500 here).
+- **(Re-review.) And the tool the fix leaned on was itself wrong, twice.** Taking the ring
+  hierarchy from pyclipper's `PolyTree` — the ruling's own remedy — produced a solid piece handed
+  out as a hole, and the plain union produced an area 10 % short, both on outlines that retrace
+  an edge. Found only because the first attempt compared the result with an independent raster
+  of the drawn outline's winding number instead of with another call into the same library.
+  *When a library's answer is the thing in doubt, the check must not ask the library.*
+- **(Re-review.) A test written for this round found a defect of the first one.** The ladder the
+  reviewer drew to show a cost cliff also has vertices of five rings on one line; the cap had
+  thirteen triangles of zero area, wound downwards in float32, and `Mesh.validate` refused the
+  fence. No earlier test had a diagonal stroke crossed by others. (Decision 9.)
 - **One malformed plant blanked the plan**, a roof ridge had a record that broke "rotate →
   transform only", a late builder registration left stale geometry, and a clock tick took two
   transactions. Decisions 3, 9, 10 and 12.
