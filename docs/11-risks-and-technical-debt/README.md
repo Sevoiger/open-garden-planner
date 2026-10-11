@@ -1113,6 +1113,18 @@ building on.
   *geometry* on 400 of 400 rotations. The test that should have seen it took its baseline after
   the rotation. Ridge items now get no record (the ridge is its house's param), and the test
   takes its baseline first.
+- **A safeguard on the hot path costs what it costs at the size nobody tested.** Refusing a
+  ring that crosses itself needs `is_simple_ring`, which compares every pair of edges. The bench
+  plans' largest ring has 24 vertices (0.1 ms), so every budget stayed green — and a 500-vertex
+  outline cost 72 ms per snapshot while one of its vertices was dragged (1,000 vertices:
+  262 ms), because an edited ring misses the cache on every tick. Found by asking for the number
+  at n = 500 before anyone drew such a polygon. From 32 vertices on the test now prunes edge
+  pairs by bounding box and runs on numpy: 2.9 ms and 10.8 ms, same machine, same load
+  (`tests/unit/test_scene3d_polygon.py::TestSimpleRingAtScale` pins that both versions agree).
+  *A check that is linear in the plan can still be quadratic in one item: measure it on the
+  largest single item a user could make, not on the largest plan.* The ear clipper the two 3D
+  views share (`triangulate_polygon`) is quadratic too and was left as it is: it runs only when
+  that item's geometry changed, and the Qt 3D view has paid it on every change since US-E6.
 - **A styled polyline does not keep a stroke width across save and load** (observed while
   generating the edge-case plan; not changed). `core/project.py` restores `stroke_width` only
   when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the

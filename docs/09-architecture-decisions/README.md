@@ -2484,7 +2484,10 @@ it stands after that round.
    - **The default builder never emits a wrong solid.** `prism_mesh` refuses a ring that is not a
      simple polygon (`ValueError`: `SceneSync` then shows the item without a solid and reports it)
      and checks its own cap before returning it: every triangle faces up and their areas sum to
-     the region's.
+     the region's. The simplicity test is quadratic in the vertex count and misses its cache on
+     every tick while a ring is being edited, so from 32 vertices on it prunes edge pairs by
+     bounding box and runs on arrays (500 vertices: 72 ms in a plain loop, 2.9 ms now; 1,000:
+     262 ms → 10.8 ms) — with a test that both versions agree.
    - **`verify_builder` looks at the solid from above.** Beside determinism, purity, mesh validity
      and the height, it refuses a builder that covers more than half of a HOLE of the footprint
      (a hole sampled on a lattice of its own points) or puts more than 1 % of the footprint's area
@@ -2652,7 +2655,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 53 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 57 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record …), each
   run against the tests that must notice. Not part of the suite (it rewrites source files); run by
