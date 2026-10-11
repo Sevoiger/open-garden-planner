@@ -13,9 +13,15 @@ rule), and how big it is by the plan:
 - **colours** — only the recipe's palette for foliage, in linear light; wood is
   the 2D BARK fill texture's mean colour (the plant tables hold no wood colour:
   a top-down sprite never shows a trunk);
-- **size** — the record's ``height_cm`` and canopy radius. Every plant ends in
-  ``_fit``: its bounding box IS the data (top = the height, widest span = the
-  canopy diameter, base at z = 0). The builders give form, the fit gives truth.
+- **size** — the record's ``height_cm`` and canopy radius. The archetype
+  builders build TO those numbers: every one places its highest point at the
+  height, its outline on the canopy circle, and keeps its leaves inside by
+  turning them — a plant is never built too tall and squashed back. ``_fit``
+  then normalises the last millimetre (the bounding box IS the data: top = the
+  height, widest span = the canopy diameter, base at z = 0) and REPORTS what it
+  had to repair (``FitReport``, ``fit_report``), so tests hold the builders to
+  it. The 2D tables' tuning numbers (``leaf_scale``, ``n_out``) are read here
+  too: retuning a sprite moves the 3D leaf count and size of that species.
 
 v0 is deliberately cheap: a few soft volumes and a shell of large geometric
 leaves, at most ``TRIANGLE_BUDGET`` triangles per plant — bounded per ARCHETYPE
@@ -23,6 +29,10 @@ and by construction (counts are clipped functions of recipe numbers, never of
 the plant's size). It makes no seasonal claim: no fruit, no flowers, no flower
 heads (the season gates arrive with Package L3), and a crown is never bare.
 Species-accurate models are Package L3 ("Plant Forge", #387).
+
+A shape is built once per (recipe form, seed, proportion step) and remembered;
+a plant that grows is that shape scaled — a date scrub is a multiplication per
+plant, not a rebuild (``PROPORTION_STEP``, ``SHAPE_CACHE_SIZE``).
 
 A plant the plan gives NO height (``height_cm is None``: no species data, no
 measurement) is not guessed: it gets the placeholder — a low, smooth, neutral
@@ -42,7 +52,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from types import MappingProxyType
 from typing import Any, Final, TypeAlias
@@ -97,7 +107,7 @@ BARK_SRGB: Final = "#5d432d"
 PLACEHOLDER_HEIGHT_FRACTION: Final = 0.12
 PLACEHOLDER_MAX_HEIGHT_CM: Final = 25.0
 #: Its tone: the 2D white (``FLOWERS["white"]``, the petal colour) × this in
-#: linear light, sRGB 171 / 168 / 159. The L0 spike's rule for a sun-lit white is
+#: linear light, sRGB 170 / 167 / 158. The L0 spike's rule for a sun-lit white is
 #: × 0.7 (``ogp-lush-cinematic`` §7, the birch trunk — an upright surface); a dome
 #: faces the noon sun, and at × 0.7 it rendered at luma 232 through the spike's
 #: engine (scratch look, 2026-10-11): unclipped, but the brightest thing in the
@@ -140,6 +150,24 @@ _LEAF_SPHERIZE: Final = 0.7
 #: spanned only 72 % of the canopy diameter. Inner elements stay irregular.
 _RIM_REACH: Final = 0.97
 _RIM_JITTER: Final = 0.10
+#: Foliage and the ground, as fractions of the plant's height. A shell leaf grows
+#: from at least ``_LEAF_LIFT`` above the ground and no vertex of it comes closer
+#: than ``_LEAF_FLOOR``; of a volume that sits on the ground, the triangles lying
+#: wholly within ``_GROUND_SKIN`` of it are not built (they are the hidden sole —
+#: and, pressed flat at z = 0, they z-fight with the ground: up to 6.7 % of a
+#: mound's triangles before this rule).
+_LEAF_LIFT: Final = 0.04
+_LEAF_FLOOR: Final = 0.015
+_GROUND_SKIN: Final = 0.01
+#: No shell leaf is longer than this fraction of the canopy RADIUS. A leaf count is
+#: fixed by the budget, so leaves grow with the surface they cover — on a plant 40
+#: times taller than wide they came out 2.4 radii long. Up to 0.7 radii a leaf can
+#: always be turned to lie inside the canopy circle (``_leaves``).
+_LEAF_LONGEST: Final = 0.6
+#: A blade's width at its tip, as a fraction of its width at the base, and the
+#: widest a blade of a tuft is drawn relative to the tuft's width.
+_BLADE_TIP: Final = 0.15
+_BLADE_WIDEST: Final = 1.2
 _TAU: Final = 2.0 * math.pi
 _UP: Final[Floats] = np.array([0.0, 0.0, 1.0])
 
@@ -192,11 +220,30 @@ def _join(parts: Sequence[_Geo]) -> _Geo:
     )
 
 
+def _without_ground_skin(geo: _Geo, skin: float) -> _Geo:
+    """``geo`` without the triangles that lie wholly within ``skin`` of the ground,
+    and without the vertices only they used."""
+    keep = geo.pos[geo.tri][:, :, 2].max(axis=1) > skin
+    if bool(keep.all()):
+        return geo
+    tri = geo.tri[keep]
+    used = np.zeros(len(geo.pos), bool)
+    used[tri.reshape(-1)] = True
+    index = np.cumsum(used) - 1
+    return _Geo(geo.pos[used], geo.nrm[used], np.asarray(index[tri], np.int64), geo.exposure[used],
+                geo.shade[used], geo.tone[used], geo.phase[used])
+
+
 class _Dice:
-    """The plant's own randomness — uniform numbers only, from one seeded stream."""
+    """The plant's own randomness — uniform numbers only, from one seeded stream.
+
+    The bit generator is named (PCG64), not numpy's default: ``default_rng`` may
+    pick another one in a later numpy, and every plant in every plan would change
+    its shape. Today the two give the same stream.
+    """
 
     def __init__(self, seed: int) -> None:
-        self._rng = np.random.default_rng(seed)
+        self._rng = np.random.Generator(np.random.PCG64(seed))
 
     def u(self, low: float, high: float, size: int | tuple[int, ...]) -> Floats:
         return low + (high - low) * self._rng.random(size)
@@ -286,13 +333,24 @@ _SPHERE_COARSE: Final = _octasphere(1)   # 18 vertices, 32 triangles
 _SPHERE: Final = _octasphere(2)          # 66 vertices, 128 triangles
 
 
+def _top_out(centers: Floats, radii: Floats, height: float) -> None:
+    """Scale the lobes' heights (in place) so the tallest one ends exactly at the
+    plant's height: the volumes are the plant's body, and the body is as tall as
+    the plan says — not 6 % taller or 12 % shorter by the roll of a die."""
+    factor = height / max(float((centers[:, 2] + radii[:, 2]).max()), 1e-12)
+    centers[:, 2] *= factor
+    radii[:, 2] *= factor
+
+
 def _lobes(centers: Floats, radii: Floats, heart: Floats, dice: _Dice, phase: float,
-           sphere: tuple[Floats, Ints] = _SPHERE) -> _Geo:
+           sphere: tuple[Floats, Ints] = _SPHERE, skin: float = 0.0) -> _Geo:
     """Soft ellipsoid volumes — the mass of a crown, a shrub or a cushion.
 
-    Vertices below the ground are pressed onto it; normals are the ellipsoid's,
-    bent toward the direction away from ``heart``; the further from the heart
-    and the more upward a vertex looks, the lighter it is.
+    A lobe that reaches below the ground sits on it: its vertices there are set
+    onto the ground, and the triangles wholly within ``skin`` of the ground —
+    its hidden sole — are left out. Normals are the ellipsoid's, bent toward the
+    direction away from ``heart``; the further from the heart and the more
+    upward a vertex looks, the lighter it is.
     """
     unit_vertices, faces = sphere
     count = len(centers)
@@ -306,8 +364,9 @@ def _lobes(centers: Floats, radii: Floats, heart: Floats, dice: _Dice, phase: fl
     exposure = 0.10 + 0.40 * depth + 0.25 * (0.5 + 0.5 * own[:, :, 2])
     tone = np.repeat(_stratified(dice, count), len(unit_vertices))
     tri = faces[None, :, :] + (np.arange(count) * len(unit_vertices))[:, None, None]
-    return _geo(pos.reshape(-1, 3), nrm.reshape(-1, 3), tri.reshape(-1, 3),
-                exposure.reshape(-1), (0.62 + 0.38 * depth).reshape(-1), tone, phase)
+    return _without_ground_skin(
+        _geo(pos.reshape(-1, 3), nrm.reshape(-1, 3), tri.reshape(-1, 3),
+             exposure.reshape(-1), (0.62 + 0.38 * depth).reshape(-1), tone, phase), skin)
 
 
 def _stratified(dice: _Dice, count: int) -> Floats:
@@ -320,20 +379,72 @@ def _stratified(dice: _Dice, count: int) -> Floats:
 
 
 def _leaves(dice: _Dice, base: Floats, outward: Floats, length: Floats, aspect: float,
-            heart: Floats, phase: float, droop: float = 0.15) -> _Geo:
+            heart: Floats, phase: float, radius: float, height: float,
+            droop: float = 0.15) -> _Geo:
     """Large geometric leaves (a diamond: 4 vertices, 2 triangles) facing ``outward``.
 
     The shell that breaks a volume's outline. Each leaf lies across its facing
     direction, hangs by ``droop``, and is lightest at its tip.
+
+    A leaf is built INSIDE the plant's size (``radius``, ``height``), never
+    squeezed into it afterwards — it is turned, which keeps its size and shape:
+
+    - it grows from at least ``_LEAF_LIFT`` × the height above the ground;
+    - a leaf with no room above or below it lies down: its plane is turned about
+      its own level line until the leaf, whatever its heading in that plane,
+      stays between ``_LEAF_FLOOR`` × the height and the height (on a plant
+      60 cm tall and 3.6 m wide, 45 cm leaves lie flat);
+    - a leaf whose tip or edge would leave the canopy circle is turned in its
+      plane, by quarter turns, to the first heading that keeps it inside — and,
+      if none does (a leaf longer than the plant is wide), to the one that
+      leaves it least; the fit pulls back what is left and reports it.
     """
     count = len(base)
+    length = np.minimum(length, _LEAF_LONGEST * radius)
+    base = base.copy()
+    base[:, 2] = np.clip(base[:, 2], _LEAF_LIFT * height, height)
+    distance = np.hypot(base[:, 0], base[:, 1])
+    outside = distance > radius
+    base[outside, :2] *= (radius / distance[outside])[:, None]
     facing = _unit(outward + dice.u(-0.35, 0.35, (count, 3)))
     spin = dice.u(-1.0, 1.0, (count, 3))
     along = _unit(spin - (spin * facing).sum(axis=1, keepdims=True) * facing)
     along = _unit(along - np.array([0.0, 0.0, droop]))
-    side = np.cross(along, facing)
+    side = _unit(np.cross(along, facing))
     reach = length[:, None]
     half_width = reach * aspect * 0.5
+    # ── no room above or below: lie down (turn the leaf's plane toward level) ──
+    plane = _unit(np.cross(side, along))                       # the leaf's own normal
+    steep = _UP[None, :] - plane[:, 2:3] * plane                # up, projected into the plane
+    slope = np.linalg.norm(steep, axis=1)                       # sin of the plane's inclination
+    tilted = slope > 1e-9
+    steep = np.where(tilted[:, None], steep / np.maximum(slope, 1e-12)[:, None], along)
+    level = _unit(np.cross(plane, steep))                       # the plane's level line
+    along_level, along_steep = (along * level).sum(axis=1), (along * steep).sum(axis=1)
+    side_level, side_steep = (side * level).sum(axis=1), (side * steep).sum(axis=1)
+    tall = slope * length                                       # the leaf standing on its tip
+    room = np.minimum(height - base[:, 2], base[:, 2] - _LEAF_FLOOR * height)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        keep = np.minimum(1.0, np.where(tall > 0.0, room / tall, np.inf))
+    new_slope = keep * slope
+    flat = np.concatenate([steep[:, :2], np.zeros((count, 1))], axis=1)
+    lost = np.linalg.norm(flat, axis=1) < 1e-9                  # a vertical plane: any level heading
+    flat[lost] = np.cross(_UP[None, :], level[lost])
+    steep = (_unit(flat) * np.sqrt(np.maximum(1.0 - new_slope ** 2, 0.0))[:, None]
+             + _UP[None, :] * new_slope[:, None])
+    along = level * along_level[:, None] + steep * along_steep[:, None]
+    side = level * side_level[:, None] + steep * side_steep[:, None]
+    # ── a tip or an edge beyond the canopy circle: turn the leaf in its own plane ──
+    heading = np.stack([along, side, -along, -side])            # the four quarter turns
+    across = np.stack([side, -along, -side, along])
+    corners = np.stack([heading * reach, 0.45 * heading * reach + across * half_width,
+                        0.45 * heading * reach - across * half_width])     # (3, 4, count, 3)
+    far = np.hypot(base[:, 0] + corners[..., 0], base[:, 1] + corners[..., 1]).max(axis=0)
+    inside = far <= radius
+    turn = np.where(inside.any(axis=0), inside.argmax(axis=0), far.argmin(axis=0))
+    each = np.arange(count)
+    along, side = heading[turn, each], across[turn, each]
+    facing = _unit(np.cross(side, along))
     pos = np.stack([
         base,
         base + along * reach * 0.45 + side * half_width,
@@ -350,27 +461,41 @@ def _leaves(dice: _Dice, base: Floats, outward: Floats, length: Floats, aspect: 
                 (phase + np.repeat(dice.u(-0.1, 0.1, count), 4)) % 1.0)
 
 
-def _lobe_surface(origin: Floats, reach: Floats, centers: Floats, radii: Floats) -> Floats:
-    """Where each ray ``origin + t · reach`` leaves the outermost lobe: t per ray, 0 for
-    a ray that meets no lobe. Shell leaves are set on that surface — on an envelope
+def _lobe_surface(origin: Floats, reach: Floats, centers: Floats, radii: Floats
+                  ) -> tuple[Floats, Ints]:
+    """Where each ray ``origin + t · reach`` leaves the outermost lobe: (t, that
+    lobe's index) per ray; t is 0 for a ray that meets no lobe. ``origin`` is one
+    point or one per ray. Shell leaves are set on that surface — on an envelope
     instead they were buried where a lobe reached it (bald crown tops in the first
     look through an engine) and hovered in the gaps between lobes."""
     step = reach[:, None, :] / radii[None, :, :]                       # (rays, lobes, 3)
-    start = ((origin[None, :] - centers) / radii)[None, :, :]
+    start = (origin.reshape(-1, 1, 3) - centers[None, :, :]) / radii[None, :, :]
     a = (step * step).sum(axis=2)
     b = 2.0 * (step * start).sum(axis=2)
     c = (start * start).sum(axis=2) - 1.0
     root = b * b - 4.0 * a * c
     far = np.where(root >= 0.0, (-b + np.sqrt(np.maximum(root, 0.0))) / (2.0 * np.maximum(a, 1e-300)), 0.0)
-    return np.asarray(np.maximum(far.max(axis=1), 0.0), np.float64)
+    return (np.asarray(np.maximum(far.max(axis=1), 0.0), np.float64),
+            np.asarray(far.argmax(axis=1), np.int64))
 
 
-def _on_lobes(dice: _Dice, origin: Floats, reach: Floats, centers: Floats, radii: Floats) -> Floats:
+def _on_lobes(dice: _Dice, origin: Floats, reach: Floats, centers: Floats, radii: Floats,
+              miss: float = 1.0) -> tuple[Floats, Floats]:
     """Points on the lobes' outer surface along the rays (a little in or out, so the
-    shell is not a film); a ray that meets no lobe keeps its own reach."""
-    distance = _lobe_surface(origin, reach, centers, radii)
-    distance = np.where(distance > 0.0, distance, 1.0) * dice.u(0.96, 1.05, len(reach))
-    return np.asarray(origin[None, :] + reach * distance[:, None], np.float64)
+    shell is not a film) and the surface's own normal there. A ray that meets no
+    lobe ends at ``miss`` × its reach and keeps its direction.
+
+    The normal is the lobe's, not the ray's: on a flat cushion the surface looks
+    up nearly everywhere, and a leaf set by the ray's direction stood on edge —
+    45 cm leaves upright on a 60 cm squash, 1.6 times the plant's height.
+    """
+    start = origin.reshape(-1, 3)
+    distance, lobe = _lobe_surface(origin, reach, centers, radii)
+    hit = distance > 0.0
+    on_surface = start + reach * distance[:, None]
+    normal = np.where(hit[:, None], (on_surface - centers[lobe]) / radii[lobe] ** 2, reach)
+    distance = np.where(hit, distance, miss) * dice.u(0.96, 1.05, len(reach))
+    return np.asarray(start + reach * distance[:, None], np.float64), _unit(normal)
 
 
 def _shell_points(dice: _Dice, count: int, lowest: float) -> Floats:
@@ -383,19 +508,23 @@ def _shell_points(dice: _Dice, count: int, lowest: float) -> Floats:
 
 def _ribbons(base: Floats, direction: Floats, reach: Floats, height: Floats, width: Floats,
              segments: int, tone: Floats, phase: Floats, arch: float = 0.0) -> _Geo:
-    """Blades: each rises ``height`` from ``base`` and leans ``reach`` along its
-    (horizontal) ``direction``, tapering to the tip; ``arch`` lets the tip nod."""
+    """Blades: each rises from ``base`` to a tip ``height`` above it and leans
+    ``reach`` along its (horizontal) ``direction``, tapering to the tip; ``arch``
+    (below 1/3) lets the tip nod. The tip is the blade's highest point, and it is
+    ``height`` up — the arch does not shorten it (it used to: blades stopped at
+    88 % of the plant's height)."""
     count = len(base)
     f = np.linspace(0.0, 1.0, segments + 1)
     along = np.concatenate([direction, np.zeros((count, 1))], axis=1)
-    rise = f - arch * f ** 3
+    rise = (f - arch * f ** 3) / (1.0 - arch)
+    climb = (1.0 - 3.0 * arch * f ** 2) / (1.0 - arch)
     centre = (base[:, None, :]
               + along[:, None, :] * (reach[:, None] * f[None, :] ** 2)[:, :, None]
               + _UP[None, None, :] * (height[:, None] * rise[None, :])[:, :, None])
     tangent = (along[:, None, :] * (reach[:, None] * 2.0 * f[None, :])[:, :, None]
-               + _UP[None, None, :] * (height[:, None] * (1.0 - 3.0 * arch * f[None, :] ** 2))[:, :, None])
+               + _UP[None, None, :] * (height[:, None] * climb[None, :])[:, :, None])
     side = np.stack([-direction[:, 1], direction[:, 0], np.zeros(count)], axis=1)  # up × direction
-    half = (width[:, None] * (1.0 - 0.85 * f[None, :]) * 0.5)[:, :, None]
+    half = (width[:, None] * (1.0 - (1.0 - _BLADE_TIP) * f[None, :]) * 0.5)[:, :, None]
     left = centre + side[:, None, :] * half
     right = centre - side[:, None, :] * half
     face = _unit(np.cross(np.broadcast_to(side[:, None, :], tangent.shape), tangent))
@@ -420,18 +549,29 @@ _FROND: Final[Floats] = np.array([0.25, 0.60, 0.98, 0.50, 0.80, 0.35, 0.06])  # 
 
 
 def _fronds(base: Floats, tip: Floats, width: Floats, bow: Floats, outline: Floats,
-            tone: Floats, phase: Floats, fold: float = 0.18, ripple: float = 0.0) -> _Geo:
+            tone: Floats, phase: Floats, ceiling: float, fold: float = 0.18,
+            ripple: float = 0.0) -> _Geo:
     """Leaves with a folded midrib: three vertices across (edge, rib, edge).
 
     Each runs from ``base`` to ``tip`` with the given ``outline`` and bows up by
     ``bow`` × its length; ``ripple`` waves the edges (a frilly leaf).
+
+    Bow, ripple and fold are heights, and a leaf is as long as the plant is
+    WIDE — so each is held to the room the plant has: the bow never lifts the
+    leaf above ``ceiling`` (the plant's height), an edge never waves and the rib
+    never folds further than half way down to the ground or up to the ceiling.
+    On a rosette 30 cm tall and 2.4 m wide the leaves lie nearly flat and the
+    inner ring still stands as tall as the plan says (unbounded, the bow alone
+    was 48 cm: the plant came out 9 times too tall and was squashed flat).
     """
     count = len(base)
     segments = len(outline) - 1
     f = np.linspace(0.0, 1.0, segments + 1)
     chord = tip - base
     length = np.linalg.norm(chord, axis=1)
-    lift = (bow * length)[:, None]
+    straight = base[:, 2:3] + chord[:, 2:3] * f[None, 1:-1]            # the unbowed leaf's height
+    room = ((ceiling - straight) / np.sin(np.pi * f[1:-1])[None, :]).min(axis=1)
+    lift = np.maximum(np.minimum(bow * length, room), 0.0)[:, None]
     centre = base[:, None, :] + chord[:, None, :] * f[None, :, None]
     centre[:, :, 2] += lift * np.sin(np.pi * f)[None, :]
     tangent = np.broadcast_to(chord[:, None, :], centre.shape).copy()
@@ -443,13 +583,19 @@ def _fronds(base: Floats, tip: Floats, width: Floats, bow: Floats, outline: Floa
     face = _unit(np.cross(tangent, np.broadcast_to(side, tangent.shape)))          # the upper side
     half = (width[:, None] * outline[None, :] * 0.5)[:, :, None]
     grown = np.minimum(1.0, 3.0 * f)   # a leaf leaves its stem flat: ripple and fold grow in
-    wave = (ripple * grown[None, :] * half[:, :, 0]
-            * np.sin(3.0 * np.pi * f[None, :] + _TAU * tone[:, None]))[:, :, None]
+    up_room = np.maximum(ceiling - centre[:, :, 2], 0.0)
+    down_room = 0.5 * np.maximum(centre[:, :, 2], 0.0)
+    swing = np.minimum(ripple * grown[None, :] * half[:, :, 0], np.minimum(up_room, down_room))
+    wave = (swing * np.sin(3.0 * np.pi * f[None, :] + _TAU * tone[:, None]))[:, :, None]
     left = centre + side * half + _UP[None, None, :] * wave
     right = centre - side * half - _UP[None, None, :] * wave
-    rib = centre - face * (2.0 * fold) * half * grown[None, :, None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        deepest = np.where(face[:, :, 2] > 0.0, down_room / face[:, :, 2],
+                           np.where(face[:, :, 2] < 0.0, up_room / -face[:, :, 2], np.inf))
+    depth = np.minimum(2.0 * fold * half[:, :, 0] * grown[None, :], deepest)[:, :, None]
+    rib = centre - face * depth
     pos = np.stack([left, rib, right], axis=2).reshape(count, -1, 3)   # per leaf: L0 M0 R0 L1 …
-    lean = 2.0 * fold
+    lean = depth / np.maximum(half, 1e-12)                             # 2 × fold where there is room
     nrm = np.stack([_unit(face - side * lean), face, _unit(face + side * lean)], axis=2)
     step = np.arange(segments) * 3
     quad = np.stack([
@@ -561,25 +707,27 @@ def _canopy(p: _Plan) -> _Shape:
     ring = _even_angles(d, 5, _RIM_JITTER)
     out = r * d.u(0.30, 0.40, 5)
     wide = r * d.u(_RIM_REACH, 1.0, 5) - out
+    # the top lobe ends exactly at the tree's height (its thickness is rolled, its top is not)
+    top_deep = half * d.uf(0.50, 0.64)
     centers = np.concatenate([
         np.stack([out * np.cos(ring), out * np.sin(ring),
                   heart[2] + half * d.u(-0.38, 0.16, 5)], axis=1),
-        np.array([[r * d.uf(-0.08, 0.08), r * d.uf(-0.08, 0.08), heart[2] + half * d.uf(0.36, 0.50)],
+        np.array([[r * d.uf(-0.08, 0.08), r * d.uf(-0.08, 0.08), h - top_deep],
                   [0.0, 0.0, heart[2] - 0.30 * half]]),
     ])
     top = r * d.uf(0.56, 0.66)
     radii = np.concatenate([
         np.stack([wide, wide, half * d.u(0.55, 0.72, 5)], axis=1),
-        np.array([[top, top, 0.52 * half], [0.62 * r, 0.62 * r, 0.62 * half]]),
+        np.array([[top, top, top_deep], [0.62 * r, 0.62 * r, 0.62 * half]]),
     ])
-    lobes = _lobes(centers, radii, heart, d, p.phase)
+    lobes = _lobes(centers, radii, heart, d, p.phase, skin=_GROUND_SKIN * h)
     count = p.shell_leaves(300, 18.0, 160, 480)
     direction = _shell_points(d, count, -0.55)
-    shell = _on_lobes(d, heart, direction * np.array([r, r, half])[None, :], centers, radii)
+    shell, normal = _on_lobes(d, heart, direction * np.array([r, r, half])[None, :], centers, radii)
     size = 0.265 * p.leaf_scale() * math.sqrt(r * max(r, half))
-    leaves = _leaves(d, shell, direction + np.array([0.0, 0.0, 0.25]),
+    leaves = _leaves(d, shell, normal + np.array([0.0, 0.0, 0.25]),
                      size * d.u(0.8, 1.25, count), 0.75 if p.flag("frilly") else 0.6,
-                     heart, p.phase)
+                     heart, p.phase, r, h)
     trunk = _trunk(base + 0.35 * half, min(0.035 * h, 0.22 * r), (1.45, 1.0, 0.86, 0.62))
     return trunk, _join([lobes, leaves])
 
@@ -640,16 +788,16 @@ def _dome(p: _Plan, centers: Floats, radii: Floats, sphere: tuple[Floats, Ints],
     """Lobes sitting on the ground plus a leaf shell on their surface, cast from
     ``heart`` in the directions of the ellipsoid ``envelope`` above ``lowest``."""
     d = p.dice
-    lobes = _lobes(centers, radii, heart, d, p.phase, sphere)
+    _top_out(centers, radii, p.height)
+    lobes = _lobes(centers, radii, heart, d, p.phase, sphere, skin=_GROUND_SKIN * p.height)
     count = p.shell_leaves(leaf_base, default_n_out, 150, most)
     direction = _shell_points(d, count, lowest)
-    shell = _on_lobes(d, heart, direction * envelope[None, :], centers, radii)
-    shell[:, 2] = np.maximum(shell[:, 2], 0.0)
+    shell, normal = _on_lobes(d, heart, direction * envelope[None, :], centers, radii)
     narrow, frilly = p.flag("narrow"), p.flag("frilly")
     length = size * p.leaf_scale() * (1.25 if narrow else 1.0) * d.u(0.8, 1.25, count)
-    leaves = _leaves(d, shell, direction + np.array([0.0, 0.0, 0.35]), length,
+    leaves = _leaves(d, shell, normal + np.array([0.0, 0.0, 0.35]), length,
                      0.30 if narrow else 0.80 if frilly else 0.60, heart, p.phase,
-                     droop=-0.25 if narrow else 0.15)
+                     p.radius, p.height, droop=-0.25 if narrow else 0.15)
     return _join([lobes, leaves])
 
 
@@ -698,25 +846,18 @@ def _climber(p: _Plan) -> _Shape:
     centers = np.stack([out * np.cos(angle), out * np.sin(angle),
                         h * (0.14 + 0.72 * index / 5.0)], axis=1)
     radii = np.stack([wide, wide, np.full(6, 0.20 * h)], axis=1)
+    _top_out(centers, radii, h)
     heart = np.array([0.0, 0.0, 0.5 * h])
-    lobes = _lobes(centers, radii, heart, d, p.phase)
+    lobes = _lobes(centers, radii, heart, d, p.phase, skin=_GROUND_SKIN * h)
     count = p.shell_leaves(280, 16.0, 140, 400)
     z = h * d.u(0.02, 0.98, count)
     turn = d.u(0.0, _TAU, count)
     radial = np.stack([np.cos(turn), np.sin(turn), np.zeros(count)], axis=1)
     # each leaf where a horizontal ray from the axis at its height leaves the lobes
-    step = radial[:, None, :2] / radii[None, :, :2]
-    start = (-centers[None, :, :2]) / radii[None, :, :2]
-    a = (step * step).sum(axis=2)
-    b = 2.0 * (step * start).sum(axis=2)
-    c = (start * start).sum(axis=2) + ((z[:, None] - centers[None, :, 2]) / radii[None, :, 2]) ** 2 - 1.0
-    root = b * b - 4.0 * a * c
-    far = np.where(root >= 0.0, (-b + np.sqrt(np.maximum(root, 0.0))) / (2.0 * a), 0.0).max(axis=1)
-    reach = np.where(far > 0.0, far, 0.3 * r) * d.u(0.96, 1.05, count)
-    shell = radial * reach[:, None] + _UP[None, :] * z[:, None]
+    shell, normal = _on_lobes(d, _UP[None, :] * z[:, None], radial * r, centers, radii, miss=0.3)
     size = 0.27 * p.leaf_scale() * math.sqrt(r * max(r, 0.5 * h))
-    leaves = _leaves(d, shell, radial + np.array([0.0, 0.0, 0.25]), size * d.u(0.8, 1.25, count),
-                     0.80 if p.flag("frilly") else 0.60, heart, p.phase)
+    leaves = _leaves(d, shell, normal + np.array([0.0, 0.0, 0.25]), size * d.u(0.8, 1.25, count),
+                     0.80 if p.flag("frilly") else 0.60, heart, p.phase, r, h)
     curl = d.u(0.0, _TAU, 5)
     start = np.stack([0.3 * r * np.cos(curl), 0.3 * r * np.sin(curl), h * d.u(0.72, 0.90, 5)], axis=1)
     tendrils = _ribbons(start, np.stack([np.cos(curl + 1.3), np.sin(curl + 1.3)], axis=1),
@@ -735,8 +876,10 @@ def _ground(p: _Plan) -> _Shape:
     out = np.concatenate([r * d.u(0.56, 0.64, 8), [0.0]])
     angle = np.concatenate([ring, [0.0]])
     wide = np.concatenate([r * d.u(_RIM_REACH, 1.0, 8) - out[:8], [r * d.uf(0.34, 0.42)]])
-    centers = np.stack([out * np.cos(angle), out * np.sin(angle), h * d.u(0.12, 0.25, 9)], axis=1)
-    radii = np.stack([wide, wide, h * d.u(0.55, 0.85, 9)], axis=1)
+    # a lumpy skyline: some bumps stand twice as high as others (two flat mats of one
+    # size were up to 97.6 % alike from the side)
+    centers = np.stack([out * np.cos(angle), out * np.sin(angle), h * d.u(0.10, 0.25, 9)], axis=1)
+    radii = np.stack([wide, wide, h * d.u(0.38, 0.85, 9)], axis=1)
     heart = np.array([0.0, 0.0, 0.2 * h])
     return None, _dome(p, centers, radii, _SPHERE_COARSE, 420, 16.0, 500, heart,
                        np.array([r, r, 0.8 * h]), -0.15, 0.20 * r)
@@ -747,20 +890,40 @@ def _hedge(p: _Plan) -> _Shape:
 
     A drum, not a box: the record is a circle and a circle has no heading, so a
     box's orientation would be invented. It is cut by hand, not turned on a
-    lathe — narrower at the top than at the foot (the batter a hedge is cut
-    with), its side bulging and its top dipping a little, differently on every
-    section: two perfect drums were the same drum (side silhouettes 99.9 % alike).
+    lathe, and no two sections are cut alike: narrower at the top than at the
+    foot (the batter a hedge is cut with), the shoulder higher or lower and
+    squarer or rounder, the side bulging, the top dipping and a little out of
+    level. Two perfect drums were the same drum (side silhouettes 99.9 % alike).
+    A hedge section still repeats more than any other plant — clipping is what
+    makes hedge plants alike, and the plan gives a section no more than a circle
+    and a height.
     """
     h, r, d = p.height, p.radius, p.dice
     sides = 20
     theta = _TAU * np.arange(sides) / sides
     bulge, dip = _lumps(d, 0.10), _lumps(d, 0.14)
-    batter = d.uf(0.80, 0.98)            # radius at the shoulder / radius at the foot
-    side, top = bulge(theta), dip(theta)
+    batter = d.uf(0.72, 0.98)            # radius at the shoulder / radius at the foot
+    shoulder = d.uf(0.68, 0.90)          # where the side turns into the top, of the height
+    square = d.uf(0.74, 0.94)            # the top's radius / the shoulder's: 1 = cut square
+    lean, low_side = d.uf(0.0, 0.12), d.uf(0.0, _TAU)   # the top is cut out of level
+
+    def top_at(angle: Floats) -> Floats:
+        return np.asarray(dip(angle) * (1.0 - lean * (0.5 + 0.5 * np.cos(angle - low_side))),
+                          np.float64)
+
+    side, top = bulge(theta), top_at(theta)
+    highest = float(top.max())           # the top's highest point is the hedge's height
+
+    def dip_to_height(angle: Floats) -> Floats:
+        return np.asarray(np.minimum(top_at(angle) / highest, 1.0), np.float64)
+
+    top = top / highest
     crown = float(top.mean())
-    pos, tri = _revolve(np.stack([side, batter * side, 0.94 * batter * side, 0.82 * batter * side]) * r,
-                        np.stack([np.zeros(sides), 0.86 * top, 0.96 * top, top]) * h,
-                        sides, apex=crown * h)
+    bevel = shoulder + 0.7 * (1.0 - shoulder)
+    pos, tri = _revolve(
+        np.stack([side, batter * side, 0.5 * (1.0 + square) * batter * side,
+                  square * batter * side]) * r,
+        np.stack([np.zeros(sides), shoulder * top, bevel * top, top]) * h, sides, apex=crown * h)
     heart = np.array([0.0, 0.0, 0.45 * h])
     nrm = _unit(_smooth_normals(pos, tri) * (1.0 - _SPHERIZE) + _unit(pos - heart[None, :]) * _SPHERIZE)
     ring_exposure = np.repeat([0.05, 0.40, 0.55, 0.60], sides)
@@ -772,34 +935,49 @@ def _hedge(p: _Plan) -> _Shape:
     radial = np.stack([np.cos(turn), np.sin(turn), np.zeros(count)], axis=1)
     inward = np.where(on_top, np.sqrt(d.u(0.0, 1.0, count)), 1.0)     # 1 = at the rim
     up_side = d.u(0.05, 1.0, count)                                     # 1 = at the shoulder
-    reach = r * bulge(turn) * np.where(on_top, 0.82 * batter * inward,
+    reach = r * bulge(turn) * np.where(on_top, square * batter * inward,
                                        1.0 - (1.0 - batter) * up_side)
-    z = h * np.where(on_top, crown + (dip(turn) - crown) * inward,
-                     0.86 * dip(turn) * up_side)
+    z = h * np.where(on_top, crown + (dip_to_height(turn) - crown) * inward,
+                     shoulder * dip_to_height(turn) * up_side)
     shell = radial * reach[:, None] + _UP[None, :] * z[:, None]
     outward = np.where(on_top[:, None], _UP[None, :], radial)
     size = 0.16 * p.leaf_scale() * math.sqrt(r * max(r, 0.5 * h))
-    leaves = _leaves(d, shell, outward, size * d.u(0.8, 1.2, count), 0.6, heart, p.phase, droop=0.05)
+    leaves = _leaves(d, shell, outward, size * d.u(0.8, 1.2, count), 0.6, heart, p.phase, r, h,
+                     droop=0.05)
     return None, _join([drum, leaves])
 
 
+def _tip_reach(reach: Floats, corner: Floats | float, fold: float = 0.0) -> Floats:
+    """How far out a leaf's or blade's TIP may be so that its corners — ``corner``
+    to either side of the tip — end on the circle of radius ``reach``, not past it;
+    a folded leaf's rib stands out from its tip by up to 2 × ``fold`` × ``corner``."""
+    inside = np.sqrt(np.maximum(reach ** 2 - np.asarray(corner) ** 2, 0.0))
+    return np.asarray(np.maximum(inside - 2.0 * fold * np.asarray(corner), 0.0), np.float64)
+
+
 def _whorl(p: _Plan, count: int, tip_radius: float, tip_height: float, width: float, bow: float,
-           outline: Floats = _BROAD_LEAF, base_radius: float = 0.06, base_height: float = 0.03,
-           ripple: float = 0.0, fold: float = 0.18, rim: bool = False) -> _Geo:
+           outline: Floats = _BROAD_LEAF, base_radius: float = 0.06, base_height: float = 0.0,
+           ripple: float = 0.0, fold: float = 0.18, rim: bool = False,
+           crown: bool = False) -> _Geo:
     """One ring of ``count`` folded leaves rising from the plant's centre to tips
     at ``tip_radius`` × the radius and ``tip_height`` × the height.
 
-    ``rim``: this ring is the plant's outline (``_RIM_REACH``, ``_RIM_JITTER``)."""
+    ``rim``: this ring is the plant's outline (``_RIM_REACH``, ``_RIM_JITTER``).
+    ``crown``: this ring is the plant's top — its tallest leaf ends exactly at
+    ``tip_height`` × the height (the others a little lower)."""
     h, r, d = p.height, p.radius, p.dice
     angle = _even_angles(d, count, _RIM_JITTER if rim else 0.25)
     radial = np.stack([np.cos(angle), np.sin(angle)], axis=1)
-    out = r * tip_radius * d.u(_RIM_REACH if rim else 0.86, 1.0, count)
+    widths = np.full(count, width) * d.u(0.9, 1.1, count)
+    out = _tip_reach(r * tip_radius * d.u(_RIM_REACH if rim else 0.86, 1.0, count),
+                     0.5 * widths * float(outline[-1]), fold)
+    tall = d.u(0.85, 1.0, count)
+    if crown:
+        tall = tall / float(tall.max())
     base = np.concatenate([radial * (base_radius * r), np.full((count, 1), base_height * h)], axis=1)
-    tip = np.concatenate([radial * out[:, None],
-                          (h * tip_height * d.u(0.85, 1.0, count))[:, None]], axis=1)
-    return _fronds(base, tip, np.full(count, width) * d.u(0.9, 1.1, count),
-                   np.full(count, bow), outline, d.u(0.0, 1.0, count),
-                   (p.phase + d.u(-0.1, 0.1, count)) % 1.0, fold, ripple)
+    tip = np.concatenate([radial * out[:, None], (h * tip_height * tall)[:, None]], axis=1)
+    return _fronds(base, tip, widths, np.full(count, bow), outline, d.u(0.0, 1.0, count),
+                   (p.phase + d.u(-0.1, 0.1, count)) % 1.0, h, fold, ripple)
 
 
 def _rosette(p: _Plan) -> _Shape:
@@ -814,12 +992,14 @@ def _rosette(p: _Plan) -> _Shape:
         _whorl(p, max(round(0.61 * outer), 4), 0.56, 0.92, 0.72 * width, 0.10, ripple=0.25),
     ]
     if p.flag("heart", True):
-        heart = np.array([[0.0, 0.0, 0.52 * h]])
+        # the heart is the plant's top: it ends exactly at the plan's height
+        heart = np.array([[0.0, 0.0, 0.56 * h]])
         rings.append(_lobes(heart, np.array([[0.36 * r, 0.36 * r, 0.44 * h]]),
-                            np.array([0.0, 0.0, 0.2 * h]), d, p.phase))
+                            np.array([0.0, 0.0, 0.2 * h]), d, p.phase, skin=_GROUND_SKIN * h))
         rings[-1].exposure += 0.45   # the heart is the youngest, lightest growth
     else:
-        rings.append(_whorl(p, max(round(0.47 * outer), 4), 0.30, 1.00, 0.55 * width, 0.05))
+        rings.append(_whorl(p, max(round(0.47 * outer), 4), 0.30, 1.00, 0.55 * width, 0.05,
+                            crown=True))
     return None, _join(rings)
 
 
@@ -834,16 +1014,28 @@ def _head(p: _Plan) -> _Shape:
     ripple = 0.3 if p.flag("frilly") else 0.15
     return None, _join([
         _whorl(p, 11, 1.00, 0.70, width, 0.22, ripple=ripple, rim=True),
-        _whorl(p, 8, 0.74, 1.00, 0.85 * width, 0.14, ripple=ripple),
+        _whorl(p, 8, 0.74, 1.00, 0.85 * width, 0.14, ripple=ripple, crown=True),
         _whorl(p, 6, 0.24, 0.50, 0.42 * width, 0.05),
     ])
 
 
-def _blade_tuft(p: _Plan, count: int, base: Floats, direction: Floats, reach: Floats,
-                height: Floats, width: float, segments: int, arch: float) -> _Geo:
+def _blade_tuft(p: _Plan, count: int, foot: Floats, tip: Floats, tall: Floats, width: float,
+                segments: int, arch: float) -> _Geo:
+    """Blades from ``foot`` (xy, on the ground) whose tips end over ``tip`` (xy); the
+    tallest is exactly as tall as the plant, the others ``tall`` (relative) of it."""
     d = p.dice
-    return _ribbons(base, direction, reach, height, width * d.u(0.8, 1.2, count), segments,
+    lean = tip - foot
+    reach = np.linalg.norm(lean, axis=1)
+    direction = lean / np.maximum(reach, 1e-12)[:, None]
+    base = np.concatenate([foot, np.zeros((count, 1))], axis=1)
+    height = p.height * tall / float(tall.max())
+    return _ribbons(base, direction, reach, height, width * d.u(0.8, _BLADE_WIDEST, count), segments,
                     d.u(0.0, 1.0, count), (p.phase + d.u(-0.1, 0.1, count)) % 1.0, arch)
+
+
+def _blade_reach(reach: Floats, width: float) -> Floats:
+    """``_tip_reach`` for a blade of a tuft ``width`` wide (its widest possible tip)."""
+    return _tip_reach(reach, 0.5 * _BLADE_WIDEST * _BLADE_TIP * width)
 
 
 def _grass(p: _Plan) -> _Shape:
@@ -854,7 +1046,7 @@ def _grass(p: _Plan) -> _Shape:
     axis, every fourth one on the canopy circle (the outline), the rest a little
     short of it; each blade grows from the tuft nearest to its tip.
     """
-    h, r, d = p.height, p.radius, p.dice
+    r, d = p.radius, p.dice
     per_tuft = round(p.number("n_out", 11.0, 8.0, 20.0))
     outer = 6 * per_tuft
     count = outer + per_tuft
@@ -864,9 +1056,11 @@ def _grass(p: _Plan) -> _Shape:
         np.stack([tuft_out * np.cos(tuft_angle), tuft_out * np.sin(tuft_angle)], axis=1),
         np.zeros((1, 2)),
     ])
+    width = 0.10 * r * p.leaf_scale()
     # the outer blades: tip direction and tip distance from the axis
     toward = _even_angles(d, outer, 0.3)
-    far = r * np.where(np.arange(outer) % 4 == 0, d.u(_RIM_REACH, 1.0, outer), d.u(0.80, 1.0, outer))
+    far = _blade_reach(r * np.where(np.arange(outer) % 4 == 0, d.u(_RIM_REACH, 1.0, outer),
+                                    d.u(0.80, 1.0, outer)), width)
     tip = far[:, None] * np.stack([np.cos(toward), np.sin(toward)], axis=1)
     apart = np.abs((toward[:, None] - tuft_angle[None, :] + np.pi) % _TAU - np.pi)
     tuft = np.concatenate([apart.argmin(axis=1), np.full(per_tuft, 6)])
@@ -875,30 +1069,27 @@ def _grass(p: _Plan) -> _Shape:
     middle = d.u(0.0, _TAU, per_tuft)
     inner_tip = (r * d.u(0.25, 0.70, per_tuft))[:, None] * np.stack(
         [np.cos(middle), np.sin(middle)], axis=1)
-    lean = np.concatenate([tip, inner_tip]) - foot
-    reach = np.linalg.norm(lean, axis=1)
-    direction = lean / np.maximum(reach, 1e-12)[:, None]
-    base = np.concatenate([foot, np.zeros((count, 1))], axis=1)
-    width = 0.10 * r * p.leaf_scale()
-    return None, _blade_tuft(p, count, base, direction, reach,
-                             h * d.u(0.70, 1.0, count), width, 4, 0.12)
+    return None, _blade_tuft(p, count, foot, np.concatenate([tip, inner_tip]),
+                             d.u(0.70, 1.0, count), width, 4, 0.12)
 
 
 def _allium(p: _Plan) -> _Shape:
     """An onion, a leek, sweet corn: ONE clump, two layers of broad blades — the outer
     arching out, the inner upright."""
-    h, r, d = p.height, p.radius, p.dice
+    r, d = p.radius, p.dice
     outer = round(p.number("n_out", 16.0, 12.0, 26.0)) + 4
     inner = max(round(0.8 * outer), 10)
     count = outer + inner
     is_outer = np.arange(count) < outer
     angle = np.concatenate([_even_angles(d, outer, _RIM_JITTER), d.u(0.0, _TAU, inner)])
-    base = np.concatenate([r * d.u(-0.02, 0.02, (count, 2)), np.zeros((count, 1))], axis=1)
-    reach = np.where(is_outer, r * d.u(_RIM_REACH, 1.0, count), r * d.u(0.15, 0.50, count))
-    height = np.where(is_outer, h * d.u(0.62, 0.84, count), h * d.u(0.85, 1.0, count))
+    foot = r * d.u(-0.02, 0.02, (count, 2))
     width = 0.24 * r * p.leaf_scale()
-    return None, _blade_tuft(p, count, base, np.stack([np.cos(angle), np.sin(angle)], axis=1),
-                             reach, height, width, 5, 0.10)
+    # where each blade's tip ends, measured from the plant's axis (not from its own foot)
+    far = np.where(is_outer, _blade_reach(r * d.u(_RIM_REACH, 1.0, count), width),
+                   r * d.u(0.15, 0.50, count))
+    tall = np.where(is_outer, d.u(0.62, 0.84, count), d.u(0.85, 1.0, count))
+    tip = far[:, None] * np.stack([np.cos(angle), np.sin(angle)], axis=1)
+    return None, _blade_tuft(p, count, foot, tip, tall, width, 5, 0.10)
 
 
 def _feathery(p: _Plan) -> _Shape:
@@ -907,11 +1098,18 @@ def _feathery(p: _Plan) -> _Shape:
     h, r, d = p.height, p.radius, p.dice
     stems = 12
     angle = _even_angles(d, stems, _RIM_JITTER)
-    direction = np.stack([np.cos(angle), np.sin(angle)], axis=1)
-    reach = r * d.u(_RIM_REACH, 1.0, stems)
-    height = h * d.u(0.62, 0.98, stems)
-    base = np.concatenate([r * d.u(-0.02, 0.02, (stems, 2)), np.zeros((stems, 1))], axis=1)
-    stalks = _ribbons(base, direction, reach, height, np.full(stems, 0.035 * r), 4,
+    thick = 0.035 * r
+    # where each stem's tip ends, measured from the plant's axis; the tallest stem
+    # is the plant's height
+    far = _tip_reach(r * d.u(_RIM_REACH, 1.0, stems), 0.5 * _BLADE_TIP * thick)
+    tall = d.u(0.62, 0.98, stems)
+    height = h * tall / float(tall.max())
+    foot = r * d.u(-0.02, 0.02, (stems, 2))
+    lean = far[:, None] * np.stack([np.cos(angle), np.sin(angle)], axis=1) - foot
+    reach = np.linalg.norm(lean, axis=1)
+    direction = lean / np.maximum(reach, 1e-12)[:, None]
+    base = np.concatenate([foot, np.zeros((stems, 1))], axis=1)
+    stalks = _ribbons(base, direction, reach, height, np.full(stems, thick), 4,
                       np.full(stems, 0.5), np.full(stems, p.phase))
     per_stem = round(p.number("n_out", 13.0, 8.0, 20.0) * 2.25)
     count = stems * per_stem
@@ -922,7 +1120,7 @@ def _feathery(p: _Plan) -> _Shape:
     outward = _unit(along * 0.6 + d.u(-1.0, 1.0, (count, 3)) + np.array([0.0, 0.0, 0.5]))
     size = 0.20 * p.leaf_scale() * math.sqrt(r * max(r, 0.6 * h))
     leaflets = _leaves(d, on_stem, outward, size * d.u(0.7, 1.2, count), 0.28,
-                       np.array([0.0, 0.0, 0.3 * h]), p.phase, droop=-0.1)
+                       np.array([0.0, 0.0, 0.3 * h]), p.phase, r, h, droop=-0.1)
     return None, _join([stalks, leaflets])
 
 
@@ -943,12 +1141,15 @@ def _flower(p: _Plan) -> _Shape:
         (index * 5) % count + d.u(-_RIM_JITTER, _RIM_JITTER, count)) / count
     radial = np.stack([np.cos(angle), np.sin(angle)], axis=1)
     z = h * (0.14 + 0.70 * index / (count - 1))
-    out = r * d.u(_RIM_REACH, 1.0, count)
+    width = 0.72 * r
+    out = _tip_reach(r * d.u(_RIM_REACH, 1.0, count), 0.5 * width * float(_BROAD_LEAF[-1]), 0.18)
     base = np.concatenate([radial * stalk_radius, z[:, None]], axis=1)
     tip = np.concatenate([radial * out[:, None], (z + h * d.u(-0.03, 0.05, count))[:, None]], axis=1)
-    leaves = _fronds(base, tip, np.full(count, 0.72 * r), np.full(count, 0.10), _BROAD_LEAF,
-                     d.u(0.0, 1.0, count), (p.phase + d.u(-0.1, 0.1, count)) % 1.0)
-    bud = _whorl(p, 5, 0.24, 1.0, 0.30 * r, 0.03, _LANCE_LEAF, base_radius=0.02, base_height=0.90)
+    leaves = _fronds(base, tip, np.full(count, width), np.full(count, 0.10), _BROAD_LEAF,
+                     d.u(0.0, 1.0, count), (p.phase + d.u(-0.1, 0.1, count)) % 1.0, h)
+    # the bud is the plant's top: its tallest leaf ends at the plan's height
+    bud = _whorl(p, 5, 0.24, 1.0, 0.30 * r, 0.03, _LANCE_LEAF, base_radius=0.02, base_height=0.90,
+                 crown=True)
     return None, _join([stalk, leaves, bud])
 
 
@@ -964,13 +1165,16 @@ def _palm(p: _Plan) -> _Shape:
     angle = _even_angles(d, count, _RIM_JITTER)
     radial = np.stack([np.cos(angle), np.sin(angle)], axis=1)
     base = np.concatenate([radial * trunk_radius, np.full((count, 1), crown)], axis=1)
-    out = r * d.u(_RIM_REACH, 1.0, count)
+    width = 0.46 * r
+    out = _tip_reach(r * d.u(_RIM_REACH, 1.0, count), 0.5 * width * float(_FROND[-1]), 0.22)
     tip = np.concatenate([radial * out[:, None], (h * d.u(0.50, 0.66, count))[:, None]], axis=1)
     length = np.linalg.norm(tip - base, axis=1)
     bow = (h - crown) * d.u(1.25, 1.6, count) / np.maximum(length, 1e-12)
-    fronds = _fronds(base, tip, np.full(count, 0.46 * r), bow, _FROND, d.u(0.0, 1.0, count),
-                     (p.phase + d.u(-0.1, 0.1, count)) % 1.0, fold=0.22)
-    spear = _whorl(p, 3, 0.22, 1.0, 0.16 * r, 0.02, _LANCE_LEAF, base_radius=0.01, base_height=0.78)
+    fronds = _fronds(base, tip, np.full(count, width), bow, _FROND, d.u(0.0, 1.0, count),
+                     (p.phase + d.u(-0.1, 0.1, count)) % 1.0, h, fold=0.22)
+    # the spear — the youngest, upright fronds — is the palm's top
+    spear = _whorl(p, 3, 0.22, 1.0, 0.16 * r, 0.02, _LANCE_LEAF, base_radius=0.01, base_height=0.78,
+                   crown=True)
     return trunk, _join([fronds, spear])
 
 
@@ -998,18 +1202,56 @@ ARCHETYPE_BUILDERS: Final[Mapping[str, _ArchetypeBuilder]] = MappingProxyType({
 # ── truth and colour ──────────────────────────────────────────────────────────
 
 
-def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> None:
-    """Make the bounding box the data, in place.
+@dataclass(frozen=True, slots=True)
+class FitReport:
+    """What it took to make a builder's output the plan's numbers.
 
-    Builders work at the plant's real size, so the canopy circle is already there:
-    foliage that strays beyond it (a leaf of the shell pointing outward) is pulled
-    back onto it. The foliage is then centred on the local origin (the canopy
-    circle's centre) — the wood stays where it stands: a trunk's foot is the plan
-    position. Whatever dips below the plant's ground — the tip of a hanging leaf —
-    is pressed onto it; a plant whose lowest point is above the ground is set
-    down. Last, everything is scaled about the origin: xy so the widest span is
-    the canopy diameter, z so the top is the height. Normals take the inverse of
-    the scale.
+    The archetype builders build TO the data — a body as tall as the height,
+    an outline on the canopy circle — and the fit only normalises the last
+    millimetre. This is the record of that last millimetre, so that a test can
+    hold the builders to it (a bounding box that is exact after the fit says
+    nothing about the plant: a squash built 1.6 times too tall and squashed back
+    had an exact box and its whole body in the lower 63 % of its height).
+
+    - ``built_top``: the builder's top before the fit, as a fraction of the
+      height (1.0 = built to the data);
+    - ``z_scale``, ``xy_scale``: the factors the fit applied;
+    - ``clamped_share``: the share of foliage vertices that lay beyond the
+      canopy circle and were pulled back onto it; ``clamped_reach``: the
+      farthest of them, in canopy radii (1.0 when there was none);
+    - ``pressed_share``: the share of all vertices that lay below the ground
+      and were pressed onto it;
+    - ``set_down``: how far the plant was set down onto the ground, as a
+      fraction of the height (a plant is never lifted);
+    - ``centre_shift``: how far the foliage was moved to centre its bounding
+      box on the plan position, in canopy radii;
+    - ``stretch``: z over xy of the scale from the proportion the shape was
+      built at to the plan's (``PROPORTION_STEP``) — 1.0 for the fit itself.
+    """
+
+    built_top: float
+    z_scale: float
+    xy_scale: float
+    clamped_share: float
+    clamped_reach: float
+    pressed_share: float
+    set_down: float
+    centre_shift: float
+    stretch: float = 1.0
+
+
+def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> FitReport:
+    """Make the bounding box the data, in place, and report what that took.
+
+    Builders work at the plant's real size and inside it, so little is left to
+    do. Foliage that still strays beyond the canopy circle (the corner of a leaf
+    lying along the plant's edge) is pulled back onto it. The foliage is then
+    centred on the local origin (the canopy circle's centre) — the wood stays
+    where it stands: a trunk's foot is the plan position. Whatever dips below
+    the plant's ground is pressed onto it; a plant whose lowest point is above
+    the ground is set down. Last, everything is scaled about the origin: xy so
+    the widest span is the canopy diameter, z so the top is the height. Normals
+    take the inverse of the scale.
 
     Never lift a plant to make its lowest vertex zero: one leaf dipping 9 cm
     under a lavender's base lifted the whole cushion 9 cm into the air, and
@@ -1021,13 +1263,19 @@ def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> None
     above keep every vertex within a few percent of the circle (measured per
     archetype in ``tests/unit/test_scene3d_plants.py``).
     """
+    parts = [foliage] if wood is None else [wood, foliage]
+    vertices = sum(len(part.pos) for part in parts)
+    built_top = max(float(part.pos[:, 2].max()) for part in parts) / height
     distance = np.hypot(foliage.pos[:, 0], foliage.pos[:, 1])
-    stray = distance > radius
+    stray = distance > radius * (1.0 + 1e-9)     # beyond the circle, not merely rounded onto it
+    clamped_reach = max(float(distance.max()) / radius, 1.0)
     foliage.pos[stray, :2] *= (radius / distance[stray])[:, None]
     low, high = foliage.pos[:, :2].min(axis=0), foliage.pos[:, :2].max(axis=0)
-    foliage.pos[:, :2] -= (low + high) / 2.0
-    parts = [foliage] if wood is None else [wood, foliage]
+    shift = (low + high) / 2.0
+    foliage.pos[:, :2] -= shift
+    pressed = 0
     for part in parts:
+        pressed += int((part.pos[:, 2] < 0.0).sum())
         part.pos[:, 2] = np.maximum(part.pos[:, 2], 0.0)
     reach = max(float(np.abs(part.pos[:, :2]).max()) for part in parts)
     bottom = min(float(part.pos[:, 2].min()) for part in parts)   # >= 0: only ever set down
@@ -1040,6 +1288,11 @@ def _fit(wood: _Geo | None, foliage: _Geo, height: float, radius: float) -> None
         nrm = part.nrm / scale[None, :]
         length = np.linalg.norm(nrm, axis=1, keepdims=True)
         part.nrm = np.where(length > 1e-12, nrm / np.maximum(length, 1e-12), _UP[None, :])
+    return FitReport(
+        built_top=built_top, z_scale=float(scale[2]), xy_scale=float(scale[0]),
+        clamped_share=float(stray.mean()), clamped_reach=clamped_reach,
+        pressed_share=pressed / vertices, set_down=bottom / height,
+        centre_shift=float(np.hypot(shift[0], shift[1])) / radius)
 
 
 @lru_cache(maxsize=32)
@@ -1082,31 +1335,201 @@ def _solid(pos: Floats, colour: NDArray[np.float32]) -> Floats:
     return rgba
 
 
+# ── the shape cache: a plant that grows is the same shape, scaled ─────────────
+
+#: The proportion (height over canopy radius) a shape is BUILT at is the plan's,
+#: rounded to a whole power of this step; the built shape is then scaled to the
+#: plan's exact height and radius. So a plant that grows a little is the shape it
+#: was, a little larger — a multiplication, not a rebuild — and it changes form
+#: only when its proportion has moved by a step. The scale is exact: the top IS
+#: the height and the widest span IS the canopy diameter at every size (the
+#: rounding moves no number the plan states). What it costs is form: one axis is
+#: stretched against the other by at most the square root of the step, 2.5 %.
+PROPORTION_STEP: Final = 1.05
+#: Shapes remembered (least recently used are dropped). One shape is one plant at
+#: one proportion step: measured 2026-10-11 over the 123 recipes at their mature
+#: size, 18 … 139 kB, 76 kB on average (``shape_bytes``) — so the cache holds at
+#: most about 140 MB, and about 80 MB when full of average plants. A plan with
+#: more growing plants than this still works; it rebuilds what was dropped.
+SHAPE_CACHE_SIZE: Final = 1024
+_UNIT_RADIUS: Final = 100.0
+#: The recipe keys an archetype builder may read; ``pal`` and ``a`` are read by
+#: ``_form`` itself. A builder that reads another key fails (``_ReadKeys``).
+_FORM_KEYS: Final = ("leaf_scale", "n_out", "narrow", "frilly", "heart")
+
+
+class _ReadKeys(dict[str, Any]):
+    """The recipe as a builder sees it: only the keys the cache key is made of.
+
+    A builder that read any other key would be handed a remembered shape built
+    for a recipe that differed in exactly that key — so reading one is an error
+    here, in every test, and not a wrong plant in a garden."""
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key not in _FORM_KEYS:
+            raise KeyError(f"a plant builder may read only {_FORM_KEYS} of a recipe, not {key!r}")
+        return super().get(key, default)
+
+
+@dataclass(frozen=True, slots=True)
+class _Form:
+    """What of a recipe decides a plant's 3D form — hashable: the cache's key."""
+
+    archetype: str
+    palette: str
+    leaf_scale: float | None
+    n_out: float | None
+    narrow: bool
+    frilly: bool
+    heart: bool
+
+    def recipe(self) -> _ReadKeys:
+        values = {"leaf_scale": self.leaf_scale, "n_out": self.n_out, "narrow": self.narrow,
+                  "frilly": self.frilly, "heart": self.heart}
+        return _ReadKeys({key: value for key, value in values.items() if value is not None})
+
+
+def _number_or_none(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def _form(recipe: Mapping[str, Any]) -> _Form:
+    archetype = str(recipe.get("a"))
+    if archetype not in ARCHETYPE_BUILDERS:
+        raise ValueError(f"no 3D builder for archetype {archetype!r}")
+    return _Form(archetype, palette_key(recipe), _number_or_none(recipe.get("leaf_scale")),
+                 _number_or_none(recipe.get("n_out")), bool(recipe.get("narrow", False)),
+                 bool(recipe.get("frilly", False)), bool(recipe.get("heart", True)))
+
+
+@dataclass(frozen=True, slots=True)
+class _Arrays:
+    """One part of a built shape: read-only float32 / uint32 arrays, shared by
+    every mesh scaled from it (colours, uvs and indices are never copied)."""
+
+    positions: NDArray[np.float32]
+    normals: NDArray[np.float32]
+    colors: NDArray[np.float32]
+    uvs: NDArray[np.float32]
+    indices: NDArray[np.uint32]
+
+    @staticmethod
+    def of(pos: Floats, nrm: Floats, colors: Floats, uvs: Floats, tri: Ints) -> _Arrays:
+        mesh = Mesh.from_arrays(pos, nrm, colors, uvs, tri)     # coerced, private, read-only
+        return _Arrays(mesh.positions, mesh.normals, mesh.colors, mesh.uvs, mesh.indices)
+
+    def scaled(self, scale: NDArray[np.float32], stretch: float) -> Mesh:
+        positions = self.positions * scale[None, :]
+        positions.setflags(write=False)
+        normals = self.normals
+        if abs(stretch - 1.0) > 1e-9:                             # not a uniform scale
+            bent = normals.astype(np.float64)
+            bent[:, 2] /= stretch
+            normals = (bent / np.linalg.norm(bent, axis=1, keepdims=True)).astype(np.float32)
+            normals.setflags(write=False)
+        return Mesh(positions, normals, self.colors, self.uvs, self.indices)
+
+    def nbytes(self) -> int:
+        return int(sum(a.nbytes for a in (self.positions, self.normals, self.colors, self.uvs,
+                                          self.indices)))
+
+
+@dataclass(frozen=True, slots=True)
+class _BuiltShape:
+    """A plant built and fitted at ``_UNIT_RADIUS`` and ``proportion`` × it."""
+
+    proportion: float
+    foliage: _Arrays
+    wood: _Arrays | None
+    report: FitReport
+
+
+def _proportion_step(height_cm: float, radius_cm: float) -> int:
+    return round(math.log(height_cm / radius_cm) / math.log(PROPORTION_STEP))
+
+
+@lru_cache(maxsize=SHAPE_CACHE_SIZE)
+def _built_shape(form: _Form, seed: int, step: int) -> _BuiltShape:
+    proportion = PROPORTION_STEP ** step
+    height, radius = proportion * _UNIT_RADIUS, _UNIT_RADIUS
+    dice = _Dice(seed)
+    wood, foliage = ARCHETYPE_BUILDERS[form.archetype](
+        _Plan(height, radius, form.recipe(), dice, dice.uf(0.0, 1.0)))
+    report = _fit(wood, foliage, height, radius)
+    colours = _foliage_colors(foliage, _palette(form.palette), FOLIAGE_TIP_WEIGHT[form.archetype])
+    sway = np.stack([np.clip(foliage.pos[:, 2] / height, 0.0, 1.0),
+                     np.minimum(foliage.phase % 1.0, 0.999999)], axis=1)
+    bark = None if wood is None else _Arrays.of(
+        wood.pos, wood.nrm, _solid(wood.pos, srgb_to_linear(BARK_SRGB)),
+        np.zeros((len(wood.pos), 2)), wood.tri)
+    return _BuiltShape(proportion, _Arrays.of(foliage.pos, foliage.nrm, colours, sway, foliage.tri),
+                       bark, report)
+
+
+def _shape_and_scale(recipe: Mapping[str, Any], seed: int, height_cm: float, radius_cm: float
+                     ) -> tuple[_BuiltShape, NDArray[np.float32], float]:
+    if not (math.isfinite(height_cm) and math.isfinite(radius_cm) and height_cm > 0.0
+            and radius_cm > 0.0):
+        raise ValueError(f"a plant needs a positive height and radius, got {height_cm!r} × {radius_cm!r}")
+    shape = _built_shape(_form(recipe), int(seed), _proportion_step(height_cm, radius_cm))
+    across = radius_cm / _UNIT_RADIUS
+    up = height_cm / (shape.proportion * _UNIT_RADIUS)
+    return shape, np.array([across, across, up], np.float32), up / across
+
+
 def build_silhouette(recipe: Mapping[str, Any], seed: int, height_cm: float,
                      radius_cm: float) -> tuple[MeshPart, ...]:
     """The silhouette of ``recipe`` at ``height_cm`` × a canopy of ``radius_cm``.
 
-    Pure and deterministic in its arguments. ``ValueError`` for an archetype
-    without a builder — never another archetype's shape.
+    Pure and deterministic in its arguments: the shape is built once per
+    (recipe form, seed, proportion step) and remembered (``PROPORTION_STEP``,
+    ``SHAPE_CACHE_SIZE``), then scaled to the exact size — remembering changes
+    how long a call takes, never what it returns. The remembered arrays are
+    read-only and shared between the meshes scaled from them. Safe to call from
+    any thread (the cache guards itself; two threads asking for one new shape at
+    once may both build it, to the same result) — used from the GUI thread only
+    so far, and not tested under threads.
+
+    ``ValueError`` for an archetype without a builder — never another
+    archetype's shape — and for a size that is not positive and finite.
     """
-    archetype = str(recipe.get("a"))
-    builder = ARCHETYPE_BUILDERS.get(archetype)
-    if builder is None:
-        raise ValueError(f"no 3D builder for archetype {archetype!r}")
-    dice = _Dice(seed)
-    wood, foliage = builder(_Plan(height_cm, radius_cm, recipe, dice, dice.uf(0.0, 1.0)))
-    _fit(wood, foliage, height_cm, radius_cm)
-    colours = _foliage_colors(foliage, _palette(palette_key(recipe)), FOLIAGE_TIP_WEIGHT[archetype])
-    sway = np.stack([np.clip(foliage.pos[:, 2] / height_cm, 0.0, 1.0),
-                     np.minimum(foliage.phase % 1.0, 0.999999)], axis=1)
-    parts = [MeshPart(Mesh.from_arrays(foliage.pos, foliage.nrm, colours, sway, foliage.tri),
-                      "foliage", casts_shadow=True, name=PART_FOLIAGE)]
-    if wood is not None:
-        bark = _solid(wood.pos, srgb_to_linear(BARK_SRGB))
-        parts.insert(0, MeshPart(
-            Mesh.from_arrays(wood.pos, wood.nrm, bark, np.zeros((len(wood.pos), 2)), wood.tri),
-            "vc", casts_shadow=True, name=PART_WOOD))
+    shape, scale, stretch = _shape_and_scale(recipe, seed, height_cm, radius_cm)
+    parts = [MeshPart(shape.foliage.scaled(scale, stretch), "foliage", casts_shadow=True,
+                      name=PART_FOLIAGE)]
+    if shape.wood is not None:
+        parts.insert(0, MeshPart(shape.wood.scaled(scale, stretch), "vc", casts_shadow=True,
+                                 name=PART_WOOD))
     return tuple(parts)
+
+
+def fit_report(recipe: Mapping[str, Any], seed: int, height_cm: float,
+               radius_cm: float) -> FitReport:
+    """What the fit repaired on the shape ``build_silhouette`` returns for these
+    arguments (``FitReport``) — the instrument that holds the builders to
+    building to the data."""
+    shape, _scale, stretch = _shape_and_scale(recipe, seed, height_cm, radius_cm)
+    return replace(shape.report, stretch=stretch)
+
+
+def shape_bytes(recipe: Mapping[str, Any], seed: int, height_cm: float, radius_cm: float) -> int:
+    """Bytes the remembered shape behind ``build_silhouette(...)`` holds — what one
+    entry of the shape cache costs (for sizing ``SHAPE_CACHE_SIZE``)."""
+    shape, _scale, _stretch = _shape_and_scale(recipe, seed, height_cm, radius_cm)
+    return shape.foliage.nbytes() + (shape.wood.nbytes() if shape.wood is not None else 0)
+
+
+def shape_cache_info() -> tuple[int, int, int]:
+    """(hits, misses, shapes held) of the shape cache since it was last cleared —
+    how the build budget's tests tell a scaled plant from a rebuilt one."""
+    info = _built_shape.cache_info()
+    return info.hits, info.misses, info.currsize
+
+
+def clear_shape_cache() -> None:
+    """Forget every remembered shape (a cold start, for a measurement)."""
+    _built_shape.cache_clear()
 
 
 @lru_cache(maxsize=64)
@@ -1163,22 +1586,33 @@ def plant_sprite(record: Record) -> SpriteRef | None:
                     category if isinstance(category, str) else None)
 
 
-def plant_archetype(record: Record) -> str | None:
-    """What ``build_plant`` builds for a record: an archetype name, ``PLACEHOLDER``
-    for a plant without a height, None for a record that is not a plant."""
-    sprite = plant_sprite(record)
-    if sprite is None:
-        return None
-    if record.height_cm is None:
-        return PLACEHOLDER
-    return str(recipe_for(sprite)["a"])
-
-
 def _canopy_radius(record: Record) -> float | None:
     radius = record.params.get(PARAM_RADIUS_CM)
     if isinstance(radius, bool) or not isinstance(radius, (int, float)):
         return None
     return float(radius) if math.isfinite(radius) and radius > 0.0 else None
+
+
+def _plant_of(record: Record) -> tuple[SpriteRef, float] | None:
+    """(sprite, canopy radius) of a record the plant builder builds as a plant;
+    None for one it hands to ``default_builder`` — not a plant kind, or a plant
+    record without a canopy circle. The one decision ``plant_archetype`` and
+    ``build_plant`` both answer from."""
+    sprite = plant_sprite(record)
+    radius = _canopy_radius(record)
+    return None if sprite is None or radius is None else (sprite, radius)
+
+
+def plant_archetype(record: Record) -> str | None:
+    """What ``build_plant`` builds for a record: an archetype name, ``PLACEHOLDER``
+    for a plant without a height, None for a record it does not build as a plant
+    (not a plant kind, or no canopy circle: that one gets ``default_builder``)."""
+    plant = _plant_of(record)
+    if plant is None:
+        return None
+    if record.height_cm is None:
+        return PLACEHOLDER
+    return str(recipe_for(plant[0])["a"])
 
 
 def build_plant(record: Record) -> tuple[MeshPart, ...]:
@@ -1191,10 +1625,10 @@ def build_plant(record: Record) -> tuple[MeshPart, ...]:
 
     Reads only the record's geometry part (``core.scene3d.build``).
     """
-    sprite = plant_sprite(record)
-    radius = _canopy_radius(record)
-    if sprite is None or radius is None:
+    plant = _plant_of(record)
+    if plant is None:
         return default_builder(record)
+    sprite, radius = plant
     if record.height_cm is None:
         return placeholder_parts(radius)
     seed = record.params.get(PARAM_SEED)
