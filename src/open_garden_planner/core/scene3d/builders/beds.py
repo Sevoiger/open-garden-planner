@@ -45,7 +45,7 @@ from ..build import BuilderRegistry
 from ..mesh import Mesh, MeshPart
 from ..record import PARAM_CONTAINER_MATERIAL, PARAM_RADIUS_CM, SHAPE_CIRCLE, Record
 from . import palette
-from .common import BuiltBuilder, footprint_of
+from .common import BuiltBuilder, corner_count, footprint_of
 from .primitives import F64, ccw_ring, lathe, offset_ring, polygon_cap, signed_area, sweep
 
 #: Plank rows are about this tall (a 15 cm board).
@@ -234,7 +234,7 @@ def triangle_budget(record: Record, height_cm: float) -> int:
     per profile edge (4 + 3 per plank row) plus the soil; 500 for a turned pot."""
     if record.kind == "CONTAINER_ROUND" and record.shape == SHAPE_CIRCLE:
         return 500
-    corners = max(len(footprint_of(record)), 3)
+    corners = max(corner_count(record), 3)
     return (2 * (4 + 3 * plank_rows(height_cm)) + 1) * corners + 10
 
 

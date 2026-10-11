@@ -2778,9 +2778,13 @@ only, and correct their heights with a fit after the fact.
    encloses as a hole in `holes` (decision 3 of this ADR, as corrected). The outer ring taken for
    the fence's shape lays a slab over the garden; `verify_builder` refuses any solid that covers
    more than half of a hole, and every line solid is held to it — closed, nearly closed and with a
-   30° corner, in every style. A closed centre line is swept as a loop. A polygon-footprint kind
-   whose record is not ONE plain ring — a polygon drawn crossing itself reaches the builder as its
-   lobes — is not built on its first ring: it gets the default prism of exactly its region. **What a line becomes is decided in ONE place**, `builders/lines.py`,
+   30° corner, in every style. A closed centre line is swept as a loop. **A builder that needs
+   one simple outline checks that it has one**: a polygon-footprint record with several regions
+   or with a hole (a self-crossing drawing can resolve into either) is built as
+   `common.plain_block` — ALL regions, holes cut out — and that same function is every fallback
+   block (a house without a usable ridge, with a ridge off the building, too low for a roof), so
+   none of them takes `footprints[0]` for the whole (the first cut's house block extruded
+   `footprints[:1]`). **What a line becomes is decided in ONE place**, `builders/lines.py`,
    from its kind and style; `fences.py` and `walls.py` are geometry only and do not import each
    other. A `FENCE` without a style is the default fence (posts, rails, pickets); a `WALL`
    without one is the wall; one of the five fence styles is that style whatever the kind. **A

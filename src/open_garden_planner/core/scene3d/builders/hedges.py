@@ -38,7 +38,7 @@ from ..build import BuilderRegistry, item_seed
 from ..mesh import Mesh, MeshPart
 from ..record import PARAM_SEED, Record
 from . import palette
-from .common import BuiltBuilder, footprint_of
+from .common import BuiltBuilder, corner_count, footprint_of
 from .primitives import (
     F64,
     ccw_ring,
@@ -236,7 +236,7 @@ def shell_area_cm2(shell: Shell) -> float:
 def triangle_budget(record: Record) -> int:
     """The most triangles a hedge may have: two per leaf (never more than 6,000
     leaves) plus its core — 4 per footprint corner."""
-    return 2 * MAX_LEAVES + 4 * max(len(footprint_of(record)), 3) + 40
+    return 2 * MAX_LEAVES + 4 * max(corner_count(record), 3) + 40
 
 
 def register(registry: BuilderRegistry) -> None:

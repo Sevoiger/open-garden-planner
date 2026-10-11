@@ -59,6 +59,7 @@ from open_garden_planner.core.scene3d.builders import (
     register,
     walls,
 )
+from open_garden_planner.core.scene3d.builders import triangle_budget as triangle_budget_of
 from open_garden_planner.core.scene3d.builders.common import BuiltBuilder, nominal_height_cm
 from open_garden_planner.core.scene3d.builders.primitives import (
     BEVEL_BEYOND,
@@ -1111,64 +1112,131 @@ def test_the_whole_matrix_through_scene_sync_and_a_recording_sink() -> None:
     assert sync.build_count == len(records)
 
 
-# ── records that are not one plain ring (L1.1's fix: a self-crossing polygon) ─
+# ── records whose ground is not one plain ring ──────────────────────────────
 
 
-BOW_TIE_LOBES = (((-300.0, -200.0), (0.0, 0.0), (-300.0, 200.0)),      # two triangles that met in
-                 ((300.0, 200.0), (0.0, 0.0), (300.0, -200.0)))         # a point: resolved into two
+BOW_TIE_LOBES = (((-301.0, -200.0), (-1.0, 0.0), (-301.0, 200.0)),      # two triangles a hair apart:
+                 ((301.0, 200.0), (1.0, 0.0), (301.0, -200.0)))          # a bow-tie, resolved
+HOLED_OUTER = rectangle(400.0, 300.0)
+HOLED_HOLE = tuple(reversed(rectangle(200.0, 100.0)))                     # clockwise
+POLYGON_KINDS = ["HOUSE", "GARAGE_SHED", "TOOL_SHED", "RAISED_BED", "CONTAINER", "WALL_PLANTER",
+                 "CONTAINER_ROUND", "GARDEN_BED", "HEDGE_SECTION", "HEDGE_POLYGON"]
 
 
 def lobes_record(kind: str, height: float | None, **params: object) -> Record:
-    """What the snapshot hands a builder for a polygon drawn crossing itself: its
-    lobes as several outer rings (here two that do not touch: the clipper's grid
-    keeps them a hair apart)."""
-    lobes = tuple(tuple((x + shift, y) for x, y in lobe)
-                  for lobe, shift in zip(BOW_TIE_LOBES, (-1.0, 1.0), strict=True))
-    return Record("lobes", kind, "polygon", lobes, Transform(), Material(kind, (200, 180, 140, 255)),
-                  height_cm=height, params=Params({"seed": "lobes", **params}))
+    """TWO regions: what the snapshot can hand a builder for a polygon drawn crossing
+    itself (its lobes as separate outer rings)."""
+    return Record("lobes", kind, "polygon", BOW_TIE_LOBES, Transform(),
+                  Material(kind, (200, 180, 140, 255)), height_cm=height,
+                  params=Params({"seed": "lobes", **params}))
 
 
-class TestRecordsThatAreNotOnePlainRing:
-    """A HOUSE, bed, container or hedge drawn as a self-crossing polygon reaches the
-    builder as SEVERAL outer rings. No shape function builds on its first lobe alone:
-    the item gets the default prism of exactly its region."""
+def holed_record(kind: str, height: float | None, **params: object) -> Record:
+    """ONE region WITH A HOLE: the other thing a self-crossing polygon can resolve to."""
+    return Record("holed", kind, "polygon", (HOLED_OUTER,), Transform(),
+                  Material(kind, (200, 180, 140, 255)), height_cm=height,
+                  params=Params({"seed": "holed", **params}), holes=((HOLED_HOLE,),))
 
-    @pytest.mark.parametrize("kind", ["HOUSE", "GARAGE_SHED", "RAISED_BED", "CONTAINER", "WALL_PLANTER",
-                                      "CONTAINER_ROUND", "GARDEN_BED", "HEDGE_SECTION", "HEDGE_POLYGON"])
-    def test_several_lobes_are_the_default_prism(self, kind: str) -> None:
+
+NOT_ONE_RING = {"two-regions": lobes_record, "a-hole": holed_record}
+
+
+class TestGroundThatIsNotOnePlainRing:
+    """A builder that needs ONE simple outline — a gable roof, a bed's frame, a pot, a
+    hedge — checks that it has one. A record with several regions, or with a hole, is
+    built as the plain block of ALL its regions with the holes cut out; never on
+    ``footprints[0]`` alone. (A self-crossing drawing is not reliably detectable from
+    the ring count — it can also resolve to one plain ring — so this is a rule about
+    the ground a builder is handed, whatever its history.)"""
+
+    @pytest.mark.parametrize("make", NOT_ONE_RING.values(), ids=NOT_ONE_RING.keys())
+    @pytest.mark.parametrize("kind", POLYGON_KINDS)
+    def test_it_is_the_plain_block_of_all_regions(self, kind: str, make) -> None:
         params = {"ridge": ((-300.0, 0.0), (300.0, 0.0))} if kind == "HOUSE" else {}
-        record = lobes_record(kind, 150.0, **params)
+        record = make(kind, 150.0, **params)
         builder = builder_of(record)
-        assert builder.uses_the_default_prism(record)
-        parts = verify_builder(builder, record, height_tolerance_cm=0.5, plan_margin_cm=0.0)
-        assert parts == default_builder(record) and [part.name for part in parts] == ["prism"]
-        assert plan_area([parts[0].mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6)  # both lobes
+        assert builder.uses_the_plain_block(record)
+        parts = verify_builder(builder, record, height_tolerance_cm=0.5, plan_margin_cm=0.0,
+                               hole_cover_limit=0.0)  # nothing outside, nothing over a hole
+        assert [part.name for part in parts] == ["prism"]
+        assert parts[0].mesh == default_builder(record)[0].mesh  # the default prism's mesh
+        assert plan_area([parts[0].mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6)
         assert float(positions(parts)[:, 2].max()) == 150.0 and builder.fit_scale(record) == 1.0
         assert parts[0].tinted and parts[0].casts_shadow
+        if record.holes:
+            assert not covers([parts[0].mesh], 37.0, 11.0)   # the hole stays open
+        else:
+            assert covers([parts[0].mesh], -200.0, 11.0) and covers([parts[0].mesh], 200.0, 11.0)
+            assert not covers([parts[0].mesh], 0.0, 150.0)   # between the lobes: nothing
 
-    @pytest.mark.parametrize("kind", ["HOUSE", "RAISED_BED", "HEDGE_POLYGON"])
-    def test_without_a_height_there_is_nothing(self, kind: str) -> None:
-        """The default prism has no nominal height to fall back on: no solid, as for any
-        item the default builder handles."""
-        record = lobes_record(kind, None)
-        assert built(record) == () and builder_of(record).raw(record) == ()
+    @pytest.mark.parametrize("make", NOT_ONE_RING.values(), ids=NOT_ONE_RING.keys())
+    @pytest.mark.parametrize(("kind", "nominal"), [("HOUSE", 450.0), ("RAISED_BED", 40.0),
+                                                   ("HEDGE_POLYGON", 150.0), ("CONTAINER", 30.0)])
+    def test_without_a_height_it_is_decoration_like_any_other(self, kind: str, nominal: float,
+                                                               make) -> None:
+        """"No height, no shadow" holds for the plain block too: the kind's nominal
+        height, every part ``casts_shadow=False`` — and nothing for a kind without one."""
+        record = make(kind, None)
+        parts = built(record)
+        assert [part.name for part in parts] == ["prism"] and not parts[0].casts_shadow
+        assert float(positions(parts)[:, 2].max()) == nominal
+        assert plan_area([parts[0].mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6)
+        assert built(make("GARDEN_BED", None)) == ()
 
-    def test_a_ring_with_a_hole_is_the_default_prism_too(self) -> None:
-        outer = rectangle(400.0, 300.0)
-        hole = tuple(reversed(rectangle(200.0, 100.0)))  # clockwise
-        record = Record("ring", "RAISED_BED", "polygon", (outer,), Transform(),
-                        Material("RAISED_BED", (200, 180, 140, 255)), height_cm=40.0,
-                        params=Params({"seed": "ring"}), holes=((hole,),))
-        parts = verify_builder(builder_of(record), record, height_tolerance_cm=0.5)
-        assert parts == default_builder(record)
-        assert not covers([parts[0].mesh], 37.0, 11.0)  # the hole stays open
+    @pytest.mark.parametrize("make", NOT_ONE_RING.values(), ids=NOT_ONE_RING.keys())
+    def test_footprint_of_refuses_to_take_one_ring_for_the_whole(self, make) -> None:
+        from open_garden_planner.core.scene3d.builders.common import (
+            corner_count,
+            footprint_of,
+            has_one_plain_ring,
+        )
+
+        record = make("RAISED_BED", 40.0)
+        assert not has_one_plain_ring(record)
+        with pytest.raises(ValueError, match="not one plain ring"):
+            footprint_of(record)
+        assert corner_count(record) == sum(len(r) for r in record.footprints) + sum(
+            len(h) for group in record.holes for h in group)
+        plain = polygon_record("RAISED_BED", rectangle(300.0, 120.0), 40.0)
+        assert has_one_plain_ring(plain) and footprint_of(plain) == plain.footprints[0]
+        for kind in POLYGON_KINDS:  # and every family's budget still answers
+            assert triangle_budget_of(make(kind, 40.0)) > 0
+
+    @pytest.mark.parametrize("make", NOT_ONE_RING.values(), ids=NOT_ONE_RING.keys())
+    def test_the_buildings_own_fallback_builds_every_region(self, make) -> None:
+        """The house's plain block — its fallback for no ridge, a ridge off the building,
+        a house too low — is the same function: called on ground that is not one ring it
+        still builds all of it (round 0 extruded ``footprints[:1]``)."""
+        record = make("HOUSE", 300.0, ridge=((-300.0, 0.0), (300.0, 0.0)))
+        for shape in (buildings._house, buildings._shed, buildings._block):
+            (walls_part,) = shape(record, 300.0)
+            assert walls_part.name == "walls" and walls_part.tinted
+            assert plan_area([walls_part.mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6)
+            if record.holes:
+                assert not covers([walls_part.mesh], 37.0, 11.0)
+
+    @pytest.mark.parametrize(("name", "record"), [
+        ("no ridge", polygon_record("HOUSE", L_SHAPE, 450.0)),
+        ("a ridge without length", polygon_record("HOUSE", L_SHAPE, 450.0,
+                                                  params={"ridge": ((10.0, 0.0), (10.0, 0.0))})),
+        ("a ridge whose line misses the building", polygon_record(
+            "HOUSE", L_SHAPE, 450.0, params={"ridge": ((-450.0, 900.0), (450.0, 900.0))})),
+        ("a house too low for a roof slab", polygon_record(
+            "HOUSE", L_SHAPE, 12.0, params={"ridge": L_RIDGE})),
+    ], ids=lambda value: value if isinstance(value, str) else "")
+    def test_every_plain_block_of_a_house_is_the_whole_footprint(self, name: str, record: Record) -> None:
+        (walls_part,) = verify_builder(builder_of(record), record, height_tolerance_cm=0.5,
+                                       plan_margin_cm=0.0)
+        assert (walls_part.name, walls_part.material_kind, walls_part.tinted) == ("walls", "vc", True)
+        assert plan_area([walls_part.mesh]) == pytest.approx(record.plan_area_cm2, rel=1e-6), name
+        assert walls_part.mesh == default_builder(record)[0].mesh  # concave L and all
 
     def test_one_plain_ring_is_what_every_matrix_record_is(self) -> None:
         for case in CASES:
             if case.record.shape != "polyline":
-                assert not builder_of(case.record).uses_the_default_prism(case.record), case.name
+                assert not builder_of(case.record).uses_the_plain_block(case.record), case.name
         closed = line_record("FENCE", CLOSED_PATH, 120.0)  # a line with a hole is still a line
-        assert not builder_of(closed).uses_the_default_prism(closed)
+        assert not builder_of(closed).uses_the_plain_block(closed)
 
 
 def test_no_builder_uses_numpy_s_default_bit_generator() -> None:

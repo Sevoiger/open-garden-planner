@@ -695,8 +695,8 @@ Added by the senior review's first round (the same story):
   the table goes stale.
 - **A mutation check for each fix.** Each rule of this round was switched off in the source
   (the link alone lifts; a 3-tuple is a caster; no bevel; an unknown style is a picket fence; a
-  container's soil 2 cm low …) and the tests that should notice were run: ten of ten failed
-  with assertions.
+  container's soil 2 cm low; a block on the first ring only …) and the tests that should notice
+  were run: fourteen of fourteen failed with assertions.
 
 ## 8.11 Security Scanning (SAST)
 
@@ -2893,10 +2893,15 @@ and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `upd
    its STROKE — for a closed line one outer ring, with the ground it encloses as a hole in
    `record.holes` — and the outer ring alone lids the garden. Nothing may be built over that
    hole: `verify_builder` refuses a solid that covers more than half of it.
-   **One plain ring, or the honest prism**: a polygon-footprint kind whose record holds several
-   outer rings (a polygon drawn crossing itself is resolved into its lobes) or a ring with holes
-   gets the default prism of exactly that region (`BuiltBuilder.uses_the_default_prism`) — never
-   a house, a bed or a hedge on its first lobe.
+   **One plain ring, or the plain block**: a builder that needs ONE simple outline — a gable
+   roof, a bed's frame, a pot, a hedge — checks that it has one (`common.has_one_plain_ring`;
+   `footprint_of` raises otherwise). A record with several regions or with a hole — a polygon
+   drawn crossing itself can be resolved into either — is built as `common.plain_block`: ALL
+   regions, holes cut out, up to the height (`BuiltBuilder.uses_the_plain_block` decides before
+   any shape function runs). The same function is every builder's fallback block (a house
+   without a usable ridge), so no fallback takes `footprints[0]` for the whole. The ring count is
+   NOT a detector of a self-crossing drawing — such a polygon can also resolve to one plain ring,
+   and then it is built like any other; a flag for it is the scene contract's to add.
 5. **Stay on the footprint.** A frame's outer face is the footprint; a round container's rim is
    the footprint's own 24-gon (`lathe` puts its ring vertices on `circle_footprint`'s). Stated
    exceptions: a roof oversails by its overhang; a hedge leaf's tip may pass the outline by a few
