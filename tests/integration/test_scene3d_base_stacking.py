@@ -295,6 +295,7 @@ class TestOneCasterWalk:
         assert calls["standing_base_cm"] == {"ui/canvas/footprints.py"}  # inside item_base_cm
         assert calls["soil_surface_cm"] == {
             "core/object_height.py",                # inside standing_base_cm
+            "core/scene3d/builders/beds.py",        # where the 3D bed meshes put their soil
         }
         assert "parent_bed_id" not in inspect.getsource(sun_shadow_controller)
         assert "parent_bed_id" not in inspect.getsource(sun_heatmap)
