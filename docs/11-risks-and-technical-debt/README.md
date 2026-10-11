@@ -1576,7 +1576,8 @@ Found by the senior review's second round, again with every test green:
 - **The first fix made a shadow depend on a warning badge.** Round 1 asked "is the plant inside
   its bed" with the app's own membership point, the centre of `boundingRect()` — the review had
   prescribed exactly that, for consistency with auto-parenting. But `CircleItem.boundingRect()`
-  grows towards +x / +y while the antagonist badge shows, so its centre moves by up to 1.8 cm:
+  grows towards +x / +y while the antagonist badge shows, so its centre moves by up to 1.8 cm
+  along each axis (2.55 cm in all):
   a linked plant 1 cm inside a raised bed's east edge stood at 38 without the badge and at 0
   with it, in the 3D record and in the 2D caster. Fix: the LIFT asks the item's stable
   geometric centre (`footprints.standing_point`, the outline's anchor — the origin of the 3D
@@ -1656,6 +1657,32 @@ Found while merging the scene contract's second fix round (`9944012`):
   roof. The contract now says `outline_resolved`, and drops the ridge. The house builder reads
   the FLAG — a test hands it a resolved ring WITH a usable ridge and still gets the block — so
   the rule does not rest on a second module remembering to leave a param out.
+
+Found by the last review pass and at the merge of the plant story (`5c44578`):
+
+- **A requirement stated the mechanism where it meant the invariant.** FR-SUN-09 said that
+  moving a plant into or out of a bed changes its shadow "only where the move also re-evaluates
+  the link". False in both directions for a LINKED plant: the base is asked on every walk with
+  the plant's own centre, so any move takes it 38 → 0 → 38 with the link untouched. What is
+  limited is the LINK. *Write what holds for the user (where the plant stands follows its
+  centre); put the mechanism's limits (which gestures link) next to it, as limits.*
+- **The list of "how a link comes about" was two entries short.** All four array actions copy
+  the source's `parent_bed_id` through serialisation (only `item_id` is stripped) and the bed's
+  child list is not told; a plant mirror-copied without its bed gets no link at all. And "a bed
+  that is moved takes its plants with it" holds for a mouse drag, the arrow keys and an agent
+  move, not for a typed coordinate or align / distribute. Each is pinned now
+  (`TestCopiesAndMovesThatDoNotEvaluateTheLink`) and is in the follow-up issue. *A list written
+  from the call sites of three functions misses every path that calls none of them: also
+  enumerate the ways an item is CREATED and the ways it MOVES.*
+- **Two stories, one registry.** The plant builder and the built world were developed against
+  separate registries; `production_registry()` now holds both. One test says that no kind
+  belongs to both families, that each of the 15 kinds resolves to its own builder, and that
+  the rest of the `ObjectType` enum falls to the default — over the enum, not over a sample of
+  it (the earlier test checked eleven hand-picked kinds).
+
+The rest of that pass is method and lives in §8.10.5: a running timer asserted as a fact, "up
+to N" without the worst direction, a source guard without a census, a committed script outside
+the suite's isolation.
 
 ### CI/release hardening: locked metadata also contains the application version
 

@@ -59,7 +59,9 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   a dropped plan costs two cold ticks and a backward scrub twice the forward one. GUI thread
   only; the cache is untested under threads.
 - **The production builders are `core/scene3d/builders/`** (L1.6, ADR-054 addendum):
-  `production_registry()` returns the `BuilderRegistry` the wiring hands to `SceneSync`. Their
+  `production_registry()` returns the `BuilderRegistry` the wiring hands to `SceneSync` — the
+  built world's twelve kinds (`register`) and the plant builder's three (`plants.register`,
+  above), no kind in both. The built world's
   rules (the top is the height by construction, polylines from the centre line — `lines.py`
   decides what a fence or wall line becomes, an unknown style is a plain panel — a polygon
   record that is not ONE plain outline (several rings, a hole, or `params["outline_resolved"]`)

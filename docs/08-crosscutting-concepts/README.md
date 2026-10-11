@@ -876,7 +876,7 @@ Added by the senior review's first round (the same story):
   names a failed test — a collection error or a crash is reported as BROKEN, not as a kill. The
   first round quoted its count from a script that lived in a scratch folder. (28 mutants when
   it was committed, 30 since the merge of the contract's second round, 32 since the third
-  review round; all killed; `--list` prints the current set.) And a mutation script rots between its runs: a mutant whose text
+  review round, 33 since the plant builder joined the registry; all killed; `--list` prints the current set.) And a mutation script rots between its runs: a mutant whose text
   has left its file mutates nothing. `tests/unit/test_scene3d_builders_mutation_script.py`
   checks on every suite run that each mutant still matches exactly once and that every test
   file and `-k` word it names exists — it found a stale mutant the day it was written (the
@@ -909,6 +909,29 @@ Added by the senior review's first round (the same story):
   EVERYWHERE: run the racing step synchronously, so the event loop cannot hide it —
   `TestTheOverlaysOwnEcho` recomputes by a direct call, then runs the control. With the old
   helper it fails three times out of three on any machine.
+- **An assertion on a running timer is a duration in disguise.** The regression above first
+  asserted `debounce.isActive()` right after the echo arrived — true only while 150 ms have not
+  passed, so a slow machine fails it for no reason. What the test means is what the timer DOES
+  (one more recompute, which saw the edit), and the lines after it already said that.
+- **"Up to N" needs the worst direction.** "The badge moves the point by up to 1.8 cm" was
+  read off one axis; the point moves 1.8 cm in x AND in y, 2.55 cm in all, and against a bed
+  edge at 45° the margin is the diagonal. State the per-axis figure and the worst case, and pin
+  the worst case (a bed turned by 45°: a plant 2.2 cm inside the edge is outside for the link).
+- **A source-reading guard needs a census, not only a pattern.** "An `ItemLookup` is constructed
+  only in the two walks" matched `ItemLookup(...)` and so never saw an alias import, `make =
+  ItemLookup` or `functools.partial(ItemLookup, items)`; and "the local is not stored" matched
+  `x = lookup` / `return lookup` and so missed a list, `.append(lookup)`, `setattr`, a tuple, a
+  closure. Turn both around: count EVERY appearance of the identifier and allow the few roles
+  that are fine; allow the ONE use of the local that is fine (an argument of a named taker) and
+  report every other. Then list what a reading still cannot see (`type(lookup)(…)`).
+- **A committed script is outside the suite's isolation: measure what it reaches.** The test
+  suite rebinds the settings names; a script run by hand has the owner's. For a script that
+  must not need isolation, run it AS DOCUMENTED in a child process with `QSettings` replaced by
+  a recorder that refuses (so even a failing run cannot touch the real store), an audit hook on
+  `open` / `os.mkdir`, and an empty redirected profile
+  (`test_run_as_documented_the_script_reaches_no_settings_no_plan_and_no_app_data`). Watch what
+  is constructed and opened, not what is imported: importing the `core` package loads the
+  settings module and PyQt6 either way.
 
 ## 8.11 Security Scanning (SAST)
 
@@ -3177,7 +3200,12 @@ to the spike's until L1.10 deletes it.
 
 The production builders live in `core/scene3d/builders/` (ADR-054 addendum "builders v0"); where an
 item stands is one rule shared with the 2D shadows (ADR-037 addendum "base stacking").
-`builders.production_registry()` is what the wiring hands to `SceneSync`.
+`builders.production_registry()` is what the wiring hands to `SceneSync`: the twelve built-world
+kinds of this section (`builders.register`) and the three plant kinds (`plants.register`,
+§8.26.7) — 15 registered kinds, none in both families, every other kind on the default prism
+(`tests/unit/test_scene3d_builders.py::TestRegistration`;
+`tests/integration/test_scene3d_built_world.py::test_a_raised_bed_with_two_real_plants_through_the_production_registry`
+takes a raised bed and two real plants through both).
 
 **Which kind gets which builder.**
 
@@ -3190,6 +3218,7 @@ item stands is one rule shared with the 2D shadows (ADR-037 addendum "base stack
 | `RAISED_BED` | `beds` | `bed`: vc | baked: oak planks, soil |
 | `CONTAINER`, `WALL_PLANTER`, `CONTAINER_ROUND`, a `GARDEN_BED` with a height | `beds` | `walls`: vc · `soil`: vc | walls tinted, soil baked |
 | `HEDGE_SECTION`, `HEDGE_POLYGON` | `hedges` | `hedge`: foliage (the dark core and the leaf shell in one mesh) | baked: the hedge texture's greens |
+| `TREE`, `SHRUB`, `PERENNIAL` | `plants` (L1.7, §8.26.7 — registered by `plants.register`, not by this section's `register`) | `wood`: vc · `foliage`: foliage — or `placeholder`: vc for a plant without a height (no shadow) | baked: the recipe's palette, the 2D bark colour |
 | everything else | `build.default_builder` | one tinted prism, or nothing without a height | tinted |
 
 **What a line becomes is decided in one place**, `builders/lines.py`, from its kind and its style
@@ -3326,9 +3355,12 @@ when BOTH hold:
 
 Otherwise 0, as before L1.6. The second condition is there because the link is bookkeeping: it is
 evaluated when a plant is created (one by one, in bulk, or pasted — `_auto_parent_plant`), when a
-selected plant is dropped after a drag, and when the agent moves a plant (`move_object`'s
-re-link); nothing that changes a BED evaluates it, so a bed resized away from its plant keeps the
-link.
+selected plant is dropped after a drag, and when the agent moves a plant (`move_object` and
+`set_object_position`, one re-link); nothing that changes a BED evaluates it, so a bed resized
+away from its plant keeps the link. Nor does any other way of moving or copying a plant: the
+arrow keys, a typed coordinate, align / distribute, an array, a mirror copy (the table below).
+**Where a linked plant stands follows its centre all the same** — the second condition is asked
+on every walk, whatever moved the plant (38 → 0 → 38 with the link untouched).
 
 **A parent the 3D scene does not hold lifts nothing — settled in the snapshot.** Whether a
 parent HAS a record is known in one place, `snapshot_records`, once every record is built: a
@@ -3345,7 +3377,7 @@ plant casts from the ground there too (the height bound above). Both axes are pi
 decisions ask it with `bed_membership_point` — the centre of `boundingRect()`, kept exactly as
 shipped; the lift asks it with `standing_point`. They are the same point until the antagonist
 badge shows: the badge grows the bounding rect towards +x / +y and moves its centre by up to
-1.8 cm. So a plant's base does not change when a warning badge appears (it did after round 1:
+1.8 cm along each axis (2.55 cm in all — the margin against an edge at 45°). So a plant's base does not change when a warning badge appears (it did after round 1:
 38 ↔ 0 for a plant 1 cm inside its bed's edge), and within that margin of an edge a link decision
 and the lift can differ — pinned decision by decision in
 `tests/integration/test_scene3d_base_stacking.py::TestWhichPointEachDecisionAsks`. A new caller
@@ -3363,9 +3395,16 @@ the caster walk 3.9 ms before L1.6, 5.0 ms now; `snapshot_records` 8.6 → 10.0 
 **An `ItemLookup` lives for ONE walk.** It holds each parent's shape as it was when the walk
 asked; kept across an edit it answers from the old shape (measured: a bed shrunk away from its
 plant, a kept lookup still says 38). Do not keep "the scene's lookup" on a controller or a view:
-a test reads the source and fails when an `ItemLookup` is constructed anywhere but in the two
-walks, or bound to anything but a local name there
-(`TestTheParentShapeIsBuiltOncePerWalk::test_a_lookup_lives_for_one_walk_and_is_never_kept`).
+a test reads the source and holds three things
+(`TestTheParentShapeIsBuiltOncePerWalk::test_a_lookup_lives_for_one_walk_and_is_never_kept`):
+the identifier `ItemLookup` appears in `src/` only as an import (under its own name), as the
+class, as a parameter's annotation and as a call inside the two walks — so `make = ItemLookup`,
+an alias import and `functools.partial(ItemLookup, …)` fail it; a walk binds its lookup to a
+local name and uses that name ONLY as an argument of `item_base_cm` / `_record_of` — so a list,
+a dict, `.append(lookup)`, `setattr`, `return lookup, 1` and a closure fail it; and the two
+functions that take a lookup use their parameter the same way. What a reading cannot see is
+stated in the helpers: a dynamic spelling (`type(lookup)(…)`, `getattr(module, "Item" +
+"Lookup")`, `copy.copy(lookup)`), and what a callee that only shares the NAME of a taker does.
 
 **A known smell.** `ui/canvas/footprints.py` is collecting jobs: footprints, the base rule and
 the app's point-in-bed test — and `core/commands.py` imports the last one from `ui/` (lazily,
@@ -3383,6 +3422,11 @@ in `tests/integration/test_scene3d_base_stacking.py::TestTheLinkAloneNeverLifts`
 | a climber on a trellis that stands in a raised bed | linked to the trellis (the smallest parent) | the climber at 0, its neighbour in the bed at 38 |
 | a pot standing on a raised bed | the pot has no parent (only plants do) | the pot on the ground, its plant at the pot's soil (30), not at 68 |
 | a bed whose outline is not one plain outline (several rings, a hole, or a self-crossing drawing: `outline_resolved`) | built as the plain block, top at the rim | its plants stand 2 cm INSIDE the block: "on its soil by construction" holds for the bed builders only |
+| a plant mirror-copied into its source's raised bed, without the bed | the copy has no link (the mirror tool evaluates nothing) | the copy on the ground, its source beside it at 38 |
+| an array copy (linear, grid, circular, along a path) of a linked plant | the source's link, copied as it is; the copy is not in the bed's child list | inside the bed: on the soil (38) — outside it: on the ground, with a stale link |
+| a bed moved by a coordinate typed into the Properties panel, or by align / distribute | the plants stay where they were, still linked (a mouse drag, the arrow keys and an agent move take them along) | the plants on the ground until the bed is back under them |
+
+The last three are pinned in `::TestCopiesAndMovesThatDoNotEvaluateTheLink`.
 
 **3D shadows against the 2D model.** The truth gate "Shadows" (`ogp-lush-cinematic` §1,
 IoU ≥ 0.85) is defined on a solid box caster. The built world is not a set of boxes, and the

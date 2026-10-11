@@ -57,7 +57,8 @@ description: >
 > lies, `base / tan α` further from the sun. The link alone never lifts: the app does not
 > keep it geometric (a bed resized away from its plant keeps the link). "Centre" is the
 > plant's stable geometric centre (`footprints.standing_point`), NOT the centre of its
-> `boundingRect()` — that one moves by up to 1.8 cm while the antagonist badge shows, and
+> `boundingRect()` — that one moves by up to 1.8 cm along each axis (about 2.5 cm
+> diagonally) while the antagonist badge shows, and
 > it stays the link decisions' point (`bed_membership_point`), exactly as shipped. Where the text
 > below says `(polygon, height)`, read `ShadowCaster`; the shadow functions take a
 > `ShadowCaster` or an exact `(footprint, height)` pair and raise `TypeError` for anything
