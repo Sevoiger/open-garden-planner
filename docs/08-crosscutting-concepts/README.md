@@ -701,7 +701,8 @@ Added by the senior review's first round (the same story):
   `scripts/mutation_check_built_world.py`, next to the scene contract's
   `mutation_check_scene3d.py`. A mutant counts as KILLED only when pytest exits with code 1 and
   names a failed test — a collection error or a crash is reported as BROKEN, not as a kill. The
-  first round quoted its count from a script that lived in a scratch folder.
+  first round quoted its count from a script that lived in a scratch folder. (28 mutants when
+  it was committed, all killed; `--list` prints the current set.)
 - **A guard that counts a construct must see every spelling of it.** "The containment test
   exists once" matched `x.contains(y.mapFromScene(p))` written as one expression; the same test
   in two statements passed. The guard now follows a mapped point through local names (and a
