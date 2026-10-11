@@ -32,6 +32,7 @@ from open_garden_planner.core.object_height import (
     soil_surface_cm,
     standing_base_cm,
 )
+from open_garden_planner.core.plant_art import PLANT_KINDS
 from open_garden_planner.core.scene3d import (
     BuilderContractError,
     BuilderRegistry,
@@ -57,6 +58,7 @@ from open_garden_planner.core.scene3d.builders import (
     hedges,
     lines,
     palette,
+    plants,
     production_registry,
     register,
     walls,
@@ -171,29 +173,77 @@ def budget_of(record: Record) -> int:
 
 
 class TestRegistration:
-    def test_exactly_the_built_world_kinds(self) -> None:
-        assert REGISTRY.kinds() == BUILT_WORLD_KINDS
+    """``production_registry()`` holds two families and nothing else: the built world
+    (this story's ``register``) and the plants (the plant story's ``plants.register``,
+    wired in at the merge of 5c44578)."""
+
+    def test_exactly_the_built_world_kinds_and_the_plant_kinds(self) -> None:
         assert frozenset({
             "HOUSE", "GARAGE_SHED", "TOOL_SHED", "FENCE", "WALL", "RAISED_BED", "CONTAINER",
             "WALL_PLANTER", "CONTAINER_ROUND", "GARDEN_BED", "HEDGE_SECTION", "HEDGE_POLYGON",
         }) == BUILT_WORLD_KINDS
+        assert frozenset({"TREE", "SHRUB", "PERENNIAL"}) == PLANT_KINDS
+        assert not BUILT_WORLD_KINDS & PLANT_KINDS                        # no kind belongs to both
+        assert REGISTRY.kinds() == BUILT_WORLD_KINDS | PLANT_KINDS       # … and nothing else is registered
+        assert len(REGISTRY.kinds()) == len(BUILT_WORLD_KINDS) + len(PLANT_KINDS) == 15
 
-    def test_every_kind_is_a_real_object_type(self) -> None:
+    def test_every_plant_kind_resolves_to_the_plant_builder(self) -> None:
+        for kind in sorted(PLANT_KINDS):
+            assert REGISTRY.builder_for(kind) is plants.build_plant, kind
+
+    def test_every_built_world_kind_resolves_to_its_own_builder(self) -> None:
+        expected = {
+            "HOUSE": buildings.build_house, "GARAGE_SHED": buildings.build_shed,
+            "TOOL_SHED": buildings.build_shed, "FENCE": lines.build_fence, "WALL": lines.build_wall,
+            "RAISED_BED": beds.build_raised_bed, "CONTAINER": beds.build_container,
+            "WALL_PLANTER": beds.build_container, "CONTAINER_ROUND": beds.build_round_container,
+            "GARDEN_BED": beds.build_garden_bed,
+            "HEDGE_SECTION": hedges.build_hedge, "HEDGE_POLYGON": hedges.build_hedge,
+        }
+        assert set(expected) == BUILT_WORLD_KINDS
+        for kind, builder in expected.items():
+            assert REGISTRY.builder_for(kind) is builder, kind
+            assert isinstance(builder, BuiltBuilder), kind      # every one of them a BuiltBuilder …
+            assert builder is not plants.build_plant, kind      # … and none the plants'
+
+    def test_the_built_world_alone_is_the_built_world(self) -> None:
+        """``register`` stays this story's: without the plants the plant kinds fall to
+        the default prism, as every other kind does."""
+        registry = BuilderRegistry()
+        register(registry)
+        assert registry.kinds() == BUILT_WORLD_KINDS
+        for kind in sorted(PLANT_KINDS):
+            assert registry.builder_for(kind) is default_builder
+
+    def test_every_registered_kind_is_a_real_object_type(self) -> None:
         from open_garden_planner.core.object_types import ObjectType
 
-        assert {member.name for member in ObjectType} >= BUILT_WORLD_KINDS
+        assert {member.name for member in ObjectType} >= REGISTRY.kinds()
 
-    def test_every_other_kind_keeps_the_default(self) -> None:
-        for kind in ("PATH", "ROOF_RIDGE", "LAWN", "GREENHOUSE", "PERGOLA", "TABLE_RECTANGULAR",
-                     "POND_POOL", "TREE", "SHRUB", "PERENNIAL", "TRELLIS"):
-            assert REGISTRY.builder_for(kind) is default_builder
+    def test_every_other_kind_falls_to_the_default(self) -> None:
+        """Over the whole ``ObjectType`` enum, not a sample of it: a kind is built by
+        the built world, by the plant builder, or by the default prism."""
+        from open_garden_planner.core.object_types import ObjectType
 
-    def test_a_fresh_registry_every_time_and_no_double_registration(self) -> None:
+        others = {member.name for member in ObjectType} - BUILT_WORLD_KINDS - PLANT_KINDS
+        assert {"PATH", "ROOF_RIDGE", "LAWN", "GREENHOUSE", "PERGOLA", "TABLE_RECTANGULAR",
+                "POND_POOL", "TRELLIS"} <= others
+        for kind in sorted(others) + ["NO_SUCH_KIND"]:
+            assert REGISTRY.builder_for(kind) is default_builder, kind
+
+    def test_a_fresh_registry_every_time_and_no_kind_is_registered_twice(self) -> None:
         assert production_registry() is not production_registry()
         registry = BuilderRegistry()
         register(registry)
         with pytest.raises(ValueError, match="already registered"):
-            register(registry)
+            register(registry)             # the built world twice
+        plants.register(registry)          # the plants once: fine …
+        with pytest.raises(ValueError, match="already registered"):
+            plants.register(registry)      # … twice: refused
+        # the registry refuses a second claim on a kind, so production_registry() could not
+        # have been built if the two families shared one
+        assert registry.kinds() == production_registry().kinds()
+        assert production_registry().version == len(BUILT_WORLD_KINDS) + len(PLANT_KINDS)
 
     def test_the_matrix_covers_every_registered_kind(self) -> None:
         assert {case.record.kind for case in CASES} == BUILT_WORLD_KINDS

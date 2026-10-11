@@ -1,4 +1,4 @@
-"""The production builders of the 3D scene (Phase 17 L1.6, #385, ADR-054 addendum).
+"""The production builders of the 3D scene (Phase 17 L1.6 and L1.7, #385, ADR-054 addenda).
 
 ``Record -> tuple[MeshPart, ...]`` functions, one module per family, each with a
 module-level ``register(registry)``. Qt-free: standard library, numpy and
@@ -14,7 +14,14 @@ covers this package).
 ``beds``           RAISED_BED, CONTAINER, WALL_PLANTER, CONTAINER_ROUND, and a
                    GARDEN_BED that was given a height
 ``hedges``         HEDGE_SECTION, HEDGE_POLYGON
+``plants``         TREE, SHRUB, PERENNIAL (``plant_art.PLANT_KINDS``): one
+                   silhouette per sprite archetype, from the 2D recipe tables
+                   (L1.7 — its own rules, gates and tests)
 =================  ==========================================================
+
+The first four are the BUILT WORLD (``register``, ``BUILT_WORLD_KINDS``,
+``triangle_budget``); ``production_registry()`` holds them and the plants. No
+kind belongs to both, and a test says so.
 
 Every other kind keeps ``build.default_builder`` — a prism up to its height, or
 nothing for an item without one: paths, lawns and in-ground beds are ground
@@ -32,7 +39,7 @@ from __future__ import annotations
 
 from ..build import BuilderRegistry
 from ..record import Record
-from . import beds, buildings, hedges, lines
+from . import beds, buildings, hedges, lines, plants
 from .common import nominal_height_cm
 
 __all__ = ["BUILT_WORLD_KINDS", "production_registry", "register", "triangle_budget"]
@@ -73,8 +80,10 @@ def triangle_budget(record: Record) -> int | None:
 
 
 def production_registry() -> BuilderRegistry:
-    """A fresh registry holding every production builder."""
+    """A fresh registry holding every production builder: the built world
+    (``register``) and the plants (``plants.register``, L1.7). Every other kind
+    falls to the registry's default, the plain prism."""
     registry = BuilderRegistry()
     register(registry)
-    # ── L1.7 (plants) adds its line HERE at merge: ``plants.register(registry)`` ──
+    plants.register(registry)
     return registry

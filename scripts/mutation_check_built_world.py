@@ -25,7 +25,11 @@ restored from an in-memory copy in a ``finally`` block, and the script refuses
 to start when ``src/`` or ``scripts/`` has uncommitted changes — so a crash can
 never be mistaken for your work, and ``git checkout -- src scripts`` is always a
 safe way back. The test runs get a throw-away ``APPDATA``: they never write to
-the application's real data folder.
+the application's real data folder. Nor does anything here reach the owner's
+settings: this script imports the standard library only — no module of the app runs
+in its process — and every child it starts is pytest, which ``tests/conftest.py``
+isolates before any app import (both held by
+``tests/unit/test_scene3d_builders_mutation_script.py``).
 
 It is NOT part of the test suite (it rewrites source files and takes several
 minutes). Run it by hand after changing the files named above, or their tests::
@@ -260,6 +264,12 @@ MUTANTS: tuple[Mutant, ...] = (
            "    overhang_cm=30.0, pitch_deg=38.0,\n",
            "    overhang_cm=60.0, pitch_deg=38.0,\n",
            (SHADOWS,)),
+    # ── the production registry (the merge of the plant story) ──────────────
+    Mutant("the plant builder is not in the production registry (every plant a prism again)",
+           BUILDERS + "__init__.py",
+           "    register(registry)\n    plants.register(registry)\n",
+           "    register(registry)\n",
+           (BUILDER_TESTS, BUILT_WORLD), "TestRegistration or two_real_plants"),
 )
 
 

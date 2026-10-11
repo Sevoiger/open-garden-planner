@@ -27,7 +27,8 @@ from typing import Any
 
 import numpy as np
 import pytest
-from PyQt6.QtCore import QPointF
+from PyQt6.QtCore import QMimeData, QPointF, Qt
+from PyQt6.QtGui import QDropEvent
 
 from open_garden_planner.core import ProjectManager
 from open_garden_planner.core.commands import (
@@ -37,6 +38,7 @@ from open_garden_planner.core.commands import (
 )
 from open_garden_planner.core.object_height import METADATA_KEY, effective_height_cm
 from open_garden_planner.core.object_types import ObjectType, PathFenceStyle
+from open_garden_planner.core.plant_art import PLANT_KINDS
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
     MeshPart,
@@ -57,6 +59,7 @@ from open_garden_planner.core.scene3d.builders import (
     hedges,
     lines,
     palette,
+    plants,
     production_registry,
 )
 from open_garden_planner.core.tools import ToolType
@@ -231,7 +234,12 @@ def test_kinds_builders_heights_and_bases(garden: Garden) -> None:
         assert production.builder_for(kind) is builder
     kinds = {record.kind for record in records.values()}
     assert kinds - BUILT_WORLD_KINDS <= {"PERENNIAL", "ROOF_RIDGE"}
-    assert production.builder_for("PERENNIAL") is default_builder  # plants are L1.7's
+    # the plants are the plant story's: its builder, wired into the same registry
+    assert production.builder_for("PERENNIAL") is plants.build_plant
+    assert production.kinds() == BUILT_WORLD_KINDS | PLANT_KINDS
+    for plant in (*garden.bed_plants, garden.pot_plant):
+        parts = pipeline.sink.item(Garden.id(plant)).parts
+        assert parts and all(part.name in (plants.PART_FOLIAGE, plants.PART_WOOD) for part in parts)
 
     def names(item: Any) -> list[str]:
         return [part.name for part in pipeline.sink.item(Garden.id(item)).parts]
@@ -295,6 +303,95 @@ def test_kinds_builders_heights_and_bases(garden: Garden) -> None:
     assert not pipeline.sink.item(Garden.id(garden.bed)).parts[0].tinted
 
     assert pipeline.tick() == (SceneDiff(), [], [])  # an untouched garden: nothing
+
+
+def _drop(view: CanvasView, mime_tail: str, at: QPointF) -> CircleItem:
+    """A gallery drop through the real ``dropEvent`` — how a user plants; returns the plant."""
+    before = {id(item) for item in view.scene().items()}
+    mime = QMimeData()
+    mime.setText(f"gallery:{mime_tail}")
+    view.dropEvent(QDropEvent(QPointF(view.mapFromScene(at)), Qt.DropAction.CopyAction, mime,
+                              Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    (new,) = [item for item in view.scene().items()
+              if isinstance(item, CircleItem) and id(item) not in before]
+    return new
+
+
+def test_a_raised_bed_with_two_real_plants_through_the_production_registry(
+    canvas: CanvasView, mouse_event: Any
+) -> None:
+    """The two stories in one registry (merge of 5c44578). A raised bed drawn with its
+    tool; a tomato and a lettuce dropped into it from the gallery — real plants, with
+    bundled species data. Through ``SceneSync`` and ``production_registry()``:
+
+    - the bed is this story's bed (a frame and soil at 38 cm);
+    - the plants are the plant story's silhouettes — the archetype of each one's own
+      sprite, not a placeholder and not the default prism — and they stand ON that soil;
+    - raising the bed re-poses the plants and rebuilds none of them."""
+    scene = canvas.scene()
+    canvas.set_active_tool(ToolType.RAISED_BED)
+    tool = canvas.tool_manager.active_tool
+    tool.mouse_press(mouse_event, QPointF(400.0, 300.0))
+    tool.mouse_move(mouse_event, QPointF(700.0, 500.0))
+    tool.mouse_release(mouse_event, QPointF(700.0, 500.0))
+    (bed,) = [item for item in scene.items() if isinstance(item, RectangleItem)]
+    tomato = _drop(canvas, "PERENNIAL:species=tomato", QPointF(480.0, 400.0))
+    lettuce = _drop(canvas, "PERENNIAL:species=lettuce", QPointF(620.0, 400.0))
+    bed_id, tomato_id, lettuce_id = (str(item.item_id) for item in (bed, tomato, lettuce))
+    assert tomato.parent_bed_id == bed.item_id == lettuce.parent_bed_id  # the drop linked them
+
+    pipeline = Pipeline(scene)
+    result, calls, built = pipeline.tick()
+    records = pipeline.sync.records
+    assert sorted(result.added) == sorted([bed_id, tomato_id, lettuce_id]) == sorted(built)
+    production = production_registry()
+
+    # the bed: this story's builder, its soil where the plants stand
+    assert production.builder_for(records[bed_id].kind) is beds.build_raised_bed
+    assert [part.name for part in pipeline.sink.item(bed_id).parts] == ["bed"]
+    assert pipeline.top(bed_id) == 40.0 and pipeline.bottom(bed_id) == 0.0
+    soil = np.asarray(palette.SOIL.linear, dtype=np.float32)
+    (bed_part,) = pipeline.sink.item(bed_id).parts
+    is_soil = np.isclose(bed_part.mesh.colors, soil, atol=1e-6).all(axis=1)
+    assert float(bed_part.mesh.positions[is_soil][:, 2].max()) == 38.0
+
+    # the plants: the plant story's builder, a silhouette each, on the soil
+    for plant_id, archetype in ((tomato_id, "mound"), (lettuce_id, "rosette")):
+        record = records[plant_id]
+        assert record.kind == "PERENNIAL" and record.kind in PLANT_KINDS
+        assert production.builder_for(record.kind) is plants.build_plant
+        assert record.params.get("sprite_species")                # the plant story's input …
+        assert plants.plant_archetype(record) == archetype        # … and what it builds from it
+        held = pipeline.sink.item(plant_id)
+        names = [part.name for part in held.parts]
+        assert plants.PART_FOLIAGE in names and plants.PART_PLACEHOLDER not in names
+        assert held.parts != default_builder(record)              # not the plain prism
+        assert record.parent_id == bed_id and record.transform.base_cm == 38.0
+        assert record.height_cm is not None
+        assert pipeline.bottom(plant_id) == 38.0                  # ON the soil: no gap, nothing sunk
+        assert pipeline.top(plant_id) == pytest.approx(38.0 + record.height_cm, abs=1e-3)
+    plant_parts = {plant_id: pipeline.sink.item(plant_id).parts for plant_id in (tomato_id, lettuce_id)}
+    shapes_built = plants.shape_cache_info().misses
+
+    # raise the bed from 40 to 75 cm: ONE rebuild — the bed; the plants are re-posed
+    canvas.command_manager.execute(_set_height(bed, 75.0))
+    result, calls, built = pipeline.tick()
+    assert result == SceneDiff(transform=(tomato_id, lettuce_id), geometry=(bed_id,))
+    assert calls == [BEGIN, ("replace_geometry", bed_id), ("update_transform", tomato_id),
+                     ("update_transform", lettuce_id), COMMIT]
+    assert built == [bed_id]                                      # no plant builder call
+    assert plants.shape_cache_info().misses == shapes_built      # … and no plant shape built
+    for plant_id in (tomato_id, lettuce_id):
+        held = pipeline.sink.item(plant_id)
+        assert held.parts is plant_parts[plant_id]                # the very same meshes
+        assert held.transform.base_cm == 73.0 and pipeline.bottom(plant_id) == 73.0
+    assert pipeline.top(bed_id) == 75.0
+
+    canvas.command_manager.undo()
+    result, calls, built = pipeline.tick()
+    assert built == [bed_id] and result.transform == (tomato_id, lettuce_id)
+    assert [pipeline.bottom(plant_id) for plant_id in (tomato_id, lettuce_id)] == [38.0, 38.0]
+    assert pipeline.tick() == (SceneDiff(), [], [])
 
 
 def _set_height(item: Any, value: float) -> ChangePropertyCommand:
