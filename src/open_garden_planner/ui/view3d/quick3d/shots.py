@@ -74,12 +74,3 @@ def top_down_pixel(east_cm: float, north_cm: float, shot: TopDownShot,
     return (width / 2.0 + (east_cm - shot.center[0]) * scale,
             height / 2.0 - (north_cm - shot.center[1]) * scale)
 
-
-def top_down_scene(pixel_x: float, pixel_y: float, shot: TopDownShot,
-                   image_size: tuple[int, int],
-                   device_pixel_ratio: float = 1.0) -> tuple[float, float]:
-    """The inverse of ``top_down_pixel``: the scene (east, north) under a pixel position."""
-    width, height = image_size
-    scale = shot.px_per_cm * device_pixel_ratio
-    return (shot.center[0] + (pixel_x - width / 2.0) / scale,
-            shot.center[1] - (pixel_y - height / 2.0) / scale)

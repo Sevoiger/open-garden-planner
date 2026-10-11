@@ -16,7 +16,7 @@ import pytest
 
 from open_garden_planner.core.scene3d import MATERIAL_KINDS
 from open_garden_planner.ui.view3d.quick3d.look import NEUTRAL_DAY
-from open_garden_planner.ui.view3d.quick3d.materials import CUSTOM_SHADER_KINDS, PART_COMPONENTS
+from open_garden_planner.ui.view3d.quick3d.materials import PART_COMPONENTS
 
 QML_DIR = (Path(__file__).resolve().parents[2] / "src" / "open_garden_planner" / "ui" / "view3d"
            / "quick3d" / "qml")
@@ -140,11 +140,41 @@ def test_every_part_component_is_a_pickable_model_with_the_tint_properties() -> 
         name = block.split()[0]
         for needed in ("property string itemId", "property int partIndex", "property string kind",
                        "property color tint", "property vector3d tintLinear", "pickable: true",
-                       "receivesShadows: true"):
+                       "receivesShadows: true", "property bool retired: false"):
             assert needed in block, (name, needed)
-    for kind in CUSTOM_SHADER_KINDS:  # a custom shader takes the LINEAR tint as a uniform
-        block = next(b for b in blocks if b.startswith(PART_COMPONENTS[kind]))
-        assert "property vector3d uTint: tintLinear" in block, kind
+    # a custom shader takes the LINEAR tint as a uniform — read from the scene, which
+    # is the one place that says which kinds have a shader of their own
+    custom = {block.split()[0] for block in blocks if "CustomMaterial" in block}
+    assert custom == {PART_COMPONENTS[kind] for kind in ("water", "foliage", "grass")}
+    for block in blocks:
+        if "CustomMaterial" in block:
+            assert "property vector3d uTint: tintLinear" in block, block.split()[0]
+
+
+def test_a_destroyed_model_is_retired_not_merely_hidden() -> None:
+    """Review P2-10: ``listParts()`` used to skip every INVISIBLE Model, so "destroyed"
+    and "hidden on purpose" were one thing. Destruction has its own flag; ``visible``
+    is reported, and stays free for a story that hides a Model."""
+    code = _scene()
+    destroy = code[code.index("function destroyPart"):code.index("function listParts")]
+    assert destroy.index("part.retired = true") < destroy.index("part.visible = false")
+    listing = code[code.index("function listParts"):code.index("function projectToView")]
+    assert "if (p.retired)" in listing and "continue" in listing
+    assert '"visible": p.visible' in listing
+    assert "p.visible)" not in listing and "!p.visible" not in listing, "visibility must not filter"
+
+
+@pytest.mark.parametrize("shader", ["foliage.vert", "grass.vert"])
+def test_the_wind_shaders_move_nothing_at_rest(shader: str) -> None:
+    """Review P2-11, read from the source (the render tier measures it in pixels): every
+    displacement is multiplied by ``rest``, which is exactly 0 while the scene's clock
+    stands at 0 — and the clock's default IS 0."""
+    source = (QML_DIR / shader).read_text(encoding="utf-8")
+    assert "float rest = smoothstep(0.0, 2.0, uTime);" in source
+    moves = [line.strip() for line in source.splitlines() if re.match(r"\s*VERTEX\.\w\s*\+=", line)]
+    assert len(moves) == 2, moves
+    assert all(line.endswith("* rest;") for line in moves), moves
+    assert re.search(r"property real windTime:\s*0\s*$", _scene(), re.MULTILINE)
 
 
 def test_shaders_named_by_the_scene_ship_beside_it_and_none_is_orphaned() -> None:

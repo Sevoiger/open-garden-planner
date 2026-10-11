@@ -5,7 +5,12 @@ failure from silently killing the process and discarding unsaved work.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import textwrap
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -36,20 +41,23 @@ class TestExceptHook:
         assert calls, "excepthook should have shown a recoverable dialog"
 
 
-def _stub_3d(monkeypatch, *, ok: bool = True, raises: bool = False) -> None:
+def _stub_3d(monkeypatch, *, ok: bool = True, raises: bool = False) -> list[dict[str, Any]]:
     """Replace the engine package's self-test: it RENDERS, which this
-    ``QT_QPA_PLATFORM=offscreen`` process cannot do (software scene graph — no 3D)."""
-    from pathlib import Path
-
+    ``QT_QPA_PLATFORM=offscreen`` process cannot do (software scene graph — no 3D).
+    Returns the list the stand-in appends its keyword arguments to, per call."""
     from open_garden_planner.ui.view3d.quick3d import selftest
 
-    def run_selftest() -> selftest.SelftestResult:
+    calls: list[dict[str, Any]] = []
+
+    def run_selftest(**kwargs: Any) -> selftest.SelftestResult:
+        calls.append(kwargs)
         if raises:
             raise RuntimeError("the engine package blew up")
         line = "  OK   Qt Quick 3D frame (stand-in)" if ok else "  FAIL Qt Quick 3D frame: stand-in"
         return selftest.SelftestResult(ok, (line,), Path("stand-in.log"))
 
     monkeypatch.setattr(selftest, "run_selftest", run_selftest)
+    return calls
 
 
 @pytest.fixture()
@@ -138,11 +146,29 @@ class TestSelfTestQuick3d:
         assert _selftest_quick3d() is True
         assert (QCoreApplication.organizationName(), QCoreApplication.applicationName()) == before
 
+    def test_standalone_the_3d_block_bounds_itself(self, monkeypatch) -> None:
+        calls = _stub_3d(monkeypatch)
+        assert _selftest_quick3d() is True
+        assert calls == [{}], "no log passed: run_selftest opens its own and arms its own watchdog"
+
+    def test_inside_the_bounded_selftest_it_arms_no_second_watchdog(
+            self, monkeypatch, tmp_path) -> None:
+        """``faulthandler`` has ONE timer per process: with the caller's log comes the
+        caller's watchdog, and a second one would silently replace it."""
+        from open_garden_planner.ui.view3d.quick3d.runlog import RenderLog
+
+        calls = _stub_3d(monkeypatch)
+        log = RenderLog(tmp_path / "whole.log", mirror=False)
+        try:
+            assert _selftest_quick3d(log) is True
+        finally:
+            log.close()
+        assert calls == [{"log": log, "watchdog_s": None}]
+
     def test_main_names_no_engine_module(self) -> None:
         """The import rule: ``main.py`` names no Qt Quick module — the engine imports of
         the self-test live in ``ui/view3d/quick3d/selftest.py``."""
         import ast
-        from pathlib import Path
 
         import open_garden_planner.main as ogp_main
 
@@ -173,8 +199,127 @@ class TestMainUtilities:
         assert "test crash entry" in crash_log.read_text(encoding="utf-8")
 
     def test_main_selftest_dispatch(self, monkeypatch) -> None:
+        """``--selftest`` runs the BOUNDED self-test — the one under a watchdog."""
         import open_garden_planner.main as ogp_main
 
-        monkeypatch.setattr(ogp_main, "_run_selftest", lambda: 42)
+        monkeypatch.setattr(ogp_main, "_run_selftest_bounded", lambda: 42)
+        monkeypatch.setattr(ogp_main, "_run_selftest", lambda *_a: pytest.fail("not the bare one"))
         monkeypatch.setattr(sys, "argv", ["ogp", "--selftest"])
         assert ogp_main.main() == 42
+
+
+_HUNG_BLOCK = textwrap.dedent("""
+    import sys
+    import time
+
+    import open_garden_planner.main as ogp_main
+
+    def hangs(log=None):
+        print("  OK   import PyQt6.Qt3DCore (stand-in)", flush=True)
+        time.sleep(120)   # e.g. the Agent API server that never reports its port
+        return 0
+
+    ogp_main.SELFTEST_WATCHDOG_S = 2.0
+    ogp_main._run_selftest = hangs
+    code = ogp_main._run_selftest_bounded()
+    print("returned", code, flush=True)
+    sys.exit(code)
+""")
+
+
+@pytest.mark.usefixtures("keep_the_qt_identity")
+class TestBoundedSelfTest:
+    """Review P1-4. The watchdog used to cover the 3D render only; the Qt3D imports and
+    the Agent API block could hang a release job until GitHub's six-hour limit."""
+
+    def test_every_block_runs_under_one_watchdog_and_one_log(self, monkeypatch, tmp_path) -> None:
+        import open_garden_planner.main as ogp_main
+
+        seen: list[Any] = []
+        log_file = tmp_path / "selftest.log"
+        monkeypatch.setenv("OGP_SELFTEST_LOG", str(log_file))
+
+        def blocks(log: Any = None) -> int:
+            seen.append(log)
+            log("inside", note="the blocks write to the same log")
+            return 0
+
+        monkeypatch.setattr(ogp_main, "_run_selftest", blocks)
+        assert ogp_main._run_selftest_bounded() == 0
+        text = log_file.read_text(encoding="utf-8")
+        assert len(seen) == 1 and seen[0] is not None and seen[0].path == log_file
+        order = [text.index(marker) for marker in (
+            "[selftest_start]", "[watchdog] armed=True seconds=300.0 what=--selftest", "[inside]",
+            "[selftest_exit] code=0 result=PASS")]
+        assert order == sorted(order), text
+
+    def test_a_failing_block_is_exit_code_1_in_the_log_too(self, monkeypatch, tmp_path) -> None:
+        import open_garden_planner.main as ogp_main
+
+        log_file = tmp_path / "selftest.log"
+        monkeypatch.setenv("OGP_SELFTEST_LOG", str(log_file))
+        monkeypatch.setattr(ogp_main, "_run_selftest", lambda _log=None: 1)
+        assert ogp_main._run_selftest_bounded() == 1
+        assert "[selftest_exit] code=1 result=FAIL" in log_file.read_text(encoding="utf-8")
+
+    def test_the_real_blocks_take_the_log_through_to_the_3d_block(
+            self, monkeypatch, tmp_path) -> None:
+        """Not a stand-in for ``_run_selftest``: its own code passes the log on, so the
+        3D block does not arm a second watchdog. Windows only, like ``TestSelfTest``."""
+        if sys.platform != "win32":
+            pytest.skip("importing the Qt3D bindings needs the bundled Qt runtime")
+        import open_garden_planner.main as ogp_main
+
+        log_file = tmp_path / "selftest.log"
+        monkeypatch.setenv("OGP_SELFTEST_LOG", str(log_file))
+        calls = _stub_3d(monkeypatch)
+        assert ogp_main._run_selftest_bounded() == 0
+        assert len(calls) == 1 and calls[0]["watchdog_s"] is None
+        assert calls[0]["log"].path == log_file
+
+    def test_without_a_log_the_selftest_fails_but_is_still_bounded(
+            self, monkeypatch, tmp_path, capsys) -> None:
+        """The log's directory cannot be created (a FILE is in the way): the blocks still
+        run, still under the watchdog, and the verdict is FAIL whatever they returned."""
+        import open_garden_planner.main as ogp_main
+        from open_garden_planner.ui.view3d.quick3d import runlog
+
+        blocker = tmp_path / "a-file"
+        blocker.write_text("not a directory", encoding="utf-8")
+        monkeypatch.setenv("OGP_SELFTEST_LOG", str(blocker / "selftest.log"))
+        armed: list[tuple[float, str]] = []
+        real = runlog.watchdog
+
+        def spy(seconds: float, log: Any, what: str = "the run") -> Any:
+            armed.append((seconds, what))
+            return real(seconds, log, what)
+
+        monkeypatch.setattr(runlog, "watchdog", spy)
+        ran: list[Any] = []
+        monkeypatch.setattr(ogp_main, "_run_selftest", lambda log=None: ran.append(log) or 0)
+        assert ogp_main._run_selftest_bounded() == 1
+        assert len(ran) == 1 and ran[0].path is None
+        assert armed == [(ogp_main.SELFTEST_WATCHDOG_S, "--selftest")]
+        out = capsys.readouterr().out
+        assert "FAIL self-test log ->" in out and "SELFTEST: FAIL (no log)" in out
+
+    def test_a_hang_in_any_block_ends_the_process_and_the_log_says_why(self, tmp_path) -> None:
+        """In a child, because the exit is real: a block that is NOT the 3D render hangs.
+        Exit code 1 after the watchdog's two seconds, and the log names the reason in
+        words before faulthandler's stack dump — the frame that hangs is in it."""
+        log_file = tmp_path / "selftest.log"
+        src = Path(__file__).resolve().parents[2] / "src"
+        env = dict(os.environ, PYTHONPATH=str(src), QT_QPA_PLATFORM="offscreen",
+                   OGP_SELFTEST_LOG=str(log_file))
+        proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
+            [sys.executable, "-c", _HUNG_BLOCK], env=env, capture_output=True, text=True,
+            timeout=100, cwd=tmp_path)
+        assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
+        assert "returned" not in proc.stdout, "the hang must end the process, not return a verdict"
+        text = log_file.read_text(encoding="utf-8")
+        assert "[watchdog] armed=True seconds=2.0 what=--selftest" in text
+        assert "[watchdog] fired=True what=--selftest" in text
+        assert "--selftest did not finish within 2 s" in text
+        assert text.index("[watchdog] fired=True") < text.index("Timeout (0:00:02")
+        assert "in hangs" in text and "_run_selftest_bounded" in text
+        assert "[selftest_exit]" not in text

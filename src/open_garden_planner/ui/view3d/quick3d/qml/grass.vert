@@ -7,8 +7,12 @@ void MAIN()
     float ph = UV0.y * 6.28318;
     vec3 wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
     float gust = 0.55 + 0.45 * sin(uTime * 0.5 + wp.x * 0.003 + wp.z * 0.002);
-    VERTEX.x += sin(uTime * 2.3 + ph + wp.x * 0.02) * uWind * w * gust;
-    VERTEX.z += cos(uTime * 1.7 + ph + wp.z * 0.02) * uWind * 0.5 * w * gust;
+    // At rest (uTime 0) the vertex is EXACTLY the mesh's: the sway eases in over the
+    // first two seconds. Without it a leaf with a wind weight sat up to uWind cm off
+    // the mesh the CPU measures heights, spreads and picks with, even with no wind.
+    float rest = smoothstep(0.0, 2.0, uTime);
+    VERTEX.x += sin(uTime * 2.3 + ph + wp.x * 0.02) * uWind * w * gust * rest;
+    VERTEX.z += cos(uTime * 1.7 + ph + wp.z * 0.02) * uWind * 0.5 * w * gust * rest;
     vColor = COLOR;
     POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0);
 }

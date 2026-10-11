@@ -41,7 +41,10 @@ class Look:
     sun_color: str
     sun_brightness: float
     #: Flat fill light in LINEAR rgb, added to every surface: it stands in for the
-    #: sky's diffuse light until L1.4 lights the scene with the sky itself.
+    #: sky's diffuse light until L1.4 lights the scene with the sky itself. A SEAM,
+    #: not a look decision that pre-empts L1.4: L1.4 extends ``Look`` (sky, fog,
+    #: probe exposure, night) and removes this field together with the
+    #: brightness-0 fill light in ``Garden.qml``.
     fill_linear: tuple[float, float, float]
     #: Exposure of the tone-mapped (perspective) view.
     exposure: float

@@ -30,7 +30,10 @@ Item {
     property color skyColor: "#cfe2f2"
     property color meadowColor: "#487f34"   // ONE albedo for the meadow and for bare plan ground
     property real windStrength: 2.5
-    property real windTime: 0               // the shaders' clock; nothing animates it before L1.4
+    // the shaders' clock, in seconds; nothing animates it before L1.4. At 0 the wind is
+    // at REST: every vertex is exactly where its mesh puts it (the shaders ease the sway
+    // in over the first two seconds), so what is drawn is what the CPU measured
+    property real windTime: 0
 
     // ---- sun (Quick3DSink.set_sun): direction only, from core/solar ----
     property bool sunUp: false              // false until the first sun, and whenever it is down
@@ -77,7 +80,9 @@ Item {
     }
 
     function destroyPart(part) {
-        // hidden first: destroy() is deferred, and a frame in between must not draw it
+        // retired first: destroy() is deferred, and until the delete arrives the Model
+        // must be neither drawn, nor picked, nor listed
+        part.retired = true
         part.visible = false
         part.pickable = false
         part.geometry = null
@@ -88,14 +93,15 @@ Item {
         var out = []
         for (var i = 0; i < parts.children.length; ++i) {
             var p = parts.children[i]
-            if (!p.visible)
+            if (p.retired)
                 continue   // destroyed, waiting for its deferred delete
             out.push({
                 "id": p.itemId, "part": p.partIndex, "kind": p.kind,
                 "x": p.position.x, "y": p.position.y, "z": p.position.z,
                 "yaw": p.eulerRotation.y,
                 "r": p.tint.r, "g": p.tint.g, "b": p.tint.b,
-                "casts": p.castsShadows, "geometry": p.geometry !== null
+                "casts": p.castsShadows, "geometry": p.geometry !== null,
+                "visible": p.visible
             })
         }
         return out
@@ -120,7 +126,9 @@ Item {
     // ---- one Component per material kind: a Model with its OWN material instance ----
     // albedo = vertex colour x tint (linear) for every kind. `tint` is the sRGB colour
     // the principled materials take; `tintLinear` the same in linear light for the
-    // custom shaders (computed in Python with the exact sRGB curve).
+    // custom shaders (computed in Python with the exact sRGB curve). `retired` marks a
+    // Model that was destroyed and waits for its deferred delete: `visible` stays free
+    // for a story that hides a Model on purpose.
     Component {
         id: vcPart
         Model {
@@ -129,6 +137,7 @@ Item {
             property string kind
             property color tint: "#ffffff"
             property vector3d tintLinear: Qt.vector3d(1, 1, 1)
+            property bool retired: false   // set by destroyPart(); never a reason to hide
             receivesShadows: true
             pickable: true
             materials: PrincipledMaterial {
@@ -147,6 +156,7 @@ Item {
             property string kind
             property color tint: "#ffffff"
             property vector3d tintLinear: Qt.vector3d(1, 1, 1)
+            property bool retired: false   // set by destroyPart(); never a reason to hide
             receivesShadows: true
             pickable: true
             // roof tiles and shingles (ogp-lush-cinematic 4: roughness 0.70-0.85)
@@ -166,6 +176,7 @@ Item {
             property string kind
             property color tint: "#ffffff"
             property vector3d tintLinear: Qt.vector3d(1, 1, 1)
+            property bool retired: false   // set by destroyPart(); never a reason to hide
             receivesShadows: true
             pickable: true
             materials: PrincipledMaterial {
@@ -189,6 +200,7 @@ Item {
             property string kind
             property color tint: "#ffffff"
             property vector3d tintLinear: Qt.vector3d(1, 1, 1)
+            property bool retired: false   // set by destroyPart(); never a reason to hide
             receivesShadows: true
             pickable: true
             // a custom shader keeps the water's hue in every mood; see water.frag for why
@@ -213,6 +225,7 @@ Item {
             property string kind
             property color tint: "#ffffff"
             property vector3d tintLinear: Qt.vector3d(1, 1, 1)
+            property bool retired: false   // set by destroyPart(); never a reason to hide
             receivesShadows: true
             pickable: true
             materials: CustomMaterial {
@@ -234,6 +247,7 @@ Item {
             property string kind
             property color tint: "#ffffff"
             property vector3d tintLinear: Qt.vector3d(1, 1, 1)
+            property bool retired: false   // set by destroyPart(); never a reason to hide
             receivesShadows: true
             pickable: true
             materials: CustomMaterial {

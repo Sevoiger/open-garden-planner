@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import contextlib
 import faulthandler
+import os
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -61,25 +63,65 @@ class RenderLog:
             self._file.close()
 
 
+def _has_descriptor(stream: IO[str]) -> bool:
+    """False for a stream that is not a real file (a captured or replaced stderr)."""
+    try:
+        stream.fileno()
+    except Exception:  # noqa: BLE001 - io.UnsupportedOperation, ValueError (closed), AttributeError
+        return False
+    return True
+
+
 @contextlib.contextmanager
-def watchdog(seconds: float, log: RenderLog) -> Iterator[None]:
+def watchdog(seconds: float, log: RenderLog, what: str = "the run") -> Iterator[None]:
     """Bound the block: after ``seconds`` every thread's stack is dumped into the
     log and the PROCESS exits with code 1 (``faulthandler``). A hang becomes a
     failed run with a stack, not a job that never ends.
 
+    The reason is written to the log in words, twice over: when the watchdog is
+    armed (what a ``Timeout`` below that line means), and — a second before the
+    end, from a helper thread — that it is about to fire. The helper needs the
+    interpreter lock; a hang inside a C call that holds it silences the helper,
+    never the dump and the exit, which ``faulthandler`` does from C.
+
+    With neither a log file nor a stderr (a windowed exe whose log could not be
+    opened) the stacks have nowhere to go — the process is ended all the same:
+    a run that cannot say why it hangs must still not hang.
+
     For self-tests and scripts that own their process — never inside the running
-    app: the exit is not negotiable.
+    app: the exit is not negotiable. ONE watchdog per process at a time
+    (``faulthandler`` has a single timer): do not nest. ``seconds <= 0`` switches
+    it off.
     """
-    target = log.crash_file() if seconds > 0 else None
-    if target is None:
-        log("watchdog", armed=False,
-            reason="disabled" if seconds <= 0 else "no log file and no stderr to dump into")
+    if seconds <= 0:
+        log("watchdog", armed=False, what=what, reason="disabled")
         yield
         return
-    log("watchdog", armed=True, seconds=seconds,
-        note="on timeout: 'Timeout' and all thread stacks follow, exit code 1")
+    target = log.crash_file()
+    nowhere = None
+    if target is None or not _has_descriptor(target):  # faulthandler writes to a descriptor
+        nowhere = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - closed in the finally
+        target = nowhere
+    log("watchdog", armed=True, seconds=seconds, what=what,
+        note=f"if {what} is not done by then: 'Timeout' and every thread's stack follow "
+             "here, and the process exits with code 1"
+             + (" (no log file and no stderr: the stacks are lost, the exit is not)"
+                if nowhere is not None else ""))
+
+    def announce() -> None:
+        with contextlib.suppress(Exception):  # a closed log must not turn into a second failure
+            log("watchdog", fired=True, what=what,
+                reason=f"{what} did not finish within {seconds:g} s — it hangs in the call at "
+                       "the top of the main thread's stack below; ending the process, exit code 1")
+
+    helper = threading.Timer(max(seconds - 1.0, seconds * 0.8), announce)
+    helper.daemon = True
     faulthandler.dump_traceback_later(seconds, exit=True, file=target)
+    helper.start()
     try:
         yield
     finally:
         faulthandler.cancel_dump_traceback_later()
+        helper.cancel()
+        if nowhere is not None:
+            nowhere.close()

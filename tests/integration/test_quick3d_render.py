@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ import pytest
 from open_garden_planner.core.scene3d import Record, Transform, srgb8_to_linear, srgb_to_linear
 from open_garden_planner.core.scene3d import sun_direction_scene as sun_direction
 from open_garden_planner.core.shadow_geometry import compute_scene_shadows, shadow_direction_scene
+from open_garden_planner.ui.view3d.quick3d.host import GRAPHICS_API_NAMES, RENDERING_APIS
 from open_garden_planner.ui.view3d.quick3d.look import NEUTRAL_DAY
 from tests.integration import quick3d_render_driver as driver
 from tests.integration.quick3d_render_support import (
@@ -54,9 +56,22 @@ Run = tuple[dict[str, Any], Path]
 @pytest.fixture(scope="module")
 def run(tmp_path_factory: pytest.TempPathFactory) -> Run:
     out = tmp_path_factory.mktemp("quick3d_render")
-    proc, result = run_driver(out, "truth,materials,states,edits,pick,sun")
+    proc, result = run_driver(out, "truth,materials,rest,states,edits,pick,sun")
     assert proc.returncode == 0 and result.get("status") == "ok", failure_report(proc, out)
     return result, out
+
+
+def test_no_builder_failed_in_any_offscreen_frame(run: Run) -> None:
+    """``render_records`` contains a failed builder — the item is then in the frame
+    WITHOUT a solid — and names it in ``build_failures``. A render test that never
+    looked would judge a frame with a hole in it."""
+    frames = 0
+    for name in ("truth", "materials", "rest"):
+        for key, frame in run[0]["scenarios"][name].items():
+            if isinstance(frame, dict) and "build_failures" in frame:
+                assert frame["build_failures"] == {}, (name, key)
+                frames += 1
+    assert frames >= 8, "the check must have looked at the offscreen frames"
 
 
 def _frame(run: Run, info: dict[str, Any]) -> tuple[np.ndarray, float]:
@@ -131,6 +146,51 @@ def test_the_wrong_rotation_sense_would_fail(run: Run, rotation: float) -> None:
     rgb, dpr = _frame(run, run[0]["scenarios"]["truth"][f"bar_{rotation:g}"])
     wrong = driver.bar_record((-rotation) % 360.0)
     assert iou(red_mask(rgb), footprint_mask(wrong, driver.TOP, rgb.shape, dpr)) < 0.5
+
+
+# ── at rest, the wind moves nothing ──────────────────────────────────────────
+
+
+def _rest_offsets(rgb: np.ndarray, dpr: float) -> dict[str, tuple[float, float]]:
+    """Per wind shader: (IoU with the CPU footprint, distance of the centroids in px)."""
+    records = driver.rest_records()
+    out: dict[str, tuple[float, float]] = {}
+    for kind, mask in (("foliage", red_mask(rgb)), ("grass", blue_mask(rgb))):
+        predicted = footprint_mask(records[kind], driver.TOP, rgb.shape, dpr)
+        (x, y), (px, py) = centroid(mask), centroid(predicted)
+        out[kind] = (iou(mask, predicted), math.hypot(x - px, y - py))
+    return out
+
+
+def test_at_rest_a_vertex_with_full_wind_weight_is_where_its_mesh_puts_it(run: Run) -> None:
+    """The scene's clock stands at 0 until L1.4 animates it. Two boxes whose EVERY
+    vertex has the full wind weight (uv.x = 1), in a wind 40 x the look's: each is
+    drawn exactly on the pixels the CPU predicts from its mesh (measured: IoU 1.000,
+    offset 0.00 px, Direct3D 11 and WARP). Heights, spreads, picks and shadows are
+    all measured against that mesh — a shader that moved it would make them wrong."""
+    rgb, dpr = _frame(run, run[0]["scenarios"]["rest"]["top"])
+    for kind, (overlap, offset) in _rest_offsets(rgb, dpr).items():
+        assert overlap >= 0.97, (kind, overlap)
+        assert offset < 0.5, (kind, offset)
+
+
+def test_a_shader_that_sways_at_rest_would_fail(tmp_path: Path) -> None:
+    """Control: the shaders as they were before the fix (the ``* rest`` factor removed).
+    The same boxes land 10.2 px (foliage) and 18.9 px (grass) from where their meshes
+    are — 20 cm and 38 cm in the garden — with no error and no warning anywhere."""
+    qml = tmp_path / "qml"
+    shutil.copytree(QML_SOURCE, qml)
+    for file in ("foliage.vert", "grass.vert"):
+        text = (qml / file).read_text(encoding="utf-8")
+        assert text.count(" * rest;") == 2, f"the control no longer finds the rest factor in {file}"
+        (qml / file).write_text(text.replace(" * rest;", ";"), encoding="utf-8")
+    out = tmp_path / "out"
+    proc, result = run_driver(out, "rest", qml_dir=qml, env=render_env(tmp_path))
+    assert proc.returncode == 0 and result.get("status") == "ok", failure_report(proc, out)
+    info = result["scenarios"]["rest"]["top"]
+    for kind, (overlap, offset) in _rest_offsets(load_rgb(out / info["file"]), float(info["dpr"])).items():
+        assert offset > 5.0 * float(info["dpr"]), (kind, offset)
+        assert overlap < 0.8, (kind, overlap)
 
 
 # ── G6: every sink call, in pixels ───────────────────────────────────────────
@@ -416,7 +476,8 @@ def _broken_copy(tmp_path: Path, file: str, old: str, new: str) -> Path:
 @pytest.mark.parametrize(("file", "old", "new"), [
     ("water.frag", "waterLuma(LIGHT_COLOR)", "waterLumaRenamed(LIGHT_COLOR)"),
     ("foliage.frag", "vColor.rgb * uTint", "vColor.rgb * uTintMissing"),
-    ("foliage.vert", "uWind * w * gust;\n    VERTEX.z", "uWindMissing * w * gust;\n    VERTEX.z"),
+    ("foliage.vert", "uWind * w * gust * rest;\n    VERTEX.z",
+     "uWindMissing * w * gust * rest;\n    VERTEX.z"),
     ("grass.vert", "vColor = COLOR;", "vColorMissing = COLOR;"),
 ], ids=["water.frag", "foliage.frag", "foliage.vert", "grass.vert"])
 def test_a_broken_shader_fails_the_render(tmp_path: Path, file: str, old: str, new: str) -> None:
@@ -450,20 +511,32 @@ def test_a_qml_error_fails_the_render(tmp_path: Path) -> None:
 
 def test_the_host_refuses_what_it_cannot_answer_truthfully(run: Run) -> None:
     """A never-shown view renders ONE frame (the second would be the bare background —
-    measured mean abs difference 161 on the probe frame); a hidden view renders none;
-    a pick without a rendered frame would read as "nothing there"."""
+    measured mean abs difference 161 on the probe frame) and may not be shown after
+    it; a hidden view renders none; a pick without a rendered frame would read as
+    "nothing there". The full matrix of call orders: ``test_quick3d_lifecycle.py``."""
     states = run[0]["scenarios"]["states"]
-    for key in ("hidden_pick", "second_hidden_grab", "grab_while_hidden", "pick_while_hidden"):
+    for key in ("hidden_pick", "second_hidden_grab", "show_after_offscreen_frame",
+                "grab_while_hidden", "pick_while_hidden"):
         assert states[key].startswith("HostStateError"), (key, states[key])
+    assert (states["state_new"], states["state_after_offscreen_frame"]) == ("new", "spent")
+    assert (states["state_shown"], states["state_hidden"]) == ("live", "hidden")
     first, _ = _frame(run, states["first_hidden_grab"])
     assert int(red_mask(first).sum()) > 1000  # the one frame it does render is the scene
 
 
 def test_the_run_names_its_graphics_device(run: Run) -> None:
+    """The API's name comes from Qt's ENUM (``host.GRAPHICS_API_NAMES``), not from a
+    list of strings somebody typed: PyQt calls the members ``OpenGL`` but
+    ``Direct3D11Rhi``, and a list written on Windows failed the first Linux run."""
     result = run[0]
     assert result["adapter"], "the adapter must be readable from the log (WARP vs GPU)"
-    for frame in result["scenarios"]["truth"].values():
-        if isinstance(frame, dict) and "graphics_api" in frame:
-            assert frame["graphics_api"] in ("Direct3D11Rhi", "OpenGLRhi", "VulkanRhi", "MetalRhi",
-                                             "Direct3D12Rhi")
-            assert frame["adapter"] == result["adapter"]
+    frames = [frame for frame in result["scenarios"]["truth"].values()
+              if isinstance(frame, dict) and "graphics_api" in frame]
+    assert frames
+    for frame in frames:
+        assert frame["graphics_api"] in set(GRAPHICS_API_NAMES.values()) & RENDERING_APIS
+        assert frame["adapter"] == result["adapter"]
+    # what render_env selects where the tier is run: Qt's default on Windows, OpenGL on Linux
+    expected = {"win32": "Direct3D11", "linux": "OpenGL"}.get(sys.platform)
+    if expected is not None:
+        assert {frame["graphics_api"] for frame in frames} == {expected}

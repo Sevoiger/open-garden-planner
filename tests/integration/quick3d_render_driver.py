@@ -51,6 +51,7 @@ from open_garden_planner.core.scene3d import (  # noqa: E402
     BuilderRegistry,
     GroundSpec,
     Material,
+    Mesh,
     MeshPart,
     Params,
     Record,
@@ -169,6 +170,43 @@ def swatch_records() -> dict[str, Record]:
 def swatch_registry() -> BuilderRegistry:
     registry = BuilderRegistry()
     registry.register("SWATCH", swatch_builder)
+    return registry
+
+
+#: The wind strength of the rest probe, in the shaders' units: 35 cm of sway for
+#: foliage and 100 cm for grass if the shader moved a vertex at rest (40 x the look's).
+REST_WIND = 100.0
+REST_SIDE, REST_HEIGHT = 100.0, 60.0
+
+
+def rest_builder(record: Record) -> tuple[MeshPart, ...]:
+    """A prism whose EVERY vertex carries the full wind weight (uv.x = 1) and a
+    quarter-turn phase (uv.y = 0.25) — the vertex a wind shader moves furthest."""
+    kind = str(record.params["material_kind"])
+    assert record.height_cm is not None
+    mesh = prism_mesh(record.footprints, record.height_cm)
+    uvs = np.tile(np.array([1.0, 0.25], dtype=np.float32), (mesh.vertex_count, 1))
+    windy = Mesh.from_arrays(mesh.positions, mesh.normals, mesh.colors, uvs, mesh.indices)
+    return (MeshPart(windy, kind, casts_shadow=True, tinted=True, name=kind),)
+
+
+def rest_records() -> dict[str, Record]:
+    """P2-11: a RED foliage box north of the origin and a BLUE grass box south of it,
+    both on the east = 0 line (where the shaders' sway term is largest)."""
+    out: dict[str, Record] = {}
+    for kind, north, colour in (("foliage", 110.0, RED), ("grass", -110.0, BLUE)):
+        out[kind] = Record(
+            item_id=kind, kind="RESTPROBE", shape="rectangle",
+            footprints=(rect_ring(REST_SIDE, REST_SIDE),),
+            transform=Transform(east_cm=0.0, north_cm=north),
+            material=Material("RESTPROBE", fill_rgba=colour), height_cm=REST_HEIGHT,
+            params=Params({"seed": kind, "material_kind": kind}))
+    return out
+
+
+def rest_registry() -> BuilderRegistry:
+    registry = BuilderRegistry()
+    registry.register("RESTPROBE", rest_builder)
     return registry
 
 
@@ -316,7 +354,8 @@ class Context:
                      "breakdown_ms": {k: round(v, 1) for k, v in frame.breakdown_ms.items()},
                      "graphics_api": frame.graphics_api, "adapter": frame.adapter,
                      "view_size": list(frame.view_size), "items": frame.items,
-                     "parts": frame.parts, "qt": dict(frame.qt)})
+                     "parts": frame.parts, "build_failures": dict(frame.build_failures),
+                     "qt": dict(frame.qt)})
         return info
 
     def shown_host(self, size: tuple[int, int] = VIEW) -> Any:
@@ -324,8 +363,18 @@ class Context:
 
         host = Quick3DHost(size, qml_dir=self.qml_dir, log=self.log)
         host.show()
-        host.wait_exposed()
+        require_ready(host, "a freshly shown host")
         return host
+
+
+def require_ready(host: Any, what: str) -> None:
+    """``wait_ready()`` answers; a driver that drops the answer would go on to ask a
+    host that is not live for frames (and get a HostStateError far from the cause)."""
+    if not host.wait_ready():
+        state = host.state.value
+        host.close()
+        raise RuntimeError(f"{what} did not become live within the timeout "
+                           f"(state {state}): no frame can be taken")
 
 
 def _pump(ms: int = 30) -> None:
@@ -347,7 +396,7 @@ def _uploads() -> int:
 def _parts(host: Any) -> list[dict[str, Any]]:
     return [{"id": p.item_id, "part": p.part_index, "kind": p.kind, "position": list(p.position),
              "yaw": p.yaw_deg, "tint": list(p.tint_rgb), "casts": p.casts_shadow,
-             "geometry": p.has_geometry} for p in host.engine_parts()]
+             "geometry": p.has_geometry, "visible": p.visible} for p in host.engine_parts()]
 
 
 def _pick(host: Any, x: float, y: float) -> dict[str, Any]:
@@ -472,7 +521,7 @@ def scenario_edits(ctx: Context) -> dict[str, Any]:
         _pump(50)
         started = time.perf_counter()
         host.show()
-        host.wait_exposed()
+        require_ready(host, "the re-shown host")
         step("7_reentry", None, picks=("a",), at={"a": a1})
         reentry_ms = (time.perf_counter() - started) * 1000.0
         return {"steps": steps, "cleared": after_clear, "reentry_ms": round(reentry_ms, 1),
@@ -523,12 +572,19 @@ def scenario_states(ctx: Context) -> dict[str, Any]:
             out["hidden_pick"] = "answered"
         except HostStateError as error:
             out["hidden_pick"] = f"HostStateError: {error}"
+        out["state_new"] = hidden.state.value
         out["first_hidden_grab"] = ctx.save("states_hidden_first", hidden.grab("hidden_first"))
+        out["state_after_offscreen_frame"] = hidden.state.value
         try:
             hidden.grab("hidden_second")
             out["second_hidden_grab"] = "answered"
         except HostStateError as error:
             out["second_hidden_grab"] = f"HostStateError: {error}"
+        try:
+            hidden.show()
+            out["show_after_offscreen_frame"] = "shown"
+        except HostStateError as error:
+            out["show_after_offscreen_frame"] = f"HostStateError: {error}"
     finally:
         hidden.close()
         _pump()
@@ -537,8 +593,10 @@ def scenario_states(ctx: Context) -> dict[str, Any]:
         SceneSync(Quick3DSink(shown)).apply({"a": EDIT_A})
         shown.set_shot(TOP)
         shown.grab("states_shown")
+        out["state_shown"] = shown.state.value
         shown.hide()
         _pump(50)
+        out["state_hidden"] = shown.state.value
         try:
             shown.grab("states_hidden_after_show")
             out["grab_while_hidden"] = "answered"
@@ -553,6 +611,17 @@ def scenario_states(ctx: Context) -> dict[str, Any]:
         shown.close()
         _pump()
     return out
+
+
+def scenario_rest(ctx: Context) -> dict[str, Any]:
+    """P2-11: with the wind at rest (the scene's clock at 0) a vertex is drawn where
+    its mesh puts it — also one with the full wind weight, also in a strong wind."""
+    from open_garden_planner.ui.view3d.quick3d.look import NEUTRAL_DAY
+
+    windy = replace(NEUTRAL_DAY, wind_strength=REST_WIND)
+    return {"wind_strength": REST_WIND,
+            "top": ctx.offscreen("rest_top", rest_records(), shot=TOP, sun=HIGH_SUN,
+                                 registry=rest_registry(), look=windy)}
 
 
 def _load_bench() -> tuple[Any, Any, Any]:
@@ -773,7 +842,7 @@ def scenario_embed(ctx: Context) -> dict[str, Any]:
         frame_ok = None
         if host is not None:
             host.show()
-            host.wait_exposed()
+            require_ready(host, "the embedded host")
             frame = host.grab(f"embed_{mode}")
             frame_ok = ctx.save("embed_container", frame)
         _pump(300)
@@ -819,6 +888,7 @@ SCENARIOS: dict[str, Callable[[Context], dict[str, Any]]] = {
     "edits": scenario_edits,
     "pick": scenario_pick,
     "states": scenario_states,
+    "rest": scenario_rest,
     "integration": scenario_integration,
     "embed": scenario_embed,
 }
@@ -879,10 +949,10 @@ def main(argv: list[str]) -> int:
 
     messages = qt_messages.QtMessages(log)
     previous = qt_messages.install(messages)
-    qt_messages.enable_graphics_info()
     code = 0
     try:
-        with offscreen.watchdog(args.watchdog_s, log):
+        # the adapter's name for the whole run (shown hosts too); the rule is cleared after
+        with qt_messages.graphics_info(), offscreen.watchdog(args.watchdog_s, log):
             offscreen.ensure_application()
             context = Context(args.out, log, args.qml_dir.resolve() if args.qml_dir else None,
                               messages)

@@ -209,6 +209,8 @@ class Rendered:
     adapter: str | None
     open_ms: float
     qt_counts: dict[str, int]
+    #: Items whose builder failed (``OffscreenFrame.build_failures``): any is a FAIL.
+    build_failures: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,18 +246,29 @@ def _render(log: RenderLog, qml_dir: Path | None) -> Rendered:
     frame = render_records(records(), shot=SHOT, sun=SUN, ground=GROUND, size=SIZE,
                            registry=registry(), qml_dir=qml_dir, log=log, graphics_info=True)
     return Rendered(frame.rgba(), frame.device_pixel_ratio, frame.graphics_api, frame.adapter,
-                    frame.open_ms, dict(frame.qt.get("counts", {})))
+                    frame.open_ms, dict(frame.qt.get("counts", {})),
+                    tuple(f"{item_id}: {error}" for item_id, error in frame.build_failures.items()))
 
 
-def run_selftest(log_path: Path | None = None, *, watchdog_s: float = WATCHDOG_S,
-                 qml_dir: Path | None = None) -> SelftestResult:
+def run_selftest(log_path: Path | None = None, *, watchdog_s: float | None = WATCHDOG_S,
+                 qml_dir: Path | None = None, log: RenderLog | None = None) -> SelftestResult:
     """Import the engine, render the self-test frame, judge it (module docstring).
 
-    Never raises: every failure becomes a ``FAIL`` line and ``ok=False``. Only the
+    Never raises: every failure becomes a ``FAIL`` line and ``ok=False``. Only a
     watchdog ends the process itself (exit code 1), and says so in the log first.
+
+    Standalone it opens its own log at ``log_path`` (default: ``default_log_path()``)
+    and bounds the render with ``watchdog_s``. ``main`` runs the WHOLE ``--selftest``
+    under one watchdog and one log: it passes that ``log`` and ``watchdog_s=None``
+    (``faulthandler`` has one timer per process — a second one here would replace
+    the outer one and cancel it on the way out).
     """
-    path = log_path if log_path is not None else default_log_path()
-    log = RenderLog(path, mirror=False)  # stdout carries the verdict lines, the file the detail
+    owns_log = log is None
+    if log is None:
+        path = log_path if log_path is not None else default_log_path()
+        log = RenderLog(path, mirror=False)  # stdout carries the verdict lines, the file the detail
+    else:
+        path = log.path if log.path is not None else default_log_path()
     lines: list[str] = []
     started = time.perf_counter()
 
@@ -271,9 +284,14 @@ def run_selftest(log_path: Path | None = None, *, watchdog_s: float = WATCHDOG_S
             say(False, f"import {name} -> {exc}")
     if all(line.startswith("  OK  ") for line in lines):
         try:
-            with watchdog(watchdog_s, log):
+            if watchdog_s is None:  # the caller bounds the whole run
                 rendered = _render(log, qml_dir)
-            problems = judge_frame(rendered.rgba, rendered.device_pixel_ratio)
+            else:
+                with watchdog(watchdog_s, log, what="the 3D self-test frame"):
+                    rendered = _render(log, qml_dir)
+            problems = [f"the builder of {failure} failed: the item has no solid"
+                        for failure in rendered.build_failures]
+            problems += judge_frame(rendered.rgba, rendered.device_pixel_ratio)
             where = f"{rendered.graphics_api} / {rendered.adapter or 'adapter unknown'}"
             if problems:
                 for problem in problems:
@@ -287,5 +305,6 @@ def run_selftest(log_path: Path | None = None, *, watchdog_s: float = WATCHDOG_S
     ok = all(line.startswith("  OK  ") for line in lines)
     log("selftest_done", result="PASS" if ok else "FAIL",
         wall_ms=round((time.perf_counter() - started) * 1000.0))
-    log.close()
+    if owns_log:
+        log.close()
     return SelftestResult(ok, tuple(lines), path)

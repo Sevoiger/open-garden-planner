@@ -42,9 +42,6 @@ PART_COMPONENTS: Final = MappingProxyType({
     "water": "waterPart",
 })
 
-#: Kinds drawn by a custom shader: their tint is the linear ``tintLinear`` uniform.
-CUSTOM_SHADER_KINDS: Final = frozenset({"foliage", "grass", "water"})
-
 #: The tint of a part that is not tinted: the identity of the multiplication.
 WHITE: Final[Rgba] = (255, 255, 255, 255)
 

@@ -8,6 +8,7 @@ the render tier only has to prove that the engine does what they say.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 import os
 import subprocess
@@ -20,7 +21,6 @@ import pytest
 from open_garden_planner.core.scene3d import MATERIAL_KINDS, Material, MeshPart, prism_mesh
 from open_garden_planner.ui.view3d.quick3d.look import NEUTRAL_DAY, Look
 from open_garden_planner.ui.view3d.quick3d.materials import (
-    CUSTOM_SHADER_KINDS,
     PART_COMPONENTS,
     WHITE,
     part_tint,
@@ -30,12 +30,13 @@ from open_garden_planner.ui.view3d.quick3d.qt_messages import (
     QtMessages,
     classify,
     graphics_adapter,
+    graphics_info,
+    logging_sink,
 )
 from open_garden_planner.ui.view3d.quick3d.shots import (
     PerspectiveShot,
     TopDownShot,
     top_down_pixel,
-    top_down_scene,
 )
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -116,12 +117,6 @@ class TestShots:
         x, y = top_down_pixel(100.0, 60.0, shot, size, device_pixel_ratio=ratio)
         assert (x, y) == pytest.approx((size[0] / 2 + 50.0 * ratio, size[1] / 2 - 30.0 * ratio))
 
-    @pytest.mark.parametrize("point", [(0.0, 0.0), (137.5, -42.25), (-900.0, 1234.0)])
-    def test_scene_and_pixel_are_inverse(self, point: tuple[float, float]) -> None:
-        shot = TopDownShot(center=(300.0, -50.0), px_per_cm=0.7)
-        pixel = top_down_pixel(*point, shot, (640, 480), device_pixel_ratio=1.5)
-        assert top_down_scene(*pixel, shot, (640, 480), device_pixel_ratio=1.5) == pytest.approx(point)
-
     @pytest.mark.parametrize("make", [
         lambda: TopDownShot((0.0, 0.0), 0.0), lambda: TopDownShot((0.0, 0.0), -1.0),
         lambda: TopDownShot((math.nan, 0.0), 1.0),
@@ -145,7 +140,6 @@ class TestMaterials:
     def test_every_material_kind_has_a_part_component(self) -> None:
         assert frozenset(PART_COMPONENTS) == MATERIAL_KINDS
         assert len(set(PART_COMPONENTS.values())) == len(PART_COMPONENTS)
-        assert CUSTOM_SHADER_KINDS < MATERIAL_KINDS
 
     def test_only_a_tinted_part_takes_the_items_colour(self) -> None:
         material = Material("SHED", fill_rgba=(200, 30, 30, 90))
@@ -191,6 +185,27 @@ class TestClassify:
     ])
     def test_other_messages_are_not_errors(self, kind: str, text: str, expected: str) -> None:
         assert classify(kind, text) == expected
+
+    @pytest.mark.parametrize("kind", ["debug", "info"])
+    @pytest.mark.parametrize("text", [
+        SHADER_PARSE,
+        "Failed to compile fragment shader",
+        "file:///x/Garden.qml:231:13: Unable to assign [undefined] to QObject*",
+        "qt.rhi.general: shader cache: failed to open, error 2",
+        "TypeError in a debug line",
+    ])
+    def test_the_level_decides_first(self, kind: str, text: str) -> None:
+        """Review P2-3: the error patterns used to run over debug and info lines too. The
+        self-test switches ``qt.rhi.general`` debug output on — so the WORDING of a Qt
+        debug line could have failed a release. Only a warning is promoted by its text."""
+        assert classify(kind, text) == "info"
+        assert classify(kind, text, "qt.rhi.general") == "info"
+        assert classify("warning", text) == "error", "the same text as a warning IS an error"
+
+    def test_a_debug_line_is_recorded_as_information_only(self) -> None:
+        qt = QtMessages()
+        qt.add("debug", SHADER_PARSE, "qt.rhi.general")
+        assert qt.clean and qt.errors == [] and qt.report()["counts"]["info"] == 1
 
     def test_the_sleeping_monitor_warning_is_the_environment(self) -> None:
         assert classify("warning", MONITOR, "qt.qpa.screen") == "environment"
@@ -240,6 +255,70 @@ class TestRecorder:
         qt = QtMessages(broken_log)
         qt.add("warning", "a message after the log was closed")  # must not raise
         assert qt.report()["counts"]["warning"] == 1
+
+
+class TestLoggingSink:
+    """``Quick3DHost.watch_messages``: a live view's Qt messages go to the app's log."""
+
+    def test_errors_and_warnings_reach_the_logger_at_their_level(
+            self, caplog: pytest.LogCaptureFixture) -> None:
+        logger = logging.getLogger("ogp.tests.quick3d.sink")
+        qt = QtMessages(logging_sink(logger))
+        with caplog.at_level(logging.DEBUG, logger=logger.name):
+            qt.add("warning", SHADER_PARSE, "qt.shadertools")
+            qt.add("warning", "QStandardPaths: XDG_RUNTIME_DIR not set")
+            qt.add("warning", MONITOR, "qt.qpa.screen")
+            qt.add("debug", "Adapter 0: 'x'", "qt.rhi.general")   # information: not logged at all
+        levels = [(record.levelno, record.getMessage()[:12]) for record in caplog.records]
+        assert levels == [(logging.ERROR, "Qt: warning:"), (logging.WARNING, "Qt: warning:"),
+                          (logging.INFO, "Qt: warning:")]
+        assert SHADER_PARSE[:40] in caplog.records[0].getMessage()
+
+    def test_a_logger_that_raises_cannot_abort_the_handler(self) -> None:
+        class Broken(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                raise OSError("log file gone")
+
+        logger = logging.getLogger("ogp.tests.quick3d.sink.broken")
+        logger.propagate = False
+        logger.addHandler(Broken())
+        previous, logging.raiseExceptions = logging.raiseExceptions, True
+        try:
+            qt = QtMessages(logging_sink(logger))
+            qt.add("warning", SHADER_PARSE)  # must not raise (it runs inside Qt's handler)
+        finally:
+            logging.raiseExceptions = previous
+        assert len(qt.errors) == 1
+
+
+class TestGraphicsInfo:
+    """Review P2-4: the debug rule was switched on and never off again."""
+
+    @staticmethod
+    def _rhi_debug() -> bool:
+        from PyQt6.QtCore import QLoggingCategory
+
+        return bool(QLoggingCategory("qt.rhi.general").isDebugEnabled())
+
+    def test_the_rule_is_on_inside_the_block_and_off_after(self, qtbot) -> None:  # noqa: ARG002
+        assert not self._rhi_debug()
+        with graphics_info():
+            assert self._rhi_debug()
+        assert not self._rhi_debug()
+
+    def test_the_rule_is_cleared_when_the_block_raises(self, qtbot) -> None:  # noqa: ARG002
+        with pytest.raises(RuntimeError), graphics_info():
+            raise RuntimeError("the render failed")
+        assert not self._rhi_debug()
+
+    def test_blocks_nest_and_the_outermost_one_switches(self, qtbot) -> None:  # noqa: ARG002
+        """The render driver records a whole run while ``render_records`` records one
+        frame: the inner block must not switch the outer one's rule off."""
+        with graphics_info():
+            with graphics_info():
+                assert self._rhi_debug()
+            assert self._rhi_debug(), "the inner block switched the outer rule off"
+        assert not self._rhi_debug()
 
 
 class TestGraphicsAdapter:

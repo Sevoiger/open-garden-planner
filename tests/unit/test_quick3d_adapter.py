@@ -62,19 +62,48 @@ class FakePart:
     alive: bool = True
 
 
+class EngineGone(RuntimeError):
+    """What a closed host raises (``HostStateError`` there) — for every call but the
+    releases."""
+
+
 @dataclass
 class FakeScene:
-    """A list-backed ``EngineScene``: records every call, holds what was created."""
+    """A list-backed ``EngineScene``: records every call, holds what was created.
+
+    It OWNS its parts, like the host: ``clear()`` destroys all of them. ``dead=True``
+    makes it behave like a closed host — the releases (``destroy_part``, ``clear``)
+    do nothing, every other call raises.
+    """
 
     calls: list[tuple[Any, ...]] = field(default_factory=list)
     parts: list[FakePart] = field(default_factory=list)
     sun: Any = "unset"
     ground: Any = "unset"
     fail_on_create: int | None = None  # raise on the n-th create_part (1-based)
+    fail_on_clear: bool = False        # a LIVE engine that cannot clear
+    dead: bool = False                 # the engine is gone (closed host, destroyed window)
     created: int = 0
+
+    def _alive(self) -> None:
+        if self.dead:
+            raise EngineGone("the engine is gone")
+
+    def clear(self) -> None:
+        self.calls.append(("clear",))
+        if self.dead:
+            return
+        if self.fail_on_clear:
+            raise RuntimeError("engine could not clear")
+        for part in self.parts:
+            part.alive = False
+        self.parts.clear()
+        self.sun = None
+        self.ground = None
 
     def create_part(self, spec: PartSpec, pose: EnginePose,
                     tint_rgba: tuple[int, int, int, int]) -> FakePart:
+        self._alive()
         self.created += 1
         if self.fail_on_create == self.created:
             raise RuntimeError("engine refused the part")
@@ -84,30 +113,37 @@ class FakeScene:
         return part
 
     def destroy_part(self, handle: object) -> None:
+        if self.dead:
+            return
         assert isinstance(handle, FakePart) and handle.alive, "destroyed twice or unknown"
         handle.alive = False
         self.parts.remove(handle)
         self.calls.append(("destroy", handle.spec.item_id))
 
     def pose_part(self, handle: object, pose: EnginePose) -> None:
+        self._alive()
         assert isinstance(handle, FakePart) and handle.alive
         handle.pose = pose
         self.calls.append(("pose", handle.spec.item_id))
 
     def tint_part(self, handle: object, tint_rgba: tuple[int, int, int, int]) -> None:
+        self._alive()
         assert isinstance(handle, FakePart) and handle.alive
         handle.tint = tint_rgba
         self.calls.append(("tint", handle.spec.item_id))
 
     def set_sun(self, travel: tuple[float, float, float] | None) -> None:
+        self._alive()
         self.sun = travel
         self.calls.append(("sun",))
 
     def set_ground(self, ground: GroundPlacement | None) -> None:
+        self._alive()
         self.ground = ground
         self.calls.append(("ground",))
 
     def request_frame(self) -> None:
+        self._alive()
         self.calls.append(("frame",))
 
     def of(self, item_id: str) -> list[FakePart]:
@@ -199,7 +235,7 @@ class TestAdd:
         assert (first.spec.part_index, second.spec.part_index) == (0, 1)
         assert first.spec.buffers == engine_buffers(walls.mesh)   # the ONE frame mapping
         assert second.spec.buffers == engine_buffers(roof.mesh)
-        assert first.spec.casts_shadow and first.spec.name == "walls"
+        assert first.spec.casts_shadow and second.spec.casts_shadow
         # the pose is frame.engine_pose: (E, base, −N), yaw = +rotation
         assert first.pose == second.pose == EnginePose((300.0, 40.0, -120.0), 17.0)
         assert sink.geometry_uploads == 2
@@ -381,6 +417,96 @@ class TestStateAndTeardown:
         assert scene.sun is None and scene.ground is None
         assert sink.sun is None and sink.ground is None and not sink.in_transaction
         assert sink.state() == RecordingSink().state()
+
+    def test_clear_hands_the_teardown_to_the_one_owner_of_the_models(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        """One owner of Model lifetime (review P1-3): the sink does not destroy part by
+        part and hope its handles are still good — it asks the engine scene, which
+        holds every Model, to drop them all."""
+        sink, scene = rig
+        sink.begin()
+        sink.add("a", (_prism(), _prism(5.0)), Transform(), RED)
+        sink.commit()
+        scene.calls.clear()
+        sink.clear()
+        assert scene.calls == [("clear",)]
+
+    def test_clear_empties_the_books_even_when_the_engine_raises(self) -> None:
+        """Exception-safe: a LIVE engine that fails to clear propagates its error (the
+        sync stays poisoned) — and the sink is empty all the same, so the next
+        ``clear()`` is clean instead of tripping over half-forgotten handles."""
+        scene = FakeScene(fail_on_clear=True)
+        sink = Quick3DSink(scene)
+        sink.begin()
+        sink.add("a", (_prism(),), Transform(), RED)
+        sink.set_sun(SunState(30.0, 100.0))
+        sink.set_ground(GroundSpec(10.0, 20.0))
+        with pytest.raises(RuntimeError, match="could not clear"):
+            sink.clear()
+        assert sink.item_ids() == () and sink.sun is None and sink.ground is None
+        assert not sink.in_transaction
+        assert sink.state() == RecordingSink().state()
+        scene.fail_on_clear = False
+        sink.clear()  # asks the engine again, and this time it is clean
+        assert scene.parts == [] and scene.calls[-1] == ("clear",)
+
+    @pytest.mark.parametrize("in_transaction", [False, True])
+    def test_clear_on_an_engine_that_is_gone_raises_nothing(self, in_transaction: bool) -> None:
+        """The host was closed, or Qt destroyed its window with the main window: there is
+        nothing left to destroy, and a sync whose engine died still has to be reset."""
+        scene = FakeScene()
+        sink = Quick3DSink(scene)
+        sink.begin()
+        sink.add("a", (_prism(), _prism(5.0)), Transform(), RED)
+        sink.set_sun(SunState(30.0, 100.0))
+        if not in_transaction:
+            sink.commit()
+        scene.dead = True
+        sink.clear()
+        sink.clear()  # idempotent
+        assert sink.item_ids() == () and sink.sun is None and not sink.in_transaction
+        with pytest.raises(EngineGone):  # everything else still says so, loudly
+            sink.begin()
+            sink.add("b", (_prism(),), Transform(), RED)
+
+    def test_attach_points_an_empty_sink_at_a_fresh_engine(self) -> None:
+        """The recovery after the engine died: clear, attach a new scene, send again."""
+        old, new = FakeScene(), FakeScene()
+        sink = Quick3DSink(old)
+        sync = SceneSync(sink)
+        record = Record(item_id="a", kind="SHED", shape="rectangle", footprints=(SQUARE,),
+                        transform=Transform(), material=RED, height_cm=100.0,
+                        params=Params({"seed": "a"}))
+        sync.apply({"a": record})
+        old.dead = True
+        sink.clear()
+        sync.reset()
+        sink.attach(new)
+        assert sink.scene is new
+        sync.apply({"a": record})
+        assert [p.spec.item_id for p in new.parts] == ["a"] and len(old.parts) == 1  # old: untouched
+
+    def test_attach_refuses_a_sink_that_still_holds_something(
+            self, rig: tuple[Quick3DSink, FakeScene]) -> None:
+        sink, scene = rig
+        other = FakeScene()
+        sink.begin()
+        with pytest.raises(SinkProtocolError, match="not empty"):
+            sink.attach(other)  # an open transaction
+        sink.add("a", (_prism(),), Transform(), RED)
+        sink.commit()
+        with pytest.raises(SinkProtocolError, match="not empty"):
+            sink.attach(other)  # an item
+        assert sink.scene is scene
+        sink.clear()
+        sink.begin()
+        sink.set_sun(SunState(30.0, 100.0))
+        sink.commit()
+        with pytest.raises(SinkProtocolError, match="not empty"):
+            sink.attach(other)  # a sun
+        sink.clear()
+        sink.attach(other)
+        assert sink.scene is other
 
     def test_clear_is_legal_at_any_time(self, rig: tuple[Quick3DSink, FakeScene]) -> None:
         sink, scene = rig

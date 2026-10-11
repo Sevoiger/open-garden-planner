@@ -2,29 +2,42 @@
 
 ``render_records`` runs the real pipeline — ``SceneSync`` → ``Quick3DSink`` →
 ``Quick3DHost`` — on a host that is never shown, and reads the frame back. It is
-what the render tests, the frozen exe's ``--selftest`` and later tools call.
+what the render tests, the frozen exe's ``--selftest`` and scripts call.
+
+FOR PROCESSES THAT OWN THEMSELVES — the self-test, a tool, a test. Not for the
+running app: each call blocks the GUI thread for 0.4–1.3 s (it creates a
+graphics device, compiles shaders, renders one frame and destroys the device
+again), and creating and destroying a device per call is the pattern behind the
+memory growth ADR-048 criterion 10 still has open. The app shows a
+``Quick3DHost`` and keeps it.
 
 What it guarantees:
 
 - **One host per frame.** A never-shown Qt Quick window renders exactly one
-  frame (``host.py``); every call builds its own host and closes it.
+  frame (``host.py``: ``NEW`` → ``SPENT``); every call builds its own host and
+  closes it.
 - **The clock stops at the finished READBACK** (``open_ms``), never at a frame
   being submitted: on a software rasteriser the real cost lands in the readback.
 - **Errors are loud.** Every Qt message of the render is recorded; a QML error or
   a shader that does not compile raises ``RenderError`` — the frame would still
-  have rendered, in the wrong colours (``qt_messages.py``).
-- **It cannot hang silently.** ``runlog.RenderLog`` is flushed per line, and
-  ``runlog.watchdog`` (around the call, in a process that owns itself) dumps
-  every thread's stack into it and exits with a non-zero code when the time is
-  up. A frozen GUI exe has no stdout and no stderr; the log file is the only
-  witness.
+  have rendered, in the wrong colours (``qt_messages.py``). So does a backend
+  that cannot render 3D at all (the software scene graph).
+- **Nothing is silently missing.** A builder that failed left its item without a
+  solid; ``OffscreenFrame.build_failures`` names every such item.
+- **It leaves the process as it found it.** No output unless a ``log`` is passed;
+  the message handler and Qt's logging rules are put back.
+- **It cannot hang silently** when the caller bounds it: ``runlog.RenderLog`` is
+  flushed per line, and ``runlog.watchdog`` (around the call) dumps every
+  thread's stack into it and exits with a non-zero code when the time is up. A
+  frozen GUI exe has no stdout and no stderr; the log file is the only witness.
 """
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,6 +105,7 @@ class OffscreenFrame:
     #: Request → finished readback, milliseconds (QML load, builders, uploads, the frame).
     open_ms: float
     breakdown_ms: Mapping[str, float]
+    #: ``Direct3D11``, ``OpenGL``, … (``host.GRAPHICS_API_NAMES``).
     graphics_api: str
     #: The device Qt rendered on, when ``graphics_info`` was asked for — e.g.
     #: ``NVIDIA GeForce RTX 4070``, ``Microsoft Basic Render Driver`` (WARP), ``llvmpipe …``.
@@ -100,11 +114,18 @@ class OffscreenFrame:
     view_size: tuple[float, float]
     items: int
     parts: int
+    #: Items whose builder failed — ``item_id`` → ``"ErrorType: message"``. Such an item
+    #: is in the frame WITHOUT a solid; an empty mapping means every item was built.
+    build_failures: Mapping[str, str] = field(default_factory=dict)
     #: ``QtMessages.report()``: counts per class, the errors, warnings, environment.
     qt: Mapping[str, Any] = field(default_factory=dict)
 
     def rgba(self) -> NDArray[np.uint8]:
         return image_rgba(self.image)
+
+
+def _silent(_phase: str, **_fields: Any) -> None:
+    """The default log: nothing. A library call does not write to stdout."""
 
 
 def render_records(
@@ -117,61 +138,73 @@ def render_records(
     registry: BuilderRegistry | None = None,
     look: Look = NEUTRAL_DAY,
     qml_dir: Path | None = None,
-    log: RenderLog | None = None,
+    log: Callable[..., None] | None = None,
     graphics_info: bool = False,
 ) -> OffscreenFrame:
     """Render ``records`` from ``shot`` under ``sun`` into an image of ``size``
     (logical pixels), through the real ``SceneSync`` → ``Quick3DSink`` path.
 
-    ``sun=None``: no sunlight (fill only). ``ground=None``: the endless meadow
-    without a plan rectangle. ``graphics_info=True`` also reports the graphics
-    adapter (it switches Qt's ``qt.rhi.general`` debug output on — for
-    self-tests and scripts, not inside the running app).
+    For a process that owns itself — see the module docstring before calling
+    this inside the running app.
 
-    Raises ``RenderError`` on a QML or shader error and when no image comes
-    back. A blank-looking frame is NOT judged here: the caller knows what the
-    frame must contain.
+    ``sun=None``: no sunlight (fill only). ``ground=None``: the endless meadow
+    without a plan rectangle. ``log``: a ``log(phase, **fields)`` callable
+    (``runlog.RenderLog``); without one nothing is written anywhere.
+    ``graphics_info=True`` also reports the graphics adapter (it switches Qt's
+    ``qt.rhi.general`` debug output on for the duration of the call).
+
+    Raises ``RenderError`` on a QML or shader error, when this backend cannot
+    render 3D, and when no image comes back. A blank-looking frame is NOT judged
+    here: the caller knows what the frame must contain. A failed BUILDER does not
+    raise (the pipeline contains it): read ``build_failures``.
     """
-    log = log if log is not None else RenderLog()
+    emit: Callable[..., None] = log if log is not None else _silent
     started = time.perf_counter()
     breakdown: dict[str, float] = {}
     ensure_application()
-    messages = qt_messages.QtMessages(log)
+    messages = qt_messages.QtMessages(emit)
     previous = qt_messages.install(messages)
-    if graphics_info:
-        qt_messages.enable_graphics_info()
     host: Quick3DHost | None = None
     try:
-        host = Quick3DHost(size, qml_dir=qml_dir, look=look, log=log)
-        breakdown["qml_load"] = host.qml_load_ms
-        mark = time.perf_counter()
-        sink = Quick3DSink(host)
-        sync = SceneSync(sink, registry)
-        sync.apply(records)
-        if ground is not None:
-            sync.set_ground(ground)
-        if sun is not None:
-            sync.set_sun(sun)
-        host.set_shot(shot)
-        breakdown["scene_apply"] = (time.perf_counter() - mark) * 1000.0
-        parts = sum(sink.part_count(item_id) for item_id in sink.item_ids())
-        log("scene_applied", ms=round(breakdown["scene_apply"], 1), items=len(sink.item_ids()),
-            parts=parts, build_failures=len(sync.failures))
-        mark = time.perf_counter()
-        image = host.grab("offscreen")
-        breakdown["grab"] = (time.perf_counter() - mark) * 1000.0
-        open_ms = (time.perf_counter() - started) * 1000.0
-        frame = OffscreenFrame(
-            image=image, open_ms=open_ms, breakdown_ms=breakdown,
-            graphics_api=host.graphics_api(),
-            adapter=qt_messages.graphics_adapter(messages.info_lines()),
-            device_pixel_ratio=host.device_pixel_ratio(), view_size=host.view_size(),
-            items=len(sink.item_ids()), parts=parts, qt=messages.report(),
-        )
-        log("rendered", open_ms=round(open_ms, 1), api=frame.graphics_api, adapter=frame.adapter,
-            px=f"{image.width()}x{image.height()}", qt=messages.report()["counts"])
+        with qt_messages.graphics_info() if graphics_info else contextlib.nullcontext():
+            host = Quick3DHost(size, qml_dir=qml_dir, look=look, log=emit)
+            breakdown["qml_load"] = host.qml_load_ms
+            api = host.graphics_api()
+            if not host.renders_3d():
+                raise RenderError(
+                    f"Qt Quick runs on the {api} backend here, where Qt Quick 3D draws nothing "
+                    "(QT_QPA_PLATFORM=offscreen selects the software scene graph): no 3D frame "
+                    "can be rendered")
+            mark = time.perf_counter()
+            sink = Quick3DSink(host)
+            sync = SceneSync(sink, registry)
+            sync.apply(records)
+            if ground is not None:
+                sync.set_ground(ground)
+            if sun is not None:
+                sync.set_sun(sun)
+            host.set_shot(shot)
+            breakdown["scene_apply"] = (time.perf_counter() - mark) * 1000.0
+            parts = sum(sink.part_count(item_id) for item_id in sink.item_ids())
+            failures = {item_id: f"{type(failure.error).__name__}: {failure.error}"
+                        for item_id, failure in sync.failures.items()}
+            emit("scene_applied", ms=round(breakdown["scene_apply"], 1),
+                 items=len(sink.item_ids()), parts=parts, build_failures=sorted(failures))
+            mark = time.perf_counter()
+            image = host.grab("offscreen")
+            breakdown["grab"] = (time.perf_counter() - mark) * 1000.0
+            open_ms = (time.perf_counter() - started) * 1000.0
+            frame = OffscreenFrame(
+                image=image, open_ms=open_ms, breakdown_ms=breakdown, graphics_api=api,
+                adapter=qt_messages.graphics_adapter(messages.info_lines()),
+                device_pixel_ratio=host.device_pixel_ratio(), view_size=host.view_size(),
+                items=len(sink.item_ids()), parts=parts, build_failures=failures,
+                qt=messages.report(),
+            )
+            emit("rendered", open_ms=round(open_ms, 1), api=api, adapter=frame.adapter,
+                 px=f"{image.width()}x{image.height()}", qt=messages.report()["counts"])
     except Exception as error:
-        log("render_failed", error=f"{type(error).__name__}: {error}")
+        emit("render_failed", error=f"{type(error).__name__}: {error}")
         raise
     finally:
         if host is not None:

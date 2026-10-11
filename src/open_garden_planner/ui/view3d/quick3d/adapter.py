@@ -14,11 +14,16 @@ What the sink guarantees:
   the host is handed is in the engine frame already; the host maps only what it
   is asked itself (a camera placement, a pick result), with the same
   ``core/scene3d/frame.py`` functions, and the QML converts nothing.
-- **One teardown.** ``clear()`` — the tenth ``EngineSink`` method (it joins the
-  protocol with the L1.1 review) — destroys every Model with its geometry,
-  forgets the sun and the ground and closes any open transaction. It is legal
-  at any time, including inside a transaction an engine error broke.
-  ``SceneSync.reset()`` calls it and then re-sends everything.
+- **One teardown, and one owner.** The engine scene OWNS every Model; the sink
+  holds handles as names. ``clear()`` — the tenth ``EngineSink`` method (it joins
+  the protocol with the L1.1 review) — asks the scene to drop everything
+  (``EngineScene.clear``) and empties the sink's books whether or not that
+  succeeds. It is legal at any time: inside a transaction, also one an engine
+  error broke; twice in a row; and when the engine is gone (the host was
+  closed, or Qt destroyed its window with the main window) — then there is
+  nothing left to destroy and it simply forgets. ``SceneSync.reset()`` calls it
+  and then re-sends everything; ``attach`` points the emptied sink at a fresh
+  engine scene.
 - **One Model per mesh part, one geometry per Model lifetime.** ``add`` creates
   the Models, ``remove`` destroys them, ``replace_geometry`` destroys and
   creates. A geometry object is never handed to a second Model: the L0 spike
@@ -70,7 +75,6 @@ class PartSpec:
     kind: str              # a ``core.scene3d.MATERIAL_KINDS`` member
     buffers: EngineBuffers
     casts_shadow: bool
-    name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +93,11 @@ class EngineScene(Protocol):
         """Create one Model with fresh geometry; return the handle that names it."""
 
     def destroy_part(self, handle: object) -> None:
-        """Destroy the Model (and its geometry) for good."""
+        """Destroy the Model (and its geometry) for good. A no-op when the engine is gone."""
+
+    def clear(self) -> None:
+        """Destroy every Model, no sun, no plan ground. A no-op when the engine is gone
+        — it must not raise then: a sync whose engine died still has to be reset."""
 
     def pose_part(self, handle: object, pose: EnginePose) -> None:
         """Move / turn the Model."""
@@ -173,15 +181,27 @@ class Quick3DSink:
         ``SceneSync.reset()`` calls it, then re-sends items, sun and ground. Every
         Model is destroyed together with its geometry, so the items added
         afterwards get fresh ones (the re-attach rule, ``ogp-3d-renderer`` §2).
+
+        Exception-safe and idempotent: the books are emptied in a ``finally``. An
+        engine that is gone raises nothing; a LIVE engine that fails to clear
+        propagates its error (the sync stays poisoned), and the next ``clear()``
+        asks it again.
         """
-        for held in self._items.values():
-            self._destroy(held)
-        self._items.clear()
-        self._sun = None
-        self._ground = None
-        self._open = False
-        self._scene.set_sun(None)
-        self._scene.set_ground(None)
+        try:
+            self._scene.clear()  # the ONE owner of the Models destroys them all
+        finally:  # the books are empty whatever the engine said: a second clear() is clean
+            self._items.clear()
+            self._sun = None
+            self._ground = None
+            self._open = False
+
+    def attach(self, scene: EngineScene) -> None:
+        """Point an EMPTY sink at another engine scene — a fresh host after the old one
+        died. ``SinkProtocolError`` while the sink still holds anything: ``clear()``
+        first (``SceneSync.reset()`` does)."""
+        if self._items or self._open or self._sun is not None or self._ground is not None:
+            raise SinkProtocolError("attach(): the sink is not empty — clear() it first")
+        self._scene = scene
 
     # ── EngineSink ───────────────────────────────────────────────────────────
 
@@ -259,8 +279,7 @@ class Quick3DSink:
             if buffers.is_empty:
                 held.handles.append(None)
                 continue
-            spec = PartSpec(item_id, index, part.material_kind, buffers, part.casts_shadow,
-                            part.name)
+            spec = PartSpec(item_id, index, part.material_kind, buffers, part.casts_shadow)
             held.handles.append(self._scene.create_part(spec, pose, part_tint(part, held.material)))
             self.geometry_uploads += 1
 

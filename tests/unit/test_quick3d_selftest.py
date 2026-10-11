@@ -218,19 +218,50 @@ class TestRun:
         blank = _good_frame()
         blank[..., :3] = (207, 226, 242)
         monkeypatch.setattr(selftest, "_render", lambda *_a, **_k: selftest.Rendered(
-            blank, 1.0, "Direct3D11Rhi", "Microsoft Basic Render Driver", 321.0, {"error": 0}))
+            blank, 1.0, "Direct3D11", "Microsoft Basic Render Driver", 321.0, {"error": 0}))
         result = selftest.run_selftest(tmp_path / "selftest.log")
         assert not result.ok and any("FAIL" in line and "box" in line for line in result.lines)
+
+    def test_a_builder_that_failed_fails_the_selftest_even_if_the_frame_looks_right(
+            self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        """Review P2-4: the pipeline CONTAINS a failed builder — the item is then in the
+        frame without a solid. ``render_records`` names it; the self-test must look."""
+        monkeypatch.setattr(selftest, "_render", lambda *_a, **_k: selftest.Rendered(
+            _good_frame(), 1.0, "Direct3D11", "Microsoft Basic Render Driver", 321.0, {"error": 0},
+            build_failures=("water: ValueError: degenerate footprint",)))
+        result = selftest.run_selftest(tmp_path / "selftest.log")
+        assert not result.ok
+        (failure,) = [line for line in result.lines if "FAIL" in line]
+        assert "the builder of water: ValueError: degenerate footprint failed" in failure
+
+    def test_with_the_callers_log_it_arms_no_watchdog_and_leaves_the_log_open(
+            self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        """``main`` bounds the WHOLE ``--selftest`` with one watchdog and one log
+        (``faulthandler`` has ONE timer per process: a second watchdog in here would
+        replace the outer one, and cancel it on the way out)."""
+        from open_garden_planner.ui.view3d.quick3d.runlog import RenderLog
+
+        monkeypatch.setattr(selftest, "_render", lambda *_a, **_k: selftest.Rendered(
+            _good_frame(), 1.0, "Direct3D11", "Microsoft Basic Render Driver", 321.0, {"error": 0}))
+        log = RenderLog(tmp_path / "whole.log", mirror=False)
+        try:
+            result = selftest.run_selftest(log=log, watchdog_s=None)
+            log("after", note="the caller's log is still open")
+        finally:
+            log.close()
+        text = (tmp_path / "whole.log").read_text(encoding="utf-8")
+        assert result.ok and result.log_path == tmp_path / "whole.log"
+        assert "[watchdog]" not in text and "[selftest_done] result=PASS" in text
+        assert "[after]" in text
 
     def test_a_good_frame_passes_and_names_the_device(self, monkeypatch: pytest.MonkeyPatch,
                                                       tmp_path) -> None:
         monkeypatch.setattr(selftest, "_render", lambda *_a, **_k: selftest.Rendered(
-            _good_frame(), 1.0, "Direct3D11Rhi", "Microsoft Basic Render Driver", 321.0, {"error": 0}))
+            _good_frame(), 1.0, "Direct3D11", "Microsoft Basic Render Driver", 321.0, {"error": 0}))
         result = selftest.run_selftest(tmp_path / "selftest.log")
         assert result.ok, result.lines
         assert all(line.startswith("  OK  ") for line in result.lines)
-        assert any("Microsoft Basic Render Driver" in line and "Direct3D11Rhi" in line
-                   for line in result.lines)
+        assert any("on Direct3D11 / Microsoft Basic Render Driver" in line for line in result.lines)
         log = (tmp_path / "selftest.log").read_text(encoding="utf-8")
         assert "watchdog" in log and "PASS" in log
 
@@ -350,5 +381,35 @@ def test_a_hang_becomes_exit_code_1_with_the_stack_in_the_log(tmp_path: Path) ->
     assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
     assert "returned" not in proc.stdout, "the hang must end the process, not return a verdict"
     text = log.read_text(encoding="utf-8")
-    assert "[watchdog] armed=True seconds=1.5" in text
-    assert "Timeout (0:00:01" in text and "in stuck" in text and "run_selftest" in text
+    assert "[watchdog] armed=True seconds=1.5 what=the 3D self-test frame" in text
+    # the reason in words, BEFORE the exit (review P1-4) — then faulthandler's own dump
+    assert "[watchdog] fired=True" in text
+    assert "the 3D self-test frame did not finish within 1.5 s" in text
+    assert text.index("[watchdog] fired=True") < text.index("Timeout (0:00:01")
+    assert "in stuck" in text and "run_selftest" in text
+
+
+_NOWHERE = textwrap.dedent("""
+    import sys
+    import time
+    from open_garden_planner.ui.view3d.quick3d.runlog import RenderLog, watchdog
+
+    sys.stderr = None            # a windowed frozen exe has none
+    log = RenderLog(None, mirror=False)   # … and its log could not be opened
+    with watchdog(1.0, log, what="a run without any output"):
+        time.sleep(120)
+    print("returned", flush=True)
+""")
+
+
+def test_a_hang_ends_the_process_even_with_nowhere_to_write(tmp_path: Path) -> None:
+    """No log file and no stderr: the watchdog used to switch itself OFF there ("nothing
+    to dump into") — an unbounded self-test in exactly the build that has no other
+    channel. Now the stacks are lost and the exit is not."""
+    src = Path(__file__).resolve().parents[2] / "src"
+    env = dict(os.environ, PYTHONPATH=str(src), QT_QPA_PLATFORM="offscreen")
+    proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
+        [sys.executable, "-c", _NOWHERE], env=env, capture_output=True, text=True, timeout=100,
+        cwd=tmp_path)
+    assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
+    assert "returned" not in proc.stdout

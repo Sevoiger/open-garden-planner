@@ -153,7 +153,24 @@ def run(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict[str, Any], Path]
 
 
 def _is_software(adapter: str | None) -> bool:
-    return adapter is None or any(name in adapter.lower() for name in SOFTWARE_ADAPTERS)
+    """True for a software rasteriser the run NAMED. An unknown adapter is not one:
+    a run that cannot say what it rendered on has no licence to skip a budget."""
+    if not adapter:
+        raise AssertionError(
+            "the run did not name its graphics adapter (qt.rhi.general): a hardware budget "
+            "can neither be asserted nor waived — fix the adapter readout, do not skip")
+    return any(name in adapter.lower() for name in SOFTWARE_ADAPTERS)
+
+
+def test_an_unknown_adapter_is_not_a_software_adapter() -> None:
+    """Review P2-8: ``adapter is None`` used to count as software, so a run that lost the
+    adapter line skipped both hardware budgets — green, with nothing measured."""
+    assert _is_software("Microsoft Basic Render Driver") is True
+    assert _is_software("llvmpipe (LLVM 15.0.7, 256 bits)") is True
+    assert _is_software("NVIDIA GeForce RTX 4070") is False
+    for unknown in (None, ""):
+        with pytest.raises(AssertionError, match="did not name its graphics adapter"):
+            _is_software(unknown)
 
 
 def _key(part: dict[str, Any]) -> tuple[str, int]:

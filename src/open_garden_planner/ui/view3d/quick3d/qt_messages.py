@@ -18,18 +18,24 @@ Four classes:
   never a failure.
 - ``info`` — debug and info output (the graphics adapter is read from it).
 
+The LEVEL decides first: only a warning can be promoted to ``error`` by its
+text. Debug and info output is never an error, whatever it says — the self-test
+switches Qt's ``qt.rhi.general`` debug output on, and the wording of a Qt debug
+line must not be able to fail a release.
+
 The classifier and the recorder are Qt-free (unit-tested without a GPU); only
-``install`` / ``uninstall`` / ``enable_graphics_info`` touch Qt — ``QtCore``,
-which is not an engine module.
+``install`` / ``uninstall`` / ``graphics_info`` touch Qt — ``QtCore``, which is
+not an engine module.
 """
 
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import sys
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, Final
 
 # A message matching one of these means the frame on screen is not the frame the
@@ -56,6 +62,7 @@ _KEEP: Final = 100  # per class: enough to read, bounded for a long session
 CLASSES: Final = ("error", "warning", "environment", "info")
 
 _ADAPTER: Final = re.compile(r"Adapter \d+: '([^']*)'")
+_GRAPHICS_INFO_DEPTH: Final = [0]  # nesting depth of graphics_info() blocks (GUI thread)
 _GL_RENDERER: Final = re.compile(r"OpenGL VENDOR: .*? RENDERER: (.*?) VERSION: ")
 
 
@@ -65,10 +72,12 @@ def classify(kind: str, text: str, category: str = "") -> str:
     ``kind`` is the Qt message type in lower case (``debug``, ``info``,
     ``warning``, ``critical``, ``fatal``).
     """
-    if kind in ("critical", "fatal") or _ERROR.search(text):
+    if kind in ("critical", "fatal"):
         return "error"
     if kind != "warning":
-        return "info"
+        return "info"  # debug / info output is never an error, whatever its wording
+    if _ERROR.search(text):
+        return "error"
     for wanted, pattern in _ENVIRONMENT:
         if category == wanted and pattern.search(text):
             return "environment"
@@ -129,9 +138,24 @@ class QtMessages:
                     "environment": list(self.kept["environment"][:30])}
 
 
+def logging_sink(logger: logging.Logger) -> Callable[..., None]:
+    """A recorder callback that writes to a Python logger — for a LIVE view, whose
+    Qt warnings and errors belong in the app's log (``Quick3DHost.watch_messages``).
+
+    An ``error`` becomes ``logger.error``, a ``warning`` ``logger.warning``, an
+    ``environment`` message ``logger.info``. Safe from any thread (``logging`` is).
+    """
+    levels = {"error": logging.ERROR, "warning": logging.WARNING}
+
+    def log(_phase: str, *, level: str = "info", msg: str = "", **_fields: Any) -> None:
+        logger.log(levels.get(level, logging.INFO), "Qt: %s", msg)
+
+    return log
+
+
 def graphics_adapter(info_lines: Iterable[str]) -> str | None:
     """The graphics device Qt chose, read from ``qt.rhi.general`` (see
-    ``enable_graphics_info``) — or None when the lines do not say.
+    ``graphics_info``) — or None when the lines do not say.
 
     Direct3D lists every adapter and marks one with ``using this adapter``; the
     marker follows the adapter it means. OpenGL prints the context's
@@ -150,16 +174,28 @@ def graphics_adapter(info_lines: Iterable[str]) -> str | None:
     return chosen
 
 
-def enable_graphics_info() -> None:
-    """Make Qt name its graphics device (``qt.rhi.general``) — as debug output, which
-    the recorder files under ``info``. Call it before the first Quick window.
+@contextlib.contextmanager
+def graphics_info() -> Iterator[None]:
+    """Make Qt name its graphics device (``qt.rhi.general``) for the block — as debug
+    output, which the recorder files under ``info`` — and switch it off again after.
+    Enter it before the Quick window is created.
 
-    ``setFilterRules`` replaces rules set the same way earlier; this is for
-    offscreen renders and the self-test, not for the running app.
+    ``QLoggingCategory.setFilterRules`` holds ONE rule set per process and has no
+    getter: entering replaces rules set the same way, leaving clears them. Nothing
+    in the app sets any (2026-10); a caller that does must not use this. Blocks
+    may nest (a recorded run around a recorded frame): the outermost one switches.
     """
     from PyQt6.QtCore import QLoggingCategory
 
-    QLoggingCategory.setFilterRules("qt.rhi.general.debug=true")
+    if _GRAPHICS_INFO_DEPTH[0] == 0:
+        QLoggingCategory.setFilterRules("qt.rhi.general.debug=true")
+    _GRAPHICS_INFO_DEPTH[0] += 1
+    try:
+        yield
+    finally:
+        _GRAPHICS_INFO_DEPTH[0] -= 1
+        if _GRAPHICS_INFO_DEPTH[0] == 0:
+            QLoggingCategory.setFilterRules("")
 
 
 def install(messages: QtMessages) -> Any:

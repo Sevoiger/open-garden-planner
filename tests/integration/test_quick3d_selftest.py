@@ -79,6 +79,16 @@ def test_the_whole_selftest_command_passes(tmp_path: Path) -> None:
     assert "SELFTEST: PASS" in proc.stdout
     assert "OK   Qt Quick 3D frame 160x120" in proc.stdout
     assert f"3D self-test log: {log}" in proc.stdout and log.is_file()
+    # ONE watchdog around every block (review P1-4), and the verdict is in the log too
+    text = log.read_text(encoding="utf-8")
+    assert text.count("[watchdog] armed=True") == 1
+    assert "[watchdog] armed=True seconds=300.0 what=--selftest" in text
+    order = [text.index(marker) for marker in (
+        "[selftest_start]", "[watchdog] armed=True", "[rendered]", "[selftest_done] result=PASS",
+        "[selftest_exit] code=0 result=PASS")]
+    assert order == sorted(order), text
+    assert "[watchdog] fired=True" not in text, "the watchdog must not have announced a hang"
+    assert "Timeout (" not in text, "faulthandler must not have dumped"
 
 
 def test_the_3d_selftest_fails_on_a_shader_that_does_not_compile(tmp_path: Path) -> None:
@@ -100,9 +110,12 @@ def test_the_3d_selftest_fails_on_a_shader_that_does_not_compile(tmp_path: Path)
 
 def test_the_3d_selftest_fails_where_nothing_renders(tmp_path: Path) -> None:
     """Under the offscreen platform Qt Quick falls back to the software scene graph,
-    which has no 3D: the frame comes back white, and the judge says so. The
-    self-test cannot pass by accident."""
+    which has no 3D. The render refuses to hand out a frame without the garden and
+    names the backend — the self-test cannot pass by accident, and its message
+    says what is wrong with the machine rather than "the box is not there"."""
     proc, log = _selftest(tmp_path, QT_QPA_PLATFORM="offscreen")
     assert proc.returncode == 1, proc.stdout + proc.stderr[-2000:]
-    assert "FAIL Qt Quick 3D frame" in proc.stdout and "the box is not there" in proc.stdout
+    (failure,) = [line for line in proc.stdout.splitlines() if "FAIL" in line]
+    assert "Qt Quick 3D render -> RenderError" in failure
+    assert "Software backend" in failure and "no 3D frame can be rendered" in failure
     assert "result=FAIL" in log
