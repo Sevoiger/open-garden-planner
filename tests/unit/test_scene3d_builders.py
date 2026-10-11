@@ -681,7 +681,7 @@ class TestPolylinesAreBuiltFromTheCentreLine:
         where the stroke reaches 2, so of the 96 cm hole a 1 m loop encloses, the solid
         covers a 17 cm strip all round — 58 % of it. The solid is right (such a wall
         leaves a 62 cm opening); the bound is for large loops. Measured: a closed WALL
-        up to 120 cm side, a stone-wall or hedge fence up to 100 cm, is refused by the
+        up to 120 cm side, a stone-wall or hedge fence up to 110 cm, is refused by the
         default. So a small loop is verified with the limit stated here — the strip the
         section reaches into, never the middle."""
         side = 100.0

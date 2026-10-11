@@ -2787,7 +2787,8 @@ only, and correct their heights with a fit after the fact.
    either side of its centre line where its stroke reaches 2, so of the 96 cm hole a 1 m square
    loop encloses it covers a 17 cm strip all round — 56 % measured — and the default refuses the
    production builder's own, correct solid: a closed WALL loop up to 120 cm side, a stone-wall
-   or hedge-fence loop up to 100 cm. Such a loop is verified with an explicit
+   or hedge-fence loop up to 110 cm (measured in 10 cm steps; the gate samples the hole on a
+   coarse grid, so its reading moves in steps). Such a loop is verified with an explicit
    `hole_cover_limit` and the reason (pinned at 0.65 for a 1 m loop; from 1.5 m on the default
    holds). (A size floor for SLIVER holes is the contract's business and a different case: this
    hole is most of a square metre.) A closed centre line is swept as a loop. **A builder that needs

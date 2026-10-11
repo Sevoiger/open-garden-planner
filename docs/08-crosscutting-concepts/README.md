@@ -2919,7 +2919,7 @@ and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `upd
    `record.holes` — and the outer ring alone lids the garden. Nothing may be built over that
    hole: `verify_builder` refuses a solid that covers more than half of it. That default is for
    loops the size of a garden. A wall or hedge reaches 19–20 cm either side of its line, so a
-   closed WALL loop up to 120 cm side (a stone-wall or hedge-fence loop up to 100 cm) covers
+   closed WALL loop up to 120 cm side (a stone-wall or hedge-fence loop up to 110 cm) covers
    over half of what it encloses and is refused although it is right: verify such a loop with
    an explicit `hole_cover_limit` and say why (the test for a 1 m loop uses 0.65).
    **One plain ring, or the plain block**: a builder that needs ONE simple outline — a gable
