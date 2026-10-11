@@ -14,6 +14,11 @@ and after EVERY step two things are asserted:
 
 Nothing is rendered: the sink is the recording double. L1.2 runs the same
 session against Qt Quick 3D.
+
+Fix round 1 added: a sink that fails in the middle of a real edit session and
+is recovered through ``SceneSync.reset()`` alone, a clock tick that moves the
+sun and grows the plants in ONE transaction, and a builder package registered
+after the plan was already showing.
 """
 
 from __future__ import annotations
@@ -38,13 +43,19 @@ from open_garden_planner.core.object_height import METADATA_KEY
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
+    GroundSpec,
     MeshPart,
     Record,
     RecordingSink,
     SceneDiff,
     SceneSync,
+    SunState,
+    SyncStateError,
+    Transform,
     default_builder,
+    prism_mesh,
 )
+from open_garden_planner.core.solar import solar_position
 from open_garden_planner.core.stacking import ArrangeMode
 from open_garden_planner.core.tools import ToolType
 from open_garden_planner.ui.canvas.arrange import build_arrange_command
@@ -91,20 +102,23 @@ class Pipeline:
         self.built.append(record.item_id)
         return default_builder(record)
 
-    def tick(self) -> tuple[SceneDiff, list[tuple[str, str | None]], list[str]]:
+    def tick(self, sun: SunState | None = None, ground: GroundSpec | None = None,
+             ) -> tuple[SceneDiff, list[tuple[str, str | None]], list[str]]:
         """One pipeline pass: (diff, the sink calls it caused, the items it built)."""
         self.sink.clear_calls()
         self.built.clear()
         records = snapshot_records(self.scene, self.at)
-        result = self.sync.apply(records)
+        assert records.skipped == ()
+        result = self.sync.apply(records, sun=sun, ground=ground)
+        calls, built = self.sink.ops(), list(self.built)  # before the reference rebuilds below
         self.assert_equals_full_rebuild(records)
-        return result, self.sink.ops(), list(self.built)
+        return result, calls, built
 
     def assert_equals_full_rebuild(self, records: dict[str, Record]) -> None:
-        fresh = SceneSync(RecordingSink(), validate=True)
-        fresh.apply(records)
+        fresh = SceneSync(RecordingSink(), self.sync.registry, validate=True)
+        fresh.apply(records, sun=self.sync.sun, ground=self.sync.ground)
         assert isinstance(fresh.sink, RecordingSink)
-        assert self.sink.state() == fresh.sink.state()
+        assert self.sink.state() == fresh.sink.state() == self.sync.expected_state()
         assert dict(self.sync.records) == records and list(self.sync.records) == list(records)
         assert self.sync.failures == {} and not self.sink.in_transaction
 
@@ -472,7 +486,7 @@ def test_bench_plan_first_apply_then_silence(qtbot, plan: str) -> None:
     ProjectManager().load(scene, PLANS / plan)
     pipeline = Pipeline(scene, JUNE)
     result, calls, built = pipeline.tick()
-    expected = 99 if plan == "bench_small.ogp" else 425
+    expected = 98 if plan == "bench_small.ogp" else 424  # every item but the roof ridge
     assert len(result.added) == len(built) == expected
     assert calls == [BEGIN, *[("add", i) for i in result.added], COMMIT]
     for _ in range(3):
@@ -491,33 +505,148 @@ def test_real_app_edit_and_sim_date(qtbot, monkeypatch) -> None:
     win._project_manager.load(win.canvas_scene, PLANS / "bench_small.ogp")
     win._sim_clock.set_datetime(datetime(2026, 6, 21, 12, 0))
     pipeline = Pipeline(win.canvas_scene, win._sim_clock.plan_date)
-    result, _calls, built = pipeline.tick()
-    assert len(result.added) == len(built) == 99
+    location = win._project_manager.location
+    ground = GroundSpec(win.canvas_scene.width_cm, win.canvas_scene.height_cm)
+
+    def sun_now() -> SunState:
+        return SunState.from_solar_position(solar_position(
+            location["latitude"], location["longitude"], win._sim_clock.instant.utc))
+
+    result, calls, built = pipeline.tick(sun=sun_now(), ground=ground)
+    assert len(result.added) == len(built) == 98
+    assert calls[-3:] == [("set_ground", None), ("set_sun", None), COMMIT]
+    assert pipeline.sink.transactions == 1  # the whole plan, its ground and its sun: one commit
 
     # an edit through the app's own undo stack
     house = next(i for i in win.canvas_scene.items()
                  if getattr(i, "object_type", None) == ObjectType.HOUSE)
     house_id = str(house.item_id)
     ridge_id = str(house.metadata["ridge_item_id"])
+    assert ridge_id not in pipeline.sync.records  # the ridge is the house's param, not a record
     win.canvas_view.command_manager.execute(MoveItemsCommand([house], QPointF(50.0, -25.0)))
     result, calls, built = pipeline.tick()
-    # the house and its ridge item move together; the ridge END POINTS in the
-    # house's own frame did not change, so the house is NOT rebuilt
-    assert set(result.transform) == {house_id, ridge_id}
-    assert result.geometry == () and result.material == () and built == []
-    assert sorted(calls[1:-1]) == sorted([("update_transform", house_id), ("update_transform", ridge_id)])
+    # the app moves the ridge item along; the ridge END POINTS in the house's own
+    # frame did not change, so the house is NOT rebuilt — one call, the house's
+    assert result == SceneDiff(transform=(house_id,)) and built == []
+    assert calls == [BEGIN, ("update_transform", house_id), COMMIT]
     win.canvas_view.command_manager.undo()
     result, calls, built = pipeline.tick()
-    assert set(result.transform) == {house_id, ridge_id} and result.geometry == () and built == []
+    assert result == SceneDiff(transform=(house_id,)) and built == []
 
-    # the sim clock moves ten years on: only the dated plants grow
-    win._sim_clock.set_date(date(2036, 6, 21))
-    pipeline.at = win._sim_clock.plan_date
+    # turning the house re-derives its ridge item (ADR-046): still ONE call, no build
+    win.canvas_view.command_manager.execute(RotateItemCommand(house, 0.0, 40.0, apply_rotation))
     result, calls, built = pipeline.tick()
+    assert result == SceneDiff(transform=(house_id,)) and built == []
+    assert calls == [BEGIN, ("update_transform", house_id), COMMIT]
+    assert pipeline.sink.item(house_id).transform.rotation_deg == 40.0
+    win.canvas_view.command_manager.undo()
+    assert pipeline.tick()[0] == SceneDiff(transform=(house_id,))
+
+    # the sim clock moves ten years and three hours on: the dated plants grow and
+    # the sun moves — ONE transaction, so no frame shows the new sun over old plants
+    before_sun = pipeline.sync.sun
+    win._sim_clock.set_datetime(datetime(2036, 6, 21, 15, 0))
+    pipeline.at = win._sim_clock.plan_date
+    transactions = pipeline.sink.transactions
+    result, calls, built = pipeline.tick(sun=sun_now(), ground=ground)
     grown = set(result.geometry)
     assert grown and result.transform == () and result.material == ()
     assert result.added == () and result.removed == ()
     kinds = {pipeline.sync.records[i].kind for i in grown}
     assert kinds <= {"TREE", "SHRUB", "PERENNIAL"}
     assert sorted(built) == sorted(grown)
-    assert [op for op, _ in calls[1:-1]] == ["replace_geometry"] * len(grown)
+    assert [op for op, _ in calls[1:-1]] == ["replace_geometry"] * len(grown) + ["set_sun"]
+    assert pipeline.sink.transactions == transactions + 1
+    assert pipeline.sync.sun != before_sun and pipeline.sink.sun == pipeline.sync.sun
+
+
+class _DeviceLost(RecordingSink):
+    """A sink whose device goes away once, in the middle of a transaction."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lose_device = False
+
+    def update_transform(self, item_id: str, transform: Transform) -> None:
+        if self.lose_device:
+            raise OSError("device lost")
+        super().update_transform(item_id, transform)
+
+
+def test_a_sink_failure_in_an_edit_session_is_recovered_through_the_protocol(
+    canvas: CanvasView,
+) -> None:
+    """Review P1-2, end to end on real items. The sink fails half way through a
+    transaction; the sync refuses further diffs; ``reset()`` — which reaches the
+    sink only through ``EngineSink.clear()`` — and one plain tick bring the
+    engine to exactly the state a from-scratch apply gives. No test code touches
+    the sink to repair it."""
+    scene = canvas.scene()
+    commands = canvas.command_manager
+    layer = scene.active_layer.id
+    shed = RectangleItem(100.0, 100.0, 300.0, 200.0, object_type=ObjectType.TOOL_SHED, layer_id=layer)
+    bed = RectangleItem(600.0, 100.0, 400.0, 120.0, object_type=ObjectType.RAISED_BED, layer_id=layer)
+    fence = PolylineItem([QPointF(0.0, 0.0), QPointF(900.0, 0.0), QPointF(900.0, 600.0),
+                          QPointF(0.0, 600.0), QPointF(0.0, 0.0)],
+                         object_type=ObjectType.FENCE, layer_id=layer)
+    for item in (shed, bed, fence):
+        commands.execute(CreateItemCommand(scene, item, "item"))
+    pipeline = Pipeline(scene)
+    sink = _DeviceLost()
+    pipeline.sink = sink
+    pipeline.sync = SceneSync(sink, BuilderRegistry(default=pipeline._build), validate=True)
+    sun, ground = SunState(35.0, 170.0), GroundSpec(scene.width_cm, scene.height_cm)
+    pipeline.tick(sun=sun, ground=ground)
+
+    # a delete and two moves in one tick: the remove goes through, the first move fails
+    commands.execute(DeleteItemsCommand(scene, [shed]))
+    commands.execute(MoveItemsCommand([bed, fence], QPointF(40.0, 25.0)))
+    sink.lose_device = True
+    with pytest.raises(OSError, match="device lost"):
+        pipeline.sync.apply(snapshot_records(scene))
+    assert pipeline.sync.poisoned and sink.in_transaction
+    assert str(shed.item_id) not in sink.item_ids()  # half applied: the engine's scene is unknown
+    with pytest.raises(SyncStateError, match="reset"):
+        pipeline.sync.apply(snapshot_records(scene))
+
+    sink.lose_device = False  # the device is back
+    pipeline.sync.reset()
+    assert sink.ops()[-1] == ("clear", None) and not sink.in_transaction
+    assert sink.item_ids() == () and sink.sun is None and sink.ground is None
+
+    result, calls, built = pipeline.tick(sun=sun, ground=ground)  # asserts == full rebuild
+    remaining = (str(bed.item_id), str(fence.item_id))
+    assert result == SceneDiff(added=remaining) and sorted(built) == sorted(remaining)
+    assert calls == [BEGIN, *[("add", i) for i in remaining], ("set_ground", None),
+                     ("set_sun", None), COMMIT]
+    # and the session simply continues
+    commands.undo()
+    result, calls, built = pipeline.tick()
+    assert result == SceneDiff(transform=remaining) and built == []
+
+
+def test_a_builder_package_registered_late_takes_over_its_items(canvas: CanvasView) -> None:
+    """Review P2-1. L1.6 and L1.7 register their builders into the registry the
+    wiring made; if one arrives after the plan is already showing, the next tick
+    rebuilds exactly the items it now owns — incremental == full rebuild holds
+    across the change (``Pipeline.tick`` asserts it)."""
+    scene = canvas.scene()
+    shed = RectangleItem(100.0, 100.0, 300.0, 200.0, object_type=ObjectType.TOOL_SHED)
+    house = RectangleItem(600.0, 100.0, 400.0, 300.0, object_type=ObjectType.HOUSE)
+    for item in (shed, house):
+        scene.addItem(item)
+    pipeline = Pipeline(scene)
+    pipeline.tick()
+    house_id = str(house.item_id)
+
+    def gabled(record: Record) -> tuple[MeshPart, ...]:
+        assert record.height_cm is not None
+        return (MeshPart(prism_mesh(record.footprints, record.height_cm * 0.6), name="walls"),
+                MeshPart(prism_mesh(record.footprints, record.height_cm), "roof", name="roof"))
+
+    pipeline.sync.registry.register("HOUSE", gabled)
+    result, calls, built = pipeline.tick()
+    assert result.is_empty  # no record changed
+    assert calls == [BEGIN, ("replace_geometry", house_id), COMMIT] and built == []
+    assert [part.name for part in pipeline.sink.item(house_id).parts] == ["walls", "roof"]
+    assert pipeline.tick() == (SceneDiff(), [], [])
