@@ -15,7 +15,9 @@ gates run over exactly those shapes, loaded through the real ``ProjectManager``:
 
 from __future__ import annotations
 
+import copy
 import importlib.util
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +70,12 @@ def _by_name(snapshot: Snapshot, name: str):
 
 def test_generator_reproduces_the_committed_fixture(qtbot, tmp_path) -> None:  # noqa: ARG001
     """Regenerating writes the same plan (modulo the save timestamp) — and leaves
-    the two bench plans exactly as they are."""
+    the two bench plans exactly as they are.
+
+    "The same plan" is ``same_plan``: this fixture has turned items, so a few of
+    its numbers went through ``cos`` / ``sin`` and may differ in their last bit
+    on another platform (the committed file was generated on Windows). On the
+    generating platform the comparison is exact as well."""
     import open_garden_planner.app.settings as app_settings
 
     spec = importlib.util.spec_from_file_location(
@@ -81,13 +88,61 @@ def test_generator_reproduces_the_committed_fixture(qtbot, tmp_path) -> None:  #
     assert after == store  # importing the generator must not retarget this process's settings
     fresh = tmp_path / module.NAME
     module.bench._save(module.build_edge_cases(), fresh)
-    assert module.bench._normalised(fresh) == module.bench._normalised(PLAN), (
+    regenerated, committed = module.bench._normalised(fresh), module.bench._normalised(PLAN)
+    assert module.same_plan(regenerated, committed), (
         "scene3d_edge_cases.ogp is stale — rerun scripts/make_scene3d_edge_plan.py")
+    if sys.platform == "win32":  # where the committed file was generated: bit for bit
+        assert regenerated == committed
     for name, build in zip(BENCH_PLANS, (module.bench.build_small, module.bench.build_large),
                            strict=True):
         again = tmp_path / name
         module.bench._save(build(), again)
         assert module.bench._normalised(again) == module.bench._normalised(PLAN.parent / name), name
+
+
+def test_same_plan_forgives_the_last_bit_and_nothing_else(qtbot) -> None:  # noqa: ARG001
+    """The comparison the regeneration test stands on, turned against itself: a
+    float moved by one bit is the same plan; a float moved by a micrometre, a
+    changed string, a missing key, a reordered list, ``True`` for ``1`` are not."""
+    import json
+    import math
+
+    spec = importlib.util.spec_from_file_location(
+        "make_scene3d_edge_plan", REPO / "scripts" / "make_scene3d_edge_plan.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    committed = json.loads(PLAN.read_text(encoding="utf-8"))
+    assert module.same_plan(committed, copy.deepcopy(committed))
+
+    def first_float(node, path=()):
+        if isinstance(node, float):
+            return path
+        children = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
+        for key, child in children:
+            found = first_float(child, (*path, key))
+            if found is not None:
+                return found
+        return None
+
+    def changed(path, change):
+        plan = copy.deepcopy(committed)
+        node = plan
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] = change(node[path[-1]])
+        return plan
+
+    where = first_float(committed["objects"])
+    assert where is not None
+    where = ("objects", *where)
+    assert module.same_plan(changed(where, lambda x: math.nextafter(x, math.inf)), committed)
+    assert not module.same_plan(changed(where, lambda x: x + 1e-4), committed)  # a micrometre
+    assert not module.same_plan(changed(("objects", 0, "object_type"), lambda _x: "SHED"), committed)
+    assert not module.same_plan(changed(("objects",), lambda items: items[1:]), committed)
+    assert not module.same_plan(changed(("objects",), lambda items: items[::-1]), committed)
+    assert not module.same_plan({"a": True}, {"a": 1}) and not module.same_plan({"a": 1}, {"b": 1})
+    assert module.same_plan({"a": 2}, {"a": 2.0})  # 2 and 2.0 are one number in JSON
 
 
 def test_what_the_plan_contains(plan) -> None:

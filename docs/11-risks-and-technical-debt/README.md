@@ -1097,8 +1097,8 @@ building on.
   there was no sequence of protocol calls that recovered. The test passed because it first called
   `RecordingSink.reset()` — a convenience of the test double that no engine has. Fix: a tenth
   protocol method, `clear()` (hold nothing; legal at any time, also inside a transaction), which
-  `reset()` now calls; `reset()` also forgets the sun and ground it deduplicated against, or the
-  first sun after a recovery would have been swallowed as "unchanged". *A fake that is more
+  `reset()` now calls. (That `reset()` forgets the sun and ground it deduplicates against — or the
+  first sun after a recovery would be swallowed as "unchanged" — was already so; it is now pinned.) *A fake that is more
   capable than the real thing certifies behaviour the real thing does not have: test recovery
   with nothing but the interface.*
 - **One malformed plant blanked the whole plan.** `plant_species = {"scientific_name": None}` on

@@ -21,6 +21,14 @@ It is written through the real ``ProjectManager`` serializer with seeded ids,
 exactly like ``scripts/make_bench_plans.py``, whose plumbing it reuses — and
 which it never modifies: the bench plans stay byte for byte what they were.
 
+One difference from the bench plans: this plan has TURNED items, so some of its
+numbers went through ``cos`` / ``sin`` (the ridge item Qt re-derives when the
+house turns, the two plants placed inside the turned bed), and the last bit of
+those belongs to the platform's C library. "Regenerating reproduces the
+committed plan" therefore means ``same_plan``: the same structure, the same
+strings and integers, every float within 1e-9 cm (section 8.10.3, "a golden
+fixture before a move"). The committed file was generated on Windows.
+
 Usage::
 
     venv/bin/python scripts/make_scene3d_edge_plan.py           # (re)write the fixture
@@ -34,6 +42,7 @@ import math
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 if str(SCRIPTS) not in sys.path:
@@ -47,6 +56,9 @@ from open_garden_planner.ui.canvas.geometry_apply import apply_rotation  # noqa:
 from open_garden_planner.ui.canvas.items import EllipseItem  # noqa: E402
 
 NAME = "scene3d_edge_cases.ogp"
+#: How far a regenerated float may lie from the committed one, in the plan's own
+#: unit (cm, degrees): far above one bit of a coordinate, far below anything real.
+FLOAT_TOLERANCE = 1e-9
 FENCE_WIDTH_CM = 10.0
 HOUSE_TURN_DEG = 25.0
 POND_TURN_DEG = 40.0
@@ -102,6 +114,23 @@ def build_edge_cases() -> bench.PlanBuilder:
     return b
 
 
+def same_plan(fresh: Any, committed: Any, tolerance: float = FLOAT_TOLERANCE) -> bool:
+    """True when two parsed plans are the same plan: equal structure, equal
+    strings / integers / booleans, floats within ``tolerance`` (module docstring)."""
+    if isinstance(fresh, bool) or isinstance(committed, bool):
+        return fresh is committed
+    if isinstance(fresh, float) or isinstance(committed, float):
+        return (isinstance(fresh, int | float) and isinstance(committed, int | float)
+                and math.isclose(fresh, committed, rel_tol=0.0, abs_tol=tolerance))
+    if isinstance(fresh, dict) and isinstance(committed, dict):
+        return (fresh.keys() == committed.keys()
+                and all(same_plan(fresh[key], committed[key], tolerance) for key in fresh))
+    if isinstance(fresh, list) and isinstance(committed, list):
+        return (len(fresh) == len(committed)
+                and all(same_plan(a, b, tolerance) for a, b in zip(fresh, committed, strict=True)))
+    return bool(fresh == committed)
+
+
 def main(argv: list[str] | None = None) -> int:
     bench._isolate_settings()
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
@@ -115,7 +144,8 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory() as tmp:
             fresh = Path(tmp) / NAME
             bench._save(build_edge_cases(), fresh)
-            current = committed.is_file() and bench._normalised(fresh) == bench._normalised(committed)
+            current = committed.is_file() and same_plan(bench._normalised(fresh),
+                                                         bench._normalised(committed))
         if not current:
             print(f"STALE: {committed.relative_to(bench.REPO)} — rerun scripts/make_scene3d_edge_plan.py")
         print("scene3d edge-case plan: " + ("OK" if current else "FAIL"))

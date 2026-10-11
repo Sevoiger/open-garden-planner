@@ -466,7 +466,7 @@ class TestReset:
 
     def test_reset_forgets_the_sun_and_ground_it_deduplicates_against(self, sync) -> None:
         """The engine forgot them (``clear()``), so "same as last time" must not
-        swallow the next one — the bug of a reset that only forgot the records."""
+        swallow the next one — what a reset that forgot only the records would do."""
         sun, ground = SunState(30.0, 180.0), GroundSpec(2400.0, 1600.0)
         assert sync.set_sun(sun) is True and sync.set_ground(ground) is True
         assert sync.set_sun(sun) is False and sync.set_ground(ground) is False
