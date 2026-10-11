@@ -39,8 +39,18 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   hole.
 - **`core/plant_art/` is standard library only** (no Qt, no numpy; AST scan in
   `tests/unit/test_plant_art.py`): the plant recipe tables and the species → sprite rule, read by
-  the sprite generator script, by `core/plant_renderer` and by the plant builder
-  `core/scene3d/builders/plants.py` (L1.7, §8.22.4, §8.26.7).
+  the sprite generator script (which executes `recipes.py` by file path — importing the package
+  by name runs `core/__init__.py` and loads PyQt6), by `core/plant_renderer` and by the plant
+  builder `core/scene3d/builders/plants.py` (L1.7, §8.22.4, §8.26.7).
+- **A plant's 3D recipe is resolved from the record's `sprite_species`** — the item's own
+  species string, raw — its `plant_category` and its kind: the 2D renderer's three inputs.
+  `species_name` / `species_key` describe the species DATA and are for labels and lookups; a
+  builder that resolved a look from them built a squash where the plan drew a pumpkin.
+- **The plant builder remembers shapes** (`PROPORTION_STEP`, `SHAPE_CACHE_SIZE` in
+  `builders/plants.py`): the mesh arrays it hands a sink are read-only and their colours, uvs and
+  indices are SHARED between the meshes of one plant at different sizes (the same array objects;
+  pinned by `tests/unit/test_scene3d_plants.py::TestShapeCache`). An adapter must copy what it
+  wants to change.
 
 ## 2. PyQt6 6.11 binding facts
 

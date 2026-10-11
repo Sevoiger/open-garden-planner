@@ -2704,17 +2704,26 @@ with the sprite on the plan about its shape or its green, and no test would noti
 
 1. **The tables have one home: `core/plant_art/recipes.py`** (standard library only). `PALETTES`,
    `FRUITS`, `FLOWERS`, `SPECIES` and `CATEGORIES` were sliced out of the script by line, not
-   retyped; the script imports them — from its own checkout's `src`, whatever a venv's editable
-   install points at — and keeps the drawing code. Its output is byte-identical to the committed
-   blobs over all 123 SVGs (5,833,889 bytes) before and after. The one palette that was a literal
+   retyped; the script executes that file by its path and keeps the drawing code — by path, so
+   that it still needs nothing but the standard library (importing the package by name runs
+   `core/__init__.py` and with it PyQt6) and cannot be led to another checkout by an editable
+   install. Its output is byte-identical to the committed blobs over all 123 SVGs (5,833,889
+   bytes) before and after. The one palette that was a literal
    in the drawing code, the hedge's, became data too (`HEDGE_PALETTE`).
 2. **The resolution is one function: `core/plant_art/resolve.py::resolve_sprite(kind, species,
    category, available=…)`** — the 2D rule extracted, quirks included, with the sprite maps it
    reads. `plant_renderer._resolve_svg_path` calls it and asks "does the SVG exist?"; the 3D
    builder calls it and asks "do the tables hold a recipe?" (the two sets are the same 123 names,
    pinned). It is held to a golden of 1,562 answers recorded from the unchanged resolver in the
-   commit before the extraction. A species the canvas draws with a category sprite gets the
-   category's recipe in 3D.
+   commit before the extraction — and, with sprite files missing, to that resolver itself, kept
+   statement for statement in the golden's generator
+   (`scripts/make_sprite_resolution_golden.py`). A species the canvas draws with a category
+   sprite gets the category's recipe in 3D.
+   **Both callers hand it the same inputs** (orchestrator ruling R14): the item's type, its plant
+   category and the item's OWN species string exactly as it is. The record carries that string
+   for this purpose as `params["sprite_species"]` (`PARAM_SPRITE_SPECIES`: `item.plant_species`,
+   not stripped, not replaced by species data; absent when empty). `species_name` and
+   `species_key` stay in the record and describe the species DATA.
 3. **One builder for the plant kinds, one silhouette per archetype**
    (`core/scene3d/builders/plants.py`, registered for `plant_art.PLANT_KINDS` — the table
    `plant_renderer.is_plant_type` answers from). Every archetype of the tables has a builder; a
@@ -2722,14 +2731,22 @@ with the sprite on the plan about its shape or its green, and no test would noti
    another one's shape. v0 is a few soft volumes and a shell of large geometric leaves: at most
    2,000 triangles a plant, bounded per archetype and by construction — counts are clipped
    functions of recipe numbers, never of the plant's size.
-4. **The fit is the truth gate, and it is the bounding box.** Builders work at the plant's real
-   size; `_fit` then pulls stray foliage back onto the canopy circle, centres the foliage on it
-   (a trunk's foot stays on the plan position), presses what dips below the ground onto it, and
-   scales so the top is `height_cm` and the widest span the canopy diameter — exact to float32.
-   For that to be honest in plan view as well, the elements that draw a plant's outline are
-   regular (`_RIM_REACH`, `_RIM_JITTER`): with outlines of any reach at any angle a fitted plant
-   left its canopy circle by up to 39 %. A plant is never *lifted* to put its lowest vertex at
-   zero — that made a cushion float on one hanging leaf (§11.4.9).
+4. **Builders build to the data; the fit normalises the last millimetre and reports it.** A
+   builder works at the plant's real height and radius and keeps to them: every archetype places
+   its highest point AT the height; shell leaves are set by the lobe's own surface normal and stay
+   inside the plant's cylinder by turning (lying down without headroom, quarter turns at the
+   canopy circle), never longer than 0.6 canopy radii; bow, ripple and fold of a folded leaf are
+   held to the height; a volume on the ground has no flat sole. `_fit` then pulls back what still
+   strays beyond the canopy circle, centres the foliage on it (a trunk's foot stays on the plan
+   position), presses what dips below the ground onto it, scales so the top is `height_cm` and
+   the widest span the canopy diameter — exact to float32 — and RETURNS what that took
+   (`FitReport`; `fit_report()` for a built plant). The bounding box is the gate the issue names;
+   the report and the foliage's area-weighted height quantiles are what make it mean something,
+   because the box is exact for anything the fit is given. For the plan view to be honest as
+   well, the elements that draw a plant's outline are regular (`_RIM_REACH`, `_RIM_JITTER`): with
+   outlines of any reach at any angle a fitted plant left its canopy circle by up to 39 %. A
+   plant is never *lifted* to put its lowest vertex at zero — that made a cushion float on one
+   hanging leaf (§11.4.9).
 5. **Foliage colours come from the recipe's palette alone, and their balance from the sprite.** A
    vertex is an sRGB mix of the palette's base anchors and tip anchors, in linear light times a
    hue-neutral depth shade. The mean tip weight of a plant is a constant per archetype, measured
@@ -2749,7 +2766,18 @@ with the sprite on the plan about its shape or its green, and no test would noti
    `casts_shadow=False`, the same for every item.
 8. **Seed.** `core.scene3d.item_seed(record.params["seed"], "plant")`, the function L1.1 ported;
    no second one. `core/plant_art` does not re-export it — that would make the package import
-   numpy. Builders draw uniform numbers only (`Generator.random`).
+   numpy. Builders draw uniform numbers only (`Generator.random`), from a generator named by its
+   bit generator — `Generator(PCG64(seed))`, not `default_rng(seed)`, whose bit generator numpy
+   may change: every plant of every plan would change its shape.
+9. **A shape is built once and scaled.** `build_silhouette` builds a shape per (recipe form,
+   seed, proportion step) and remembers it; the plan's exact height and radius are a scale of the
+   remembered shape. The proportion (height over canopy radius) is rounded to a whole power of
+   1.05 for the BUILD only, so the size is never misstated (the scale is exact) and the form is
+   stretched by at most 2.5 % in one axis. The cache is bounded (1,024 shapes, about 80 MB of
+   average plants), holds read-only arrays, and its key is the very object a builder is handed
+   as its recipe — a builder cannot read a recipe key the key lacks. The builder stays a pure
+   function of its record. A daily date scrub of 320 plants is then 15 ms where it was 342 ms
+   (busy machine); a first build is as slow as before and is L1.3's to schedule.
 
 **Alternatives rejected.**
 
@@ -2761,8 +2789,22 @@ with the sprite on the plan about its shape or its green, and no test would noti
   plan. Fixing the 2D rule changes sprites users see and is its own issue.
 - **Scaling the farthest vertex onto the canopy circle** instead of fitting the bounding box. The
   box then spans as little as 72 % of the canopy diameter (measured, feathery), outside the ± 10 %
-  spread gate. Bounding-box fit plus regular outlines keeps both: box exact, at most 8.1 % beyond
-  the circle (a hedge) over 1,000 ids × three proportions × three recipes per archetype.
+  spread gate. Bounding-box fit plus regular outlines keeps both: box exact, at most 9.2 % beyond
+  the circle (a mound) over 1,000 ids × three proportions × three recipe forms per archetype —
+  bounded by measurement, not by construction.
+- **Resolving the 3D recipe from the species data** (`species_name`, as the first version did,
+  or `species_key`). The data's name is not the string the plan draws from: a gallery "pumpkin"
+  carries the bundled record "Winter Squash" and was built as a squash; a species assigned from
+  the plant database changes the data and not the string. One rule on two inputs is two rules.
+- **Squashing an over-tall plant into its height** (what the first fit did). Exact bounding box,
+  wrong plant: its body ends where the squash factor puts it. See "what the first version got
+  wrong".
+- **Rebuilding a plant on every date tick.** 218 ms per daily tick for `bench_large` on a busy
+  machine (the reviewer's measurement), every tick, on the GUI thread. A proportionally grown
+  plant is the same shape scaled; decision 9.
+- **A build budget in milliseconds on a shared machine.** The same build is 3.5 times slower
+  with every core busy, in CPU time as much as in wall time. The budgets are stated in units of
+  a reference workload timed alongside, and the counts that cause the time are asserted exactly.
 - **Checking the foliage hue against the palette's entries.** The palette is what the builder
   mixes from — the check would test the mixing against itself. The reference is the sprite as
   QSvgRenderer draws it: the shipped SVG minus the same sprite with a black palette is exactly
@@ -2783,24 +2825,33 @@ with the sprite on the plan about its shape or its green, and no test would noti
 
 - New: `core/plant_art/{__init__,recipes,resolve}.py`, `core/scene3d/builders/plants.py` (and a
   one-line `builders/__init__.py`; L1.6 owns the real one and its registry factory calls
-  `plants.register`). Changed: the sprite generator (imports, two palette defaults) and
-  `core/plant_renderer` (derives its three maps, calls `resolve_sprite`). No `.ogp` change, no
-  `FILE_VERSION` bump, no user-visible string, no new dependency, nothing wired into the app.
-- **Known gap — the record does not carry the item's sprite string.** The canvas resolves a
-  sprite from `item.plant_species`; the record's `species_name` is the species data's common name
-  when there is species data, else that string. They agree for every plant placed from the
-  gallery or a plant list (both bench plans: 61 / 61 and 320 / 320). They differ after a species
-  was assigned from the plant database (`ApplySpeciesCommand` writes the data and leaves the
-  string): the canvas keeps the old sprite, 3D builds the new species. Closing it needs one more
-  param in `snapshot_records` (the item's own species string); the builder then reads that.
-  Pinned as a known gap by `tests/integration/test_scene3d_plants.py`.
+  `plants.register`). Changed: the sprite generator (loads the tables by path, two palette
+  defaults), `core/plant_renderer` (derives its three maps, calls `resolve_sprite`),
+  `core/scene3d/record.py` (`PARAM_SPRITE_SPECIES`) and `ui/view3d/snapshot.py` (writes it). New
+  scripts: `make_sprite_resolution_golden.py`, `measure_plant_art_3d.py`,
+  `mutation_check_plant_art.py`. No `.ogp` change, no `FILE_VERSION` bump, no user-visible
+  string, no new dependency, nothing wired into the app.
+- **3D builds what 2D draws — including what 2D draws oddly.** A plant given a species from
+  the plant database (`ApplySpeciesCommand` writes the data and leaves the item's string) keeps
+  its old sprite on the plan, and so its old shape in 3D, at the new species' size. That was
+  recorded as a known gap between the views in the first version (3D built the new species); it
+  is now one behaviour, and a 2D question: should the sprite follow an assigned species?
+  Follow-up issue material, with the partial-match quirks below — not a 3D matter.
 - **The resolver's quirks are visible in 3D.** Lemon Balm (90 × 60 cm) is built as a `canopy` —
-  a trunk and a crown 90 cm tall — because that is the sprite the plan shows. Twelve of the 118
+  a trunk and a crown 90 cm tall — because that is the sprite the plan shows; "Melon" takes the
+  eggplant's recipe, "Bean (Bush)" a climber's, a string of blanks the rose's. Twelve of the 118
   bundled species have no sprite of their own and take their item type's category.
 - **Many plants are placeholders until someone says how tall they are.** A category plant from
   the gallery ("Round Deciduous", "Palm" …) has no species data and so no height: the 2D shadow
   model casts none for it either. A typed height, a measured one or a species turns the marker
-  into the plant.
+  into the plant. The same holds for a plant whose species string names one of the twelve
+  SPRITES the bundled database has no species for (squash, turnip, arugula, chard, okra,
+  tarragon, lemongrass, marjoram, bay laurel, stevia, sorrel, lovage): its own sprite on the
+  plan, a grey disc in 3D. The gallery offers none of them (all 86 gallery species have a record
+  and a height); they come from plant lists, older plans, an agent or a typed species.
+- **A sprite's tuning numbers move its 3D plant.** `leaf_scale` and `n_out` were tuned for the 2D
+  drawing and are read by the 3D builders (within clipped ranges). `core/object_height` and
+  `agent_api/creates.py` keep their own lists of the plant kinds; both are drift-guarded.
 - One bark for every species (a birch is brown); a climber stands without its support; a
   `hedge_section` is a drum; sweet corn is a fountain of blades (its 2D archetype is `allium`).
 - **Open for later stories**: L1.2 shows the parts (`foliage`, `vc`); L1.4's wind reads
@@ -2811,30 +2862,61 @@ with the sprite on the plan about its shape or its green, and no test would noti
 **Evidence.**
 
 - **`tests/unit/test_plant_art.py`**: the package imports the standard library only; the
-  generator and the renderer hold the package's objects, not copies; `resolve_sprite` equals the
-  1,562 golden answers under each availability rule; plant kinds, category names and recipe keys
-  cannot drift; the spike's palette copy equals the shared table.
-  `tests/unit/test_plant_sprite_conformance.py` (unchanged) regenerates all 123 SVGs.
-- **`tests/unit/test_scene3d_plants.py`**: all 123 recipes × seedling / mid / mature (bundled
-  sizes where a species reaches the sprite) × 5 ids — 1,845 builds with height, spread and base
-  exact; triangles at most canopy 1,904, mound 1,608, climber 1,368, ground 1,128, grass 1,120,
-  hedge 900, feathery 792, conifer 664, rosette 560, allium 470, head 400, palm 356, flower 316;
-  extreme sizes (1 cm to 50 m, 27 : 1 wide to 40 : 1 tall); at least six vertices on the ground;
-  the foliage hue within 10° of the rendered sprite for all 123 (worst 5.2°, median 0.8°); same
-  record → same mesh; two ids → side silhouettes at most 0.965 alike (two petunias; two perfect
-  hedge drums scored 0.999 before the hedge was given a batter and an uneven top); the
+  generator executes the package's `recipes.py` and runs with PyQt6 and numpy blocked; the
+  renderer holds the package's maps; `resolve_sprite` equals the 1,562 golden answers under each
+  availability rule, the golden is what its generator writes, and old rule, new rule and
+  renderer agree with sprite files missing; a plant whose sprite file is missing is painted with
+  the next sprite in line; plant kinds, category names and recipe keys cannot drift; the spike's
+  palette copy equals the shared table. `tests/unit/test_plant_sprite_conformance.py`
+  (unchanged) regenerates all 123 SVGs.
+- **`tests/unit/test_scene3d_plants.py`**: all 123 recipes × six sizes (a seedling, a mid size
+  and the mature size along the recipe's own proportion; the bundled species' small size;
+  30 × 240 cm; 300 × 60 cm) × 5 ids — 3,690 builds — and nine extreme sizes × three recipe forms
+  per archetype: height, spread and base exact, AND built to them (the builder's own top 1.0000
+  of the height before the fit; nothing pressed onto the ground; at most 1.23 % of the foliage
+  vertices pulled back onto the canopy circle from at most 1.068 radii; foliage area quantiles
+  per archetype; no ground-flat triangle; at least six vertices on the ground). Triangles at
+  most canopy 1,904, mound 1,556, climber 1,352, grass 1,120, ground 1,092, hedge 900, feathery
+  792, conifer 664, rosette 560, allium 470, head 400, palm 356, flower 316. The foliage hue
+  within 10° of the rendered sprite for all 123 (worst 5.0°), and the tip weights re-derived
+  from the sprites. Same record → same mesh, cold or warm. Two ids: twelve ids a recipe, no pair
+  above 0.985 (measured over 30 ids: maximum 0.975, 99 % of 53,505 pairs below 0.952). The fit's
+  report against hand-made plants. The shape cache: exact scale, exact size at 600 random
+  sizes, read-only shared arrays, a key that is the builder's only view of a recipe. The
   placeholder; wind weights; `verify_builder` throughout.
 - **`tests/integration/test_scene3d_plants.py`** (§8.10): fifteen plants planted through the real
-  drop and tool paths, two dates, exact sink calls.
-- **`tests/perf/test_scene3d_plants_budget.py`**: every plant of both bench plans at two dates —
-  61 plants 70,802 triangles, 320 plants 300,212 triangles; June → December reaches the sink as
-  29 / 80 `replace_geometry` calls and nothing else. Build time, median: 66–68 ms and 329–333 ms
-  (about 1 ms a plant) on a quiet machine one commit before the builder was frozen; the frozen
-  builder costs 1.0–1.35 times that (measured against it in one process, interleaved) and read
-  196–208 ms and 750–958 ms while three other full test runs shared the machine. A quiet reading
-  of the frozen builder is owed. Asserted bounds: 400 ms and 2,000 ms.
-- A mutation check — 45 single-rule breaks of the tables, the resolver, the renderer's use of it
-  and the builder, each run against these tests on a copy of the tree (a scratch script, not
-  committed) — killed 44. The survivor, a placeholder with eight sides, showed that the round rim
-  had no test; `TestPlaceholder::test_its_rim_is_the_canopy_circle` (the rim polygon covers at
-  least 99.5 % of the canopy circle) kills it now.
+  drop and tool paths, two dates, exact sink calls; ALL 100 gallery plants and all 222 species
+  strings (and the odd ones) drawn and built from the same sprite, through the real scene and
+  `snapshot_records`; a species assigned from the plant database.
+- **`tests/perf/test_scene3d_plants_budget.py`**: both bench plans — 61 plants 68,402 triangles,
+  320 plants 291,652; June → December reaches the sink as 29 / 80 `replace_geometry` calls and
+  nothing else; a first build, and a daily scrub tick warm and cold, in milliseconds and in
+  units of a reference workload (the numbers: §8.26.7); a warm tick holds what a cold build
+  holds.
+- **`scripts/measure_plant_art_3d.py`** prints every number above (`truth`, `reach`, `clones`,
+  `shapes`, `scrub`); **`scripts/mutation_check_plant_art.py`** breaks one rule at a time on a
+  copy of the tree: 73 mutants, every one killed. (Its first run on the reworked builder killed
+  72: the survivor — the fit no longer sets a hovering plant down — showed that no builder hovers
+  any more, so that safety net was exercised by nothing; the fit-report test now asserts it. The
+  run before the review, 45 mutants, had found the placeholder's round rim unpinned the same
+  way.)
+
+### What the first version of the plant art got wrong (independent review, same day)
+
+Recorded because each of these passed every gate the story had set itself (the entries with
+their measurements: §11.4.9).
+
+- **A squash was built 1.6 times too tall and squashed back.** The height gate compared the
+  mesh's top with the plan's height after a fit that scales the top onto the height: it could
+  not fail. Shell leaves faced along the ray from the plant's heart instead of along the lobe's
+  surface, so on a flat plant they stood on edge; at 15 × 800 cm nine archetypes were 3.5 to 11.6
+  times too tall. The test matrix scaled height and spread together and never saw another
+  proportion. Decision 4, and the fourth test pattern of §8.10.4.
+- **"2D and 3D agree for every plant from the gallery" was false.** The builder resolved from the
+  species data's name; the canvas resolves from the item's string. Checked for 11 of 86 gallery
+  species. Decision 2 (ruling R14).
+- **The renderer's missing-file fall-through was pinned by nothing** — dropping it survived
+  3,048 tests, because the shipped sprite set is complete. Decision 2's differential.
+- **The generator needed Qt for the first time**, the no-clones gate was five fixed ids, the
+  build budget was six times a quiet median with no scrub tick timed, and a daily scrub rebuilt
+  every growing plant. Decisions 1, 8 and 9, and §8.26.7's numbers.

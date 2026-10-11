@@ -9,7 +9,10 @@ The recipe tables (`PALETTES`, `FRUITS`, `FLOWERS`, `SPECIES`, `CATEGORIES`)
 live in `src/open_garden_planner/core/plant_art/recipes.py` since Phase 17
 L1.7: the 3D plant builder reads the same recipes, so a species' archetype and
 palette are the same on the plan and in the 3D view. The script holds the
-drawing code and imports the tables.
+drawing code and loads the tables from that file by its path — it needs
+nothing but the standard library, as before. Two of a recipe's numbers,
+`leaf_scale` and `n_out`, are read by the 3D builder as well: retuning a sprite
+changes that species' leaf size and count in 3D.
 
 ## The "Lush Sprite" style (user-approved 2026-07-26, issue #281)
 
