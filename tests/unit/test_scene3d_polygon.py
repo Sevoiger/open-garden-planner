@@ -19,6 +19,7 @@ from open_garden_planner.core.scene3d import (
     ccw,
     cw,
     group_rings,
+    is_buildable_region,
     is_flat_ring,
     is_simple_ring,
     point_in_regions,
@@ -50,10 +51,12 @@ def tri_area(points, triangle) -> float:
     return ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2.0
 
 
-def assert_triangulates(outer, holes) -> None:
+def assert_triangulates(outer, holes, *, flat_corners: bool = False) -> None:
     """The three facts of a correct triangulation of outer-minus-holes: every
     triangle counter-clockwise, their areas summing to the region's, and no
-    triangle's centroid in a hole or outside the outer ring."""
+    triangle's centroid in a hole or outside the outer ring. ``flat_corners``:
+    the region may have three vertices of different rings on one line, and an
+    ear without an area yields no triangle — so there may be fewer."""
     points, triangles = triangulate_region(outer, holes)
     assert points == tuple(outer) + tuple(p for hole in holes for p in hole)
     areas = [tri_area(points, t) for t in triangles]
@@ -65,7 +68,9 @@ def assert_triangulates(outer, holes) -> None:
         cy = sum(points[i][1] for i in triangle) / 3.0
         assert point_in_regions(cx, cy, ((tuple(outer), tuple(holes)),)), (cx, cy)
     # outer + holes joined by one bridge each: n + 2h vertices on the merged ring
-    assert len(triangles) == len(points) + 2 * len(holes) - 2
+    full = len(points) + 2 * len(holes) - 2
+    assert len(triangles) <= full if flat_corners else len(triangles) == full
+    assert min(areas) > 1e-9  # no triangle that is nothing
 
 
 # ── orientation ───────────────────────────────────────────────────────────────
@@ -247,6 +252,92 @@ class TestGroupRings:
         assert sum(len(h) for _o, h in regions) == holes, label
         assert len(rings) == outers + holes
 
+    # ── fix round 2 (P1): who owns a hole is not decided on a boundary point ───
+
+    def test_a_hole_is_not_given_to_an_island_that_touches_it(self) -> None:
+        """The re-review's case. Outer A, a hole H in it whose FIRST vertex is
+        (20, 50), an island B inside H touching it exactly there. Ownership used
+        to be decided by "which outer contains ``hole[0]``" — a point on B's
+        boundary, where the point test may answer either way: H went to B, the
+        island it surrounds (measured at 123a435, in every order of the rings)."""
+        a = rect(0.0, 0.0, 100.0, 100.0)
+        h = ((20.0, 50.0), (50.0, 80.0), (80.0, 50.0), (50.0, 20.0))
+        b = ((20.0, 50.0), (40.0, 45.0), (40.0, 55.0))
+        assert ring_area(h) < 0.0 < ring_area(b)
+        for rings in ([a, h, b], [b, h, a], [h, b, a], [b, a, h]):
+            assert dict(group_rings(rings)) == {a: (h,), b: ()}
+
+    def test_a_hole_whose_every_vertex_lies_on_its_outer_ring(self) -> None:
+        """A diamond cut out of a square, corner to edge: no vertex of the hole is
+        inside anything, and it is still that square's hole."""
+        a = rect(0.0, 0.0, 100.0, 100.0)
+        diamond = ((0.0, 50.0), (50.0, 100.0), (100.0, 50.0), (50.0, 0.0))
+        assert ring_area(diamond) < 0.0
+        other = rect(200.0, 0.0, 300.0, 100.0)
+        assert group_rings([other, diamond, a]) == ((other, ()), (a, (diamond,)))
+
+    def test_the_owner_must_be_larger_than_the_hole(self) -> None:
+        """An island contains points of the hole around it; it is smaller than
+        that hole and so can never own it — and a hole in nothing still raises."""
+        hole = rect(0.0, 0.0, 100.0, 100.0, clockwise=True)
+        island = rect(40.0, 0.0, 60.0, 20.0)  # sits where the hole's inside point is looked for
+        with pytest.raises(ValueError, match="no outer ring"):
+            group_rings([hole, island])
+
+    @pytest.mark.parametrize("seed", range(40))
+    def test_point_inside_is_strictly_inside(self, seed: int) -> None:
+        rng = random.Random(seed)
+        ring = _wobbly(rng.randrange(3, 40), rng, tangle=False)
+        if seed % 2:
+            ring = ring[::-1]
+        shift = rng.randrange(len(ring))
+        ring = ring[shift:] + ring[:shift]
+        x, y = polygon_module._point_inside(ring)
+        assert point_in_ring(x, y, ring)
+        assert _distance_to_ring(x, y, ring) > 1e-6
+
+    @pytest.mark.parametrize(
+        "ring",
+        [L_SHAPE, L_SHAPE[::-1], SQUARE[::-1],
+         # the corner's triangle holds other vertices: a notch reaching into it
+         ((0.0, 0.0), (100.0, 0.0), (10.0, 10.0), (0.0, 100.0)),
+         ((0.0, 0.0), (100.0, 0.0), (20.0, 5.0), (10.0, 10.0), (5.0, 20.0), (0.0, 100.0)),
+         ((100.0, 100.0), (100.0, 300.0), (300.0, 300.0), (300.0, 260.0), (140.0, 260.0),
+          (140.0, 140.0), (300.0, 140.0), (300.0, 100.0)),
+         # a vertex on the line between the corner's neighbours
+         ((0.0, 0.0), (100.0, 0.0), (50.0, 50.0), (0.0, 100.0))],
+        ids=["L", "L clockwise", "square clockwise", "a notch", "a notch of three", "a C",
+             "a vertex on the chord"],
+    )
+    def test_point_inside_of_awkward_rings(self, ring) -> None:
+        x, y = polygon_module._point_inside(tuple(ring))
+        assert point_in_ring(x, y, ring) and _distance_to_ring(x, y, ring) > 1e-6
+
+
+def _distance_to_ring(x: float, y: float, ring) -> float:
+    best = math.inf
+    for i in range(len(ring)):
+        (ax, ay), (bx, by) = ring[i - 1], ring[i]
+        dx, dy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)))
+        best = min(best, math.hypot(x - (ax + t * dx), y - (ay + t * dy)))
+    return best
+
+
+def review_ladder(rungs: int, width: float = 6.0):
+    """The ladder of the re-review, drawn as ONE stroke: two rails 100 cm apart
+    and a rung every 40 cm. → its region ``(outer, holes)``; ``rungs - 2`` holes
+    from 6 rungs on (the first cells merge with the rails' ends)."""
+    path = [(0.0, 0.0)]
+    for k in range(rungs):
+        x = 40.0 * k
+        path += ([(x, 100.0), (x + 40.0, 100.0), (x + 40.0, 0.0), (x, 0.0)] if k % 2 == 0 else
+                 [(x + 40.0, 0.0), (x + 40.0, 100.0), (x, 100.0)])
+    path = [*dict.fromkeys(path), (0.0, 0.0)]
+    rings = [tuple((round(x, 7), round(y, 7)) for x, y in ring)
+             for ring in polyline_footprint(path, width)]
+    ((outer, holes),) = group_rings(rings)
+    return outer, holes
 
 
 # ── triangulation ─────────────────────────────────────────────────────────────
@@ -335,3 +426,186 @@ class TestTriangulateRegion:
         hole = rect(0.0, 0.0, 100.0, 100.0, clockwise=True)  # the same square
         with pytest.raises(ValueError):
             triangulate_region(outer, (hole,))
+
+
+# ── fix round 2: the cost of many holes, and the one predicate ────────────────
+
+
+class TestManyHoles:
+    """Review round 2, P2-4. A ladder drawn as one stroke: 20 holes took 24 ms in
+    the first version and 58 holes 2.6 s — on every geometry tick of that item
+    (and a closed fence along a traced outline of 400 vertices 12.6 s). The
+    bridge of a hole is now found in one pass over the edges."""
+
+    @pytest.mark.parametrize("rungs", [4, 20, 60])
+    def test_a_ladder_triangulates(self, rungs: int) -> None:
+        outer, holes = review_ladder(rungs)
+        assert len(holes) >= rungs - 2
+        assert_triangulates(outer, holes, flat_corners=True)
+
+    def test_an_ear_without_an_area_yields_no_triangle(self) -> None:
+        """Found by this round's own test of the ladder. Its long diagonal is
+        crossed by every rung, so vertices of the outer ring and of several holes
+        lie on ONE line — the diagonal's edge. Ears along it have a doubled area
+        of 1e-14 cm² (noise around an exact zero): counter-clockwise by luck,
+        nothing in fact, and in the engine's float32 thirteen of them came out
+        wound DOWNWARDS (``Mesh.validate`` refused the fence). They are clipped
+        and yield no triangle."""
+        outer, holes = review_ladder(20)
+        points, triangles = triangulate_region(outer, holes)
+        full = len(points) + 2 * len(holes) - 2
+        assert (full, len(triangles)) == (239, 226)  # 13 ears without an area
+        areas = [tri_area(points, t) for t in triangles]
+        assert min(areas) > 0.009 and sum(areas) == pytest.approx(
+            regions_area(((outer, holes),)), rel=1e-12)
+        assert polygon_module._FLAT_CORNER == 4e-15
+
+    def test_the_work_per_hole_is_one_pass_not_a_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cliff, pinned as a COUNT (a clock would be a flake on a loaded
+        box): each hole tests ONE block of nearby boundary vertices against the
+        edges. Measured: 58 blocks for 58 holes, 94 for 94."""
+        blocks = 0
+        touch = polygon_module._touch
+
+        def counting(*args):
+            nonlocal blocks
+            blocks += 1
+            return touch(*args)
+
+        monkeypatch.setattr(polygon_module, "_touch", counting)
+        for rungs in (60, 100):
+            outer, holes = review_ladder(rungs)
+            blocks = 0
+            triangulate_region(outer, holes)
+            assert len(holes) <= blocks <= 2 * len(holes), (rungs, len(holes), blocks)
+
+    def test_beyond_the_bounds_it_refuses_instead_of_freezing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outer, holes = review_ladder(20)
+        vertices = len(outer) + sum(len(h) for h in holes)
+        assert (len(holes), vertices) == (20, 201)
+        monkeypatch.setattr(polygon_module, "MAX_HOLED_REGION_VERTICES", vertices - 1)
+        with pytest.raises(ValueError, match="201 vertices with 20 holes is beyond"):
+            triangulate_region(outer, holes)
+        monkeypatch.setattr(polygon_module, "MAX_HOLED_REGION_VERTICES", vertices)
+        triangulate_region(outer, holes)
+        monkeypatch.setattr(polygon_module, "MAX_BRIDGE_WORK", 20 * 201 - 1)
+        with pytest.raises(ValueError, match="beyond"):
+            triangulate_region(outer, holes)
+        monkeypatch.setattr(polygon_module, "MAX_BRIDGE_WORK", 20 * 201)
+        triangulate_region(outer, holes)
+        # a region without holes has no bound here
+        monkeypatch.setattr(polygon_module, "MAX_HOLED_REGION_VERTICES", 0)
+        monkeypatch.setattr(polygon_module, "MAX_BRIDGE_WORK", 0)
+        assert len(triangulate_region(L_SHAPE)[1]) == 4
+        assert (polygon_module.MAX_HOLED_REGION_VERTICES, polygon_module.MAX_BRIDGE_WORK) == (0, 0)
+
+    def test_the_real_bounds(self) -> None:
+        assert polygon_module.MAX_HOLED_REGION_VERTICES == 8000
+        assert polygon_module.MAX_BRIDGE_WORK == 500_000
+
+    def test_a_closed_fence_along_a_traced_outline(self) -> None:
+        """One hole, many vertices: 400 path vertices → 1,201 ring vertices. The
+        first version took 12.6 s for this region; it is cut and proven here."""
+        rng = random.Random(400)
+        path = list(_wobbly(400, rng, tangle=False))
+        rings = [tuple((round(x, 7), round(y, 7)) for x, y in ring)
+                 for ring in polyline_footprint([*path, path[0]], 4.0)]
+        ((outer, holes),) = group_rings(rings)
+        assert len(holes) == 1 and len(outer) + len(holes[0]) > 800
+        vertices, triangles = polygon_module.cut_region(outer, holes)
+        assert len(triangles) == len(vertices)  # n + 2h - 2 with one hole
+        assert sum(tri_area(vertices, t) for t in triangles) == pytest.approx(
+            regions_area(((outer, holes),)), rel=1e-9)
+
+
+class TestBuildable:
+    """THE predicate: a region may be handed to a builder exactly when the default
+    builder's own triangulation cuts it and the cut is proven."""
+
+    HOLE = rect(40.0, 40.0, 60.0, 60.0, clockwise=True)
+
+    def test_what_is_buildable(self) -> None:
+        assert is_buildable_region(SQUARE)
+        assert is_buildable_region(SQUARE, (self.HOLE,))
+        assert is_buildable_region(L_SHAPE, ())
+        outer, holes = review_ladder(20)
+        assert is_buildable_region(outer, holes)
+
+    @pytest.mark.parametrize(
+        ("label", "outer", "holes"),
+        [("a clockwise outer ring", SQUARE[::-1], ()),
+         ("an outer ring that crosses itself", LOPSIDED_BOW_TIE[::-1], ()),
+         ("an outer ring without area", ((0.0, 0.0), (10.0, 0.0), (20.0, 0.0)), ()),
+         ("a counter-clockwise hole", SQUARE, (rect(40.0, 40.0, 60.0, 60.0),)),
+         ("a hole that crosses itself", rect(0.0, 0.0, 400.0, 400.0),
+          (((100.0, 100.0), (300.0, 300.0), (300.0, 100.0), (100.0, 250.0)),)),
+         ("a hole on the outer ring", SQUARE, (SQUARE[::-1],)),
+         ("a hole that reaches outside", SQUARE, (rect(50.0, 40.0, 150.0, 60.0, clockwise=True),)),
+         ("a hole outside", SQUARE, (rect(200.0, 40.0, 250.0, 60.0, clockwise=True),)),
+         ("two holes that overlap", SQUARE, (rect(20.0, 20.0, 60.0, 60.0, clockwise=True),
+                                             rect(40.0, 40.0, 80.0, 80.0, clockwise=True))),
+         ("two holes that touch in a point", SQUARE, (rect(20.0, 20.0, 50.0, 50.0, clockwise=True),
+                                                      rect(50.0, 50.0, 80.0, 80.0, clockwise=True)))],
+    )
+    def test_what_is_not(self, label: str, outer, holes) -> None:
+        assert not is_buildable_region(tuple(outer), tuple(holes)), label
+        with pytest.raises(ValueError):
+            polygon_module.cut_region(tuple(outer), tuple(holes))
+
+    def test_touching_is_not_refused_for_its_own_sake(self) -> None:
+        """The predicate is "it can be cut and the cut is proven", not "the rings
+        keep their distance": a hole that touches the outer ring in one point is a
+        region with a pinch, and it is cut correctly."""
+        diamond = ((0.0, 50.0), (50.0, 80.0), (80.0, 50.0), (50.0, 20.0))
+        assert is_buildable_region(SQUARE, (diamond,))
+        assert_triangulates(SQUARE, (diamond,), flat_corners=True)
+
+    def test_cut_region_is_the_triangulation_with_the_proof(self) -> None:
+        vertices, triangles = polygon_module.cut_region(SQUARE, (self.HOLE,))
+        points, plain = triangulate_region(SQUARE, (self.HOLE,))
+        assert vertices == points and triangles == tuple(plain)
+        assert isinstance(triangles, tuple)  # cached: nobody can edit what the next caller gets
+        assert sum(tri_area(vertices, t) for t in triangles) == 10000.0 - 400.0
+
+    def test_a_wrong_triangulation_does_not_get_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The proof is not decoration: a triangulation that forgets the hole, or
+        winds a triangle downwards, is refused whatever produced it."""
+        polygon_module.cut_region.cache_clear()
+        filled = (tuple(SQUARE) + tuple(self.HOLE), [(0, 1, 2), (0, 2, 3)])  # covers the hole too
+        monkeypatch.setattr(polygon_module, "triangulate_region", lambda *_a: filled)
+        with pytest.raises(ValueError, match="covers 10000.0 cm"):
+            polygon_module.cut_region(SQUARE, (self.HOLE,))
+        flipped = (tuple(SQUARE), [(0, 1, 2), (0, 3, 2), (0, 2, 3), (0, 2, 3)])  # the sum is right
+        monkeypatch.setattr(polygon_module, "triangulate_region", lambda *_a: flipped)
+        with pytest.raises(ValueError, match="smallest triangle -5000.0"):
+            polygon_module.cut_region(SQUARE)
+        polygon_module.cut_region.cache_clear()
+
+    def test_both_answers_are_remembered(self) -> None:
+        """The snapshot asks on every tick; a region that cannot be built must not
+        be tried again each time."""
+        outer = tuple((x + 0.125, y) for x, y in SQUARE)  # a region no other test has asked about
+        reaching_out = (tuple((x + 0.125, y) for x, y in rect(50.0, 40.0, 150.0, 60.0, clockwise=True)),)
+        before = is_buildable_region.cache_info()
+        assert not is_buildable_region(outer, reaching_out)
+        assert not is_buildable_region(outer, reaching_out)
+        assert is_buildable_region(outer) and is_buildable_region(outer)
+        after = is_buildable_region.cache_info()
+        assert (after.misses - before.misses, after.hits - before.hits) == (2, 2)
+
+    def test_the_default_builder_builds_exactly_what_the_predicate_accepts(self) -> None:
+        from open_garden_planner.core.scene3d import prism_mesh
+
+        outer, holes = review_ladder(20)
+        mesh = prism_mesh((outer,), 120.0, (holes,))
+        mesh.validate()
+        assert mesh.vertex_count
+        overlapping = (rect(20.0, 20.0, 60.0, 60.0, clockwise=True),
+                       rect(40.0, 40.0, 80.0, 80.0, clockwise=True))
+        assert not is_buildable_region(SQUARE, overlapping)
+        with pytest.raises(ValueError):
+            prism_mesh((SQUARE,), 120.0, (overlapping,))

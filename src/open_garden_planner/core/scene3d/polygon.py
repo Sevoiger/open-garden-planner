@@ -8,17 +8,27 @@ clockwise (signed area < 0). That is the orientation pyclipper emits and the one
 load-bearing — its stroke comes back as two rings, and extruding the inner one
 as a solid turns a 3.6 m² fence into an 80 m² slab (senior review, fix round 1).
 
-Plain Python on float pairs, with one exception: the simplicity test of a large
-ring runs on numpy (it is quadratic, and it runs on every edit of that ring).
-``triangulate_polygon`` is the ear clipper the Qt 3D view has always used
-(US-E6), moved here unchanged so it survives ``legacy.py``;
-``triangulate_region`` adds holes by bridging each hole to the boundary and
-clipping ears of the merged ring.
+Plain Python on float pairs, except where a test is quadratic and runs on every
+edit of a ring — the simplicity test of a large ring and the triangulation of a
+region with holes run on numpy. ``triangulate_polygon`` is the ear clipper the
+Qt 3D view has always used (US-E6), moved here unchanged so it survives
+``legacy.py``; ``triangulate_region`` adds holes by bridging each hole to the
+boundary and clipping ears of the merged ring.
+
+ONE predicate says whether a region may be handed to a builder:
+``is_buildable_region`` — true exactly when ``cut_region``, the triangulation
+the default builder itself uses, cuts it and the triangles add up to the
+region's area. The snapshot asks it for every outline it turns into rings, so
+"a record's regions can be built" is a checked fact, not a hope (fix round 2).
+
+Caches. ``ring_area``, ``is_simple_ring``, ``cut_region`` and
+``is_buildable_region`` are ``lru_cache``d on whole rings and never cleared:
+bounded (a few thousand entries each), and at plan sizes a few megabytes at
+most — a traced outline of 1,000 vertices is 16 kB per entry.
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Final, TypeAlias
@@ -30,6 +40,7 @@ Point: TypeAlias = tuple[float, float]
 Ring: TypeAlias = tuple[Point, ...]
 Region: TypeAlias = tuple[Ring, tuple[Ring, ...]]
 Triangle: TypeAlias = tuple[int, int, int]
+_Floats: TypeAlias = "NDArray[np.float64] | float"
 
 
 # ── area and orientation ──────────────────────────────────────────────────────
@@ -184,28 +195,35 @@ def _edges_touch_numpy(ring: Ring) -> bool:
         if not len(i):
             continue
         i = i + start
-        ax, ay, bx, by = points[i, 0], points[i, 1], following[i, 0], following[i, 1]  # edge i: a -> b
-        cx, cy, dx, dy = points[j, 0], points[j, 1], following[j, 0], following[j, 1]  # edge j: c -> d
-        d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx)  # _cross(c, d, a)
-        d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx)  # _cross(c, d, b)
-        d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)  # _cross(a, b, c)
-        d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax)  # _cross(a, b, d)
-        crossing = (((d1 > 0) != (d2 > 0)) & (d1 != 0) & (d2 != 0)
-                    & ((d3 > 0) != (d4 > 0)) & (d3 != 0) & (d4 != 0))
-        touching = (((d1 == 0) & _within(ax, ay, cx, cy, dx, dy))
-                    | ((d2 == 0) & _within(bx, by, cx, cy, dx, dy))
-                    | ((d3 == 0) & _within(cx, cy, ax, ay, bx, by))
-                    | ((d4 == 0) & _within(dx, dy, ax, ay, bx, by)))
-        if bool(np.any(crossing | touching)):
+        if bool(np.any(_touch(points[i, 0], points[i, 1], following[i, 0], following[i, 1],
+                              points[j, 0], points[j, 1], following[j, 0], following[j, 1]))):
             return True
     return False
 
 
-def _within(px: NDArray[np.float64], py: NDArray[np.float64], sx: NDArray[np.float64],
-            sy: NDArray[np.float64], ex: NDArray[np.float64], ey: NDArray[np.float64]) -> NDArray[np.bool_]:
+def _touch(ax: _Floats, ay: _Floats, bx: _Floats, by: _Floats,
+           cx: _Floats, cy: _Floats, dx: _Floats, dy: _Floats) -> NDArray[np.bool_]:
+    """``segments_touch`` on arrays (they broadcast): the closed segments a–b and
+    c–d share a point. The four cross products are written in the scalar
+    version's order of operations, so the two never disagree."""
+    d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx)  # _cross(c, d, a)
+    d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx)  # _cross(c, d, b)
+    d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)  # _cross(a, b, c)
+    d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax)  # _cross(a, b, d)
+    crossing = (((d1 > 0) != (d2 > 0)) & (d1 != 0) & (d2 != 0)
+                & ((d3 > 0) != (d4 > 0)) & (d3 != 0) & (d4 != 0))
+    touching = (((d1 == 0) & _within(ax, ay, cx, cy, dx, dy))
+                | ((d2 == 0) & _within(bx, by, cx, cy, dx, dy))
+                | ((d3 == 0) & _within(cx, cy, ax, ay, bx, by))
+                | ((d4 == 0) & _within(dx, dy, ax, ay, bx, by)))
+    return np.asarray(crossing | touching)
+
+
+def _within(px: _Floats, py: _Floats, sx: _Floats, sy: _Floats,
+            ex: _Floats, ey: _Floats) -> NDArray[np.bool_]:
     """``_on_segment`` on arrays: p inside the bounding box of s–e."""
-    return ((np.minimum(sx, ex) <= px) & (px <= np.maximum(sx, ex))
-            & (np.minimum(sy, ey) <= py) & (py <= np.maximum(sy, ey)))
+    return np.asarray((np.minimum(sx, ex) <= px) & (px <= np.maximum(sx, ex))
+                      & (np.minimum(sy, ey) <= py) & (py <= np.maximum(sy, ey)))
 
 
 @lru_cache(maxsize=4096)
@@ -231,11 +249,44 @@ def is_simple_ring(ring: Ring) -> bool:
 # ── nesting ───────────────────────────────────────────────────────────────────
 
 
+def _point_inside(ring: Ring) -> Point:
+    """A point STRICTLY inside a simple ring (of either orientation).
+
+    At the ring's lowest-leftmost corner — a convex one — the triangle with its
+    two neighbours either holds no other vertex, and then its centroid is
+    inside the ring, or it does, and then the midpoint between the corner and
+    the vertex in it that is farthest from the neighbours' line is.
+    """
+    n = len(ring)
+    at = min(range(n), key=lambda i: (ring[i][1], ring[i][0]))
+    corner, before, after = ring[at], ring[at - 1], ring[(at + 1) % n]
+    if _cross(before, corner, after) < 0:
+        before, after = after, before  # the clockwise ring: read the corner the other way round
+    best, reach = None, 0.0
+    for point in ring:
+        if point in (corner, before, after) or not _point_in_triangle(point, before, corner, after):
+            continue
+        height = abs(_cross(before, after, point))
+        if best is None or height > reach:
+            best, reach = point, height
+    if best is None:
+        return ((corner[0] + before[0] + after[0]) / 3.0, (corner[1] + before[1] + after[1]) / 3.0)
+    return ((corner[0] + best[0]) / 2.0, (corner[1] + best[1]) / 2.0)
+
+
 def group_rings(rings: Sequence[Ring]) -> tuple[Region, ...]:
     """Sort a flat list of rings — outers counter-clockwise, holes clockwise, as
     pyclipper returns them — into regions: each hole joins the smallest outer
     that contains it. Rings with fewer than three vertices or no area are dropped;
-    a hole inside no outer raises ``ValueError`` (it is not a footprint)."""
+    a hole inside no outer raises ``ValueError`` (it is not a footprint).
+
+    Ownership is decided by a point strictly INSIDE the hole and by size: the
+    owner is the smallest outer ring that is larger than the hole and contains
+    that point. (A vertex of the hole would not do — a hole may touch its outer
+    ring, or an island inside it, exactly there, and a point on a boundary has
+    no inside. Nor would containment alone: an island inside the hole contains
+    points of it too, and is smaller than the hole.)
+    """
     outers: list[Ring] = []
     holes: list[Ring] = []
     for ring in rings:
@@ -248,10 +299,11 @@ def group_rings(rings: Sequence[Ring]) -> tuple[Region, ...]:
             holes.append(ring)
     owned: list[list[Ring]] = [[] for _ in outers]
     for hole in holes:
-        x, y = hole[0]
+        x, y = _point_inside(hole)
+        size = -ring_area(hole)
         best = -1
         for index, outer in enumerate(outers):
-            if point_in_ring(x, y, outer) and (
+            if ring_area(outer) > size and point_in_ring(x, y, outer) and (
                 best < 0 or ring_area(outer) < ring_area(outers[best])
             ):
                 best = index
@@ -320,28 +372,6 @@ def triangulate_polygon(polygon: Sequence[Sequence[float]]) -> list[Triangle]:
     return triangles
 
 
-def _blocked(points: Sequence[Point], a: int, b: int,
-             edges: Sequence[tuple[int, int]]) -> bool:
-    """True when the bridge points[a]–points[b] touches any edge anywhere but at
-    its own two ends."""
-    pa, pb = points[a], points[b]
-    ends = (a, b)
-    for e1, e2 in edges:
-        first, second = e1 in ends, e2 in ends
-        if first and second:
-            return True  # the bridge would lie on an existing edge
-        if first or second:
-            # an edge that starts at one end of the bridge: it blocks only when its
-            # far end lies on the bridge (a collinear overlap)
-            far = points[e2 if first else e1]
-            if _cross(pa, pb, far) == 0 and _on_segment(far, pa, pb):
-                return True
-            continue
-        if segments_touch(pa, pb, points[e1], points[e2]):
-            return True
-    return False
-
-
 def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target: int) -> bool:
     """True when points[target] lies strictly inside the interior angle of the
     counter-clockwise ``loop`` at position ``at``."""
@@ -355,33 +385,130 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
     return left_of_in or left_of_out  # reflex corner: inside either
 
 
-def _ear_clip(points: Sequence[Point], loop: list[int]) -> list[Triangle]:
+#: The size limits of ``triangulate_region`` for a region WITH holes. Its cost has
+#: two parts: the bridges — per hole one pass over every edge, so holes x vertices
+#: — and the ear clipping of the merged ring, one array pass per vertex for an
+#: ordinary outline. Measured on the dev box under load (the first version in
+#: brackets): a closed fence along a traced outline, 1 hole, 1,201 vertices 45 ms
+#: (12.6 s), 7,287 vertices 0.29 s; a ladder drawn as one stroke, 58 holes / 591
+#: vertices 43 ms (2.5 s), 94 / 977 89 ms, 312 / 3,219 0.43 s; a square mesh drawn
+#: as one stroke, 400 holes / 1,609 vertices 0.31 s. Beyond either limit — about
+#: 0.3 s — it refuses with ``ValueError`` instead of holding the GUI thread: the
+#: region is then not buildable. A region without holes has no limit here.
+MAX_HOLED_REGION_VERTICES: Final = 8000  # outer ring and holes together
+MAX_BRIDGE_WORK: Final = 500_000  # holes x vertices
+_BRIDGE_CANDIDATES: Final = 6  # boundary vertices tried per block, nearest first
+
+
+def _bridge_position(points: Sequence[Point], xy: NDArray[np.float64], loop: list[int],
+                     hole_vertex: int, waiting_first: NDArray[np.intp],
+                     waiting_second: NDArray[np.intp]) -> int:
+    """The position in ``loop`` of the nearest boundary vertex that ``hole_vertex``
+    can be bridged to: the segment between them touches no edge of the boundary
+    or of a hole still to be merged (``waiting_first`` → ``waiting_second``, this
+    hole's own edges among them), and leaves the boundary into its inside.
+
+    Boundary vertices are tried nearest first, a block at a time, each block
+    against every edge at once. Per hole that is one sort of the boundary plus,
+    usually, one block: O(L log L + E) for a boundary of L vertices and E edges.
+    """
+    index = np.asarray(loop, dtype=np.intp)
+    first = np.concatenate([index, waiting_first])
+    second = np.concatenate([np.roll(index, -1), waiting_second])
+    cx, cy, dx, dy = xy[first, 0], xy[first, 1], xy[second, 0], xy[second, 1]
+    hx, hy = float(xy[hole_vertex, 0]), float(xy[hole_vertex, 1])
+    at_hole = (first == hole_vertex) | (second == hole_vertex)
+    order = np.argsort(np.hypot(xy[index, 0] - hx, xy[index, 1] - hy), kind="stable")
+    for start in range(0, len(order), _BRIDGE_CANDIDATES):
+        positions = [int(at) for at in order[start:start + _BRIDGE_CANDIDATES]
+                     if _inside_corner(points, loop, int(at), hole_vertex)]
+        if not positions:
+            continue
+        ends = index[positions]
+        ax, ay = xy[ends, 0][:, None], xy[ends, 1][:, None]
+        starts_here = first[None, :] == ends[:, None]
+        at_end = starts_here | (second[None, :] == ends[:, None])
+        # an edge that starts at an end of the bridge blocks it only when its far
+        # end lies ON the bridge (they would overlap); every other edge when it
+        # touches the bridge anywhere
+        far = np.where(starts_here | (first == hole_vertex)[None, :], second[None, :], first[None, :])
+        fx, fy = xy[far, 0], xy[far, 1]
+        overlapping = (((hx - ax) * (fy - ay) - (hy - ay) * (fx - ax) == 0)
+                       & _within(fx, fy, ax, ay, hx, hy))
+        touching = _touch(ax, ay, hx, hy, cx[None, :], cy[None, :], dx[None, :], dy[None, :])
+        blocked = np.where(at_end | at_hole[None, :], overlapping, touching).any(axis=1)
+        free = np.flatnonzero(~blocked)
+        if len(free):
+            return positions[int(free[0])]
+    raise ValueError("no bridge from a hole to its outer ring (rings touch or cross)")
+
+
+#: Three vertices on one line have a cross product of zero — in exact arithmetic.
+#: In floats it comes out as noise of either sign, about 4 · 2⁻⁵³ · (the largest
+#: coordinate) · (the corner's two edges). A corner whose doubled area is below
+#: this many times that product is FLAT: clipping it yields no triangle.
+_FLAT_CORNER: Final = 4e-15
+
+
+def _ear_clip(points: Sequence[Point], loop: Sequence[int]) -> list[Triangle]:
     """Clip ears of a counter-clockwise loop of indices into ``points``. The loop
     may visit a vertex twice (a bridge to a hole runs out and back): a second
-    visit to an ear's own corner never blocks that ear."""
+    visit to an ear's own corner never blocks that ear.
+
+    Each candidate corner is tested against every vertex still in the loop at
+    once; after a clipped ear the search goes on at its neighbour. O(n) array
+    passes for a well-behaved loop of n vertices, O(n²) at worst.
+
+    An ear without an area — three vertices of different rings on one line, as
+    along the edge of a diagonal stroke that other strokes cross — is clipped
+    like any other and yields NO triangle (``_FLAT_CORNER``): it covers nothing,
+    and rounded to the engine's float32 it would come out wound either way.
+    """
+    n = len(loop)
+    xs = [points[i][0] for i in loop]
+    ys = [points[i][1] for i in loop]
+    x, y = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
+    alive = np.ones(n, dtype=bool)
+    before = [n - 1, *range(n - 1)]
+    after = [*range(1, n), 0]
     triangles: list[Triangle] = []
-    loop = list(loop)
-    while len(loop) > 3:
-        m = len(loop)
-        for i in range(m):
-            ia, ib, ic = loop[i - 1], loop[i], loop[(i + 1) % m]
-            a, b, c = points[ia], points[ib], points[ic]
-            if _cross(a, b, c) <= 0:
-                continue
-            corners = (ia, ib, ic)
-            if any(j not in corners and points[j] not in (a, b, c)
-                   and _point_in_triangle(points[j], a, b, c) for j in loop):
-                continue
-            triangles.append((ia, ib, ic))
-            loop.pop(i)
-            break
-        else:
+    remaining, at, misses = n, 0, 0
+    while remaining > 3:
+        a, c = before[at], after[at]
+        ax, ay, bx, by, cx, cy = xs[a], ys[a], xs[at], ys[at], xs[c], ys[c]
+        ear = False
+        if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) > 0:  # a convex corner
+            # only a vertex inside the triangle's bounding box can be inside the triangle
+            near = np.flatnonzero(alive & (x >= min(ax, bx, cx)) & (x <= max(ax, bx, cx))
+                                  & (y >= min(ay, by, cy)) & (y <= max(ay, by, cy)))
+            px, py = x[near], y[near]
+            d1 = (ax - px) * (by - py) - (ay - py) * (bx - px)  # _point_in_triangle, for each
+            d2 = (bx - px) * (cy - py) - (by - py) * (cx - px)
+            d3 = (cx - px) * (ay - py) - (cy - py) * (ax - px)
+            inside = ~(((d1 < 0) | (d2 < 0) | (d3 < 0)) & ((d1 > 0) | (d2 > 0) | (d3 > 0)))
+            corner = (((px == ax) & (py == ay)) | ((px == bx) & (py == by))
+                      | ((px == cx) & (py == cy)))
+            ear = not bool(np.any(inside & ~corner))
+        if ear:
+            reach = max(abs(ax), abs(ay), abs(bx), abs(by), abs(cx), abs(cy))
+            edges = abs(bx - ax) + abs(by - ay) + abs(cx - ax) + abs(cy - ay)
+            if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) > _FLAT_CORNER * reach * edges:
+                triangles.append((loop[a], loop[at], loop[c]))
+            alive[at] = False
+            after[a], before[c] = c, a
+            remaining -= 1
+            at, misses = a, 0
+            continue
+        at = c
+        misses += 1
+        if misses > remaining:
             raise ValueError("the region cannot be triangulated (degenerate or self-touching rings)")
-    last = _cross(points[loop[0]], points[loop[1]], points[loop[2]])
+    b, c = after[at], after[after[at]]
+    last = _cross(points[loop[at]], points[loop[b]], points[loop[c]])
     if last < 0:
         raise ValueError("the region cannot be triangulated (a clockwise remainder)")
     if last > 0:
-        triangles.append((loop[0], loop[1], loop[2]))
+        triangles.append((loop[at], loop[b], loop[c]))
     return triangles
 
 
@@ -392,47 +519,106 @@ def triangulate_region(
 
     ``vertices`` is ``outer`` followed by every hole, unchanged — the triangles
     index into it, are all counter-clockwise, and cover exactly the outer minus
-    the holes. ``outer`` must be a simple counter-clockwise ring and each hole a
-    simple clockwise ring inside it; anything the algorithm cannot triangulate
-    raises ``ValueError`` rather than returning a wrong cap.
+    the holes (n + 2h − 2 of them for n vertices and h holes, fewer where three
+    vertices lie on one line). ``outer`` must be a simple counter-clockwise ring and each hole a
+    simple clockwise ring strictly inside it, none touching another; anything
+    the algorithm cannot triangulate raises ``ValueError`` rather than returning
+    a wrong cap. Use ``cut_region`` to get the result PROVEN (areas checked).
 
     Without holes this is ``triangulate_polygon`` (the ear clipper the Qt 3D view
     uses). With holes, each one is first joined to the boundary by a *bridge* —
-    the shortest vertex-to-vertex segment that crosses no edge — which turns the
-    region into one ring that walks out to the hole, around it and back.
+    a vertex-to-vertex segment that touches no edge — which turns the region
+    into one ring that walks out to the hole, around it and back. Holes are
+    taken rightmost first, each from its rightmost vertex: no hole still waiting
+    can then stand between that vertex and the boundary to its right, so a
+    bridge always exists. Cost: O(H · (L log L + E)) for the bridges of H holes
+    plus the ear clipping of the merged ring — quadratic in the vertex count at
+    worst, in array passes; ``MAX_HOLED_REGION_VERTICES`` and ``MAX_BRIDGE_WORK``
+    bound it, and beyond them this raises.
     """
     points: tuple[Point, ...] = tuple(outer) + tuple(p for hole in holes for p in hole)
     if not holes:
         return points, triangulate_polygon(outer)
+    if len(points) > MAX_HOLED_REGION_VERTICES or len(holes) * len(points) > MAX_BRIDGE_WORK:
+        raise ValueError(
+            f"a region of {len(points)} vertices with {len(holes)} holes is beyond what is "
+            f"triangulated here ({MAX_HOLED_REGION_VERTICES} vertices, holes x vertices "
+            f"{MAX_BRIDGE_WORK})"
+        )
+    xy = np.asarray(points, dtype=np.float64)
     loop = list(range(len(outer)))
-    pending: list[list[int]] = []
+    waiting: list[list[int]] = []
     start = len(outer)
     for hole in holes:
-        pending.append(list(range(start, start + len(hole))))
+        waiting.append(list(range(start, start + len(hole))))
         start += len(hole)
-    while pending:
-        edges = [(loop[i], loop[(i + 1) % len(loop)]) for i in range(len(loop))]
-        for ring in pending:
-            edges.extend((ring[i], ring[(i + 1) % len(ring)]) for i in range(len(ring)))
-        merged = False
-        for ring in pending:
-            candidates = sorted(
-                ((math.dist(points[h], points[loop[at]]), k, at)
-                 for k, h in enumerate(ring) for at in range(len(loop))),
-            )
-            for _distance, k, at in candidates:
-                h, o = ring[k], loop[at]
-                if not _inside_corner(points, loop, at, h):
-                    continue
-                if _blocked(points, o, h, edges):
-                    continue
-                # out along the bridge, once around the hole, and back
-                loop[at + 1:at + 1] = ring[k:] + ring[:k] + [h, o]
-                pending.remove(ring)
-                merged = True
-                break
-            if merged:
-                break
-        if not merged:
-            raise ValueError("no bridge from a hole to its outer ring (rings touch or cross)")
+    waiting.sort(key=lambda ring: max(points[i][0] for i in ring), reverse=True)
+    rings = [np.asarray(ring, dtype=np.intp) for ring in waiting]
+    first = np.concatenate(rings)  # the edges of every hole, in the order they are merged
+    second = np.concatenate([np.roll(ring, -1) for ring in rings])
+    begins = np.cumsum([0, *(len(ring) for ring in waiting)])
+    for number, ring in enumerate(waiting):
+        k = max(range(len(ring)), key=lambda j: points[ring[j]])  # its rightmost vertex
+        at = _bridge_position(points, xy, loop, ring[k], first[begins[number]:],
+                              second[begins[number]:])
+        # out along the bridge, once around the hole, and back
+        loop[at + 1:at + 1] = ring[k:] + ring[:k] + [ring[k], loop[at]]
     return points, _ear_clip(points, loop)
+
+
+# ── the one predicate ─────────────────────────────────────────────────────────
+
+
+@lru_cache(maxsize=2048)
+def cut_region(outer: Ring, holes: tuple[Ring, ...] = ()) -> tuple[tuple[Point, ...], tuple[Triangle, ...]]:
+    """``triangulate_region``, with the result PROVEN before it is handed out.
+
+    Raises ``ValueError`` unless the outer ring is a simple counter-clockwise
+    polygon, every hole a simple clockwise one, every triangle of the result
+    faces up, and the triangles' areas add up to the region's (outer minus
+    holes) — the two facts a wrong triangulation cannot both satisfy. This is
+    what the default builder calls (``build.prism_mesh``); cached, so asking
+    whether a region can be built costs nothing again when it then is.
+    """
+    if not is_simple_ring(outer) or not ring_area(outer) > 0.0:
+        raise ValueError(
+            f"a footprint ring of {len(outer)} vertices is not a simple polygon "
+            "(it crosses or touches itself)"
+        )
+    for hole in holes:
+        if not is_simple_ring(hole) or not ring_area(hole) < 0.0:
+            raise ValueError(
+                f"a hole ring of {len(hole)} vertices is not a simple polygon "
+                "(it crosses or touches itself)"
+            )
+    vertices, triangles = triangulate_region(outer, holes)
+    doubled = [
+        (vertices[b][0] - vertices[a][0]) * (vertices[c][1] - vertices[a][1])
+        - (vertices[b][1] - vertices[a][1]) * (vertices[c][0] - vertices[a][0])
+        for a, b, c in triangles
+    ]
+    expected = ring_area(outer) + sum(ring_area(hole) for hole in holes)
+    slack = 1e-9 * max(1.0, abs(expected))
+    if (doubled and min(doubled) < -slack) or abs(sum(doubled) / 2.0 - expected) > slack:
+        raise ValueError(
+            f"the cap of a footprint ring covers {sum(doubled) / 2.0!r} cm² "
+            f"(smallest triangle {min(doubled, default=0.0) / 2.0!r}); its region is {expected!r} cm²"
+        )
+    return vertices, tuple(triangles)
+
+
+@lru_cache(maxsize=4096)
+def is_buildable_region(outer: Ring, holes: tuple[Ring, ...] = ()) -> bool:
+    """THE predicate for "a builder can turn this region into a solid": true
+    exactly when ``cut_region`` — the default builder's own triangulation — cuts
+    it and proves the cut. The snapshot keeps only regions for which it holds.
+
+    It implies what a builder of its own may rely on: the outer ring is a simple
+    counter-clockwise polygon, the holes are simple, clockwise and inside it,
+    and the triangulation exists. Cached, false answers included.
+    """
+    try:
+        cut_region(outer, holes)
+    except ValueError:
+        return False
+    return True

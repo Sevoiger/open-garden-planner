@@ -62,9 +62,12 @@ from open_garden_planner.core.scene3d import (
     Transform,
     default_builder,
     diff,
+    is_buildable_region,
     is_simple_ring,
     point_in_regions,
     pose_ring,
+    prism_mesh,
+    regions_area,
     signed_area,
     verify_builder,
 )
@@ -94,6 +97,7 @@ from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
 from open_garden_planner.ui.view3d import snapshot as snapshot_module
 from open_garden_planner.ui.view3d.snapshot import (
     SkippedItem,
+    SkipReason,
     collect_scene3d_records,
     snapshot_records,
 )
@@ -880,8 +884,8 @@ class TestRecordContent:
         item.setPos(float("nan"), 0.0)
         snapshot, skipped = snapshot_with_report(canvas.scene())
         assert snapshot == {}
-        assert [(s.item_id, s.kind) for s in skipped] == [(str(item.item_id), "TOOL_SHED")]
-        assert isinstance(skipped[0].error, ValueError)
+        assert skipped == [SkippedItem(str(item.item_id), "TOOL_SHED", SkipReason.RECORD_FAILED,
+                                       "ValueError", "a position that is not finite")]
 
 
 # ── P1-1: a stroke that closes on itself ──────────────────────────────────────
@@ -1017,6 +1021,7 @@ class TestSelfCrossingPolygon:
         record = snapshot[str(bow.item_id)]
         assert skipped == []
         assert len(item_footprints(bow)) == 1  # 2D: the ring as drawn
+        assert record.params["outline_resolved"] is True and "ridge" not in record.params
         assert len(record.footprints) == 2 and record.holes == ()
         assert all(is_simple_ring(ring) and len(ring) == 3 for ring in record.footprints)
         assert [signed_area(ring) for ring in record.footprints] == pytest.approx([30000.0, 30000.0])
@@ -1053,10 +1058,258 @@ class TestSelfCrossingPolygon:
     def test_a_polygon_with_no_area_left_gets_no_record(self, canvas: CanvasView) -> None:
         flat = PolygonItem([QPointF(0.0, 0.0), QPointF(100.0, 100.0), QPointF(200.0, 200.0)],
                            object_type=ObjectType.HOUSE)
+        spur = PolygonItem([QPointF(400.0, 200.0), QPointF(400.0, 0.0), QPointF(400.0, 50.0),
+                            QPointF(350.0, 50.0), QPointF(400.0, 50.0)], object_type=ObjectType.HOUSE)
         canvas.scene().addItem(flat)
+        canvas.scene().addItem(spur)
         snapshot, skipped = snapshot_with_report(canvas.scene())
-        assert snapshot == {} and skipped == []  # it covers no ground: left out by design
-        assert snapshot_module._resolved(((0.0, 0.0), (1.0, 1.0))) == []
+        assert snapshot == {} and skipped == []  # they cover no ground: left out by design
+
+    # ── fix round 2 (P1): "resolved" is a fact a builder can read, and every region is buildable ──
+
+    #: The four outlines of the re-review, measured on real HOUSE polygons: at the
+    #: first fix one was a single ring passing for an ordinary house, one had a
+    #: pocket the default builder could not cut, one a ring that was not simple,
+    #: and one got no record at all. → (footprint rings, their vertex counts).
+    REVIEWED: dict[str, tuple[list[tuple[float, float]], list[int]]] = {
+        "one ring of ten": ([(50, 400), (0, 300), (350, 100), (0, 400), (50, 0)], [10]),
+        "a pocket": ([(100, 50), (100, 150), (350, 400), (50, 200), (150, 150), (0, 50), (200, 300)],
+                     [4, 3, 13]),
+        "a ring that touches itself": ([(150, 100), (0, 200), (50, 150), (350, 0), (0, 300)], [3, 3]),
+        "a hole on the boundary": ([(0, 200), (50, 0), (50, 250), (150, 100), (0, 0), (250, 100)],
+                                   [3, 16]),
+    }
+
+    @pytest.mark.parametrize("label", sorted(REVIEWED))
+    def test_the_four_outlines_of_the_review(self, canvas: CanvasView, label: str) -> None:
+        points, rings = self.REVIEWED[label]
+        house = PolygonItem([QPointF(1000.0 + x, 800.0 + y) for x, y in points],
+                            object_type=ObjectType.HOUSE)
+        ridge = PolylineItem([QPointF(1000.0, 1000.0), QPointF(1350.0, 1000.0)],
+                             object_type=ObjectType.ROOF_RIDGE)
+        house.set_metadata("ridge_item_id", str(ridge.item_id))
+        canvas.scene().addItem(house)
+        canvas.scene().addItem(ridge)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert skipped == [] and list(snapshot) == [str(house.item_id)]  # a record, every time
+        record = snapshot[str(house.item_id)]
+        # resolved — said in the record, not guessed from a ring count …
+        assert record.params["outline_resolved"] is True
+        assert sorted(len(ring) for ring in record.footprints) == sorted(rings)
+        # … and the ridge that was drawn for the DRAWN outline is not handed on
+        assert "ridge" not in record.params
+        # every region is one a builder can build: the predicate, and the builder itself
+        assert all(is_buildable_region(outer, holes) for outer, holes in record.regions)
+        (part,) = verify_builder(default_builder, record)
+        part.validate()
+        assert _cap_area(part.mesh) == pytest.approx(record.plan_area_cm2, rel=1e-6)
+        sync = SceneSync(RecordingSink(), validate=True)
+        sync.apply(snapshot)
+        assert sync.failures == {}
+        # the ground it covers is what the 2D shadow fills at a vertical sun, less the hair
+        # by which parts that met in a point were drawn apart (0.002 cm along their edges)
+        from open_garden_planner.core.shadow_geometry import compute_scene_shadows
+
+        vertical_sun = compute_scene_shadows([(item_footprints(house)[0], 300.0)], 89.999, 180.0)
+        assert record.plan_area_cm2 == pytest.approx(_signed_area_sum(vertical_sun), rel=2e-3)
+        # an unchanged scene still snapshots identically, a move is still a transform only
+        assert diff(snapshot, snapshot_records(canvas.scene())).is_empty
+        house.moveBy(33.25, -12.5)
+        assert diff(snapshot, snapshot_records(canvas.scene())) == SceneDiff(
+            transform=(str(house.item_id),))
+
+    def test_a_simple_house_keeps_its_ridge_and_says_nothing_about_resolving(
+        self, canvas: CanvasView
+    ) -> None:
+        house = PolygonItem([QPointF(0.0, 0.0), QPointF(900.0, 0.0), QPointF(900.0, 540.0),
+                             QPointF(0.0, 540.0)], object_type=ObjectType.HOUSE)
+        ridge = PolylineItem([QPointF(0.0, 270.0), QPointF(900.0, 270.0)],
+                             object_type=ObjectType.ROOF_RIDGE)
+        house.set_metadata("ridge_item_id", str(ridge.item_id))
+        canvas.scene().addItem(house)
+        canvas.scene().addItem(ridge)
+        record = snapshot_records(canvas.scene())[str(house.item_id)]
+        assert "outline_resolved" not in record.params and "ridge" in record.params
+
+    @pytest.mark.parametrize(
+        ("label", "points"),
+        [("a closing vertex that repeats the first",
+          [(0, 0), (400, 0), (400, 300), (150, 300), (150, 150), (0, 150), (0, 0)]),
+         ("a vertex placed twice",
+          [(0, 0), (400, 0), (400, 0), (400, 300), (150, 300), (150, 150), (0, 150)]),
+         ("both, and a triple",
+          [(0, 0), (0, 0), (0, 0), (400, 0), (400, 300), (150, 300), (150, 150), (0, 150), (0, 0)])],
+    )
+    def test_a_vertex_placed_twice_does_not_send_an_outline_through_the_resolution(
+        self, canvas: CanvasView, label: str, points: list[tuple[float, float]]
+    ) -> None:
+        """Review round 2, P1.3. Such an outline is not self-crossing; resolving it
+        put its vertices on the clipper grid, started the ring somewhere else and
+        would now cost a HOUSE its ridge. It stays the drawn outline, said once."""
+        plain = PolygonItem([QPointF(x + 0.123456, y + 0.654321) for x, y in dict.fromkeys(points)],
+                            object_type=ObjectType.HOUSE)
+        doubled = PolygonItem([QPointF(x + 0.123456, y + 0.654321) for x, y in points],
+                              object_type=ObjectType.HOUSE)
+        scene = canvas.scene()
+        scene.addItem(plain)
+        scene.addItem(doubled)
+        snapshot, skipped = snapshot_with_report(scene)
+        one, two = snapshot[str(plain.item_id)], snapshot[str(doubled.item_id)]
+        assert skipped == [] and "outline_resolved" not in two.params, label
+        assert two.footprints == one.footprints and len(two.footprints[0]) == 6  # vertex for vertex
+        assert two.holes == ()
+        # unchanged scene → empty diff; move → transform only; turn → transform only
+        assert diff(snapshot, snapshot_records(scene)).is_empty
+        doubled.moveBy(41.5, 17.25)
+        moved = snapshot_records(scene)
+        assert diff(snapshot, moved) == SceneDiff(transform=(str(doubled.item_id),))
+        apply_rotation(doubled, 33.0)
+        assert diff(moved, snapshot_records(scene)) == SceneDiff(transform=(str(doubled.item_id),))
+
+    def test_an_outline_that_cannot_be_made_buildable_is_skipped_with_its_own_code(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The residue, should there ever be one: no record, a ``SkippedItem`` with a
+        stable code, the rest of the plan untouched. Forced here — over 7,500 random
+        self-crossing outlines none arose (``test_random_self_crossing_outlines``)."""
+        snapshot_module._reported.clear()
+        monkeypatch.setattr(snapshot_module, "_resolved_regions", lambda *_args, **_kwargs: None)
+        snapshot_module._polygon_regions.cache_clear()
+        try:
+            bow = PolygonItem([QPointF(0.0, 0.0), QPointF(400.0, 300.0), QPointF(400.0, 0.0),
+                               QPointF(0.0, 300.0)], object_type=ObjectType.HOUSE)
+            shed = _rectangle()
+            canvas.scene().addItem(bow)
+            canvas.scene().addItem(shed)
+            snapshot, skipped = snapshot_with_report(canvas.scene())
+        finally:
+            snapshot_module._polygon_regions.cache_clear()
+        assert list(snapshot) == [str(shed.item_id)]
+        assert skipped == [SkippedItem(str(bow.item_id), "HOUSE", SkipReason.OUTLINE_UNBUILDABLE,
+                                       "_UnbuildableOutline",
+                                       "the outline cannot be resolved into buildable regions")]
+
+
+def _random_outline(rng: Any, grid: float, vertices: int, span: float = 400.0) -> tuple[Any, ...]:
+    points: list[tuple[float, float]] = []
+    cells = int(span / grid)
+    while len(points) < vertices:
+        point = (rng.randrange(cells + 1) * grid, rng.randrange(cells + 1) * grid)
+        if not points or point != points[-1]:
+            points.append(point)
+    if points[0] == points[-1]:
+        points.pop()
+    return tuple((float(x), float(y)) for x, y in points)
+
+
+def _winding_area(outline: Any, step: float = 2.0, span: float = 400.0) -> float:
+    """The area an outline fills by the non-zero rule, from a raster of its winding
+    number — computed with no clipper at all."""
+    xs, ys = np.meshgrid(np.arange(step / 2.0, span, step), np.arange(step / 2.0, span, step))
+    winding = np.zeros(xs.shape, dtype=np.int64)
+    for i in range(len(outline)):
+        (x1, y1), (x2, y2) = outline[i - 1], outline[i]
+        if y1 != y2:
+            crossed = ((y1 > ys) != (y2 > ys)) & (xs < (x2 - x1) * (ys - y1) / (y2 - y1) + x1)
+            winding += np.where(crossed, 1 if y2 > y1 else -1, 0)
+    return float((winding != 0).sum()) * step * step
+
+
+@pytest.mark.parametrize(("grid", "count"), [(50.0, 2500), (10.0, 2500), (0.001, 2500)],
+                         ids=["a 50 cm grid", "a 10 cm grid", "a 0.001 cm grid"])
+def test_random_self_crossing_outlines(grid: float, count: int) -> None:
+    """Review round 2, P1 — the promise as a number. 2,500 random outlines of 5 to
+    9 vertices that cross or touch themselves, per grid (a coarse one, where
+    vertices fall on each other and edges retrace; a fine one, where nothing
+    does): every one gets regions, every region satisfies the predicate, the
+    default builder builds every one, and the ground covered is the outline's
+    non-zero area. 0 dropped, 0 unbuildable — and if that ever stops being 0,
+    this test says by how many."""
+    import random
+
+    rng = random.Random(385)
+    dropped = unbuilt = wrong = seen = 0
+    while seen < count:
+        outline = _random_outline(rng, grid, rng.randrange(5, 10))
+        if len(outline) < 3 or is_simple_ring(snapshot_module._without_repeats(outline)):
+            continue
+        truth = _winding_area(outline)
+        if truth == 0.0:
+            assert snapshot_module._polygon_regions(outline) == ((), True)  # no ground: no record
+            continue
+        seen += 1
+        regions, resolved = snapshot_module._polygon_regions(outline)
+        assert resolved
+        if not regions:
+            dropped += 1
+            continue
+        if not all(is_buildable_region(outer, holes) for outer, holes in regions):
+            unbuilt += 1
+            continue
+        mesh = prism_mesh([outer for outer, _holes in regions], 100.0,
+                          [holes for _outer, holes in regions])
+        mesh.validate()  # … and what it builds is a sound mesh in the engine's float32
+        unbuilt += not mesh.vertex_count
+        # against the raster (2 cm cells: a perimeter of ~2,000 cm is ±1.5 % of a small shape)
+        wrong += abs(regions_area(regions) - truth) > 0.03 * truth + 200.0
+    assert (dropped, unbuilt, wrong) == (0, 0, 0)
+
+
+class TestWhatPyclipperGetsWrong:
+    """Two outlines — found by the random run above — for which pyclipper's own
+    answer is not the outline's non-zero area: it retraces an edge, and the
+    union hands one piece out as a hole. ``_resolved_regions`` checks every
+    reading against the DRAWN outline and takes one that holds."""
+
+    CASES: dict[str, tuple[tuple[tuple[float, float], ...], float]] = {
+        "a piece handed out the wrong way round": (
+            ((400.0, 250.0), (150.0, 300.0), (300.0, 0.0), (200.0, 100.0), (250.0, 100.0),
+             (200.0, 400.0), (200.0, 100.0), (300.0, 0.0), (100.0, 350.0)), 13603.6),
+        "a hole hung under the wrong ring": (
+            ((400.0, 400.0), (100.0, 250.0), (300.0, 100.0), (250.0, 200.0), (300.0, 250.0),
+             (200.0, 100.0), (250.0, 200.0), (300.0, 100.0)), 36704.5),
+    }
+
+    @pytest.mark.parametrize("label", sorted(CASES))
+    def test_the_regions_are_the_outline_s_not_the_clipper_s(self, label: str) -> None:
+        import pyclipper
+
+        outline, area = self.CASES[label]
+        assert _winding_area(outline, step=0.5) == pytest.approx(area, rel=2e-3)  # the truth
+        grid = [snapshot_module._to_grid(outline)]
+        strict = snapshot_module._tree_regions(
+            snapshot_module._clip_tree(grid, pyclipper.PFT_NONZERO, strictly_simple=True))
+        # pyclipper's StrictlySimple reading is not usable as it comes …
+        assert not (snapshot_module._buildable(strict)
+                    and snapshot_module._matches_outline(outline, strict))
+        regions, resolved = snapshot_module._polygon_regions(outline)
+        # … and what is handed out is the outline's area, less a hair along the edges
+        assert resolved and regions and snapshot_module._matches_outline(outline, regions)
+        assert regions_area(regions) == pytest.approx(area, rel=1e-3)
+        assert all(is_buildable_region(outer, holes) for outer, holes in regions)
+
+    def test_the_second_one_is_wrong_in_the_plain_union_too(self) -> None:
+        """Why no reading of pyclipper's is trusted without the check: the plain
+        union's signed ring areas sum to 33,133 cm² for an outline that fills 36,704."""
+        import pyclipper
+
+        outline, area = self.CASES["a hole hung under the wrong ring"]
+        clipper = pyclipper.Pyclipper()
+        clipper.AddPath(snapshot_module._to_grid(outline), pyclipper.PT_SUBJECT, True)
+        rings = clipper.Execute(pyclipper.CT_UNION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+        assert sum(pyclipper.Area(ring) for ring in rings) / 1e6 == pytest.approx(33133.1, abs=0.1)
+        assert area - 33133.1 > 3500.0
+
+    def test_matches_outline_tells_a_lost_piece_and_a_filled_hole(self) -> None:
+        square = ((0.0, 0.0), (300.0, 0.0), (300.0, 300.0), (0.0, 300.0))
+        pocket = ((100.0, 100.0), (100.0, 200.0), (200.0, 200.0), (200.0, 100.0))  # clockwise
+        assert snapshot_module._matches_outline(square, ((square, ()),))
+        assert not snapshot_module._matches_outline(square, ((square, (pocket,)),))  # a hole too many
+        half = ((0.0, 0.0), (150.0, 0.0), (150.0, 300.0), (0.0, 300.0))
+        assert not snapshot_module._matches_outline(square, ((half, ()),))  # a piece lost
+        # a hair along the edges is not judged: the separation lives there
+        inset = ((0.002, 0.002), (299.998, 0.002), (299.998, 299.998), (0.002, 299.998))
+        assert snapshot_module._matches_outline(square, ((inset, ()),))
 
     def test_it_still_moves_and_turns_as_transform_only(self, canvas: CanvasView) -> None:
         bow = PolygonItem([QPointF(100.0, 100.0), QPointF(500.0, 400.0), QPointF(500.0, 100.0),
@@ -1139,13 +1392,45 @@ class TestContainment:
         (skipped,) = report
         assert isinstance(skipped, SkippedItem)
         assert (skipped.item_id, skipped.kind) == (bad_id, "TREE")
-        assert skipped.reason == "its record could not be built"
-        assert isinstance(skipped.error, error_type)
-        assert [s.item_id for s in report_again] == [bad_id]  # observable every time …
+        assert skipped.reason is SkipReason.RECORD_FAILED and skipped.reason == "record_failed"
+        assert skipped.error_type == error_type.__name__ and skipped.error_message
+        assert report_again == report  # observable every time, and two reports are EQUAL …
         mine = [r for r in caplog.records if bad_id in r.getMessage()]
         assert len(mine) == 1  # … logged once
         assert mine[0].levelno == logging.ERROR and mine[0].exc_info is not None
-        assert mine[0].exc_info[1] is skipped.error  # with the exception
+        logged = mine[0].exc_info[1]  # the exception itself goes to the log, and only there
+        assert type(logged).__name__ == skipped.error_type and str(logged) == skipped.error_message
+
+    def test_a_skipped_item_is_plain_data_and_keeps_nothing_alive(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 2, P2-1. The report is a list a caller is told to keep. It
+        used to hold the exception — whose traceback holds the frames, which hold
+        the scene and the item. Now it is strings and a code, and the item can go."""
+        import dataclasses
+        import gc
+        import weakref
+
+        # pytest's own log capture keeps every LogRecord, traceback and all, for its
+        # report; a real handler writes the line and forgets it. Out of the way here,
+        # so that the REPORT is the only thing that could still hold the item.
+        monkeypatch.setattr(snapshot_module._log, "disabled", True)
+        scene = canvas.scene()
+        tree = CircleItem(300.0, 100.0, 30.0, object_type=ObjectType.TREE)
+        scene.addItem(tree)
+        _break_species(tree)
+        _snapshot, report = snapshot_with_report(scene)
+        (skipped,) = report
+        assert all(isinstance(getattr(skipped, field.name), str)
+                   for field in dataclasses.fields(skipped))  # a StrEnum member is a str
+        assert not hasattr(skipped, "error")
+        gone = weakref.ref(tree)
+        scene.removeItem(tree)
+        del tree
+        gc.collect()
+        assert gone() is None  # the report does not pin the item
+        assert [reason.value for reason in SkipReason] == [
+            "record_failed", "duplicate_id", "outline_unbuildable"]  # the codes a UI maps to texts
 
     def test_a_repaired_item_comes_back(self, canvas: CanvasView) -> None:
         scene = canvas.scene()
@@ -1169,31 +1454,40 @@ class TestContainment:
         scene.addItem(tree)
         with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
             _break_species(tree)  # AttributeError: 'NoneType' object has no attribute 'strip'
-            first = snapshot_with_report(scene)[1][0].error
+            first = snapshot_with_report(scene)[1][0]
             _break_species_name(tree)  # AttributeError again, another message
-            second = snapshot_with_report(scene)[1][0].error
-            assert str(first) != str(second) and type(first) is type(second)
+            second = snapshot_with_report(scene)[1][0]
+            assert first.error_message != second.error_message
+            assert first.error_type == second.error_type == "AttributeError"
             assert len(caplog.records) == 1
             tree.metadata.pop("plant_species")
             _break_position(tree)  # ValueError: another kind of failure
-            assert isinstance(snapshot_with_report(scene)[1][0].error, ValueError)
+            assert snapshot_with_report(scene)[1][0].error_type == "ValueError"
         assert len(caplog.records) == 2
 
     def test_the_memory_of_what_was_logged_is_bounded(
         self, canvas: CanvasView, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """"Logged once" needs a memory; a session that sees many broken items must
-        not grow it without end. Past the bound it starts over — at worst a line
-        is repeated, never suppressed."""
-        monkeypatch.setattr(snapshot_module, "_REPORTED_MAX", 2)
+        """"Logged once" needs a memory, and the memory needs a bound — one that
+        bounds the VOLUME too (review round 2, P2-2: clearing the memory when it
+        was full logged every broken item again on every snapshot — 8 items, a
+        memory of 5, 10 idle snapshots: 80 lines). Now: 5 items are logged once
+        each, one line says that further failures are not logged, and that is
+        all — however many snapshots follow. The caller's list is never cut."""
+        monkeypatch.setattr(snapshot_module, "_REPORTED_MAX", 5)
         scene = canvas.scene()
-        for index in range(3):
+        for index in range(8):
             tree = CircleItem(100.0 + 100.0 * index, 100.0, 30.0, object_type=ObjectType.TREE)
             scene.addItem(tree)
             _break_species(tree)
         with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
-            assert len(snapshot_with_report(scene)[1]) == 3
-        assert len(caplog.records) == 3 and len(snapshot_module._reported) <= 2
+            for _ in range(10):
+                assert len(snapshot_with_report(scene)[1]) == 8  # reported every time
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        notices = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(errors) == 5 and len(notices) == 1 and len(caplog.records) == 6
+        assert "further ones are left out of the log" in notices[0].getMessage()
+        assert len(snapshot_module._reported) == 6  # five failures and the marker: it stays put
 
     def test_the_report_is_an_out_parameter_and_the_return_type_is_what_it_was(
         self, canvas: CanvasView
@@ -1213,7 +1507,7 @@ class TestContainment:
         scene.addItem(shed)
         scene.addItem(tree)
         _break_species(tree)
-        report: list[SkippedItem] = [SkippedItem("earlier", "X", "kept")]
+        report: list[SkippedItem] = [SkippedItem("earlier", "X", SkipReason.DUPLICATE_ID)]
         snapshot = snapshot_records(scene, None, skipped=report)
         assert type(snapshot) is dict and list(snapshot) == [str(shed.item_id)]
         assert [s.item_id for s in report] == ["earlier", str(tree.item_id)]
@@ -1254,12 +1548,11 @@ class TestDuplicateIds:
             snapshot, report = snapshot_with_report(scene)
             snapshot_records(scene)
         assert list(snapshot) == [shared] and snapshot[shared].kind == "TOOL_SHED"  # first wins
-        (skipped,) = report
-        assert (skipped.item_id, skipped.kind, skipped.error) == (shared, "RAISED_BED", None)
-        assert skipped.reason == "another item already has this id"
+        assert report == [SkippedItem(shared, "RAISED_BED", SkipReason.DUPLICATE_ID)]
+        assert (report[0].error_type, report[0].error_message) == ("", "")  # nothing was raised
         (logged,) = caplog.records  # once, though snapshotted twice
         assert logged.levelno == logging.WARNING and shared in logged.getMessage()
-        assert "already has this id" in logged.getMessage()
+        assert "already has this id [duplicate_id]" in logged.getMessage()
 
 
 # ── a HOUSE and its ridge ─────────────────────────────────────────────────────

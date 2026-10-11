@@ -20,9 +20,11 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import date
+from enum import StrEnum
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pyclipper
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsScene
@@ -56,6 +58,8 @@ from open_garden_planner.core.scene3d import (
     records_from_raw,
     ring_area,
 )
+from open_garden_planner.core.scene3d.polygon import is_buildable_region, regions_area
+from open_garden_planner.core.scene3d.record import PARAM_OUTLINE_RESOLVED
 from open_garden_planner.core.shadow_geometry import (
     CLIPPER_SCALE,
     circle_footprint,
@@ -135,18 +139,34 @@ def collect_scene3d_records(
 _NO_RECORD_KINDS = frozenset({"ROOF_RIDGE"})
 
 
+class SkipReason(StrEnum):
+    """Why an item got no record — a stable CODE. A UI maps it to a ``tr()`` text;
+    the value is never shown to the user as it is."""
+
+    #: Building its record raised (malformed metadata, geometry that is not finite …).
+    RECORD_FAILED = "record_failed"
+    #: Another item, lower in the paint order, already has this id.
+    DUPLICATE_ID = "duplicate_id"
+    #: Its outline cannot be turned into regions a builder can build
+    #: (``core.scene3d.is_buildable_region``), not even after resolving it.
+    OUTLINE_UNBUILDABLE = "outline_unbuildable"
+
+
 @dataclass(frozen=True, slots=True)
 class SkippedItem:
     """A visible, typed canvas item that got no record, and why.
 
-    ``reason`` is a short English phrase for logs and diagnostics (never shown
-    to the user as it is); ``error`` the exception, when one was raised.
+    Plain data, safe to keep: ``reason`` is a ``SkipReason`` code; of an exception
+    it holds the type's name and the message as strings, never the exception
+    itself (its traceback would keep the scene and the item alive). Two reports of
+    the same failure are equal.
     """
 
     item_id: str
     kind: str
-    reason: str
-    error: Exception | None = None
+    reason: SkipReason
+    error_type: str = ""  # the exception's class name; "" when none was raised
+    error_message: str = ""
 
 
 class _Lookup:
@@ -166,27 +186,43 @@ class _Lookup:
 #: What has been logged already — one line per item and KIND of failure (the
 #: reason and the exception's type), not one per edit: the pipeline snapshots on
 #: every change, and an exception message may carry a value that changes with
-#: every mouse move. Bounded: cleared when it overflows.
+#: every mouse move. Bounded in memory AND in volume: once it is full nothing new
+#: is logged for the rest of the session (one line says so) — clearing it instead
+#: would log every broken item again on every snapshot.
 _reported: set[tuple[str, str, str]] = set()
 _REPORTED_MAX = 2048
+_NO_MORE = ("", "no more", "")  # the marker of "the one line that says so was written"
+#: The LOG's words for a code (English, for whoever reads ``app.log``; never shown in the UI).
+_LOG_TEXT: dict[SkipReason, str] = {
+    SkipReason.RECORD_FAILED: "its record could not be built",
+    SkipReason.DUPLICATE_ID: "another item already has this id",
+    SkipReason.OUTLINE_UNBUILDABLE: "its outline cannot be made into regions a builder can build",
+}
 
 
-def _report(skipped: SkippedItem, into: list[SkippedItem] | None) -> None:
-    """Hand a skipped item to the caller's list (every time) and to the log (once)."""
+def _report(skipped: SkippedItem, into: list[SkippedItem] | None,
+            error: BaseException | None = None) -> None:
+    """Hand a skipped item to the caller's list (every time) and to the log (once).
+    ``error``, the exception itself, goes to the log only."""
     if into is not None:
         into.append(skipped)
-    key = (skipped.item_id, skipped.reason, type(skipped.error).__name__)
+    key = (skipped.item_id, str(skipped.reason), skipped.error_type)
     if key in _reported:
         return
     if len(_reported) >= _REPORTED_MAX:
-        _reported.clear()
+        if _NO_MORE not in _reported:
+            _reported.add(_NO_MORE)
+            _log.warning("3D snapshot: %d different failures have been logged; further ones are "
+                         "left out of the log (they are still reported to the caller)",
+                         _REPORTED_MAX)
+        return
     _reported.add(key)
-    if skipped.error is not None:
-        _log.error("3D snapshot: %s item %r is left out of the 3D view (%s)",
-                   skipped.kind, skipped.item_id, skipped.reason, exc_info=skipped.error)
+    line = "3D snapshot: %s item %r is left out of the 3D view: %s [%s]"
+    words = (skipped.kind, skipped.item_id, _LOG_TEXT[skipped.reason], skipped.reason.value)
+    if error is not None:
+        _log.error(line, *words, exc_info=error)
     else:
-        _log.warning("3D snapshot: %s item %r is left out of the 3D view (%s)",
-                     skipped.kind, skipped.item_id, skipped.reason)
+        _log.warning(line, *words)
 
 
 @lru_cache(maxsize=4096)
@@ -204,37 +240,227 @@ def _quantized(ring: Any) -> Ring:
     return tuple((quantize_cm(x), quantize_cm(y)) for x, y in ring)
 
 
-@lru_cache(maxsize=2048)
-def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...]:
-    """A polyline's item-local stroke: the centre line inflated by half its width
-    (``polyline_footprint`` — pyclipper, a 1/1000 cm grid), sorted into outer
-    rings and the holes they enclose. A closed fence is one outer and one hole."""
-    return group_rings([_quantized(ring) for ring in polyline_footprint(list(path), width_cm)])
+class _UnbuildableOutline(ValueError):
+    """An outline that cannot be turned into regions a builder can build."""
 
 
-def _resolved(ring: Ring) -> list[Ring]:
-    """A self-crossing ring as simple rings (outers counter-clockwise, holes
-    clockwise), by pyclipper's NON-ZERO rule on the 2D shadow's integer grid.
-    ``[]`` when nothing with an area is left."""
-    scaled = [(round(x * CLIPPER_SCALE), round(y * CLIPPER_SCALE)) for x, y in ring]
-    return [_quantized((x / CLIPPER_SCALE, y / CLIPPER_SCALE) for x, y in path)
-            for path in pyclipper.SimplifyPolygon(scaled, pyclipper.PFT_NONZERO) if len(path) >= 3]
+#: How far a region whose rings TOUCH is drawn in, in clipper units (1/1000 cm):
+#: 0.002 cm, twenty micrometres. Where two parts of a resolved outline meet in a
+#: single point — the pocket of a self-crossing polygon touching its outer ring,
+#: a neck pinched to nothing — no triangulation is possible as it stands; drawn
+#: in by this much the parts stand a hair apart and each can be built. Only such
+#: outlines pay it; the rest keep their exact coordinates.
+_SEPARATION: int = 2
+#: A resolved outline is compared with the DRAWN one on a lattice of this many
+#: points a side; points closer to a drawn edge than the tolerance are not
+#: judged (the separation and the clipper grid both live there).
+_LATTICE: int = 48
+_OUTLINE_TOLERANCE_CM = 0.01
 
 
-@lru_cache(maxsize=2048)
-def _polygon_regions(ring: Ring) -> tuple[Region, ...]:
-    """A drawn polygon as simple rings. A simple one is itself, turned
-    counter-clockwise. One that crosses itself (a bow-tie) is resolved with the
-    non-zero rule — the rule the 2D shadow fills the caster's own footprint
-    with — so the 3D solid stands on the ground the 2D shadow treats as built
-    on; its vertices then sit on the clipper grid. (The canvas PAINTS such a
-    polygon with Qt's odd-even rule: the same for a bow-tie, not for a
-    pentagram, whose centre the shadow fills and the paint leaves open.)"""
-    if len(ring) < 3:
+def _to_grid(ring: Ring) -> list[tuple[int, int]]:
+    return [(round(x * CLIPPER_SCALE), round(y * CLIPPER_SCALE)) for x, y in ring]
+
+
+def _tree_regions(tree: Any) -> tuple[Region, ...]:
+    """The regions of a pyclipper PolyTree: every outer ring with the holes
+    pyclipper itself says are its own — the hierarchy is the clipper's, not a
+    guess from a point test. An island inside a hole is a region of its own.
+    Orientation is set from the ring's PLACE in the tree, never read off the
+    contour: pyclipper hands a split-off piece out the wrong way round now and
+    then (measured)."""
+    regions: list[Region] = []
+    outers = list(tree.Childs)
+    while outers:
+        node = outers.pop(0)
+        outer = _quantized((x / CLIPPER_SCALE, y / CLIPPER_SCALE) for x, y in node.Contour)
+        holes: list[Ring] = []
+        for child in node.Childs:
+            hole = _quantized((x / CLIPPER_SCALE, y / CLIPPER_SCALE) for x, y in child.Contour)
+            if len(hole) >= 3 and ring_area(hole) != 0.0:
+                holes.append(hole if ring_area(hole) < 0.0 else hole[::-1])
+            outers.extend(child.Childs)
+        if len(outer) >= 3 and ring_area(outer) != 0.0:
+            regions.append((ccw(outer), tuple(holes)))
+    return tuple(regions)
+
+
+def _buildable(regions: tuple[Region, ...]) -> bool:
+    return all(is_buildable_region(outer, holes) for outer, holes in regions)
+
+
+def _inside_ring(px: Any, py: Any, ring: Ring) -> Any:
+    """Even-odd point-in-ring for arrays of points."""
+    inside = np.zeros(len(px), dtype=bool)
+    x1, y1 = ring[-1]
+    for x2, y2 in ring:
+        if y1 != y2:
+            inside ^= ((y1 > py) != (y2 > py)) & (px < (x2 - x1) * (py - y1) / (y2 - y1) + x1)
+        x1, y1 = x2, y2
+    return inside
+
+
+def _matches_outline(outline: Ring, regions: tuple[Region, ...]) -> bool:
+    """True when ``regions`` cover what the DRAWN outline fills by the non-zero
+    rule and nothing else — checked where it can be checked without trusting
+    the clipper: at ``_LATTICE`` x ``_LATTICE`` points over the outline's
+    bounding box, each one's winding number about the drawn ring against its
+    being inside a region. A reading that put a hole where there is ground, or
+    lost a piece, differs at every lattice point of that piece."""
+    xs = [x for x, _y in outline]
+    ys = [y for _x, y in outline]
+    steps = (np.arange(_LATTICE) + 0.5) / _LATTICE
+    gx, gy = np.meshgrid(min(xs) + steps * (max(xs) - min(xs)), min(ys) + steps * (max(ys) - min(ys)))
+    px, py = gx.ravel(), gy.ravel()
+    winding = np.zeros(len(px), dtype=np.int64)
+    judged = np.ones(len(px), dtype=bool)
+    x1, y1 = outline[-1]
+    for x2, y2 in outline:
+        dx, dy = x2 - x1, y2 - y1
+        if dx or dy:
+            along = np.clip(((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy), 0.0, 1.0)
+            judged &= np.hypot(px - (x1 + along * dx), py - (y1 + along * dy)) >= _OUTLINE_TOLERANCE_CM
+        if y1 != y2:
+            crossed = ((y1 > py) != (y2 > py)) & (px < dx * (py - y1) / dy + x1)
+            winding += np.where(crossed, 1 if y2 > y1 else -1, 0)
+        x1, y1 = x2, y2
+    covered = np.zeros(len(px), dtype=bool)
+    for outer, holes in regions:
+        mine = _inside_ring(px, py, outer)
+        for hole in holes:
+            mine &= ~_inside_ring(px, py, hole)
+        covered |= mine
+    return bool(np.all((winding != 0)[judged] == covered[judged]))
+
+
+def _clip_tree(subject: list[list[tuple[int, int]]], fill: int, *, strictly_simple: bool = False,
+               band: list[list[tuple[int, int]]] | None = None) -> Any:
+    """The union of ``subject`` under ``fill`` as a pyclipper PolyTree — minus a
+    band ``_SEPARATION`` wide along every ring of ``band``, when one is given.
+    None when no ring of ``subject`` has an area."""
+    clipper = pyclipper.Pyclipper()
+    clipper.StrictlySimple = strictly_simple
+    try:
+        clipper.AddPaths(subject, pyclipper.PT_SUBJECT, True)
+    except pyclipper.ClipperException:
+        return None
+    if band is None:
+        return clipper.Execute2(pyclipper.CT_UNION, fill, fill)
+    stroke = pyclipper.PyclipperOffset()
+    stroke.AddPaths(band, pyclipper.JT_SQUARE, pyclipper.ET_CLOSEDLINE)
+    clipper.AddPaths(stroke.Execute(_SEPARATION), pyclipper.PT_CLIP, True)
+    return clipper.Execute2(pyclipper.CT_DIFFERENCE, fill, pyclipper.PFT_NONZERO)
+
+
+def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int,
+                      outline: Ring | None = None) -> tuple[Region, ...] | None:
+    """Rings on the clipper grid → regions a builder can build, or None.
+
+    Three readings of the rings' union under ``fill``, the first that holds:
+
+    1. the union with ``StrictlySimple``, read as a PolyTree — rings that do not
+       touch themselves, pyclipper's own hierarchy, the outline's own vertices;
+    2. the plain union with a band of ``_SEPARATION`` cut away along its rings —
+       for parts that meet in a point: drawn apart by a hair, each can be built;
+    3. the rings themselves with that band cut away along every one of THEM —
+       no reading of the clipper's is trusted, at the price of a cut along every
+       drawn edge, also those inside the solid.
+
+    "Holds" is checked, not assumed, because pyclipper's answer for an outline
+    that retraces or touches itself is not always right (measured: a piece
+    handed out the wrong way round, a hole hung under the wrong ring): every
+    region must be buildable (``is_buildable_region``), and — for a drawn
+    ``outline`` — the regions must cover exactly what the outline fills
+    (``_matches_outline``); for a stroke (no outline) the regions' area must be
+    the rings' own, less at most the band.
+
+    None when no reading holds; ``()`` when nothing with an area is there.
+    """
+    plain = _clip_tree(rings, fill)
+    paths = pyclipper.PolyTreeToPaths(plain) if plain is not None else []
+    if not paths:
         return ()
-    if is_simple_ring(ring):
-        return ((ccw(ring), ()),)
-    return group_rings(_resolved(ring))
+    scale2 = float(CLIPPER_SCALE) ** 2
+    area = sum(pyclipper.Area(ring) for ring in rings) / scale2  # a stroke's rings are oriented
+    rim = (sum(math.dist(path[i - 1], path[i]) for path in paths for i in range(len(path)))
+           * (2.0 * _SEPARATION + 2.0) / scale2)  # both sides of the band, and the grid's own unit
+
+    def holds(regions: tuple[Region, ...], *, drawn_in: bool) -> bool:
+        if not regions or not _buildable(regions):
+            return False
+        if outline is not None:
+            return _matches_outline(outline, regions)
+        got = regions_area(regions)
+        return (area - rim if drawn_in else area - 1e-6) <= got <= area + 1e-6
+
+    strict = _clip_tree(rings, fill, strictly_simple=True)
+    regions = _tree_regions(strict) if strict is not None else ()
+    if holds(regions, drawn_in=False):
+        return regions
+    for band in (paths, rings):
+        regions = _tree_regions(_clip_tree(band if band is paths else rings, fill, band=band))
+        if holds(regions, drawn_in=True):
+            return regions
+    return None
+
+
+@lru_cache(maxsize=2048)
+def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...] | None:
+    """A polyline's item-local stroke as buildable regions, or None when it
+    cannot be made into any.
+
+    The centre line inflated by half its width (``polyline_footprint`` —
+    pyclipper, a 1/1000 cm grid), its rings taken as they come and sorted into
+    outer rings and the holes they enclose: a closed fence is one outer and one
+    hole. Only when that is not buildable — two parts of the stroke meet in a
+    point — the rings go through ``_resolved_regions``.
+    """
+    rings = [_quantized(ring) for ring in polyline_footprint(list(path), width_cm)]
+    try:
+        regions = group_rings(rings)
+    except ValueError:
+        regions = None
+    if regions is not None and _buildable(regions):
+        return regions
+    # the stroke's rings are oriented (outers counter-clockwise, holes clockwise):
+    # their non-zero union is the stroke
+    return _resolved_regions([_to_grid(ring) for ring in rings if len(ring) >= 3],
+                             pyclipper.PFT_NONZERO)
+
+
+def _without_repeats(ring: Ring) -> Ring:
+    """``ring`` without a vertex placed twice in a row (a doubled click, a closing
+    vertex that repeats the first): the same outline, said once. The FIRST of
+    such a run is the one kept, so the ring still starts where it was drawn."""
+    kept: list[tuple[float, float]] = []
+    for point in ring:
+        if not kept or point != kept[-1]:
+            kept.append(point)
+    while len(kept) > 1 and kept[-1] == kept[0]:
+        kept.pop()
+    return tuple(kept) if len(kept) != len(ring) else ring
+
+
+@lru_cache(maxsize=2048)
+def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | None, bool]:
+    """A drawn polygon as ``(regions, resolved)``; regions None = not buildable.
+
+    A simple polygon is itself, turned counter-clockwise, vertex for vertex
+    (``resolved`` False) — also when a vertex was merely placed twice in a row.
+    One that crosses or touches itself is RESOLVED: the non-zero rule — the rule
+    the 2D shadow fills the caster's own footprint with — so the 3D solid stands
+    on the ground the 2D shadow treats as built on; its vertices then sit on the
+    clipper grid, it may be one ring, several, or rings with holes, and parts
+    that met in a point are drawn in by ``_SEPARATION``. (The canvas PAINTS such
+    a polygon with Qt's odd-even rule: the same for a bow-tie, not for a
+    pentagram, whose centre the shadow fills and the paint leaves open.)
+    """
+    ring = _without_repeats(ring)
+    if len(ring) < 3:
+        return (), False
+    if is_simple_ring(ring) and is_buildable_region(ccw(ring)):
+        return ((ccw(ring), ()),), False
+    return _resolved_regions([_to_grid(ring)], pyclipper.PFT_NONZERO, outline=ring), True
 
 
 @lru_cache(maxsize=1024)
@@ -290,18 +516,20 @@ def _ridge_param(house_frame: LocalFrame, ridge: Any) -> ParamValue | None:
 
 
 def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, ...], Ring, float | None,
-                                                                 float | None]:
-    """``(regions, path, path_width_cm, radius_cm)`` of an outline in the record's
-    frame; no regions means the item covers no ground. Raises ``ValueError`` for
-    geometry that is not finite."""
+                                                                 float | None, bool]:
+    """``(regions, path, path_width_cm, radius_cm, resolved)`` of an outline in
+    the record's frame; no regions means the item covers no ground, ``resolved``
+    that the regions are not the drawn outline (``PARAM_OUTLINE_RESOLVED``).
+    Raises ``ValueError`` for geometry that is not finite and
+    ``_UnbuildableOutline`` for an outline no builder could build."""
     if outline.shape == OUTLINE_CIRCLE:
         radius = outline.radius_cm
         if radius is None or not math.isfinite(radius):
             raise ValueError(f"a circle of radius {radius!r}")
         if radius <= 0.0:
-            return (), (), None, None
+            return (), (), None, None, False
         radius = quantize_cm(radius)
-        return ((_circle_ring(radius), ()),), (), None, radius
+        return ((_circle_ring(radius), ()),), (), None, radius, False
     ring = frame.local_ring(outline.points)
     if not _finite_ring(ring):
         raise ValueError("geometry that is not finite")
@@ -310,15 +538,21 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
         if width is None or not math.isfinite(width):
             raise ValueError(f"a stroke width of {width!r}")
         if len(ring) < 2:
-            return (), ring, width, None
-        return _polyline_regions(ring, width), ring, width, None
+            return (), ring, width, None, False
+        stroke = _polyline_regions(ring, width)
+        if stroke is None:
+            raise _UnbuildableOutline("the stroke cannot be made into buildable regions")
+        return stroke, ring, width, None, False
     if outline.shape == OUTLINE_POLYGON:
-        return _polygon_regions(ring), (), None, None
+        regions, resolved = _polygon_regions(ring)
+        if regions is None:
+            raise _UnbuildableOutline("the outline cannot be resolved into buildable regions")
+        return regions, (), None, None, resolved
     # an ellipse or a rectangle: convex by construction; a mirrored scene transform
     # (baked into the ring) turns it clockwise, and without an area it covers nothing
     if len(ring) < 3 or ring_area(ring) == 0.0:
-        return (), (), None, None
-    return ((ccw(ring), ()),), (), None, None
+        return (), (), None, None, False
+    return ((ccw(ring), ()),), (), None, None, False
 
 
 def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
@@ -334,10 +568,12 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     frame = _frame_of(item, outline.anchor, rotatable=shape != OUTLINE_CIRCLE)
     if not math.isfinite(frame.east_cm + frame.north_cm):
         raise ValueError("a position that is not finite")
-    regions, path, width, radius = _regions_of(outline, frame)
+    regions, path, width, radius, resolved = _regions_of(outline, frame)
     if not regions:
         return None
     params: dict[str, ParamValue] = {PARAM_SEED: item_id}
+    if resolved:
+        params[PARAM_OUTLINE_RESOLVED] = True
     if radius is not None:
         params[PARAM_RADIUS_CM] = radius
     if shape == OUTLINE_POLYLINE:
@@ -358,7 +594,7 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
         params[PARAM_PLANT_CATEGORY] = category.name
     if is_container_type(object_type):
         params[PARAM_CONTAINER_MATERIAL] = container_material(metadata)
-    if kind == "HOUSE":
+    if kind == "HOUSE" and not resolved:  # a drawn ridge belongs to the DRAWN outline
         ridge_id = metadata.get("ridge_item_id")
         if ridge_id:
             ridge = _ridge_param(frame, lookup.get(ridge_id))
@@ -416,8 +652,9 @@ def snapshot_records(
     time, and in the log once per item and kind of failure: an item whose
     record could not be built
     (malformed metadata, geometry that is not finite — any exception is
-    contained to that item) and a second item carrying an id already taken (the
-    lower one wins). One bad item never blanks the view.
+    contained to that item), a second item carrying an id already taken (the
+    lower one wins), and an item whose outline cannot be turned into regions a
+    builder can build. One bad item never blanks the view.
 
     What a record holds, and why (``core.scene3d.record``, §8.26.1):
 
@@ -428,8 +665,11 @@ def snapshot_records(
       is not rigid (an item in a scaled group) is baked into the local geometry.
     - ``footprints`` are simple OUTER rings, counter-clockwise, and ``holes``
       what is cut out of them: a polyline's stroke is sorted into both (a closed
-      fence is one outer and one hole), a self-crossing polygon is resolved into
-      simple rings by the non-zero rule, the 2D shadow's rule for a footprint.
+      fence is one outer and one hole), a polygon that crosses itself is
+      resolved by the non-zero rule, the 2D shadow's rule for a footprint —
+      and says so in ``params`` (``outline_resolved``). EVERY region of a record
+      satisfies ``core.scene3d.is_buildable_region``: the default builder's own
+      triangulation has cut it.
     - ``height_cm``: ``effective_height_cm(..., at_date)`` — the 2D shadow's
       resolver; None means decoration that casts no shadow.
     - ``transform.base_cm`` is 0.0 here; L1.6 stands a plant on its parent bed
@@ -452,13 +692,18 @@ def snapshot_records(
         item_id = str(item_uuid)
         try:
             record = _record_of(item, object_type, item_id, at_date, lookup)
+        except _UnbuildableOutline as error:
+            _report(SkippedItem(item_id, kind, SkipReason.OUTLINE_UNBUILDABLE,
+                                type(error).__name__, str(error)), skipped)
+            continue
         except Exception as error:  # one bad item must not blank the view (docstring)
-            _report(SkippedItem(item_id, kind, "its record could not be built", error), skipped)
+            _report(SkippedItem(item_id, kind, SkipReason.RECORD_FAILED,
+                                type(error).__name__, str(error)), skipped, error)
             continue
         if record is None:
             continue
         if item_id in records:
-            _report(SkippedItem(item_id, kind, "another item already has this id"), skipped)
+            _report(SkippedItem(item_id, kind, SkipReason.DUPLICATE_ID), skipped)
             continue
         records[item_id] = record
     return records
