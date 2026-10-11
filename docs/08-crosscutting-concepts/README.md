@@ -672,7 +672,7 @@ suite (ADR-054, "What the first version got wrong").
   turning" test turned the item *before* taking its baseline, one named for `reset()` never called
   it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
   fails if the named behaviour breaks?"
-- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 89
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 90
   single-rule mutations to the pipeline, each against the tests that must notice; its first run
   found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant

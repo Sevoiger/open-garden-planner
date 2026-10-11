@@ -2556,6 +2556,16 @@ it stands after that round.
      400 holes in a mesh 0.31 s. Beyond `MAX_HOLED_REGION_VERTICES` (8,000) or `MAX_BRIDGE_WORK`
      (holes × vertices = 500,000) — about 0.3 s — `triangulate_region` refuses instead of holding
      the GUI thread; such a region is not buildable and its item is reported.
+   - **Where the cap is cut, and what that costs an outline under edit.** Because the predicate
+     needs the triangulation, it is computed in the snapshot and cached; the builder reuses it.
+     A ring that is being edited misses the cache on every tick, as before — only now in the
+     snapshot rather than in the builder. With the ear clipper the two 3D views share that is
+     272 ms for 1,000 vertices, so from `ARRAY_EAR_CLIP_FROM` = 256 vertices a ring without
+     holes is cut by the array ear clipper as well: snapshot plus build of a traced outline
+     with one vertex dragged takes 22 ms at 500 vertices and 41 ms at 1,000, where the first
+     version took 51 ms and 250 ms. Below 256 the shared clipper stays (it is faster there, and
+     the cap is the Qt 3D view's, triangle for triangle); above it the same polygon is cut into
+     other triangles. A ring the array clipper cannot finish falls back to the shared one.
    - The simplicity test is quadratic in the vertex count and misses its cache on
      every tick while a ring is being edited, so from 32 vertices on it prunes edge pairs by
      bounding box and runs on arrays (500 vertices: 72 ms in a plain loop, 2.9 ms now; 1,000:
@@ -2763,7 +2773,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 89 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 90 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
   resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to

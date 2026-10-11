@@ -397,6 +397,13 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 #: region is then not buildable. A region without holes has no limit here.
 MAX_HOLED_REGION_VERTICES: Final = 8000  # outer ring and holes together
 MAX_BRIDGE_WORK: Final = 500_000  # holes x vertices
+#: From this many vertices on, a ring WITHOUT holes is cut by the array ear clipper
+#: as well. Below it ``triangulate_polygon`` — the clipper the Qt 3D view uses —
+#: is faster and gives that view's triangles vertex for vertex; above it the plain
+#: loop is what an edit of a traced outline waits for on every tick. Measured, same
+#: machine, same load: 100 vertices 2.3 ms (loop) / 4.0 ms (arrays); 500: 76 / 25;
+#: 1,000: 272 / 30.
+ARRAY_EAR_CLIP_FROM: Final = 256
 _BRIDGE_CANDIDATES: Final = 6  # boundary vertices tried per block, nearest first
 
 
@@ -526,7 +533,9 @@ def triangulate_region(
     a wrong cap. Use ``cut_region`` to get the result PROVEN (areas checked).
 
     Without holes this is ``triangulate_polygon`` (the ear clipper the Qt 3D view
-    uses). With holes, each one is first joined to the boundary by a *bridge* —
+    uses) — up to ``ARRAY_EAR_CLIP_FROM`` vertices; a larger ring is cut by the
+    array ear clipper used for regions with holes: the same polygon, other
+    triangles, a ninth of the time at 1,000 vertices. With holes, each one is first joined to the boundary by a *bridge* —
     a vertex-to-vertex segment that touches no edge — which turns the region
     into one ring that walks out to the hole, around it and back. Holes are
     taken rightmost first, each from its rightmost vertex: no hole still waiting
@@ -538,6 +547,11 @@ def triangulate_region(
     """
     points: tuple[Point, ...] = tuple(outer) + tuple(p for hole in holes for p in hole)
     if not holes:
+        if len(outer) >= ARRAY_EAR_CLIP_FROM and ring_area(outer) > 0.0:
+            try:
+                return points, _ear_clip(points, range(len(outer)))
+            except ValueError:
+                pass  # a ring it cannot finish: the shared clipper below has a fan to fall back on
         return points, triangulate_polygon(outer)
     if len(points) > MAX_HOLED_REGION_VERTICES or len(holes) * len(points) > MAX_BRIDGE_WORK:
         raise ValueError(

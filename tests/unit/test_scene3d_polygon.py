@@ -533,6 +533,64 @@ class TestManyHoles:
             regions_area(((outer, holes),)), rel=1e-9)
 
 
+class TestLargeRingsWithoutHoles:
+    """Fix round 2. The predicate asks for the cap's triangulation in the snapshot,
+    so a traced outline under edit pays the ear clipper on every tick. The plain
+    loop needs 272 ms for 1,000 vertices; the array clipper 30 ms."""
+
+    def test_small_rings_take_the_shared_clipper_and_large_ones_the_arrays(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        used: list[str] = []
+        shared, arrays = polygon_module.triangulate_polygon, polygon_module._ear_clip
+        monkeypatch.setattr(polygon_module, "triangulate_polygon",
+                            lambda ring: used.append("shared") or shared(ring))
+        monkeypatch.setattr(polygon_module, "_ear_clip",
+                            lambda points, loop: used.append("arrays") or arrays(points, loop))
+        threshold = polygon_module.ARRAY_EAR_CLIP_FROM
+        assert threshold == 256
+        rng = random.Random(11)
+        below, at = _wobbly(threshold - 1, rng, tangle=False), _wobbly(threshold, rng, tangle=False)
+        assert triangulate_region(below)[1] == shared(below)  # the Qt 3D view's triangles, exactly
+        assert len(triangulate_region(at)[1]) == threshold - 2
+        assert used == ["shared", "arrays"]
+        used.clear()
+        triangulate_region(at[::-1])  # clockwise: only the shared clipper takes either winding
+        assert used == ["shared"]
+
+    @pytest.mark.parametrize("n", [256, 400, 1000])
+    def test_a_large_ring_is_cut_correctly(self, n: int) -> None:
+        ring = _wobbly(n, random.Random(n), tangle=False)
+        vertices, triangles = polygon_module.cut_region(ring)  # … and proven
+        assert vertices == ring and len(triangles) == n - 2
+        areas = [tri_area(vertices, t) for t in triangles]
+        assert min(areas) > 0.0 and sum(areas) == pytest.approx(signed_area(ring), rel=1e-9)
+        assert sorted({i for t in triangles for i in t}) == list(range(n))  # every vertex is used
+        assert is_buildable_region(ring)
+
+    def test_a_ring_the_array_clipper_cannot_finish_falls_back_to_the_shared_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def gives_up(_points, _loop):
+            raise ValueError("no ear")
+
+        ring = _wobbly(300, random.Random(3), tangle=False)
+        expected = polygon_module.triangulate_polygon(ring)
+        monkeypatch.setattr(polygon_module, "_ear_clip", gives_up)
+        assert triangulate_region(ring)[1] == expected
+
+    def test_a_large_ring_with_collinear_runs(self) -> None:
+        """A rectangle with a vertex every centimetre along each side: 400 vertices,
+        396 of them on a straight line between their neighbours."""
+        ring = tuple([(float(x), 0.0) for x in range(100)] + [(100.0, float(y)) for y in range(100)]
+                     + [(float(100 - x), 100.0) for x in range(100)]
+                     + [(0.0, float(100 - y)) for y in range(100)])
+        assert len(ring) == 400 and is_simple_ring(ring)
+        vertices, triangles = polygon_module.cut_region(ring)
+        assert sum(tri_area(vertices, t) for t in triangles) == pytest.approx(10000.0, rel=1e-12)
+        assert min(tri_area(vertices, t) for t in triangles) > 0.0
+
+
 class TestBuildable:
     """THE predicate: a region may be handed to a builder exactly when the default
     builder's own triangulation cuts it and the cut is proven."""

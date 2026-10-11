@@ -1189,6 +1189,16 @@ building on.
   largest single item a user could make, not on the largest plan.* The ear clipper the two 3D
   views share (`triangulate_polygon`) is quadratic too and was left as it is: it runs only when
   that item's geometry changed, and the Qt 3D view has paid it on every change since US-E6.
+  - **One round later that sentence stopped being enough.** "Every region is buildable" is
+    checked by cutting the region, so the ear clipper moved from the builder into the snapshot
+    (cached; the builder reuses the cut). The total per edit tick was unchanged — and the
+    snapshot of a 1,000-vertex outline with one vertex dragged went from 9 ms to 290 ms. Measured
+    only because the rule above said to: the suite's budgets run on warm caches and on plans
+    whose largest ring has 24 vertices. From 256 vertices on, a ring without holes is now cut by
+    the array ear clipper written for regions with holes (1,000 vertices: 30 ms against 272),
+    and snapshot plus build is 41 ms where the first version took 250. *Moving work to another
+    function moves its cost too; re-measure the hot path at the large size after every such
+    move.*
 - **A styled polyline does not keep a stroke width across save and load** (observed while
   generating the edge-case plan; not changed). `core/project.py` restores `stroke_width` only
   when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the

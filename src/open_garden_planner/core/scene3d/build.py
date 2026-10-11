@@ -128,10 +128,12 @@ def prism_mesh(
     into the hole, and a cap that covers the outer MINUS the holes. Neutral white
     vertex colours (a tinted part), flat normals, no bottom cap.
 
-    A hole-free ring produces exactly the vertices of the Qt 3D view's
-    ``extrude_footprint`` (same ear clipper, ``polygon.triangulate_polygon``), so
-    the two views cannot disagree — less the cap triangles that are nothing at
-    the mesh's float32 precision (``_FLOAT32_SLIVER``). A flat ring (fewer than three corners, or all
+    A hole-free ring of fewer than ``polygon.ARRAY_EAR_CLIP_FROM`` (256) vertices
+    produces exactly the vertices of the Qt 3D view's ``extrude_footprint`` (same
+    ear clipper, ``polygon.triangulate_polygon``), so the two views cannot
+    disagree — less the cap triangles that are nothing at the mesh's float32
+    precision (``_FLOAT32_SLIVER``); a larger ring gets the same cap cut into
+    other triangles. A flat ring (fewer than three corners, or all
     of them on one line) and a non-positive height give no geometry. A ring that
     is not a simple polygon (a bow-tie) raises ``ValueError``: no cap of it would
     be the plan's shape, and an honest "no solid" beats a wrong one. So does any
