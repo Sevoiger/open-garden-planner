@@ -2572,7 +2572,10 @@ accident. Whoever turns `footprints` into something with area — a builder, the
 picker — iterates `regions`; extruding the outer ring alone turns a 3.6 m² fence into a slab over
 the 80 m² it encloses (that was the first version's defect, and `verify_builder` now refuses it).
 A polygon that crosses itself (a bow-tie) arrives already resolved into simple rings, by the
-non-zero rule the 2D shadow fills it with.
+non-zero rule — the rule the 2D shadow fills a caster's own footprint with (a bow-tie's two lobes,
+60,000 cm² both ways). The canvas *paints* such a polygon with Qt's odd-even rule, which agrees
+for a bow-tie and not for a pentagram (its centre: filled by the shadow and so by the solid, left
+open by the paint).
 
 **What the snapshot leaves out.** By design, silently: invisible items, items without an object
 type, items that cover no ground (text, groups, a one-point polyline), and `ROOF_RIDGE` items —
@@ -2581,8 +2584,8 @@ over. Because something is wrong, and **reported**: an item whose record cannot 
 (malformed metadata, non-finite geometry — any exception is contained to that item) and a second
 item carrying an id already taken (the lower one wins). `snapshot_records` returns a `Snapshot`:
 a `dict[str, Record]` in every respect, plus `snapshot.skipped`, a tuple of
-`SkippedItem(item_id, kind, reason, error)`. Each is logged once per item and cause, not once
-per edit. The wiring (L1.3) is expected to show `skipped` — and `SceneSync.failures` — where a
+`SkippedItem(item_id, kind, reason, error)`. Each is logged once per item and kind of failure
+(the exception's type), not once per edit. The wiring (L1.3) is expected to show `skipped` — and `SceneSync.failures` — where a
 user can find them.
 
 Where the local frame hangs: the circle's centre; `rect().center()` of an ellipse or rectangle;

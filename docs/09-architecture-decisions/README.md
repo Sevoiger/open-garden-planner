@@ -2425,8 +2425,14 @@ it stands after that round.
      stroke is sorted into both — a fence that closes on itself, or nearly (a gap narrower than
      the stroke), is one outer ring and one hole. `holes` is part of `geometry_sig`.
    - **A polygon that crosses itself is resolved in the snapshot** into simple rings by the
-     non-zero rule — the rule the 2D shadow's union fills it with — so a builder never receives a
-     ring it cannot triangulate. (Its vertices then sit on pyclipper's grid.)
+     non-zero rule, so a builder never receives a ring it cannot triangulate. (Its vertices then
+     sit on pyclipper's grid.) Non-zero because it is the rule the 2D shadow fills a caster's own
+     footprint with — measured at a vertical sun: both lobes of a bow-tie, the whole star of a
+     pentagram — and the solid must stand where its shadow starts. It is *not* what the canvas
+     paints for every such polygon: Qt fills by odd-even, which leaves a pentagram's centre open
+     (7,757 against 11,226 cm² for a star of radius 1 m); for a bow-tie the two rules agree. A
+     drawn self-crossing polygon is an accident more often than a plan, and of the two readings
+     the shadow's is the one a truth gate compares against.
    - **A ROOF_RIDGE item has no record.** The ridge reaches the pipeline as its HOUSE's `ridge`
      param. As a record of its own it changed *geometry* whenever the house turned (the app
      re-derives the ridge item's points: measured on 400 of 400 rotations), which would have made
@@ -2521,7 +2527,7 @@ it stands after that round.
     `snapshot_records` returns a `Snapshot` — a `dict`, as before, with one attribute: `skipped`.
     An item whose record cannot be built (malformed metadata, geometry that is not finite: any
     exception is contained to that item) is left out, listed in `skipped` with its exception, and
-    logged once per item and cause — not once per edit. A second item carrying an id already
+    logged once per item and kind of failure (the exception's type) — not once per edit. A second item carrying an id already
     taken is skipped the same way, with a warning; the lower one wins. Items left out by design
     (invisible, without an object type, covering no ground, a roof ridge) are not in `skipped`.
 13. **The truth principle: a beautiful wrong frame is a P0.** The contract is the gate table of

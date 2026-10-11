@@ -1077,6 +1077,12 @@ building on.
     left alone because `item_footprints` is pinned byte for byte by the golden fixture and the 2D
     shadow is shipped behaviour — the fix (shade `outer − holes`, as `group_rings` now makes
     easy) is a change of its own with its own before/after.
+  - **Same family, also 2D, also left alone: a polygon that crosses itself.** `_caster_paths_int`
+    assumes a simple ring ("normalize CCW for stable winding"). For the bow-tie
+    `[(0, 0), (400, 300), (400, 0), (0, 300)]` at 300 cm, sun 60° / azimuth 180°, it shades
+    80,000 cm²; its two lobes shaded as the two prisms they are give 129,282 cm² (measured; the
+    mechanism was not investigated). The 3D record resolves such a polygon into its lobes; the 2D
+    sweep does not.
   - **A plan-view check has its own blind spot.** The first version sampled each *triangle* at
     four points and summed the weights of the ones inside a hole. It read 205 % for a slab over
     the fence's hole (measured — a share above one), and it cannot see a small hole under large
@@ -1098,7 +1104,8 @@ building on.
 - **One malformed plant blanked the whole plan.** `plant_species = {"scientific_name": None}` on
   one item raised `AttributeError` out of `snapshot_records`, so no record reached the engine.
   The snapshot now contains any exception to its item, lists the item in `Snapshot.skipped` and
-  logs it once per item and cause — once, because the pipeline snapshots on every edit. *A loop
+  logs it once per item and kind of failure (the exception's type, not its message — a message
+  can carry a value that changes with every mouse move, and the pipeline snapshots on every edit). *A loop
   over user data needs its `try` inside the loop — and a place where what it swallowed can be
   read.*
 - **"Rotate → transform only" was false for the one item a house owns.** A `ROOF_RIDGE` item had

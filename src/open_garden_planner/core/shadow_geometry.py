@@ -109,11 +109,13 @@ def polyline_footprint(points: Sequence[Point], width_cm: float) -> list[Polygon
 def resolve_self_intersections(points: Sequence[Point]) -> list[Polygon]:
     """A self-crossing polygon as simple rings: outers CCW, holes CW.
 
-    The NON-ZERO rule, the one ``compute_scene_shadows`` unions a footprint
-    with — so the simple rings cover exactly what that footprint shades in 2D (a
-    bow-tie is its two lobes, a pentagram its filled star). Used by the 3D
-    snapshot (Phase 17 L1.1), which must hand builders simple rings; the 2D
-    shadow path itself does not call this. Vertices land on the clipper grid
+    The NON-ZERO rule, the one ``compute_scene_shadows`` unions a caster's own
+    footprint with — so the simple rings cover the ground that footprint fills
+    in the 2D shadow at a vertical sun (measured: a bow-tie is its two lobes, a
+    pentagram its filled star, centre included). Used by the 3D snapshot (Phase
+    17 L1.1), which must hand builders simple rings; the 2D shadow path itself
+    does not call this, and its SWEEP of a self-crossing ring is not the shadow
+    of these rings (section 11.4.8). Vertices land on the clipper grid
     (``CLIPPER_SCALE``); ``[]`` for fewer than three points or no area.
     """
     if len(points) < 3:

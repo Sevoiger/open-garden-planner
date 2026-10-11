@@ -160,14 +160,16 @@ class Snapshot(dict[str, Record]):
     skipped: tuple[SkippedItem, ...] = ()
 
 
-#: What has been logged already — one line per item and cause, not one per edit
-#: (the pipeline snapshots on every change). Bounded: cleared when it overflows.
-_reported: set[tuple[str, str]] = set()
+#: What has been logged already — one line per item and KIND of failure (the
+#: reason and the exception's type), not one per edit: the pipeline snapshots on
+#: every change, and an exception message may carry a value that changes with
+#: every mouse move. Bounded: cleared when it overflows.
+_reported: set[tuple[str, str, str]] = set()
 _REPORTED_MAX = 2048
 
 
 def _report(skipped: SkippedItem) -> None:
-    key = (skipped.item_id, f"{skipped.reason}: {skipped.error!r}")
+    key = (skipped.item_id, skipped.reason, type(skipped.error).__name__)
     if key in _reported:
         return
     if len(_reported) >= _REPORTED_MAX:
@@ -208,8 +210,11 @@ def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...]:
 def _polygon_regions(ring: Ring) -> tuple[Region, ...]:
     """A drawn polygon as simple rings. A simple one is itself, turned
     counter-clockwise. One that crosses itself (a bow-tie) is resolved with the
-    non-zero rule — the rule its 2D shadow is unioned with — so the 3D solid
-    covers what the plan shades; its vertices then sit on the clipper grid."""
+    non-zero rule — the rule the 2D shadow fills the caster's own footprint
+    with — so the 3D solid stands on the ground the 2D shadow treats as built
+    on; its vertices then sit on the clipper grid. (The canvas PAINTS such a
+    polygon with Qt's odd-even rule: the same for a bow-tie, not for a
+    pentagram, whose centre the shadow fills and the paint leaves open.)"""
     if len(ring) < 3:
         return ()
     if is_simple_ring(ring):
@@ -388,7 +393,8 @@ def snapshot_records(
     and ``ROOF_RIDGE`` items (a ridge reaches 3D as its HOUSE's ``ridge`` param).
 
     Left out because something is wrong, and REPORTED — in ``Snapshot.skipped``
-    and once per item in the log: an item whose record could not be built
+    every time, and in the log once per item and kind of failure: an item whose
+    record could not be built
     (malformed metadata, geometry that is not finite — any exception is
     contained to that item) and a second item carrying an id already taken (the
     lower one wins). One bad item never blanks the view.
@@ -403,7 +409,7 @@ def snapshot_records(
     - ``footprints`` are simple OUTER rings, counter-clockwise, and ``holes``
       what is cut out of them: a polyline's stroke is sorted into both (a closed
       fence is one outer and one hole), a self-crossing polygon is resolved into
-      simple rings by the 2D shadow's non-zero rule.
+      simple rings by the non-zero rule, the 2D shadow's rule for a footprint.
     - ``height_cm``: ``effective_height_cm(..., at_date)`` — the 2D shadow's
       resolver; None means decoration that casts no shadow.
     - ``transform.base_cm`` is 0.0 here; L1.6 stands a plant on its parent bed

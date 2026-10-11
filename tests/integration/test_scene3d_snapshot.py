@@ -934,8 +934,8 @@ class TestClosedStrokes:
         # the area. Stated tolerances: (1) the cap IS the footprint region, to
         # float32 (1e-6); (2) the region is what the 2D stroke encloses, to
         # pyclipper's grid — the two inflate the same line in two frames (5e-4);
-        # (3) both are the line's length times its width, to 0.5 % — round joins
-        # and butt ends are the rest. The slab of the defect was off by 4,350 %.
+        # (3) both are the line's length times its width, to 0.5 % — square
+        # joins and butt ends are the rest. The slab of the defect was off by 4,350 %.
         (part,) = verify_builder(default_builder, record)
         part.validate()
         cap = _cap_area(part.mesh)
@@ -998,10 +998,11 @@ class TestClosedStrokes:
 class TestSelfCrossingPolygon:
     def test_a_bow_tie_house_becomes_its_two_lobes(self, canvas: CanvasView) -> None:
         """The user can draw it; ``item_footprints`` hands it to the 2D shadow as
-        one self-crossing ring, which the shadow's union fills by the non-zero
-        rule. The record carries what that rule fills — two simple triangles — so
-        no builder ever receives a ring it cannot triangulate, and the first
-        contract's mesh that failed ``validate()`` cannot be emitted."""
+        one self-crossing ring, whose own ground the shadow's union fills by the
+        non-zero rule (60,000 cm² at a vertical sun: both lobes). The record
+        carries what that rule fills — two simple triangles — so no builder ever
+        receives a ring it cannot triangulate, and the first contract's mesh that
+        failed ``validate()`` cannot be emitted."""
         bow = PolygonItem([QPointF(100.0, 100.0), QPointF(500.0, 400.0), QPointF(500.0, 100.0),
                            QPointF(100.0, 400.0)], object_type=ObjectType.HOUSE)
         canvas.scene().addItem(bow)
@@ -1012,6 +1013,10 @@ class TestSelfCrossingPolygon:
         assert len(record.footprints) == 2 and record.holes == ()
         assert all(is_simple_ring(ring) and len(ring) == 3 for ring in record.footprints)
         assert [signed_area(ring) for ring in record.footprints] == pytest.approx([30000.0, 30000.0])
+        from open_garden_planner.core.shadow_geometry import compute_scene_shadows
+
+        vertical_sun = compute_scene_shadows([(item_footprints(bow)[0], 300.0)], 89.999, 180.0)
+        assert _signed_area_sum(vertical_sun) == pytest.approx(record.plan_area_cm2, rel=1e-6)
         (part,) = verify_builder(default_builder, record)
         part.validate()
         assert _cap_area(part.mesh) == pytest.approx(60000.0, rel=1e-6)
@@ -1117,19 +1122,26 @@ class TestContainment:
         snapshot = snapshot_records(scene)
         assert list(snapshot) == [str(tree.item_id)] and snapshot.skipped == ()
 
-    def test_a_new_cause_on_the_same_item_is_logged_again(
+    def test_the_log_is_keyed_by_item_and_kind_of_failure_not_by_message(
         self, canvas: CanvasView, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """The pipeline snapshots on every edit, and an exception's message may
+        carry a value that changes with each of them. So: the same kind of
+        failure on the same item is one line however its message reads, and a
+        different kind is a new line."""
         scene = canvas.scene()
         tree = CircleItem(300.0, 100.0, 30.0, object_type=ObjectType.TREE)
         scene.addItem(tree)
         with caplog.at_level(logging.WARNING, logger=snapshot_module.__name__):
-            _break_species(tree)
-            snapshot_records(scene)
-            snapshot_records(scene)
+            _break_species(tree)  # AttributeError: 'NoneType' object has no attribute 'strip'
+            first = snapshot_records(scene).skipped[0].error
+            _break_species_name(tree)  # AttributeError again, another message
+            second = snapshot_records(scene).skipped[0].error
+            assert str(first) != str(second) and type(first) is type(second)
+            assert len(caplog.records) == 1
             tree.metadata.pop("plant_species")
-            _break_pattern(tree)
-            snapshot_records(scene)
+            _break_position(tree)  # ValueError: another kind of failure
+            assert isinstance(snapshot_records(scene).skipped[0].error, ValueError)
         assert len(caplog.records) == 2
 
     def test_the_snapshot_is_a_dict_to_every_consumer(self, canvas: CanvasView) -> None:
