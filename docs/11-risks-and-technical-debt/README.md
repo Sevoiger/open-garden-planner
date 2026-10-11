@@ -1130,6 +1130,45 @@ building on.
   when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the
   preset's width whatever was saved. The edge-case plan therefore uses fences without a preset.
 
+### 11.4.9 The test suite wrote into the developer's real plant library (found 2026-10-11, during Phase 17 L1)
+
+- **Symptom.** The developer's own `%APPDATA%/OpenGardenPlanner/custom_plants.json` held 209
+  custom plants, 207 of them the same "Walnut (Juglans regia)"; `plant_lists.json` in the same
+  folder had been rewritten that morning by nobody. Every full run of the suite, by any agent on
+  the machine, added one more Walnut. (Counted by whoever found it; the fix below was written and
+  tested without opening that folder.)
+- **Root cause.** `tests/conftest.py` isolated the settings store (#285) and nothing else.
+  `services.plant_library.get_app_data_dir()` resolves `%APPDATA%/OpenGardenPlanner` (or
+  `$XDG_DATA_HOME/…`) on every call and was never redirected, so every store built on it — the
+  custom plant library, plant lists, seed inventory, companion rules, smart symbols, the weather
+  cache — was the user's real one in a test process.
+  `tests/ui/test_plant_database_panel.py::…::test_sparse_species_saves_back_as_none` calls
+  `panel._on_field_changed()`, whose last step saves the edited species through
+  `get_plant_library()`: a correct test of the panel, and a write into the real library. Two test
+  files had even noted the gap in a docstring ("isn't isolated by `tests/conftest.py`") and
+  stubbed their own way around it; nobody closed it.
+- **Fix.** The conftest sets `APPDATA` and `XDG_DATA_HOME` to a per-process temporary directory
+  at import time (§8.10.4) — the same place and for the same reason as the settings redirection.
+  No production code changed. The real directory was not cleaned by this change: what to do with
+  the 207 entries is the owner's decision.
+- **The same search found three more writers outside the test root**, none of them into the
+  user's own app folder, all through `QStandardPaths.writableLocation`: (1)
+  `tests/unit/test_main_hardening.py::TestExceptHook` appended a traceback to
+  `%APPDATA%/pytest-qt-qapp/crash.log` on every run — 331 of them, 82 kB, when counted; (2) the
+  companion, climate and thumbnail caches under `%LOCALAPPDATA%/pytest-qt-qapp/`, which survive
+  from run to run, so a test could pass on a cache an earlier run had filled; (3)
+  `tests/unit/test_paths.py::test_get_projects_dir_falls_back_to_home` created
+  `~/Documents/Open Garden Planner` on every machine it ran on, because `get_projects_dir()`
+  creates what it returns. (1) and (2) are closed by redirecting the Python-level function
+  (§8.10.4), (3) by giving that test a home of its own.
+- **Lessons.** *Isolating one store is not isolating the process:* list every place the app
+  writes (`get_app_data_dir`, `QStandardPaths`, `Path.home()`, the temp directory) and decide
+  each one — redirected, or left with a reason. *A test that is correct about the unit can still
+  be wrong about the world:* the Walnut test asserts what it should and has passed since it was
+  written. *A known gap written into a docstring is a defect with a comment on it.* And the pin
+  must not need the thing it protects: the end-to-end test never reads the real directory — it
+  watches what the process opens.
+
 ### CI/release hardening: locked metadata also contains the application version
 
 A version-only edit to `pyproject.toml` makes `uv.lock` stale. The measured probe failed

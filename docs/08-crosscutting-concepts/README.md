@@ -627,6 +627,57 @@ suite (ADR-054, "What the first version got wrong").
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
   with every rule.
 
+### 8.10.4 Test isolation: the user's data directory and the locations Qt hands out
+
+A test process must not read or write anything the user owns. Three stores are redirected, all
+three in `tests/conftest.py` at its **import time** — module scope, not a fixture. pytest imports
+the root conftest before it collects any test module, so a store that is built while a module is
+being *imported* already lands in the test location; a fixture runs after collection and cannot
+cover that. (The settings store is the first of the three; §8.8 is its specification.)
+
+| What | Production location | How the suite redirects it |
+| ---- | ------------------- | -------------------------- |
+| Settings (`QSettings`) | organisation / application of `app.settings` | the two names are rebound to a per-process test key (§8.8, ADR-041) |
+| The app-data directory, `services.plant_library.get_app_data_dir()`: custom plants, plant lists, seed inventory, companion rules, smart symbols, weather cache | `%APPDATA%/OpenGardenPlanner` (Windows), `$XDG_DATA_HOME/OpenGardenPlanner` or `~/.local/share/…` (Linux), `~/Library/Application Support/…` (macOS) | `APPDATA` and `XDG_DATA_HOME` are set to a directory of this process, `TEST_DATA_ROOT` (a `tempfile.mkdtemp` named with the pid), removed by `atexit` |
+| What the app asks `QStandardPaths.writableLocation` for: `crash.log` and `app.log` (AppDataLocation), the companion, climate and thumbnail caches (AppLocalDataLocation), the default project folder under Documents — which `app.paths.get_projects_dir()` creates | the user's profile, named after the Qt application | the Python-level function is replaced for five locations (`REDIRECTED_QT_LOCATIONS`) and answers with a folder under `TEST_DATA_ROOT`; every other location is passed through |
+
+- **The environment is the whole mechanism for the app-data directory** on Windows and Linux:
+  `get_app_data_dir()` reads the variable on every call, so no production override exists or is
+  needed, and a **child process** a test starts (a script, the app itself) inherits the
+  redirection. That is why it is not a patched function.
+- **macOS reads no variable.** There `conftest._rebind_get_app_data_dir` replaces the function
+  itself, in the defining module and in every module that bound the name with `from … import`.
+  No Mac runs this suite (CI is Linux and Windows): the replacement is exercised by hand in a
+  test, the `sys.platform == "darwin"` condition is not. A child process on macOS is not covered.
+- **Qt's locations cannot be moved by the environment on Windows** (Qt asks the shell for the
+  folders). Hence the Python-level replacement; a test that needs another answer monkeypatches
+  `QStandardPaths.writableLocation` as before, and gets the suite's version back afterwards.
+  What Qt itself writes from C++ — its shader and QML disk caches — still goes to the folder Qt
+  derives from the application name (`pytest-qt-qapp` in a test process): not the user's app
+  folder, but not under `TEST_DATA_ROOT` either. A child process is not covered: it does not
+  import conftest.
+- **Not redirected, by decision:** the temp directory (`tempfile.gettempdir()`), which the
+  autosave of an untitled plan and the stylesheet's two arrow images use. Redirecting it would
+  move pytest's own `tmp_path` and every library's scratch space. A test that lets an untitled
+  plan autosave must sandbox it itself (`tests/integration/test_dynamic_input_overlay.py` shows
+  how) — otherwise the real app offers that file for recovery at its next start.
+- **Per process, not per test.** Every test of one run shares the redirected directories, as the
+  whole suite used to share the real ones. A test that needs an empty library builds its own
+  store on `tmp_path` (`PlantListStore(storage_path=…)`) or resets the singleton.
+
+Pinned by `tests/integration/test_app_data_isolation.py`: the two variables are assigned at
+conftest module scope before the first import of the app (an AST check, the counterpart of
+`TestTheRedirectionMechanismItself` for the settings); the directory resolves under
+`TEST_DATA_ROOT` and not where it pointed before; a child process inherits it; the root is gone
+when the interpreter has exited; and — end to end — building the whole `GardenPlannerApp`,
+running the plant database panel's save path and the plant-list store opens, creates, renames
+and lists **nothing** under the place the directory used to be. That last test never touches
+the real directory, not even to read it: it computes where it was from what the environment said
+before the redirection (`conftest.PRODUCTION_DATA_ENV`) and watches the process's file access
+through a `sys.addaudithook` hook (inert outside the test: an audit hook cannot be removed
+again). A positive control points the variable at a stand-in directory and shows that the save
+is seen there.
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
