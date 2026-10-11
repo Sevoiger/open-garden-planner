@@ -569,6 +569,17 @@ def _load_bench() -> tuple[Any, Any, Any]:
     return scene, view, manager
 
 
+def largest_solids(scene: Any, solid_ids: set[str]) -> tuple[Any, Any]:
+    """The two canvas items with the largest footprint among those that have a Model."""
+    def area(item: Any) -> float:
+        rect = item.sceneBoundingRect()
+        return float(rect.width() * rect.height())
+
+    solids = [item for item in scene.items() if str(getattr(item, "item_id", "")) in solid_ids]
+    solids.sort(key=lambda item: (-area(item), str(item.item_id)))
+    return solids[0], solids[1]
+
+
 def _recording_summary(sink: RecordingSink) -> dict[str, Any]:
     """What the engine SHOULD hold, from the recording sink: one row per drawable part."""
     rows = []
@@ -656,11 +667,9 @@ def scenario_integration(ctx: Context) -> dict[str, Any]:
         open_ms = (time.perf_counter() - opened) * 1000.0
         tick("0_open_top", top)
 
-        # the items of the session: a building with a height (it has a Model)
-        solids = [item for item in scene.items()
-                  if str(getattr(item, "item_id", "")) in {p["id"] for p in first["engine_parts"]}]
-        solids.sort(key=lambda item: str(item.item_id))
-        target, victim = solids[0], solids[1]
+        # the items of the session: the two largest solids (the house and its neighbour) —
+        # big enough that an edit of them is visible from the overview camera
+        target, victim = largest_solids(scene, {p["id"] for p in first["engine_parts"]})
         ids = {"moved": str(target.item_id), "deleted": str(victim.item_id)}
 
         commands.execute(MoveItemsCommand([target], QPointF(137.25, -42.5)))
