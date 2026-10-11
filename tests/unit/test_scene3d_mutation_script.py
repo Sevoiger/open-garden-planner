@@ -85,7 +85,7 @@ def test_every_mutant_still_matches_its_file_exactly_once() -> None:
              if _text(mutant.path).count(mutant.old) != 1]
     assert stale == []
     assert all(mutant.old != mutant.new for mutant in script().MUTANTS)
-    assert len(script().MUTANTS) >= 115
+    assert len(script().MUTANTS) >= 144
 
 
 def test_every_test_a_mutant_names_exists() -> None:

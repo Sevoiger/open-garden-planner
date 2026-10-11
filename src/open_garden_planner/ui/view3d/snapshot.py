@@ -15,11 +15,21 @@ Two collectors live here until L1.10 removes Qt 3D:
 
 Three things on record about the contract-v2 half (review of fix round 1):
 
-- Its caches — ``_circle_ring``, ``_polyline_regions``, ``_polygon_regions``,
-  ``_material`` — are module-global ``lru_cache``s keyed by whole rings and never
-  cleared. Bounded (1,024 to 4,096 entries each), and small at plan sizes: an
-  outline of 1,000 vertices is 16 kB per entry. A ring that is being edited
-  adds an entry per tick and pushes the oldest out.
+- What it remembers is module-global and never cleared. ``_polyline_regions``
+  and ``_polygon_regions`` are keyed by whole rings and bounded by the VERTICES
+  they hold (``core.scene3d.polygon.ring_keyed``: 262,144 each, keys and
+  answers together), not by the number of answers: an outline of 4,000
+  vertices that is being edited adds an answer per tick, and 2,048 of those
+  were a gigabyte. ``_circle_ring``, ``_circle_regions`` and ``_material`` are
+  keyed by a number or a few short strings (``lru_cache``, 1,024 to 4,096
+  entries of at most 24 vertices).
+- The outline of an item comes out of a plan file, and anybody can write one.
+  So the INPUT is bounded before the work (an item's stored vertex count before
+  one vertex is read; the pairs of a path before the clipper sees it; what the
+  clipper returns before one ring of it is read), and what is bounded is the
+  SUM: one ``WorkBudget`` of ``MAX_REGION_WORK`` units pays for everything one
+  item's outline needs — the clipper, the sorting, every region's cut. See
+  ``_stroke_regions`` and ``_outline_regions``, and section 8.11.
 - This module is a second place that knows the clipper's scale
   (``CLIPPER_SCALE``; the first is ``core/shadow_geometry``): it resolves a
   self-crossing outline and sorts rings into regions itself. Both belong in ONE
@@ -34,6 +44,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -45,7 +56,6 @@ import pyclipper
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsScene
 
-import open_garden_planner.core.scene3d.polygon as _polygon
 from open_garden_planner.core.container_model import container_material
 from open_garden_planner.core.object_height import effective_height_cm
 from open_garden_planner.core.object_types import PathFenceStyle, is_container_type
@@ -75,10 +85,17 @@ from open_garden_planner.core.scene3d import (
     ring_area,
 )
 from open_garden_planner.core.scene3d.polygon import (
-    exceeds_work_bound,
+    MAX_ITEM_VERTICES,
+    RegionTooLargeError,
+    WorkBudget,
     is_buildable_region,
     is_region_too_large,
+    region_cost,
+    region_work,
     regions_area,
+    ring_keyed,
+    stack_height,
+    touching_pairs,
 )
 from open_garden_planner.core.scene3d.record import (
     MAX_LENGTH_CM,
@@ -98,6 +115,7 @@ from open_garden_planner.ui.canvas.footprints import (
     item_footprints,
     item_outline,
 )
+from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
 
 if TYPE_CHECKING:
@@ -175,6 +193,11 @@ class SkipReason(StrEnum):
     #: Its outline cannot be turned into regions a builder can build
     #: (``core.scene3d.is_buildable_region``), not even after resolving it.
     OUTLINE_UNBUILDABLE = "outline_unbuildable"
+    #: Its outline is too LARGE for the 3D view: more vertices than one item may
+    #: have (``core.scene3d.polygon.MAX_ITEM_VERTICES``), or turning it into
+    #: regions would cost more than the work bound (``MAX_REGION_WORK``). Nothing
+    #: is wrong with its shape; the 2D plan shows it as it is.
+    OUTLINE_TOO_LARGE = "outline_too_large"
     #: One of its lengths — height, width, radius, a coordinate, its position —
     #: is beyond ``core.scene3d.MAX_LENGTH_CM`` or infinite (a hand-edited plan).
     OUT_OF_RANGE = "out_of_range"
@@ -225,6 +248,7 @@ _LOG_TEXT: dict[SkipReason, str] = {
     SkipReason.RECORD_FAILED: "its record could not be built",
     SkipReason.DUPLICATE_ID: "another item already has this id",
     SkipReason.OUTLINE_UNBUILDABLE: "its outline cannot be made into regions a builder can build",
+    SkipReason.OUTLINE_TOO_LARGE: "its outline is too large for the 3D view",
     SkipReason.OUT_OF_RANGE: "one of its lengths is beyond what a plan can hold",
 }
 
@@ -263,11 +287,13 @@ class _Refused:
     why: str
 
 
-#: Refused for its SIZE: cutting it would cost more than ``core.scene3d``'s work
-#: bound. Nothing else is tried on such an outline — no other reading of it is smaller.
+#: Refused for its SIZE: it has more vertices than one item's outline may have, or
+#: turning it into regions would cost more than the work bound. Nothing else is
+#: tried on such an outline — no other reading of it is smaller.
 _TOO_LARGE: Final = _Refused(
-    "the outline is too large for the 3D view: cutting it is beyond the work bound "
-    "(core.scene3d.polygon.MAX_REGION_WORK)")
+    "the outline is too large for the 3D view: beyond what one item's outline may hold "
+    f"(core.scene3d.polygon.MAX_ITEM_VERTICES = {MAX_ITEM_VERTICES:,} vertices) or cost "
+    "(MAX_REGION_WORK units of work)")
 _NO_READING: Final = _Refused("the outline cannot be made into regions a builder can build")
 
 
@@ -288,6 +314,57 @@ def _quantized(ring: Any) -> Ring:
 
 class _UnbuildableOutline(ValueError):
     """An outline that cannot be turned into regions a builder can build."""
+
+
+class _OutlineTooLarge(_UnbuildableOutline):
+    """… because of its SIZE (``SkipReason.OUTLINE_TOO_LARGE``)."""
+
+
+# What the CLIPPER costs, in the work units of ``core.scene3d.polygon`` (about a
+# nanosecond each on the development box). Its work is not ours to count, so it is
+# priced from what it depends on — all of it known BEFORE the clipper is asked:
+# the vertices; the STACK (``stack_height``: a sweep line carries every edge it
+# crosses, so teeth standing side by side cost their number squared without
+# crossing anything); and the pairs of segments that cross or lie within a
+# stroke's reach of each other (``touching_pairs``). Each price is the dearest
+# case measured (``scripts/measure_region_work.py`` prints price against cost for
+# every family it knows), so an honest outline pays more than it costs.
+_CLIP_UNITS: Final = 10_000  # any call of the clipper
+_OFFSET_POINT_UNITS: Final = 2_500  # inflating a path, a band along rings: per point …
+_OFFSET_STACK_UNITS: Final = 70  # … per point and edge in the stack (a path)
+_BAND_STACK_UNITS: Final = 420  # … (a band, and the difference it is cut out with)
+_OFFSET_NEAR_UNITS: Final = 600  # … per pair of segments whose strokes can overlap
+_OFFSET_CROSSING_UNITS: Final = 5_000  # … and per pair whose centre lines cross
+_UNION_VERTEX_UNITS: Final = 500  # a union: per vertex …
+_UNION_STACK_UNITS: Final = 15  # … per vertex and edge in the stack
+_UNION_CROSSING_UNITS: Final = 600  # … per pair of edges that cross
+_STRICT_VERTEX_UNITS: Final = 1_000  # the same with StrictlySimple: per vertex …
+_STRICT_SQUARE_UNITS: Final = 3  # … per vertex² of each ring that comes back (it compares them all)
+_STRICT_CROSSING_UNITS: Final = 2_500  # … per pair of edges that cross
+_BAND_CROSSING_UNITS: Final = 8_000  # a band along the union's rings: per such pair
+_OWN_BAND_CROSSING_UNITS: Final = 30_000  # a band along the drawn rings themselves: per such pair
+_RING_UNITS: Final = 2_000  # reading a ring the clipper made …
+_RING_VERTEX_UNITS: Final = 1_000  # … per vertex: off its grid, onto the record's, its area
+#: A square join reaches half the stroke width times the square root of two from the
+#: centre line — how far a segment's part of the stroke can lie from the segment.
+_SQUARE_JOIN: Final = 0.7072
+
+
+def _pay_for_reading(made: Sequence[Sequence[Any]], budget: WorkBudget) -> None:
+    """Rings as the clipper returned them: counted — all of them together, which
+    costs nothing — and paid for BEFORE one of them is read. More vertices than
+    one item may have are refused outright."""
+    vertices = sum(len(ring) for ring in made)
+    if vertices > MAX_ITEM_VERTICES:
+        budget.refuse()
+    budget.spend(_RING_UNITS * len(made) + _RING_VERTEX_UNITS * vertices)
+
+
+def _region_vertices(regions: tuple[Region, ...] | _Refused) -> int:
+    """How many vertices an answer of ``_polyline_regions`` holds (a refusal: none)."""
+    if isinstance(regions, _Refused):
+        return 0
+    return sum(len(outer) + sum(len(hole) for hole in holes) for outer, holes in regions)
 
 
 #: How far a region whose rings TOUCH is drawn in, in clipper units (1/1000 cm):
@@ -331,16 +408,37 @@ def _tree_regions(tree: Any) -> tuple[Region, ...]:
     return tuple(regions)
 
 
-def _judged(regions: tuple[Region, ...]) -> _Refused | None:
-    """None when every region can be built; otherwise why not — at the first that cannot."""
+def _tree_rings(tree: Any) -> list[Any]:
+    """Every contour of a PolyTree, as the clipper holds it (nothing is read)."""
+    rings: list[Any] = []
+    nodes = list(tree.Childs)
+    while nodes:
+        node = nodes.pop()
+        rings.append(node.Contour)
+        nodes.extend(node.Childs)
+    return rings
+
+
+def _buildable(regions: tuple[Region, ...], budget: WorkBudget | None = None) -> bool:
+    """True when every region can be built; False at the first whose SHAPE cannot.
+
+    All of them are paid out of ONE budget (the item's; one of its own when
+    none is given): a region is not looked at unless the least it can cost
+    (``region_work``, from its sizes alone) is still there, and what it did
+    cost is paid when it is known — a thousand regions that each fit the bound
+    do not fit it together. A region or a sum beyond the bound raises
+    ``RegionTooLargeError``: nothing else is tried on an outline like that.
+    """
+    budget = budget if budget is not None else WorkBudget("the regions of an outline")
     for outer, holes in regions:
+        if region_work(outer, holes) > budget.left:
+            budget.refuse()
+        budget.spend(region_cost(outer, holes))
         if not is_buildable_region(outer, holes):
-            return _TOO_LARGE if is_region_too_large(outer, holes) else _NO_READING
-    return None
-
-
-def _buildable(regions: tuple[Region, ...]) -> bool:
-    return _judged(regions) is None
+            if is_region_too_large(outer, holes):
+                budget.refuse()
+            return False
+    return True
 
 
 def _inside_ring(px: Any, py: Any, ring: Ring) -> Any:
@@ -406,8 +504,9 @@ def _clip_tree(subject: list[list[tuple[int, int]]], fill: int, *, strictly_simp
     return clipper.Execute2(pyclipper.CT_DIFFERENCE, fill, pyclipper.PFT_NONZERO)
 
 
-def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int,
-                      outline: Ring | None = None) -> tuple[Region, ...] | _Refused:
+def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ring | None = None,
+                      budget: WorkBudget | None = None,
+                      crossings: int = 0) -> tuple[Region, ...] | _Refused:
     """Rings on the clipper grid → regions a builder can build, or why not.
 
     Three readings of the rings' union under ``fill``, the first that holds:
@@ -429,45 +528,107 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int,
     the rings' own, less at most the band.
 
     ``()`` when nothing with an area is there; ``_NO_READING`` when no reading
-    holds; ``_TOO_LARGE`` as soon as one reading is refused for its size — the
-    others would only be refused again.
+    holds.
+
+    Every call of the clipper, every ring read and every check is PAID out of
+    ``budget`` (the item's; one of its own when none is given) before it runs —
+    priced from the rings' vertices, their stack and ``crossings``, the pairs of
+    their edges that cross (``touching_pairs``; the caller counts them, because
+    only the caller knows that a stroke's rings do not cross). A reading the
+    budget does not cover raises ``RegionTooLargeError``, and so does a region
+    that is refused for its size: the next reading would only be refused again.
+    The dearest reading is the last — a band along every drawn edge is 30,000
+    units for each crossing (800 points scribbled across a plan cross 73,000
+    times; that reading alone took ten seconds).
     """
+    budget = budget if budget is not None else WorkBudget("resolving an outline")
+    vertices = sum(len(ring) for ring in rings)
+    sweep = stack_height(rings, closed=True) * vertices
+    # the first reading is two unions, plain and strict, and both are paid before either
+    # runs: an outline that cannot afford them is not handed to the clipper at all
+    budget.spend(2 * _CLIP_UNITS + (_UNION_VERTEX_UNITS + _STRICT_VERTEX_UNITS) * vertices
+                 + 2 * _UNION_STACK_UNITS * sweep
+                 + (_UNION_CROSSING_UNITS + _STRICT_CROSSING_UNITS) * crossings)
     plain = _clip_tree(rings, fill)
     paths = pyclipper.PolyTreeToPaths(plain) if plain is not None else []
     if not paths:
         return ()
+    _pay_for_reading(paths, budget)
+    made = sum(len(path) for path in paths)
     scale2 = float(CLIPPER_SCALE) ** 2
     area = sum(pyclipper.Area(ring) for ring in rings) / scale2  # a stroke's rings are oriented
     rim = (sum(math.dist(path[i - 1], path[i]) for path in paths for i in range(len(path)))
            * (2.0 * _SEPARATION + 2.0) / scale2)  # both sides of the band, and the grid's own unit
 
-    def holds(regions: tuple[Region, ...], *, drawn_in: bool) -> bool | _Refused:
-        if not regions:
+    def read(tree: Any) -> tuple[Region, ...]:
+        _pay_for_reading(_tree_rings(tree), budget)
+        return _tree_regions(tree)
+
+    def holds(regions: tuple[Region, ...], *, drawn_in: bool) -> bool:
+        if not regions or not _buildable(regions, budget):
             return False
-        refused = _judged(regions)
-        if refused is not None:
-            return refused if refused is _TOO_LARGE else False
         if outline is not None:
+            budget.spend(_LATTICE * _LATTICE * (_OUTLINE_CHECK_UNITS * len(outline)
+                                                + _REGION_CHECK_UNITS * _region_vertices(regions)))
             return _matches_outline(outline, regions)
         got = regions_area(regions)
         return bool((area - rim if drawn_in else area - 1e-6) <= got <= area + 1e-6)
 
+    budget.spend(_STRICT_SQUARE_UNITS * sum(len(path) ** 2 for path in paths))
     strict = _clip_tree(rings, fill, strictly_simple=True)
-    regions = _tree_regions(strict) if strict is not None else ()
-    verdict = holds(regions, drawn_in=False)
-    for band in (paths, rings):
-        if verdict is True:
-            return regions
-        if verdict is _TOO_LARGE:
-            return _TOO_LARGE
-        regions = _tree_regions(_clip_tree(band if band is paths else rings, fill, band=band))
-        verdict = holds(regions, drawn_in=True)
-    if verdict is True:
+    regions = read(strict) if strict is not None else ()
+    if holds(regions, drawn_in=False):
         return regions
-    return _TOO_LARGE if verdict is _TOO_LARGE else _NO_READING
+    for band, along, per_crossing in ((paths, made, _BAND_CROSSING_UNITS),
+                                      (rings, vertices, _OWN_BAND_CROSSING_UNITS)):
+        budget.spend(_CLIP_UNITS + per_crossing * crossings + along * (
+            _OFFSET_POINT_UNITS + _BAND_STACK_UNITS * stack_height(band, closed=True)))
+        regions = read(_clip_tree(band, fill, band=band))
+        if holds(regions, drawn_in=True):
+            return regions
+    return _NO_READING
 
 
-@lru_cache(maxsize=2048)
+def _stroke_regions(path: Ring, width_cm: float,
+                    budget: WorkBudget) -> tuple[Region, ...] | _Refused:
+    """``_polyline_regions``, paying into ``budget`` — in this order, each step
+    paid for before it runs:
+
+    1. the pairs of the centre line's segments, counted on arrays (the count is
+       the square of the points, and is itself paid first): those that cross,
+       and those near enough for their strokes to overlap;
+    2. the inflation, priced from the points, their stack and those pairs — the
+       clipper is not asked about a path it would take seconds to answer;
+    3. the rings that came back, ALL of them together, counted before one is
+       read (a scribble of 800 points comes back as 53,000 rings);
+    4. sorting them — every hole asks every outer ring, the product is the price;
+    5. every region's cut, out of the same budget.
+    """
+    if width_cm <= 0.0:
+        return ()
+    reach = _SQUARE_JOIN * width_cm
+    near, crossings = touching_pairs(path, budget, closed=False, reach=reach)
+    budget.spend(_CLIP_UNITS + _OFFSET_NEAR_UNITS * near + _OFFSET_CROSSING_UNITS * crossings
+                 + len(path) * (_OFFSET_POINT_UNITS + _OFFSET_STACK_UNITS
+                                * stack_height((path,), closed=False, reach=reach)))
+    made = polyline_footprint(list(path), width_cm)
+    _pay_for_reading(made, budget)
+    rings = [_quantized(ring) for ring in made]
+    try:
+        regions = group_rings(rings, budget)
+    except RegionTooLargeError:
+        raise
+    except ValueError:
+        regions = None
+    if regions is not None and _buildable(regions, budget):
+        return regions
+    # the stroke's rings are oriented (outers counter-clockwise, holes clockwise):
+    # their non-zero union is the stroke. They touch; they do not cross
+    return _resolved_regions([_to_grid(ring) for ring in rings if len(ring) >= 3],
+                             pyclipper.PFT_NONZERO, budget=budget)
+
+
+@ring_keyed(vertices=lambda path, _width_cm: len(path), holds=_region_vertices)
 def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...] | _Refused:
     """A polyline's item-local stroke as buildable regions, or why it has none.
 
@@ -476,10 +637,11 @@ def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...] | _Refu
     outer rings and the holes they enclose: a closed fence is one outer and one
     hole.
 
-    Its SIZE is judged first, on the rings as they come back and before they are
-    sorted or tested: the largest outer ring with every hole, as one region. A
-    stroke refused for size — then, or while a region of it is cut — is not
-    looked at again: refusing must cost less than building.
+    Everything this costs is paid out of ONE budget of ``MAX_REGION_WORK`` units,
+    each step before it runs (``_stroke_regions``): a stroke that is refused for
+    its size — before the clipper is asked, when its rings come back, or while a
+    region of it is cut — is not looked at again. Refusing costs less than
+    building, and the refusal is remembered like any other answer.
 
     A stroke that is not buildable for another reason goes through
     ``_resolved_regions``. That is no rare path: two butt ends that meet corner
@@ -491,25 +653,10 @@ def _polyline_regions(path: Ring, width_cm: float) -> tuple[Region, ...] | _Refu
     a stroke's rings never were the drawn vertices, and what builds a fence or a
     wall reads ``path`` and ``path_width_cm``.
     """
-    rings = [_quantized(ring) for ring in polyline_footprint(list(path), width_cm)]
-    outers = [ring for ring in rings if len(ring) >= 3 and ring_area(ring) > 0.0]
-    holes = [ring for ring in rings if len(ring) >= 3 and ring_area(ring) < 0.0]
-    if outers and exceeds_work_bound(max(outers, key=len), holes):
-        return _TOO_LARGE
     try:
-        regions = group_rings(rings)
-    except ValueError:
-        regions = None
-    if regions is not None:
-        refused = _judged(regions)
-        if refused is None:
-            return regions
-        if refused is _TOO_LARGE:
-            return _TOO_LARGE
-    # the stroke's rings are oriented (outers counter-clockwise, holes clockwise):
-    # their non-zero union is the stroke
-    return _resolved_regions([_to_grid(ring) for ring in rings if len(ring) >= 3],
-                             pyclipper.PFT_NONZERO)
+        return _stroke_regions(path, width_cm, WorkBudget("the stroke of a path"))
+    except RegionTooLargeError:
+        return _TOO_LARGE
 
 
 def _without_repeats(ring: Ring) -> Ring:
@@ -526,15 +673,13 @@ def _without_repeats(ring: Ring) -> Ring:
 
 
 #: What comparing ONE reading of a resolved outline with the drawn one costs, in
-#: ``core.scene3d``'s work units, per lattice point and vertex of the outline
-#: (``_matches_outline``); up to three readings are compared. An outline that
-#: crosses itself and has more vertices than this allows — about 1,000 — is not
-#: resolved: it is refused for its size like any other.
+#: ``core.scene3d``'s work units (``_matches_outline``): per lattice point and
+#: vertex of the drawn outline, and per lattice point and vertex of the reading's
+#: regions. Paid for each reading that is compared, so an outline that crosses
+#: itself is resolved while the budget lasts — about 2,500 vertices for one
+#: reading, about 1,000 for all three.
 _OUTLINE_CHECK_UNITS: Final = 20
-
-
-def _resolving_is_too_much(vertices: int) -> bool:
-    return 3 * _OUTLINE_CHECK_UNITS * _LATTICE * _LATTICE * vertices > _polygon.MAX_REGION_WORK
+_REGION_CHECK_UNITS: Final = 5
 
 
 @lru_cache(maxsize=4096)
@@ -546,7 +691,25 @@ def _circle_regions(radius_cm: float) -> tuple[Region, ...] | _Refused:
     return ((ring, ()),) if is_buildable_region(ring) else _NO_READING
 
 
-@lru_cache(maxsize=2048)
+def _outline_regions(ring: Ring,
+                     budget: WorkBudget) -> tuple[tuple[Region, ...] | _Refused, bool]:
+    """``_polygon_regions``, paying into ``budget``: the ring as it is when it can
+    be cut — its SIZE judged before the simplicity test or anything else that
+    costs — and otherwise resolved, after counting how often it crosses itself:
+    that count is what the clipper's work on it depends on."""
+    if len(ring) > MAX_ITEM_VERTICES:
+        budget.refuse()
+    ring = _without_repeats(ring)
+    if len(ring) < 3:
+        return (), False
+    outer = ccw(ring)
+    if _buildable(((outer, ()),), budget):  # a simple polygon that was cut, and the cut proven
+        return ((outer, ()),), False
+    _near, crossings = touching_pairs(ring, budget, closed=True)
+    return _resolved_regions([_to_grid(ring)], pyclipper.PFT_NONZERO, ring, budget, crossings), True
+
+
+@ring_keyed(holds=lambda answer: _region_vertices(answer[0]))
 def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | _Refused, bool]:
     """A drawn polygon as ``(regions, resolved)`` — or, for regions, why it has none.
 
@@ -559,18 +722,16 @@ def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | _Refused, bool]:
     that met in a point are drawn in by ``_SEPARATION``. (The canvas PAINTS such
     a polygon with Qt's odd-even rule: the same for a bow-tie, not for a
     pentagram, whose centre the shadow fills and the paint leaves open.)
+
+    One budget of ``MAX_REGION_WORK`` units pays for all of it
+    (``_outline_regions``); an outline that is refused for its size — as a ring,
+    or because resolving it would cost more than is left — is never resolved,
+    and the refusal is remembered like any other answer.
     """
-    ring = _without_repeats(ring)
-    if len(ring) < 3:
-        return (), False
-    outer = ccw(ring)
-    # ``is_buildable_region`` judges the ring's SIZE before anything that costs —
-    # the simplicity test included — so nothing has to be asked about it first
-    if is_buildable_region(outer):  # a simple polygon that was cut, and the cut proven
-        return ((outer, ()),), False
-    if is_region_too_large(outer) or _resolving_is_too_much(len(ring)):
-        return _TOO_LARGE, False  # refused for its size: never resolved
-    return _resolved_regions([_to_grid(ring)], pyclipper.PFT_NONZERO, outline=ring), True
+    try:
+        return _outline_regions(ring, WorkBudget("a drawn outline"))
+    except RegionTooLargeError:
+        return _TOO_LARGE, False
 
 
 @lru_cache(maxsize=1024)
@@ -625,13 +786,26 @@ def _ridge_param(house_frame: LocalFrame, ridge: Any) -> ParamValue | None:
     return (ends[0], ends[1])
 
 
+def _drawn_vertices(item: Any) -> int:
+    """How many vertices the item's outline holds as it is STORED — asked before
+    one of them is read (``item_outline`` reads them all, and a plan file can
+    hold a polyline of 200,000 points). 0 for the shapes whose vertex count is
+    the code's and not the plan's: a rectangle's 4, an ellipse's and a circle's 24."""
+    if isinstance(item, PolylineItem):
+        return len(item.points)
+    if isinstance(item, PolygonItem):
+        return int(item.polygon().count())
+    return 0
+
+
 def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, ...], Ring, float | None,
                                                                  float | None, bool]:
     """``(regions, path, path_width_cm, radius_cm, resolved)`` of an outline in
     the record's frame; no regions means the item covers no ground, ``resolved``
     that the regions are not the drawn outline (``PARAM_OUTLINE_RESOLVED``).
     Raises ``ValueError`` for geometry that is not finite and
-    ``_UnbuildableOutline`` for an outline no builder could build."""
+    ``_UnbuildableOutline`` for an outline no builder could build
+    (``_OutlineTooLarge`` when the reason is its size)."""
     if outline.shape == OUTLINE_CIRCLE:
         radius = outline.radius_cm
         if radius is None or math.isnan(radius):
@@ -645,6 +819,8 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
         if isinstance(disc, _Refused):
             raise _UnbuildableOutline(f"a circle of radius {radius!r} cm: {disc.why}")
         return disc, (), None, radius, False
+    if len(outline.points) > MAX_ITEM_VERTICES:  # before one of them is moved into the frame
+        raise _OutlineTooLarge(_TOO_LARGE.why)
     ring = frame.local_ring(outline.points)
     if not _finite_ring(ring):
         raise ValueError("geometry that is not finite")
@@ -662,12 +838,12 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
             return (), ring, width, None, False
         stroke = _polyline_regions(ring, width)
         if isinstance(stroke, _Refused):
-            raise _UnbuildableOutline(stroke.why)
+            raise (_OutlineTooLarge if stroke is _TOO_LARGE else _UnbuildableOutline)(stroke.why)
         return stroke, ring, width, None, False
     if outline.shape == OUTLINE_POLYGON:
         regions, resolved = _polygon_regions(ring)
         if isinstance(regions, _Refused):
-            raise _UnbuildableOutline(regions.why)
+            raise (_OutlineTooLarge if regions is _TOO_LARGE else _UnbuildableOutline)(regions.why)
         return regions, (), None, None, resolved
     # an ellipse or a rectangle: convex by construction; a mirrored scene transform
     # (baked into the ring) turns it clockwise, and without an area it covers nothing
@@ -684,6 +860,9 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     """One item → its record; None when it covers no ground (not an error).
     Anything it raises is contained by ``snapshot_records``. ``lookup`` finds
     another item by id (a HOUSE's ridge)."""
+    drawn = _drawn_vertices(item)
+    if drawn > MAX_ITEM_VERTICES:  # one comparison — before a single vertex is read
+        raise _OutlineTooLarge(f"an outline of {drawn:,} vertices: {_TOO_LARGE.why}")
     outline = item_outline(item, at_date)
     if outline is None:
         return None
@@ -778,7 +957,10 @@ def snapshot_records(
     (malformed metadata, geometry that is not finite — any exception is
     contained to that item), a second item carrying an id already taken (the
     lower one wins), an item whose outline cannot be turned into regions a
-    builder can build, and an item with a length beyond
+    builder can build, an item whose outline is too large (more than
+    ``MAX_ITEM_VERTICES`` vertices, or more work than ``MAX_REGION_WORK`` — a
+    polyline of 200,000 points is answered with one comparison, and the rest of
+    the plan gets its records), and an item with a length beyond
     ``core.scene3d.MAX_LENGTH_CM`` — a height of 1e300 from a hand-edited plan
     is a finite number and an infinite float32; such an item gets no record
     rather than a solid nobody can draw. One bad item never blanks the view.
@@ -824,8 +1006,9 @@ def snapshot_records(
                                 type(error).__name__, str(error)), skipped)
             continue
         except _UnbuildableOutline as error:
-            _report(SkippedItem(item_id, kind, SkipReason.OUTLINE_UNBUILDABLE,
-                                type(error).__name__, str(error)), skipped)
+            reason = (SkipReason.OUTLINE_TOO_LARGE if isinstance(error, _OutlineTooLarge)
+                      else SkipReason.OUTLINE_UNBUILDABLE)
+            _report(SkippedItem(item_id, kind, reason, type(error).__name__, str(error)), skipped)
             continue
         except Exception as error:  # one bad item must not blank the view (docstring)
             _report(SkippedItem(item_id, kind, SkipReason.RECORD_FAILED,

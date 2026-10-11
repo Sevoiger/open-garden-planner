@@ -57,14 +57,13 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from functools import lru_cache
 from typing import Final, TypeAlias
 
 from .color import Rgba, srgb8_to_linear
 from .polygon import (
     Point as Point,  # re-exported: `from .record import Point, Ring` predates polygon.py
 )
-from .polygon import Region, ring_area
+from .polygon import Region, ring_area, ring_keyed
 from .polygon import Ring as Ring
 
 ParamValue: TypeAlias = "str | int | float | bool | None | tuple[ParamValue, ...]"
@@ -142,11 +141,12 @@ def _check_length(what: str, value: float) -> None:
         )
 
 
-@lru_cache(maxsize=8192)
+@ring_keyed()
 def _ring_facts(ring: Ring) -> tuple[float, float]:
     """``(signed area, largest absolute coordinate)`` of a ring — the two things a
-    record checks on every ring of every snapshot, behind ONE cache lookup (a
-    tuple's hash is recomputed on each lookup, and that is most of the cost)."""
+    record checks on every ring of every snapshot, behind ONE lookup (a tuple's
+    hash is recomputed on each lookup, and that is most of the cost). Remembered
+    by the vertices held, not by the number of rings (``polygon.ring_keyed``)."""
     return ring_area(ring), max((max(abs(x), abs(y)) for x, y in ring), default=0.0)
 
 

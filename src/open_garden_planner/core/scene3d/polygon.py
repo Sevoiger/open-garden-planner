@@ -21,17 +21,26 @@ the default builder itself uses, cuts it and the triangles add up to the
 region's area. The snapshot asks it for every outline it turns into rings, so
 "a record's regions can be built" is a checked fact, not a hope (fix round 2).
 
-Caches. ``ring_area``, ``is_simple_ring``, ``cut_region`` and
-``is_buildable_region`` are ``lru_cache``d on whole rings and never cleared:
-bounded (a few thousand entries each), and at plan sizes a few megabytes at
-most — a traced outline of 1,000 vertices is 16 kB per entry.
+Two bounds hold for everything here, because the rings come out of a plan file
+and a plan file can be written by anybody (security review of fix round 3):
+
+- WORK. Whatever is superlinear — the simplicity test, sorting rings into
+  regions, a bridge, the ear clipping, counting the pairs of a path — is paid
+  for in work units out of a ``WorkBudget`` BEFORE it runs, and refused
+  (``RegionTooLargeError``) when the budget does not cover it. One region may
+  cost ``MAX_REGION_WORK``; so may everything ONE item's outline needs, which
+  ``ui.view3d.snapshot`` pays into one budget.
+- MEMORY. What is remembered about rings (``ring_keyed``: ``ring_area``, the
+  verdict and the cut of a region) is bounded by the VERTICES it holds, not by
+  the number of answers, and a ring of more than ``MAX_ITEM_VERTICES`` vertices
+  is never hashed and never a key.
 """
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Sequence
-from functools import lru_cache
-from typing import Final, NoReturn, TypeAlias
+from typing import Any, Final, Generic, NamedTuple, NoReturn, ParamSpec, TypeAlias, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -41,6 +50,126 @@ Ring: TypeAlias = tuple[Point, ...]
 Region: TypeAlias = tuple[Ring, tuple[Ring, ...]]
 Triangle: TypeAlias = tuple[int, int, int]
 _Floats: TypeAlias = "NDArray[np.float64] | float"
+
+
+# ── what is remembered ────────────────────────────────────────────────────────
+
+#: The most vertices ONE item's outline may have in the 3D pipeline: as it is
+#: DRAWN (a polygon's ring, the points of a path) and as it is MADE (every ring
+#: the clipper returns for it, together). The first is asked of the item before
+#: one vertex is read, the second of the clipper's answer before one ring of it
+#: is. Far above what the work bound lets through (a plain outline of about
+#: 3,500 vertices; a stroke of about 4,300), so it never refuses what could be
+#: built — it is what makes the answer for 200,000 points ONE comparison, and
+#: what bounds a key.
+MAX_ITEM_VERTICES: Final = 16_384
+#: How many vertices ONE ``ring_keyed`` function holds at most, keys and answers
+#: together. At 104 bytes a vertex (a tuple of two floats, and its place in the
+#: ring) that is 27 MB if nothing were shared; the rings are the records' own, so
+#: a full cache adds little to what the records already hold. (Before: 2,048 to
+#: 8,192 ANSWERS each, whatever their size — a traced outline of 4,000 vertices
+#: dragged for a minute was a gigabyte.)
+HELD_VERTICES: Final = 262_144
+_ENTRY_VERTICES: Final = 8  # what an answer weighs beyond its rings: the entry itself
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+class CacheInfo(NamedTuple):
+    """What a ``ring_keyed`` function holds (``cache_info()``)."""
+
+    hits: int
+    misses: int
+    max_vertices: int
+    vertices: int
+    entries: int
+
+
+class _Entry(Generic[_R]):
+    __slots__ = ("answer", "asked", "weight")
+
+    def __init__(self, answer: _R, weight: int, asked: int) -> None:
+        self.answer, self.weight, self.asked = answer, weight, asked
+
+
+class RingKeyed(Generic[_P, _R]):
+    """A function of rings with its answers remembered — what ``functools.lru_cache``
+    does, bounded by the VERTICES held instead of the number of answers.
+
+    An answer about a traced outline of 4,000 vertices is a thousand times an
+    answer about a rectangle; a bound on entries is no bound on memory. Answers
+    are kept until their keys (``vertices(*args)``) and what ``holds(answer)``
+    says of the answers add up to ``max_vertices``; then the least recently
+    asked go, down to three quarters. A call about more than
+    ``MAX_ITEM_VERTICES`` vertices is answered and NOT kept: such a ring is
+    never hashed and never a key. Positional arguments only are remembered.
+    Safe to call from several threads, like ``lru_cache``; an exception is not
+    remembered.
+    """
+
+    def __init__(self, function: Callable[_P, _R], max_vertices: int,
+                 vertices: Callable[..., int], holds: Callable[[Any], int] | None) -> None:
+        self.__wrapped__ = function
+        self.__name__ = function.__name__
+        self.__doc__ = function.__doc__
+        self._vertices, self._holds, self._max = vertices, holds, max_vertices
+        self._entries: dict[tuple[Any, ...], _Entry[_R]] = {}
+        self._held = self._asked = self._hits = self._misses = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        if kwargs:
+            return self.__wrapped__(*args, **kwargs)
+        size = self._vertices(*args)
+        if size > MAX_ITEM_VERTICES:
+            return self.__wrapped__(*args, **kwargs)  # never hashed, never a key
+        with self._lock:
+            self._asked += 1
+            entry = self._entries.get(args)
+            if entry is not None:
+                entry.asked = self._asked
+                self._hits += 1
+                return entry.answer
+            self._misses += 1
+        answer = self.__wrapped__(*args, **kwargs)
+        weight = _ENTRY_VERTICES + size + (self._holds(answer) if self._holds is not None else 0)
+        with self._lock:
+            if args not in self._entries:
+                self._entries[args] = _Entry(answer, weight, self._asked)
+                self._held += weight
+                if self._held > self._max:
+                    self._forget()
+        return answer
+
+    def _forget(self) -> None:
+        """Drop the least recently asked answers until three quarters of the room is in use."""
+        for key, entry in sorted(self._entries.items(), key=lambda item: item[1].asked):
+            if self._held <= self._max * 3 // 4:
+                break
+            del self._entries[key]
+            self._held -= entry.weight
+
+    def cache_clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+            self._held = self._hits = self._misses = 0
+
+    def cache_info(self) -> CacheInfo:
+        return CacheInfo(self._hits, self._misses, self._max, self._held, len(self._entries))
+
+
+def ring_keyed(max_vertices: int = HELD_VERTICES, *, vertices: Callable[..., int] = len,
+               holds: Callable[[Any], int] | None = None,
+               ) -> Callable[[Callable[_P, _R]], RingKeyed[_P, _R]]:
+    """Decorator: remember a function of rings, bounded by vertices (``RingKeyed``).
+    ``vertices(*args)`` says how many vertices a call's arguments hold (default:
+    the length of its one ring), ``holds(answer)`` how many its answer does."""
+
+    def remembered(function: Callable[_P, _R]) -> RingKeyed[_P, _R]:
+        return RingKeyed(function, max_vertices, vertices, holds)
+
+    return remembered
 
 
 # ── area and orientation ──────────────────────────────────────────────────────
@@ -62,9 +191,9 @@ def signed_area(ring: Sequence[Sequence[float]]) -> float:
     return _signed_area(ring)
 
 
-@lru_cache(maxsize=8192)
+@ring_keyed()
 def ring_area(ring: Ring) -> float:
-    """``signed_area`` of an immutable ring, cached — a snapshot checks the
+    """``signed_area`` of an immutable ring, remembered — a snapshot checks the
     orientation of every ring of every record, and most rings repeat."""
     return _signed_area(ring)
 
@@ -227,17 +356,19 @@ def _within(px: _Floats, py: _Floats, sx: _Floats, sy: _Floats,
                       & (np.minimum(sy, ey) <= py) & (py <= np.maximum(sy, ey)))
 
 
-@lru_cache(maxsize=4096)
 def is_simple_ring(ring: Ring) -> bool:
     """True when ``ring`` is a simple polygon: at least three vertices, a non-zero
     area, and no two non-adjacent edges sharing a point (no bow-tie, no touching).
 
-    Quadratic in the vertex count, so it is cached (the snapshot asks it for every
-    user-drawn polygon and the default builder for every ring it extrudes, and
-    rings repeat between snapshots) and, from ``SIMPLE_RING_NUMPY_FROM`` vertices
-    on, vectorised: a ring that is being edited misses the cache on every tick.
+    Quadratic in the vertex count: from ``SIMPLE_RING_NUMPY_FROM`` vertices on it
+    runs on arrays, and a ring whose test ALONE would cost more than
+    ``MAX_REGION_WORK`` (about 7,000 vertices) is refused with
+    ``RegionTooLargeError`` — a question is not answered at any price. Not
+    remembered: its one caller, the cut of a region, is (``cut_region``).
     """
     n = len(ring)
+    if _simplicity_work(n) > MAX_REGION_WORK:
+        _refuse(f"the simplicity test of a ring of {n} vertices")
     if n < 3 or _signed_area(ring) == 0.0:
         return False
     if any(ring[i] == ring[(i + 1) % n] for i in range(n)):
@@ -295,7 +426,7 @@ def _ring_holds(ring: Ring) -> Callable[[float, float], bool]:
     return holds
 
 
-def group_rings(rings: Sequence[Ring]) -> tuple[Region, ...]:
+def group_rings(rings: Sequence[Ring], work: WorkBudget | None = None) -> tuple[Region, ...]:
     """Sort a flat list of rings — outers counter-clockwise, holes clockwise, as
     pyclipper returns them — into regions: each hole joins the smallest outer
     that contains it. Rings with fewer than three vertices or no area are dropped;
@@ -307,26 +438,38 @@ def group_rings(rings: Sequence[Ring]) -> tuple[Region, ...]:
     ring, or an island inside it, exactly there, and a point on a boundary has
     no inside. Nor would containment alone: an island inside the hole contains
     points of it too, and is smaller than the hole.)
+
+    Every hole asks every outer ring: holes x outers, and each question costs the
+    outer ring's vertices. That product is paid into ``work`` (a budget of its
+    own when none is given) BEFORE the first question — 2,000 small holes in
+    2,000 small outer rings took 3.8 s here when nothing asked. Beyond the
+    budget: ``RegionTooLargeError``.
     """
     outers: list[Ring] = []
     holes: list[Ring] = []
+    areas: list[float] = []
     for ring in rings:
         if len(ring) < 3:
             continue
         area = ring_area(ring)
         if area > 0.0:
             outers.append(ring)
+            areas.append(area)
         elif area < 0.0:
             holes.append(ring)
     owned: list[list[Ring]] = [[] for _ in outers]
+    if holes:
+        budget = work if work is not None else WorkBudget("sorting rings into regions")
+        budget.spend(len(holes) * sum(_ask_work(len(outer)) for outer in outers)
+                     + _INSIDE_VERTEX_UNITS * sum(len(hole) for hole in holes))
     holds = [_ring_holds(outer) for outer in outers] if holes else []
     for hole in holes:
         x, y = _point_inside(hole)
         size = -ring_area(hole)
         best = -1
-        for index, outer in enumerate(outers):
-            if ring_area(outer) > size and holds[index](x, y) and (
-                best < 0 or ring_area(outer) < ring_area(outers[best])
+        for index in range(len(outers)):
+            if areas[index] > size and holds[index](x, y) and (
+                best < 0 or areas[index] < areas[best]
             ):
                 best = index
         if best < 0:
@@ -409,14 +552,17 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 
 # ── what a cut may cost ───────────────────────────────────────────────────────
 
-#: THE WORK BOUND — what cutting ONE region may cost, with holes or without. A
-#: region whose cut would cost more is refused (``RegionTooLargeError``) instead
-#: of holding the GUI thread, and the refusal comes FIRST: before the simplicity
-#: test, before a bridge, before an ear — refusing costs microseconds.
+#: THE WORK BOUND — what cutting ONE region may cost, with holes or without, and
+#: what everything ONE item's outline needs may cost together (the snapshot pays
+#: the clipper, the sorting and every region's cut into one ``WorkBudget``: a
+#: thousand regions that each fit are not a thousand bounds). What would cost
+#: more is refused (``RegionTooLargeError``) instead of holding the GUI thread,
+#: and the refusal comes FIRST: a step is paid for before it runs — before the
+#: simplicity test, before a bridge, before an ear, before the clipper is asked.
 #:
 #: Work is counted, not timed, so the verdict is the same on every machine. A
 #: unit is priced at about a nanosecond on the development box (the price list
-#: below); the three things a cut does each pay as they go:
+#: below); the things a cut does each pay as they go:
 #:
 #: - the simplicity test of each ring — every pair of its edges, n²;
 #: - a bridge per hole — one sort of the boundary, then a block of candidates at
@@ -425,16 +571,22 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 #:   loop each time one is tested.
 #:
 #: What fits, measured (``scripts/measure_region_work.py``, which prints the
-#: table in section 8.26.1): a plain traced outline of about 3,900 vertices; a
-#: closed fence along about 1,450 traced points; a ladder of about 215 cells or
-#: a square mesh of about 330 drawn as one stroke. At the bound a cut takes
-#: about a quarter of a second on a quiet machine.
+#: table in section 8.26.1): a plain traced outline of about 3,500 vertices; a
+#: comb of about 1,600; a closed fence along about 1,400 traced points; a
+#: square mesh of 16 x 16 openings drawn as one stroke. At the bound a unit
+#: took 0.35 to 1.5 ns on the development box, quiet to busy: 0.05 to 0.22 s.
 MAX_REGION_WORK: Final = 150_000_000
 
 # The price list, in work units. Fitted to measurements on the development box
 # (the script above prints units against milliseconds for each kind of region).
-_PAIR_UNITS: Final = 3  # simplicity test on arrays: per n² of one ring (each pair once)
+_REGION_UNITS: Final = 3_000  # a region, whatever its size: what asking about it costs at least
+_PAIR_UNITS: Final = 3  # every pair of the segments of one ring or path, on arrays: per n² …
+_NEAR_PAIR_UNITS: Final = 350  # … and per pair whose boxes meet (those are tested one by one)
 _SMALL_PAIR_UNITS: Final = 250  # … in the plain loop (rings below SIMPLE_RING_NUMPY_FROM)
+_ASK_UNITS: Final = 12_000  # group_rings: one outer ring asked about one point, on arrays …
+_ASK_VERTEX_UNITS: Final = 3  # … per vertex of that ring
+_ASK_SMALL_VERTEX_UNITS: Final = 120  # … in the plain loop (rings below SIMPLE_RING_NUMPY_FROM)
+_INSIDE_VERTEX_UNITS: Final = 700  # … and the point inside a hole: per vertex of the hole
 _HOLE_UNITS: Final = 140_000  # a bridge: setting the search up, per hole …
 _HOLE_VERTEX_UNITS: Final = 100  # … per boundary vertex (sorted by distance) …
 _HOLE_EDGE_UNITS: Final = 60  # … and per edge of the boundary and the holes still waiting
@@ -464,34 +616,127 @@ class RegionTooLargeError(ValueError):
     a region cannot be cut.)"""
 
 
+def _too_large(what: str) -> str:
+    return (f"{what} is beyond what is cut here (the work bound, MAX_REGION_WORK = "
+            f"{MAX_REGION_WORK:,} units)")
+
+
 def _refuse(what: str) -> NoReturn:
-    raise RegionTooLargeError(
-        f"{what} is beyond what is cut here (the work bound, MAX_REGION_WORK = "
-        f"{MAX_REGION_WORK:,} units)"
-    )
+    raise RegionTooLargeError(_too_large(what))
 
 
-class _Work:
-    """What a cut has left to spend. ``spend`` raises ``RegionTooLargeError`` the
-    moment the bound is passed — so nothing runs for longer than the bound."""
+class WorkBudget:
+    """What is left to spend — on ONE region's cut, or on everything ONE item's
+    outline needs. ``spend`` raises ``RegionTooLargeError`` the moment the bound
+    is passed, so nothing runs for longer than the bound: pay for a step BEFORE
+    it runs wherever its price is known beforehand, and as it goes where it is
+    not (the ears, the bridges)."""
 
     __slots__ = ("budget", "left", "what")
 
-    def __init__(self, what: str, budget: int | None = None) -> None:
+    def __init__(self, what: str = "an outline", budget: int | None = None) -> None:
         self.what = what
         self.budget = MAX_REGION_WORK if budget is None else budget
         self.left = self.budget
+
+    @property
+    def spent(self) -> int:
+        return self.budget - self.left
 
     def spend(self, units: int) -> None:
         self.left -= units
         if self.left < 0:
             _refuse(self.what)
 
+    def refuse(self) -> NoReturn:
+        """Refuse outright: for a size that no budget covers (``MAX_ITEM_VERTICES``)."""
+        _refuse(self.what)
+
 
 def _simplicity_work(vertices: int) -> int:
     """What ``is_simple_ring`` costs for a ring of that many vertices."""
     pair = _PAIR_UNITS if vertices >= SIMPLE_RING_NUMPY_FROM else _SMALL_PAIR_UNITS
     return pair * vertices * vertices
+
+
+def _ask_work(vertices: int) -> int:
+    """What asking ONE outer ring of that many vertices about ONE point costs (``_ring_holds``)."""
+    if vertices >= SIMPLE_RING_NUMPY_FROM:
+        return _ASK_UNITS + _ASK_VERTEX_UNITS * vertices
+    return _ASK_SMALL_VERTEX_UNITS * (vertices + 2)
+
+
+def touching_pairs(points: Sequence[Sequence[float]], work: WorkBudget, *, closed: bool,
+                   reach: float = 0.0) -> tuple[int, int]:
+    """``(near, touching)`` among the pairs of NON-ADJACENT segments of a path —
+    of a ring when ``closed``.
+
+    ``touching``: the pairs that share a point — where a polygon crosses or
+    touches itself, where a path crosses its own line. ``near``: the pairs whose
+    bounding boxes meet once each is widened by ``reach``; every touching pair
+    is among them. These two numbers are what the clipper's work on the path
+    depends on, and they are counted BEFORE the clipper sees it: 800 points
+    scribbled across a plan cross 73,000 times, and resolving them took ten
+    seconds.
+
+    The count itself is every pair once, on arrays, and is paid into ``work``
+    before it runs; the near pairs are paid before they are tested one by one.
+    """
+    segments = len(points) if closed else len(points) - 1
+    if segments < 3:
+        return 0, 0
+    work.spend(_PAIR_UNITS * segments * segments)
+    xy = np.asarray(points, dtype=np.float64)
+    first, second = xy[:segments], np.roll(xy, -1, axis=0)[:segments]
+    low, high = np.minimum(first, second) - reach, np.maximum(first, second) + reach
+    index = np.arange(segments)
+    near_pairs = touching = 0
+    for start in range(0, segments, _SIMPLE_RING_ROWS):
+        rows = slice(start, min(start + _SIMPLE_RING_ROWS, segments))
+        later = slice(start, segments)
+        row = index[rows, None]
+        column = index[None, later]
+        near = ((low[rows, None, 0] <= high[None, later, 0]) & (low[None, later, 0] <= high[rows, None, 0])
+                & (low[rows, None, 1] <= high[None, later, 1]) & (low[None, later, 1] <= high[rows, None, 1])
+                & (column > row + 1))
+        if closed:
+            near &= ~((row == 0) & (column == segments - 1))  # the ring's last segment meets its first
+        i, j = np.nonzero(near)
+        if not len(i):
+            continue
+        near_pairs += len(i)
+        work.spend(_NEAR_PAIR_UNITS * len(i))
+        i, j = i + start, j + start
+        touching += int(np.count_nonzero(_touch(first[i, 0], first[i, 1], second[i, 0], second[i, 1],
+                                                first[j, 0], first[j, 1], second[j, 0], second[j, 1])))
+    return near_pairs, touching
+
+
+def stack_height(rings: Sequence[Sequence[Sequence[float]]], *, closed: bool, reach: float = 0.0) -> int:
+    """The most segments of ``rings`` — of paths when not ``closed`` — that ONE
+    horizontal line crosses, each segment's height widened by ``reach``.
+
+    What a sweep-line clipper pays per step: it carries every edge the line
+    crosses. A zigzag of 4,000 points whose teeth stand side by side, crossing
+    nothing, has a stack of 4,000 and took the clipper 1.6 s to inflate; lying on
+    its side it has a stack of 2 and took 4 ms. Linear to compute (one sort).
+    """
+    lows, highs = [], []
+    for ring in rings:
+        if len(ring) < 2:
+            continue
+        y = np.asarray(ring, dtype=np.float64)[:, 1]
+        following = np.roll(y, -1)
+        if not closed:
+            y, following = y[:-1], following[:-1]
+        lows.append(np.minimum(y, following))
+        highs.append(np.maximum(y, following))
+    if not lows:
+        return 0
+    low, high = np.sort(np.concatenate(lows) - reach), np.sort(np.concatenate(highs) + reach)
+    # at the k-th lowest lower end: k + 1 segments have begun, and those whose upper end
+    # lies below it have ended
+    return int((np.arange(1, len(low) + 1) - np.searchsorted(high, low, side="left")).max())
 
 
 def _triangulation_floor(outer_vertices: int, hole_sizes: Sequence[int]) -> int:
@@ -517,7 +762,7 @@ def region_work(outer: Sequence[Sequence[float]], holes: Sequence[Sequence[Seque
     is refused before any test runs; one below may still be refused while it is
     cut, when its shape makes the bridges or the ears cost more than the least."""
     sizes = [len(hole) for hole in holes]
-    return (_simplicity_work(len(outer)) + sum(_simplicity_work(size) for size in sizes)
+    return (_REGION_UNITS + _simplicity_work(len(outer)) + sum(_simplicity_work(size) for size in sizes)
             + _triangulation_floor(len(outer), sizes))
 
 
@@ -531,7 +776,7 @@ def exceeds_work_bound(outer: Sequence[Sequence[float]],
 
 def _bridge_position(points: Sequence[Point], xy: NDArray[np.float64], loop: list[int],
                      hole_vertex: int, waiting_first: NDArray[np.intp],
-                     waiting_second: NDArray[np.intp], work: _Work) -> int:
+                     waiting_second: NDArray[np.intp], work: WorkBudget) -> int:
     """The position in ``loop`` of the nearest boundary vertex that ``hole_vertex``
     can be bridged to: the segment between them touches no edge of the boundary
     or of a hole still to be merged (``waiting_first`` → ``waiting_second``, this
@@ -585,7 +830,7 @@ def _bridge_position(points: Sequence[Point], xy: NDArray[np.float64], loop: lis
 _FLAT_CORNER: Final = 4e-15
 
 
-def _ear_clip(points: Sequence[Point], loop: Sequence[int], work: _Work) -> list[Triangle]:
+def _ear_clip(points: Sequence[Point], loop: Sequence[int], work: WorkBudget) -> list[Triangle]:
     """Clip ears of a counter-clockwise loop of indices into ``points``. The loop
     may visit a vertex twice (a bridge to a hole runs out and back): a second
     visit to an ear's own corner never blocks that ear.
@@ -676,7 +921,7 @@ def _described(outer: Sequence[object], holes: Sequence[Sequence[object]]) -> st
     return f"a region of {vertices} vertices with {len(holes)} holes"
 
 
-def _triangulate(outer: Ring, holes: Sequence[Ring], work: _Work) -> tuple[tuple[Point, ...], list[Triangle]]:
+def _triangulate(outer: Ring, holes: Sequence[Ring], work: WorkBudget) -> tuple[tuple[Point, ...], list[Triangle]]:
     """``triangulate_region``, paying into ``work``."""
     points: tuple[Point, ...] = tuple(outer) + tuple(p for hole in holes for p in hole)
     if not holes:
@@ -735,45 +980,102 @@ def triangulate_region(
     what = _described(outer, holes)
     if _triangulation_floor(len(outer), [len(hole) for hole in holes]) > MAX_REGION_WORK:
         _refuse(what)
-    return _triangulate(outer, holes, _Work(what))
+    return _triangulate(outer, holes, WorkBudget(what))
 
 
 # ── the one predicate ─────────────────────────────────────────────────────────
 
 
-@lru_cache(maxsize=2048)
-def cut_region(outer: Ring, holes: tuple[Ring, ...] = ()) -> tuple[tuple[Point, ...], tuple[Triangle, ...]]:
+_Cut: TypeAlias = tuple[tuple[Point, ...], tuple[Triangle, ...]]
+_BUILDABLE, _UNBUILDABLE, _TOO_LARGE = 0, 1, 2
+#: Up to this many vertices, and without holes, a region is looked up before it
+#: is sized up (a rectangle is asked on every tick; ``_cut`` judges its size
+#: anyway). Anything larger is sized up BEFORE it is hashed.
+_SMALL_REGION: Final = 64
+
+
+class _Examined(NamedTuple):
+    """What cutting a region came to: the verdict, the work it took, the cut
+    when there is one and the refusal's words when there is not."""
+
+    verdict: int
+    spent: int
+    cut: _Cut | None
+    why: str
+
+
+def _region_vertices(outer: Ring, holes: tuple[Ring, ...]) -> int:
+    return len(outer) + sum(len(hole) for hole in holes)
+
+
+@ring_keyed(vertices=_region_vertices, holds=lambda examined: len(examined.cut[1]) if examined.cut else 0)
+def _examined(outer: Ring, holes: tuple[Ring, ...]) -> _Examined:
+    """``_cut``, remembered — refusals included: a region that cannot be built
+    must not be tried again on every tick. ONE memory for the verdict, what it
+    cost and the cut, so that the builder gets the cut the verdict made."""
+    work = WorkBudget(_described(outer, holes))
+    try:
+        cut = _cut(outer, holes, work)
+    except RegionTooLargeError as error:
+        return _Examined(_TOO_LARGE, work.spent, None, str(error))
+    except ValueError as error:
+        return _Examined(_UNBUILDABLE, work.spent, None, str(error))
+    return _Examined(_BUILDABLE, work.spent, cut, "")
+
+
+def _examine(outer: Ring, holes: tuple[Ring, ...]) -> _Examined:
+    """``_examined`` — after the SIZE: a region whose rings alone put it beyond
+    the bound is answered from their lengths, never hashed and never a key."""
+    if (len(outer) > _SMALL_REGION or holes) and exceeds_work_bound(outer, holes):
+        return _Examined(_TOO_LARGE, 0, None, _too_large(_described(outer, holes)))
+    return _examined(outer, holes)
+
+
+def cut_region(outer: Ring, holes: tuple[Ring, ...] = ()) -> _Cut:
     """``triangulate_region``, with the result PROVEN before it is handed out.
 
     Raises ``ValueError`` unless the outer ring is a simple counter-clockwise
     polygon, every hole a simple clockwise one, every triangle of the result
     faces up, and the triangles' areas add up to the region's (outer minus
     holes) — the two facts a wrong triangulation cannot both satisfy. This is
-    what the default builder calls (``build.prism_mesh``); cached, so asking
-    whether a region can be built costs nothing again when it then is.
+    what the default builder calls (``build.prism_mesh``); remembered, so asking
+    whether a region can be built costs nothing again when it then is — and a
+    refusal is remembered with its words.
 
     The size is judged FIRST: ``RegionTooLargeError`` (a ``ValueError``) when
     ``region_work`` is beyond ``MAX_REGION_WORK`` — raised before the simplicity
     test or anything else that costs — and when the cut itself, once started,
     would pass the bound.
     """
-    return _cut(outer, holes, _Work(_described(outer, holes)))
+    examined = _examine(outer, holes)
+    if examined.cut is None:
+        raise (RegionTooLargeError if examined.verdict == _TOO_LARGE else ValueError)(examined.why)
+    return examined.cut
 
 
 def cut_work(outer: Ring, holes: tuple[Ring, ...] = ()) -> int:
     """What ``cut_region`` spends on this region, in work units — by cutting it
-    (nothing is cached). At least ``region_work(outer, holes)``; raises what
+    (nothing is remembered). At least ``region_work(outer, holes)``; raises what
     ``cut_region`` raises. For measurements and tests: a count is the same on
     every machine, a duration is not."""
-    work = _Work(_described(outer, holes))
+    work = WorkBudget(_described(outer, holes))
     _cut(outer, holes, work)
-    return work.budget - work.left
+    return work.spent
 
 
-def _cut(outer: Ring, holes: tuple[Ring, ...],
-         work: _Work) -> tuple[tuple[Point, ...], tuple[Triangle, ...]]:
+def region_cost(outer: Ring, holes: tuple[Ring, ...] = ()) -> int:
+    """What finding out about this region HAS cost, in work units — remembered
+    with the verdict, and the same whether the region could be built or not
+    (``region_work`` is the least a cut can cost, from the sizes alone; this is
+    what it did cost). 0 for a region refused from its size alone. What a
+    caller that judges several regions against ONE budget pays per region."""
+    return _examine(outer, holes).spent
+
+
+def _cut(outer: Ring, holes: tuple[Ring, ...], work: WorkBudget) -> _Cut:
     if exceeds_work_bound(outer, holes):
         _refuse(work.what)
+    work.spend(_REGION_UNITS)
     for ring in (outer, *holes):
         work.spend(_simplicity_work(len(ring)))
     if not is_simple_ring(outer) or not ring_area(outer) > 0.0:
@@ -803,24 +1105,6 @@ def _cut(outer: Ring, holes: tuple[Ring, ...],
     return vertices, tuple(triangles)
 
 
-_BUILDABLE, _UNBUILDABLE, _TOO_LARGE = 0, 1, 2
-
-
-@lru_cache(maxsize=4096)
-def _verdict(outer: Ring, holes: tuple[Ring, ...]) -> int:
-    """What ``cut_region`` says about a region, remembered — refusals included
-    (``lru_cache`` does not keep an exception, and a region that cannot be built
-    must not be tried again on every tick)."""
-    try:
-        cut_region(outer, holes)
-    except RegionTooLargeError:
-        return _TOO_LARGE
-    except ValueError:
-        return _UNBUILDABLE
-    return _BUILDABLE
-
-
-@lru_cache(maxsize=4096)
 def is_buildable_region(outer: Ring, holes: tuple[Ring, ...] = ()) -> bool:
     """THE predicate for "a builder can turn this region into a solid": true
     exactly when ``cut_region`` — the default builder's own triangulation — cuts
@@ -828,13 +1112,13 @@ def is_buildable_region(outer: Ring, holes: tuple[Ring, ...] = ()) -> bool:
 
     It implies what a builder of its own may rely on: the outer ring is a simple
     counter-clockwise polygon, the holes are simple, clockwise and inside it,
-    and the triangulation exists. Cached, false answers included.
+    and the triangulation exists. Remembered, false answers included.
     """
-    return _verdict(outer, holes) == _BUILDABLE
+    return _examine(outer, holes).verdict == _BUILDABLE
 
 
 def is_region_too_large(outer: Ring, holes: tuple[Ring, ...] = ()) -> bool:
     """True when ``cut_region`` refuses the region for its SIZE (the work bound)
     — as opposed to its shape. No other reading of the same outline will be
-    smaller, so a caller that gets True stops there. Cached with the verdict."""
-    return _verdict(outer, holes) == _TOO_LARGE
+    smaller, so a caller that gets True stops there. Remembered with the verdict."""
+    return _examine(outer, holes).verdict == _TOO_LARGE
