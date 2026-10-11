@@ -24,6 +24,10 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   `tests/unit/test_scene3d_contract.py`). It is the production side of the engine boundary since
   L1.1 (ADR-054, §8.26.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
   driven by `SceneSync`; builders are tested against `RecordingSink` with no GPU.
+- **`core/plant_art/` is standard library only** (no Qt, no numpy; AST scan in
+  `tests/unit/test_plant_art.py`): the plant recipe tables and the species → sprite rule, read by
+  the sprite generator script, by `core/plant_renderer` and by the plant builder
+  `core/scene3d/builders/plants.py` (L1.7, §8.22.4, §8.26.7).
 
 ## 2. PyQt6 6.11 binding facts
 

@@ -599,6 +599,36 @@ them where they fit.
   identified), and a hover test that does not check would have passed vacuously there. Assert an
   effect of the hover (the handle's highlight brush) before asserting that it changed nothing else.
 
+### 8.10.4 Patterns from the plant builders (Phase 17 L1.7)
+
+Four patterns from `tests/unit/test_plant_art.py`, `tests/unit/test_scene3d_plants.py` and
+`tests/integration/test_scene3d_plants.py`; the stories behind them are §11.4.9.
+
+- **A golden of answers before extracting a rule.** The companion of "a golden fixture before a
+  move" for a *function*: before `resolve_sprite` was extracted from the 2D renderer, 1,562 of the
+  old resolver's answers were recorded (every key of its map, each in two casings, every bundled
+  common and scientific name, the names the gallery sets, junk, and the fallback grid of kinds ×
+  categories) and committed alone. The extracted function is then held to the file under every
+  way it can be asked. Quirks get pinned on purpose — a rule that users see is not improved inside
+  a refactoring.
+- **An independent reference by subtraction.** To ask "is this colour the sprite's foliage
+  colour?" without painting a mask: render the sprite as shipped and once more with its palette
+  replaced by black. Source-over compositing is linear in every layer's colour, so the difference
+  of the two images is exactly the ink that depends on the palette; everything drawn from other
+  colours cancels. The same trick isolates any one input of a layered drawing. Assert the two
+  renders share an alpha channel — then they are the same shapes.
+- **Every metric gets a case whose answer is known.** A measuring function is code and can be
+  wrong in the flattering direction. `side_silhouette` is asserted to give 1.0 for a plant against
+  itself, the hue instrument to *fail* a plant built in another palette
+  (`test_the_hue_instrument_tells_palettes_apart`), `verify_builder` to reject a builder that
+  reads the transform. Where a gate could pass by construction, add the neighbouring measure the
+  gate does not ask for (bounding box → distance from the axis).
+- **A known gap is a test, not a sentence in a report.** Where the 3D view can still disagree
+  with the plan — a species assigned from the plant database —
+  `test_known_gap_a_species_assigned_from_the_database` asserts both answers as they are today.
+  The day the gap is closed the test fails and has to be rewritten; until then nobody can believe
+  it is closed.
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
@@ -2055,7 +2085,9 @@ controls; all are iconized.
 Every SVG under `resources/plants/{species,categories}/` is produced by
 `scripts/generate_plant_sprites.py` — a seeded, deterministic generator whose
 recipe tables (archetype + palette + signature features per species) are the
-actual source of the plant art. The committed SVGs are build artifacts:
+actual source of the plant art. Since Phase 17 L1.7 the tables themselves live
+in `core/plant_art/recipes.py`, shared with the 3D plant builder (§8.22.4); the
+script keeps the drawing code. The committed SVGs are build artifacts:
 `--check` and `tests/unit/test_plant_sprite_conformance.py` fail on any byte
 drift, which also makes hand edits impossible to land. The binding style
 contract lives in `resources/plants/README.md` ("Lush Sprite", user-approved
@@ -2102,8 +2134,44 @@ skill's "SVG sprite forge" section; never judge by XML or a browser render)
 `tests/integration/test_plant_sprite_rendering.py` — the §8.10 test renders
 every sprite to visible pixels through `render_plant_pixmap`, including
 tint, rotation and the 16 px growth-model size) → owner sign-off on a
-contact sheet for style-level changes. New species additionally need a
-`_SPECIES_FILES` alias in `core/plant_renderer.py`.
+contact sheet for style-level changes. The recipe is in
+`core/plant_art/recipes.py`; a new species additionally needs its names in
+`SPECIES_SPRITES` (`core/plant_art/resolve.py`) — and both edits reach the 3D
+view as well (§8.22.4).
+
+### 8.22.4 One recipe table for 2D and 3D (Phase 17 L1.7, ADR-054 addendum)
+
+`core/plant_art/` is the Qt-free, standard-library-only home of everything that
+says what a plant looks like (an AST scan in `tests/unit/test_plant_art.py`
+pins the import rule):
+
+| Module | Holds | Read by |
+|---|---|---|
+| `recipes.py` | `PALETTES`, `FRUITS`, `FLOWERS`, `SPECIES`, `CATEGORIES` (moved verbatim, order included), `palette_key(recipe)`, `FEATURE_KEYS`, `ARCHETYPES` | the sprite generator; the 3D plant builder |
+| `resolve.py` | `SPECIES_SPRITES`, `CATEGORY_SPRITES`, `DEFAULT_CATEGORY`, `PLANT_KINDS`; `resolve_sprite(kind, species, category, available=…)`, `resolve_recipe`, `recipe_for` | `core/plant_renderer`; the 3D plant builder |
+
+**One rule decides a plant's sprite.** `resolve_sprite` is the 2D resolution,
+extracted: the species sprite (the species string lower-cased and stripped, as
+an exact key, else the first key that contains it or is contained in it), else
+the sprite of the plant's category, else the sprite of its object type's
+default category. `available` says whether a candidate exists — the renderer
+passes "the SVG file exists", the 3D builder "the tables hold a recipe"; a
+candidate that does not exist is skipped and the next rule applies. Kinds and
+categories are plain names (`"TREE"`, `"PALM"`): `core/object_types` imports Qt.
+
+The rule was extracted, not improved. Its partial match has quirks — "Lemon
+Balm" takes the lemon tree's sprite, "Melon" the eggplant's, a whitespace-only
+species the rose's — and they are pinned
+(`tests/fixtures/plant_art/sprite_resolution_golden.json`, 1,562 answers of the
+resolver as it was before the extraction), because changing them changes what
+users see on the plan. What the 3D view builds for a plant is the recipe of the
+sprite the plan shows; if the sprite is wrong, fix the rule here, once.
+
+**Byte identity on Windows.** With `core.autocrlf=true` the SVGs in the working
+tree end in CRLF, so a raw byte diff of the generator's output against the
+files on disk reports all 123 as different. The committed blobs are the
+reference (`git cat-file blob HEAD:<path>`); the conformance gate compares
+text, which is newline-agnostic.
 
 ## 8.23 Object Sprite Pipeline (#308, ADR-042)
 
@@ -2624,3 +2692,140 @@ assert the invariant that makes diffs safe after each step of an edit sequence: 
 `translated(mesh, …)` → `mesh.translated(…)` *within the local frame*, `normal_vs_winding`,
 `srgb_to_linear` and `item_seed` keep their names. Drift-guard tests keep the ported helpers equal
 to the spike's until L1.10 deletes it.
+
+### 8.26.7 Plant v0 — archetype silhouettes from the shared recipes (L1.7)
+
+`core/scene3d/builders/plants.py` is the builder of the plant kinds (`TREE`, `SHRUB`,
+`PERENNIAL`). It decides nothing about a plant by itself: the **recipe** comes from the tables the
+2D sprites are drawn from, through the rule the 2D renderer uses (§8.22.4), and the **size** from
+the record.
+
+```
+record ──plant_sprite()──▶ SpriteRef ──recipe_for()──▶ recipe {a, pal, leaf_scale, n_out, …}
+   │  kind, species_name, plant_category                     │
+   │  height_cm, params["radius_cm"], params["seed"]         ▼
+   └────────────────────────────────────────────▶ ARCHETYPE_BUILDERS[recipe["a"]]  form
+                                                   _fit(height, radius)             truth
+                                                   _foliage_colors(palette)         colour
+                                                              ▼
+                                        MeshPart "wood" (vc) · MeshPart "foliage" (foliage)
+```
+
+**What a record gets.**
+
+| Record | Built |
+|---|---|
+| a plant kind, a canopy radius, a height | the silhouette of its recipe's archetype, fitted |
+| a plant kind, a canopy radius, `height_cm is None` | the placeholder (below) |
+| anything else | `default_builder` (the prism, or nothing) |
+
+**The thirteen archetypes** — every `a=` of the tables; `ARCHETYPE_BUILDERS` is pinned to
+`plant_art.ARCHETYPES`, and an unknown archetype raises (`SceneSync` contains it: that one item
+has no solid and is listed in `failures`).
+
+| Archetype | Silhouette | Recipe keys read | Triangles, measured max |
+|---|---|---|---|
+| `canopy` | tapered trunk, crown of seven soft lobes (five round it, each reaching the canopy circle), a leaf shell on the lobes | `leaf_scale`, `n_out`, `frilly` | 1,904 |
+| `conifer` | short trunk, 3–6 star-rimmed cone tiers by the tree's proportions (each a little higher, shorter or deeper cut per plant), a leader | — | 664 |
+| `mound` | six lobes sitting on the ground, leaning to one side, a leaf shell on the lobes | `leaf_scale`, `n_out`, `narrow`, `frilly` | 1,608 |
+| `climber` | six lobes on a one-turn helix (a pillar when tall, a mat when wide), a leaf shell on the lobes, tendrils | `leaf_scale`, `n_out`, `frilly` | 1,368 |
+| `ground` | nine small bumps under a dense leaf shell | `leaf_scale`, `n_out`, `narrow`, `frilly` | 1,128 |
+| `hedge` | a hand-clipped drum: batter, bevelled uneven top, fine leaf shell | `leaf_scale`, `n_out` | 900 |
+| `rosette` | three rings of broad folded leaves round a heart, or a fourth ring when `heart=False` | `n_out`, `leaf_scale`, `heart` | 560 |
+| `head` | two rings of large leaves and a low bud | `frilly` | 400 |
+| `grass` | seven tufts of thin arching blades | `n_out`, `leaf_scale` | 1,120 |
+| `allium` | one clump: an outer layer of arching blades, an inner upright one | `n_out`, `leaf_scale` | 470 |
+| `feathery` | twelve thin arching stems carrying narrow leaflets | `n_out`, `leaf_scale` | 792 |
+| `flower` | a stalk, twelve broad leaves up its length, a leaf bud | — | 316 |
+| `palm` | ringed slender trunk, arching notched fronds | `n_out` | 356 |
+
+Every archetype also reads `pal` (through `palette_key`). Nothing else of a recipe is read in v0:
+no feature key (`plant_art.FEATURE_KEYS` — fruit, flowers, pods, umbels, bulbs, bloom puffs), not
+`head` (the curd is a flower head), not `rib_color`, not the sprite radius `r`. The season gates
+(`ogp-lush-cinematic` §1) arrive with Package L3; until then a plant shows nothing a season
+decides, and a crown is never bare.
+
+**The budget** is 2,000 triangles a plant (`TRIANGLE_BUDGET`), per archetype, and holds by
+construction: every count is a clipped function of recipe numbers (`_Plan.number`,
+`_Plan.shell_leaves`) and never of the plant's size — a 1 cm seedling and a 50 m tree of one
+recipe have the same triangle count. A coarse-leaved recipe gets fewer, larger leaves; a
+fine-leaved one more, smaller ones.
+
+**The fit** (`_fit`) is where a plant becomes true. Builders work in centimetres at the record's
+real height and radius, so proportions are right before any scaling. Then, in this order: foliage
+beyond the canopy circle is pulled back onto it; the foliage's bounding box is centred on the
+local origin — the canopy circle's centre — while wood stays where it stands (a trunk's foot is
+the plan position, however lopsided the crown); everything is scaled about the origin so that the
+widest span is exactly the canopy diameter, the base z = 0 and the top `height_cm`; normals take
+the inverse scale. The bounding box is exact to float32, which is what the height (± 3 %) and
+spread (± 10 %) gates measure.
+
+Order matters at the ground. Anything below z = 0 — the tip of a hanging leaf — is pressed onto
+the ground, and a plant whose lowest point is *above* the ground is set down; a plant is never
+lifted to bring its lowest vertex to zero. The first version subtracted the minimum, and one leaf
+dipping under a cushion's base lifted the whole cushion into the air with `min z == 0` intact
+(§11.4.9). The gate therefore counts: at least six vertices within 0.5 % of the height above the
+ground.
+
+Shell leaves sit **on the lobes**: `_on_lobes` casts a ray from the crown's heart in each leaf's
+direction and sets the leaf where the ray leaves the outermost lobe (a little in or out). Placed
+on an ellipsoid envelope instead they were buried where a lobe reached the envelope — crowns bald
+on top — and hovered in the gaps between lobes.
+
+The bounding box alone would not make the plan view honest: a sparse plant whose few long leaves
+point anywhere fits its box and still leaves its canopy circle. So the elements that draw an
+outline — a rosette's outer leaves, a palm's fronds, an allium's outer blades, a grass's longest
+blades, the lobes round a crown, a mound, a climber or a ground cover — reach at least
+`_RIM_REACH` (0.97) of the radius and sit within `_RIM_JITTER` (0.10) of an even slot round the
+axis. Measured over 1,000 ids × three proportions × three recipes per archetype: no vertex further
+than 1.081 canopy radii from the axis (hedge; palm 1.078, feathery 1.077, canopy 1.071, the rest
+under 1.06), against 1.39 before the rule. Seen from above, a plant's convex hull covers 93–102 %
+of its canopy circle. Inner elements stay irregular.
+
+**Colour.** Foliage: `_foliage_colors` mixes the palette's base anchors (`b0`, `b1`) and tip
+anchors (`t0`, `t1`) in sRGB, as the 2D gradients do, converts to linear light and multiplies with
+a hue-neutral depth shade. Each vertex has an *exposure* (0 deep inside or at the base, 1 at an
+outer tip); the tip weight is `FOLIAGE_TIP_WEIGHT[archetype] + 0.9 × (exposure − its area-weighted
+mean)`, so a plant's mean tip weight is the archetype's constant whatever its geometry. Those
+thirteen constants were measured from the rendered sprites — the tip weight whose mix has the hue
+of a sprite's foliage, median per archetype: 0.65 for an allium's light blades, 0.12 for a
+conifer's dark whorls. Wood: one colour, `BARK_SRGB` = the mean of `resources/textures/bark.png`
+in linear light.
+
+**Conventions for the engine.** Parts are named `wood` (material kind `vc`) and `foliage`
+(`foliage`); both cast shadows. In the foliage part `uv.x` is the wind sway weight —
+`z / height`, 0 at the ground, 1 at the top — and `uv.y` the sway phase in [0, 1): one base phase
+per plant, ± 0.1 per leaf or blade, so a crown moves as one and its leaves flutter. Wood has
+`uv = 0`. Foliage normals are bent toward the direction away from the crown's heart (0.6 for
+volumes, 0.7 for leaves), so a crown shades as one soft volume.
+
+**The placeholder.** A plant the plan gives no height — no species data, no measurement, no typed
+height; in practice every category plant from the gallery until someone says how tall it is — is
+not guessed. `placeholder_parts(radius)` is one part named `placeholder`: a smooth spherical cap
+over the canopy circle (48 sides), `min(0.12 × diameter, 25 cm)` high, in one neutral tone (the
+2D white × 0.5 in linear light, sRGB 170 / 167 / 158), material `vc`, `casts_shadow=False` — the
+2D shadow model gives such a plant no shadow either. It reads nothing but the radius: two ids, any species
+or category, give the same dome. It cannot be taken for a plant: no leaves, no trunk, a third of
+the saturation of the palest real foliage, never taller than 25 cm.
+
+**Adding an archetype** (a new `a=` in the tables): write `_name(p: _Plan) -> (wood | None,
+foliage)` from the primitives (`_lobes`, `_leaves`, `_ribbons`, `_fronds`, `_revolve`), give its
+outline a regular rim, clip every count that a recipe number feeds, add it to
+`ARCHETYPE_BUILDERS` and its measured tip weight to `FOLIAGE_TIP_WEIGHT`. The gates then run by
+themselves — `tests/unit/test_scene3d_plants.py` builds every recipe of both tables.
+
+**Instruments** (all in `tests/unit/test_scene3d_plants.py`, no GPU):
+
+| Question | Instrument |
+|---|---|
+| Is the bounding box the data? | `verify_builder(build_plant, record, height_tolerance=0.03)` + `bbox` over 123 recipes × 3 sizes × 5 ids |
+| Does it stay on its canopy circle? | `max hypot(x, y) / radius ≤ 1.10`, 40 ids × 3 proportions × 2 recipes per archetype |
+| Is the green the sprite's green? | `sprite_foliage_rgb`: the shipped SVG rendered by QSvgRenderer minus the same sprite with a black palette = the ink that depends on the palette; its hue against `mean_srgb(foliage mesh)`, ± 10° |
+| Does it stand on the ground? | at least six vertices within 0.5 % of the height above z = 0 (a floating plant had one to three) |
+| Are the shell leaves on the lobes? | `_on_lobes` points lie within −10 % / +12 % of the outermost lobe's surface |
+| Are two plants clones? | `side_silhouette` (x–z occupancy, 32 × 32, lattice-sampled) and its IoU for five ids, ≤ 0.97 |
+| Does a date change rebuild only what grew? | `tests/perf/test_scene3d_plants_budget.py`, `tests/integration/test_scene3d_plants.py` |
+
+What these instruments do not see: how a plant *looks*. The numpy rasteriser used for the sanity
+sheets of this story is a scratch tool; the Beauty Board through the real engine and the
+independent 3D review are the look gate (`ogp-lush-cinematic` §5, §6).

@@ -1044,6 +1044,98 @@ None of these was reported by a user: each was found by measuring a claim before
   a corner fixed is reported as geometry **and** transform: correct — the record's frame hangs on
   the item's centre, and that centre moved. Both are pinned as behaviour, not worked around.
 
+### 11.4.9 What the plant builders taught (Phase 17 L1.7, #385)
+
+Most gates of the plant story passed the first time they ran. The entries below are about what
+that did and did not prove (ADR-054 addendum "plant art v0", §8.26.7). Three of them were found by
+looking at a render, not by a number.
+
+- **A gate satisfied by the repair that broke the thing: a cushion floated 9 cm above the
+  ground with `min z == 0`.** The base gate says the lowest vertex is at 0, and the first `_fit`
+  guaranteed it by subtracting the minimum. Then shell leaves were allowed down to the ground:
+  one leaf of a lavender dipped 9 cm below the cushion's base, the fit lifted the whole plant by
+  those 9 cm — 13 % of its height — and the gate held: one vertex touched the ground and the
+  plant hung in the air (a hydrangea 11 cm, a petunia 15 % of its height). Found on a sanity
+  render (the side view); 59 of 123 recipes once counted. Fix: what dips
+  below the ground is pressed onto it (as the lobes always were); a plant is only ever set
+  *down*, never lifted. Pinned by counting, in
+  `tests/unit/test_scene3d_plants.py::test_every_recipe_fits_the_plan_s_numbers`: at least six
+  vertices within 0.5 % of the height above the ground (a trunk's foot ring has eight; the
+  floating plants had one to three). *"The minimum is zero" is true of a floating object with one
+  hanging thread. Ask how much of the thing meets the constraint, not whether its extreme does —
+  and never make a constraint hold by translating the result.*
+- **What a number cannot say: the crowns were bald on top.** Every gate was green — height,
+  spread, triangles, hue, clones — and the first look through an engine (the dormant spike's
+  renderer, a scratch script) showed mounds and crowns with a smooth bare top and a skirt of
+  leaves. The shell leaves had been placed on an ellipsoid *envelope*; where a lobe reached the
+  envelope they were inside it, and between lobes they hovered. Fix: `_on_lobes` casts each leaf
+  from the crown's heart onto the outer surface of the lobes
+  (`test_shell_leaves_are_set_on_the_lobes`). Moving the leaves onto the lobes then made the
+  lobes the plant's outline, and the canopy-circle measure of the next entry went from 1.07 to
+  1.20 for a climber and from 1.05 to 1.14 for a mound until their lobes were made regular too —
+  the stress test caught that one. *Look-dev is a gate. A story that may not approve its own look
+  still has to look.*
+- **A fix made by eye stays unpinned until a number can see it: the placeholder's rim.** Through
+  the same renderer the placeholder's rim read as a polygon at close range; 24 sides became 48,
+  and nothing asserted it. A mutation check — one rule broken at a time on a copy of the tree, 45
+  breaks, each run against the story's tests — killed 44. The survivor was a placeholder with
+  *eight* sides: the bounding box, the farthest vertex and the smooth normals of an octagon are
+  those of a circle. Pinned now by the area of the rim polygon, at least 99.5 % of the canopy
+  circle (48 sides cover 99.7 %, 24 cover 98.9 %, 8 cover 90.0 %):
+  `tests/unit/test_scene3d_plants.py::TestPlaceholder::test_its_rim_is_the_canopy_circle`. *After
+  a fix made by looking, name the number that would have seen the defect. If there is none, the
+  fix is a habit, not a gate.*
+- **A bounding box that fits is not a footprint that fits: a "fitted" plant stood 39 % outside
+  its canopy circle.** The spread gate is the bounding box (widest span = canopy diameter ± 10 %),
+  and the first `_fit` made it exact for every archetype. An assertion the gate does not ask for —
+  no vertex further than 1.10 canopy radii from the plant's axis — failed on the sixth recipe (a
+  fig tree, 1.18). Measured for every archetype it read 1.39 for `feathery`, 1.37 for `allium`,
+  1.23 for `flower`, ~1.2 for every leaf shell: a plant whose few long blades point anywhere fits
+  its box and pokes out of its circle at the diagonals. Scaling the farthest vertex onto the circle instead only moves the lie — the box then
+  spans 72 % of the diameter. Neither fit can repair an irregular outline. Fix: the elements that
+  draw an outline are regular by construction (`_RIM_REACH`, `_RIM_JITTER` in
+  `core/scene3d/builders/plants.py`), stray shell leaves are pulled back onto the circle before
+  the fit, and the box stays exact: at most 1.081 radii over 1,000 ids × three proportions ×
+  three recipes per archetype. Pinned by
+  `tests/unit/test_scene3d_plants.py::test_the_plant_stays_on_its_canopy_circle`. *A truth gate
+  measures one projection of the truth; measure the neighbouring one before trusting it.*
+- **An instrument that under-samples reports a difference that is not there: two identical hedge
+  drums "differed" by 26 %.** The no-clones gate compares side silhouettes of two ids on a
+  32 × 32 occupancy grid. The first instrument sampled every triangle at 15 points; a hedge's
+  side triangles span 27 rows of cells, so each silhouette was a different random sieve and two
+  drums — the same shape, by design — scored an IoU of 0.74. The gate was green *because* the
+  instrument was broken. Sampled on a lattice finer than half a cell, the same two drums scored
+  0.999: clones. Fix, in this order: the instrument (`side_silhouette`), then the hedge (a batter,
+  a bulging side, an uneven top — 0.95 at most now). *Give every metric a case whose answer you
+  know: two builds of one id must score 1.0, and something you believe to be a clone should score
+  close to it. A gate that has never failed has not yet been shown to work.*
+- **"Byte-identical" needs to say against which bytes: on Windows the working tree is not the
+  commit.** Regenerating the 123 sprites from the unchanged generator and diffing them against
+  `resources/plants/` reported 123 of 123 files different — 10,650 bytes, one per line. With
+  `core.autocrlf=true` the files on disk end in CRLF; the generator writes LF, and the committed
+  blobs are LF. The reference for a byte comparison is the blob (`git cat-file blob HEAD:<path>`):
+  identical, 123 of 123, 5,833,889 bytes, before and after the tables moved. The conformance gate
+  never noticed because it compares text.
+- **A script that imports the app imports whichever checkout the environment points at.** The dev
+  venv's editable install resolves `open_garden_planner` to the main checkout (measured: without
+  `PYTHONPATH`, `open_garden_planner.__file__` is the main checkout's, from any directory). A
+  sprite generator that had simply gained `from open_garden_planner.core.plant_art.recipes import
+  …` would, run from a worktree, have read the *other* checkout's tables as soon as that checkout
+  has the package — and a before/after comparison in the worktree would then compare one
+  unchanged table with itself and pass. The generator puts its own checkout's `src` first on
+  `sys.path` (as `scripts/make_bench_plans.py` does); the scratch dump printed the recipes
+  module's path to prove which file was read.
+- **A reference built from your own inputs agrees with you.** The first plan for the foliage-hue
+  gate compared the mesh's mean hue with the mean hue of the palette's entries — the very colours
+  the builder mixes from, so any mixing would have passed within a degree or two of whatever the
+  palette's midpoint is. The palettes span up to 41° of hue between their anchors (`dark`: 105° to
+  148°); where a sprite's foliage sits in that span is decided by the sprite's drawing code
+  (conifers at the base anchors, alliums at the tips). The reference is therefore the rendered
+  sprite: the shipped SVG drawn by QSvgRenderer, minus the same sprite drawn with a black palette,
+  is exactly the ink that depends on the palette — no hand-made mask for fruit and flowers. A
+  single mean tip weight for all plants would have put an onion 9° off; per-archetype weights
+  measured from the sprites give 5.2° at worst (rosemary), 0.8° at the median.
+
 ### CI/release hardening: locked metadata also contains the application version
 
 A version-only edit to `pyproject.toml` makes `uv.lock` stale. The measured probe failed
