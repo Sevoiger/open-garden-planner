@@ -29,16 +29,17 @@ plant's shadow and its 3D solid start at the same height.
 And one point-in-bed PREDICATE, ``shape_contains``, asked with one of two points:
 
 - the LINK decisions (auto-parenting on creation, bulk create and paste, the
-  re-link after a drag, the agent's ``move_object`` re-link and its
-  ``link_is_geometric``) ask it with ``bed_membership_point`` — the centre of the
+  re-link after a drag, the agent's re-link after ``move_object`` or
+  ``set_object_position``, and its ``link_is_geometric``) ask it with ``bed_membership_point`` — the centre of the
   item's ``boundingRect()``, exactly as they always did (``centre_is_inside``);
 - the LIFT (``item_base_cm``) asks it with ``standing_point`` — the item's stable
   geometric centre, the origin of its footprint and of its 3D record.
 
 The two points differ while a plant shows its antagonist badge: the badge grows
 the bounding rect towards +x / +y by ``0.3 * min(0.45 * radius, cap)``, which
-moves its centre by up to 1.8 cm. A link decision made in that state can
-therefore differ from the lift for a plant whose centre is within that margin of
+moves its centre by up to 1.8 cm along EACH axis — 2.55 cm in all, which is the
+margin against an edge at 45°. A link decision made in that state can therefore
+differ from the lift for a plant whose centre is within that margin of
 its bed's edge — the link is bookkeeping and keeps its shipped point; where a
 solid STANDS must not change when a warning is painted over it.
 
@@ -161,7 +162,12 @@ class ItemLookup:
     walks: the shapes it holds are the items' shapes at the time of the walk, and
     a lookup that outlives an edit answers from the old ones (a bed shrunk away
     from its plant still "contains" it). Construct one as a local of the walk and
-    let it die there — a test reads the source and fails otherwise.
+    let it die there — a test reads the source and fails otherwise: in the
+    application the name ``ItemLookup`` appears only as an import, as this class,
+    as a parameter's annotation and as a call inside the two walks, and a lookup
+    is handed to ``item_base_cm`` / ``_record_of`` and to nothing else
+    (``tests/integration/test_scene3d_base_stacking.py``, which also says what
+    such a reading cannot see).
     """
 
     __slots__ = ("_by_id", "_items", "_shapes")
@@ -196,11 +202,11 @@ def bed_membership_point(item: Any) -> QPointF:
 
     The centre of the item's ``boundingRect()`` — the construct every link
     decision of the app uses (auto-parenting on creation, bulk create and paste,
-    the re-link after a drag, the agent's ``move_object`` re-link and its
-    ``link_is_geometric``). Kept exactly as shipped. It is NOT the geometric
+    the re-link after a drag, the agent's re-link after ``move_object`` or
+    ``set_object_position``, and its ``link_is_geometric``). Kept exactly as shipped. It is NOT the geometric
     centre: the antagonist badge grows the bounding rect towards +x / +y and so
-    moves this point by up to 1.8 cm. Where an item STANDS is asked of
-    ``standing_point`` instead.
+    moves this point by up to 1.8 cm along each axis (about 2.5 cm diagonally).
+    Where an item STANDS is asked of ``standing_point`` instead.
     """
     point: QPointF = item.mapToScene(item.boundingRect().center())
     return point

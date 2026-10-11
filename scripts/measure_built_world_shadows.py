@@ -45,7 +45,16 @@ ANALYTICALLY — no shadow map, no texel. The numbers are references for the
 BUILDERS. An engine render reads lower for members near one shadow-map texel
 (0.8 cm wires, 1.6 cm bars) through no fault of the builder.
 
-Qt-free: numpy, pyclipper and the Qt-free ``core`` modules.
+Uses numpy, pyclipper and the Qt-free ``core`` modules, and constructs nothing of Qt.
+
+**It keeps out of the owner's settings and data — measured, not assumed.** Importing
+the ``core`` package does load the app's settings module, its project loader and
+PyQt6's modules into this process. But run as above the script constructs no
+``QSettings`` and no Qt application, opens no plan and writes no file:
+``tests/unit/test_scene3d_shadow_agreement.py`` runs both forms in a process of its
+own with each of those watched. A change that makes it load a plan or ask a setting
+must isolate it first, before its first app import (the pattern: ``isolate`` in
+``scripts/measure_plant_art_3d.py``) — outside pytest the settings are the owner's.
 """
 from __future__ import annotations
 

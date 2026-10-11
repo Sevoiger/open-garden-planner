@@ -28,6 +28,7 @@ from PyQt6.QtCore import QPointF
 
 import open_garden_planner
 from open_garden_planner.core import ProjectManager
+from open_garden_planner.core.alignment import AlignMode
 from open_garden_planner.core.commands import (
     ChangePropertyCommand,
     CreateItemCommand,
@@ -58,6 +59,7 @@ from open_garden_planner.core.shadow_geometry import (
     shadow_direction_scene,
 )
 from open_garden_planner.core.solar import solar_position
+from open_garden_planner.core.tools.base_tool import ToolType
 from open_garden_planner.ui.canvas import footprints, sun_heatmap, sun_shadow_controller
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
@@ -246,17 +248,19 @@ class TestTheOneRule:
                                                         height: float) -> None:
         """The HEIGHT axis. The contract holds no length beyond 10 km (``MAX_LENGTH_CM``),
         so a bed taller than that gets no record and is reported. Its plant is NOT taken
-        down with it and does not float where the bed's soil would be. Two rules act, and
-        each says only what it knows (review round 3, P2-3):
+        down with it and does not float where the bed's soil would be.
 
-        - ``object_height``: no base is derived from a height beyond the bound — such a
-          base would be out of the record's own range, and the plant would lose its
-          record over its bed's nonsense height (measured before: a 20 km bed had no
-          record and neither had its plant). This one acts in 2D too: the plant casts
-          from the ground, although the bed itself still casts there;
-        - ``snapshot_records``: an item whose parent got no record stands on the ground
-          (measured before: a bed of 10 km + 1 cm had no record, its plant a base of
-          999,999 cm) — ``test_a_parent_without_a_record_lifts_nothing`` for the rest."""
+        On these five heights ONE rule acts — ``object_height``'s: no base is derived
+        from a height beyond the bound. Such a base would be out of the record's own
+        range (measured before: a 20 km bed had no record and neither had its plant) or,
+        in the 2 cm above the bound, a base of 999,999 cm over a bed that has no record.
+        It acts in 2D too: the plant casts from the ground, although the bed itself still
+        casts there.
+
+        The snapshot's rule — a record whose parent got none stands on the ground —
+        finds nothing left to do here: every height that costs the bed its record is
+        beyond the bound already. It is pinned on the axes where it does act, in
+        ``test_a_parent_without_a_record_lifts_nothing`` (review round 3, P2-3)."""
         from open_garden_planner.core.scene3d import MAX_LENGTH_CM
         from open_garden_planner.ui.view3d.snapshot import SkippedItem, SkipReason
 
@@ -467,13 +471,136 @@ def _is_item_lookup_call(node: ast.AST) -> bool:
             and getattr(node.func, "id", getattr(node.func, "attr", "")) == "ItemLookup")
 
 
+#: The functions that take a lookup — the only ones a walk may hand its own to.
+#: Matched by NAME (a stated limit of ``lookup_escapes``).
+LOOKUP_TAKERS = frozenset({"item_base_cm", "_record_of"})
+
+
+def _parent_map(tree: ast.AST) -> dict[int, ast.AST]:
+    return {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+
+def item_lookup_identifiers(tree: ast.AST) -> list[tuple[str, str]]:
+    """``(function, role)`` for every appearance of the identifier ``ItemLookup`` in
+    ``tree``: "import" (under its own name), "import under another name", "class
+    definition", "parameter annotation", "annotation of a name", "call", and "used as
+    a value" for everything else — ``make = ItemLookup``, ``partial(ItemLookup, items)``,
+    a base class, a return annotation, ``isinstance``. A string that is not a docstring
+    and names it is "named in a string" (``getattr(module, "ItemLookup")``).
+
+    LIMIT, stated: a spelling that never writes the identifier is not seen —
+    ``type(lookup)(items)``, ``lookup.__class__``, ``copy.copy(lookup)``,
+    ``getattr(module, "Item" + "Lookup")``, ``vars(module)[name]``. Comments are not
+    read at all."""
+    parents = _parent_map(tree)
+
+    def function_of(node: ast.AST) -> str:
+        up = parents.get(id(node))
+        while up is not None:
+            if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return up.name
+            up = parents.get(id(up))
+        return "<module>"
+
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    found: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        role = ""
+        if isinstance(node, ast.alias):
+            if node.name.split(".")[-1] == "ItemLookup" or node.asname == "ItemLookup":
+                role = ("import" if node.name == "ItemLookup" and node.asname is None
+                        else "import under another name")
+        elif isinstance(node, ast.ClassDef) and node.name == "ItemLookup":
+            role = "class definition"
+        elif (isinstance(node, (ast.Name, ast.Attribute))
+              and getattr(node, "id", getattr(node, "attr", "")) == "ItemLookup"):
+            parent = parents.get(id(node))
+            if isinstance(parent, ast.Call) and parent.func is node:
+                role = "call"
+            elif isinstance(parent, ast.arg):
+                role = "parameter annotation"
+            elif isinstance(parent, ast.AnnAssign) and parent.annotation is node:
+                role = "annotation of a name"
+            else:
+                role = "used as a value"
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and "ItemLookup" in node.value and id(node) not in docstrings):
+            role = "named in a string"
+        if role:
+            found.append((function_of(node), role))
+    return found
+
+
+def lookup_parameters(tree: ast.AST) -> list[tuple[Any, str]]:
+    """``(function node, parameter name)`` for every parameter annotated ``ItemLookup``."""
+    found: list[tuple[Any, str]] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        spec = function.args
+        for arg in (*spec.posonlyargs, *spec.args, *spec.kwonlyargs, spec.vararg, spec.kwarg):
+            if arg is not None and arg.annotation is not None and any(
+                    getattr(node, "id", getattr(node, "attr", "")) == "ItemLookup"
+                    for node in ast.walk(arg.annotation)):
+                found.append((function, arg.arg))
+    return found
+
+
+def lookup_escapes(function: ast.AST, name: str) -> list[str]:
+    """How the lookup bound to ``name`` in ``function`` could outlive the call: one
+    reason for every READ of the name that is neither
+
+    - an argument of a call to one of ``LOOKUP_TAKERS`` — ``item_base_cm(item, lookup)`` —
+    - nor a method CALL on the lookup itself — ``lookup.get(…)``, ``lookup.shape_of(…)``.
+
+    So a list or a dict that holds it, ``kept.append(lookup)``, ``setattr(…, lookup)``,
+    ``return lookup, 1``, ``self.kept += [lookup]``, a closure over it and a bound
+    method taken from it (``keep = lookup.get``) are all reported.
+
+    LIMITS, stated: a taker is matched by NAME — what another function of that name
+    does with its argument is not seen; and ``locals()`` or a frame object hands out
+    every local without writing its name."""
+    parents = _parent_map(function)
+    reasons: set[str] = set()
+    for node in ast.walk(function):
+        if not (isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)):
+            continue
+        scope = parents.get(id(node))
+        while scope is not None and not isinstance(
+                scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            scope = parents.get(id(scope))
+        if scope is not None and scope is not function:
+            reasons.add("used in a closure")
+            continue
+        parent = parents[id(node)]
+        if isinstance(parent, ast.keyword):
+            parent = parents[id(parent)]
+        if isinstance(parent, ast.Call) and parent.func is not node:
+            callee = getattr(parent.func, "id", getattr(parent.func, "attr", "")) or "an expression"
+            if callee not in LOOKUP_TAKERS:
+                reasons.add(f"handed to {callee}")
+        elif isinstance(parent, ast.Attribute):
+            call = parents.get(id(parent))
+            if not (isinstance(call, ast.Call) and call.func is parent):
+                reasons.add(f"attribute {parent.attr} taken without a call")
+        else:
+            reasons.add("used as a value")
+    return sorted(reasons)
+
+
 def lookups_constructed(tree: ast.AST) -> list[tuple[str, str]]:
     """``(function, problem)`` for every ``ItemLookup(...)`` constructed in ``tree``;
     ``problem`` is "" when the lookup is bound to a local name of the function that
-    makes it and that name is neither stored nor returned.
+    makes it and that name does not escape (``lookup_escapes``: it is only ever handed
+    to a taker or asked itself).
 
-    What it does not follow: a lookup handed to another function as an argument (that
-    is how a walk uses it) and kept THERE. The callee's own parameter is not checked."""
+    A construction this function does not recognise as one — an alias, a partial — is
+    the census's to find (``item_lookup_identifiers``)."""
     functions = [node for node in ast.walk(tree)
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
     found: list[tuple[str, str]] = []
@@ -495,15 +622,10 @@ def lookups_constructed(tree: ast.AST) -> list[tuple[str, str]]:
                     found.append((function.name, "the local name is declared global or nonlocal: "
                                   + ", ".join(sorted(names & escaping))))
                     continue
-                kept = set()
-                for other in body_nodes:
-                    hands_on = isinstance(other, (ast.Return, ast.Yield, ast.YieldFrom)) or (
-                        isinstance(other, (ast.Assign, ast.AnnAssign)) and other is not node)
-                    stored = other.value if hands_on else None  # type: ignore[attr-defined]
-                    if isinstance(stored, ast.Name) and stored.id in names:
-                        kept.add(stored.id)
-                found.append((function.name, "the local name is stored or returned: "
-                              + ", ".join(sorted(kept)) if kept else ""))
+                reasons = sorted({reason for name in names
+                                  for reason in lookup_escapes(function, name)})
+                found.append((function.name, "the local name escapes: " + "; ".join(reasons)
+                              if reasons else ""))
         for node in body_nodes:
             if _is_item_lookup_call(node) and id(node) not in claimed:
                 claimed.add(id(node))
@@ -721,7 +843,8 @@ BADGE_SHIFT_CM = 1.8   # 0.3 * min(0.45 * 30, 12) / 2: what the badge moves the 
 class TestWhereAPlantStandsDoesNotDependOnABadge:
     """Review round 2, P2-1. The antagonist badge grows a plant's ``boundingRect()``
     towards +x / +y, so the rect's centre — the point the LINK decisions ask — moves
-    by up to 1.8 cm while the badge shows. Round 1 asked the lift with that point: a
+    by up to 1.8 cm along EACH axis while the badge shows (2.55 cm in all: the margin
+    against an edge at 45°, pinned below). Round 1 asked the lift with that point: a
     linked plant 1 cm inside its bed's east edge dropped from 38 to 0, in the 3D
     record and in the 2D caster, whenever the badge appeared.
 
@@ -766,6 +889,33 @@ class TestWhereAPlantStandsDoesNotDependOnABadge:
         controller.recompute_now()
         assert controller.recompute_count == count and painted() == shadow
         controller.set_enabled(False)
+
+    def test_against_an_edge_at_45_degrees_the_margin_is_the_badge_s_diagonal(
+        self, canvas: CanvasView
+    ) -> None:
+        """The last pass, P2-b: "1.8 cm" is not an upper bound of the margin. The badge
+        moves the link point by 1.8 cm in x AND in y — 2.55 cm in all — and against a
+        bed edge that faces (+x, +y) the whole length counts: a linked plant 2.2 cm
+        inside such an edge is OUTSIDE for the link decisions while the badge shows, and
+        stands on the soil all the same. At 2.6 cm inside, both say inside."""
+        garden = Garden(canvas)
+        apply_rotation(garden.bed, 45.0)
+        centre = garden.bed.mapToScene(garden.bed.rect().center())
+        axis = garden.bed.mapToScene(garden.bed.rect().center() + QPointF(1.0, 0.0)) - centre
+        along = 1.0 / math.sqrt(2.0)
+        assert (centre.x(), centre.y()) == pytest.approx((550.0, 400.0))
+        # the turned bed's long axis runs along (+x, +y): its short edges, 150 cm from the
+        # centre, face (+x, +y) and (-x, -y)
+        assert (axis.x(), axis.y()) == pytest.approx((along, along))
+        assert math.sqrt(2.0) * BADGE_SHIFT_CM == pytest.approx(2.546, abs=1e-3)
+        for index, (inside_by, link_point_is_inside) in enumerate(((2.2, False), (2.6, True))):
+            reach = 150.0 - inside_by
+            plant = _add(garden, _perennial(garden, 550.0 + reach * along, 400.0 + reach * along,
+                                            61.0 + index, radius=30.0), f"{inside_by} cm inside")
+            assert plant.parent_bed_id == garden.bed.item_id  # created without a badge: linked
+            plant.set_antagonist_warning(True)
+            assert footprints.centre_is_inside(plant, garden.bed) is link_point_is_inside
+            assert _bases(garden, plant) == (38.0, 38.0)      # where it stands: its own centre
 
     @pytest.mark.parametrize("painted", ["antagonist badge", "companion highlight"])
     def test_the_standing_point_ignores_what_is_painted_over_the_plant(
@@ -930,9 +1080,11 @@ class TestWhichPointEachDecisionAsks:
         from open_garden_planner.agent_api.schema import WriteResult
 
         told = " ".join((WriteResult.model_fields["link_is_geometric"].description or "").split())
-        for words in ("bounding box", "warning badge", "up to 2 cm", "sun study", "3D view",
-                      "do not report a mismatch"):
+        for words in ("bounding box", "warning badge",
+                      "1.8 cm along each axis (about 2.5 cm diagonally)",  # not "up to 2 cm"
+                      "sun study", "3D view", "do not report a mismatch"):
             assert words in told, words
+        assert "up to" not in told  # the margin is stated, not bounded by a round number
 
     def test_the_mirror_case_a_link_made_under_a_badge_does_not_lift(self, window: Any) -> None:
         """At the WEST edge the badge pulls the link point INTO the bed: a plant whose
@@ -948,6 +1100,211 @@ class TestWhichPointEachDecisionAsks:
         record = snapshot_records(window.canvas_scene)[str(plant.item_id)]
         (caster,) = [c for c in collect_shadow_casters(window.canvas_scene) if c.height_cm == 61.0]
         assert (record.transform.base_cm, caster.base_cm) == (0.0, 0.0)
+
+
+def _accept(monkeypatch: Any, module: str, dialog: str, **settings: Any) -> None:
+    """The named array dialog, Accepted with these settings. They are read-only
+    properties over spin boxes, so they are patched onto the CLASS (the pattern of
+    ``tests/integration/test_array_tools.py``)."""
+    import importlib
+
+    from PyQt6.QtWidgets import QDialog
+
+    dialog_class = getattr(importlib.import_module(f"open_garden_planner.ui.dialogs.{module}"), dialog)
+    monkeypatch.setattr(dialog_class, "__init__", lambda _self, *_args, **_kwargs: None)
+    monkeypatch.setattr(dialog_class, "exec", lambda _self: QDialog.DialogCode.Accepted)
+    for key, value in settings.items():
+        monkeypatch.setattr(dialog_class, key, property(lambda _self, _value=value: _value))
+
+
+def _select_only(garden: Garden, *items: Any) -> None:
+    for item in garden.scene.selectedItems():
+        item.setSelected(False)
+    for item in items:
+        item.setSelected(True)
+
+
+def _new_plants(garden: Garden, before: set[int]) -> list[CircleItem]:
+    return [item for item in garden.scene.items()
+            if isinstance(item, CircleItem) and id(item) not in before]
+
+
+def _base_pair(garden: Garden, plant: Any) -> tuple[float, float]:
+    """(3D record base, 2D caster base) of a plant that shares its height with others:
+    the caster is found by where its footprint is."""
+    point = footprints.standing_point(plant)
+    assert point is not None
+    bases = [caster.base_cm for caster in collect_shadow_casters(garden.scene)
+             if caster.height_cm == plant.metadata[METADATA_KEY]
+             and math.hypot(sum(x for x, _y in caster.footprint) / len(caster.footprint) - point.x(),
+                            sum(y for _x, y in caster.footprint) / len(caster.footprint) - point.y()) < 2.0]
+    (caster_base,) = bases
+    return garden.records()[str(plant.item_id)].transform.base_cm, caster_base
+
+
+#: (the canvas action, its dialog's module and class, the dialog's settings, where the two
+#: copies of the Garden's plant at (500, 400) land — one in the bed, one outside it)
+ARRAY_CASES = [
+    ("create_linear_array", "linear_array_dialog", "LinearArrayDialog",
+     {"count": 3, "spacing_cm": 150.0, "angle_deg": 0.0, "create_constraints": False},
+     [(650.0, 400.0), (800.0, 400.0)]),
+    ("create_grid_array", "grid_array_dialog", "GridArrayDialog",
+     {"rows": 1, "cols": 3, "row_spacing_cm": 50.0, "col_spacing_cm": 150.0,
+      "create_constraints": False},
+     [(650.0, 400.0), (800.0, 400.0)]),
+    ("create_circular_array", "circular_array_dialog", "CircularArrayDialog",
+     {"count": 3, "radius_cm": 75.0, "start_angle_deg": 0.0, "sweep_angle_deg": 180.0},
+     [(350.0, 400.0), (425.0, 325.0)]),
+    ("create_array_along_path", "array_along_path_dialog", "ArrayAlongPathDialog",
+     {"count": 2, "spacing_cm": 0.0, "use_spacing_mode": False, "start_offset_pct": 0.0,
+      "end_offset_pct": 0.0, "follow_tangent": False},
+     [(650.0, 400.0), (800.0, 400.0)]),
+]
+
+
+class TestCopiesAndMovesThatDoNotEvaluateTheLink:
+    """The last pass (the review of round 3, P2-a). More ways a link comes about, or
+    stays, without anyone asking the geometry — shipped behaviour, each pinned with its
+    expected values so that the bed-membership follow-up changes it knowingly:
+
+    - an ARRAY copy of a linked plant takes its source's link as it is, and the bed's
+      child list is not told;
+    - a plant MIRROR-COPIED without its bed gets no link, wherever the copy lands;
+    - a linked plant MOVED by anything but a mouse drop or an agent move keeps its link;
+    - a BED moved by a typed coordinate or by align / distribute leaves its plants.
+
+    Where a plant STANDS is right in every one of them where a link exists: it follows
+    the plant's centre (FR-SUN-09). Where no link exists, the plant is on the ground."""
+
+    @pytest.mark.parametrize(("action", "module", "dialog", "settings", "lands"), ARRAY_CASES,
+                             ids=[case[0] for case in ARRAY_CASES])
+    def test_an_array_copy_takes_its_source_s_link_as_it_is(
+        self, canvas: CanvasView, monkeypatch: Any, action: str, module: str, dialog: str,
+        settings: dict[str, Any], lands: list[tuple[float, float]],
+    ) -> None:
+        """Expected: both copies linked to the source's bed, neither in the bed's child
+        list; the one inside the bed at base 38, the one outside at 0 — with a link to a
+        bed it is not in. WHY: all four array actions build a copy from the source's
+        serialised form (``_strip_item_ids`` drops ``item_id`` and nothing else, so
+        ``parent_bed_id`` is restored by ``_deserialize_item``), and the array commands
+        only add the items: no evaluator runs, ``add_child_id`` is not called."""
+        garden = Garden(canvas)  # bed x 400 … 700, y 300 … 500; the plant at (500, 400), linked
+        _accept(monkeypatch, module, dialog, **settings)
+        _select_only(garden, garden.plant)
+        if action == "create_array_along_path":  # this one needs the item AND a polyline selected
+            from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
+
+            path = PolylineItem([QPointF(650.0, 400.0), QPointF(800.0, 400.0)],
+                                object_type=ObjectType.PATH, layer_id=garden.scene.active_layer.id)
+            garden.scene.addItem(path)
+            path.setSelected(True)
+        before_records = garden.records()
+        before = {id(item) for item in garden.scene.items()}
+
+        getattr(canvas, action)()
+
+        copies = _new_plants(garden, before)
+        points = [footprints.standing_point(copy) for copy in copies]
+        centres = sorted((point.x(), point.y()) for point in points if point is not None)
+        assert [value for centre in centres for value in centre] == pytest.approx(
+            [value for centre in lands for value in centre], abs=1e-6)
+        inside = [copy for copy, point in zip(copies, points, strict=True)
+                  if footprints.shape_contains(garden.bed, point)]
+        assert len(copies) == 2 and len(inside) == 1
+        (outside,) = [copy for copy in copies if copy is not inside[0]]
+        for copy in copies:
+            assert copy.item_id != garden.plant.item_id               # a new item …
+            assert copy.parent_bed_id == garden.bed.item_id           # … with its source's link, as it is
+            assert copy.metadata[METADATA_KEY] == 60.0
+        assert list(garden.bed.child_item_ids) == [garden.plant.item_id]  # the bed was not told
+        assert not footprints.centre_is_inside(outside, garden.bed)   # a link to a bed it is not in
+        # where each one STANDS follows its centre
+        assert _base_pair(garden, inside[0]) == (38.0, 38.0)
+        assert _base_pair(garden, outside) == (0.0, 0.0)
+        assert garden.records()[str(outside.item_id)].parent_id == garden.bed_id
+        assert _base_pair(garden, garden.plant) == (38.0, 38.0)
+
+        garden.commands.undo()  # one step
+        assert _new_plants(garden, before) == [] and garden.records() == before_records
+
+    def test_a_plant_mirror_copied_without_its_bed_gets_no_link(
+        self, canvas: CanvasView, mouse_event: Any
+    ) -> None:
+        """Expected: the copy at (600, 400) — inside the raised bed its source stands
+        in — has NO link and base 0; its source, 1 m to the west, 38. WHY:
+        ``mirror_geometry._mirror_circle`` builds a new, unlinked ``CircleItem``;
+        ``MirrorTool._remap_parent_links`` only links a copy whose parent is mirrored
+        with it; and ``MirrorItemsCommand`` adds the items without evaluating anything."""
+        garden = Garden(canvas)
+        _select_only(garden, garden.plant)
+        before = {id(item) for item in garden.scene.items()}
+        canvas.set_active_tool(ToolType.MIRROR)
+        tool = canvas.tool_manager.active_tool
+        tool._copy_mode = True  # under the offscreen platform the Copy / Move chooser is skipped
+        tool.mouse_press(mouse_event, QPointF(550.0, 100.0))  # the axis x = 550 …
+        tool.mouse_press(mouse_event, QPointF(550.0, 700.0))  # … the second click applies
+
+        (copy,) = _new_plants(garden, before)
+        point = footprints.standing_point(copy)
+        assert point is not None and (point.x(), point.y()) == pytest.approx((600.0, 400.0), abs=1e-6)
+        assert footprints.centre_is_inside(copy, garden.bed)   # it IS in the bed …
+        assert copy.parent_bed_id is None                       # … and nothing linked it
+        assert list(garden.bed.child_item_ids) == [garden.plant.item_id]
+        assert _base_pair(garden, copy) == (0.0, 0.0)
+        assert _base_pair(garden, garden.plant) == (38.0, 38.0)
+
+    def test_where_a_linked_plant_stands_follows_its_centre_whatever_moved_it(
+        self, canvas: CanvasView
+    ) -> None:
+        """FR-SUN-09's invariant. ``MoveItemsCommand`` alone is what the arrow keys and
+        a coordinate typed into the Properties panel execute (``properties_panel.py``,
+        ``_on_position_changed``): no evaluator runs, so the link stays — and the base
+        follows the plant's centre all the same: 38 → 0 → 38. The other direction is the
+        limit: such a move does not GIVE a link, so a plant that never had one stays on
+        the ground inside the bed."""
+        garden = Garden(canvas)
+        garden.commands.execute(MoveItemsCommand([garden.plant], QPointF(300.0, 0.0)))  # to (800, 400)
+        assert garden.plant.parent_bed_id == garden.bed.item_id   # nothing evaluated the link …
+        assert not footprints.centre_is_inside(garden.plant, garden.bed)
+        assert _bases(garden, garden.plant) == (0.0, 0.0)         # … and the plant is on the ground
+        garden.commands.execute(MoveItemsCommand([garden.plant], QPointF(-300.0, 0.0)))
+        assert garden.plant.parent_bed_id == garden.bed.item_id
+        assert _bases(garden, garden.plant) == (38.0, 38.0)       # back in: on the soil again
+
+        loner = _add(garden, _perennial(garden, 900.0, 400.0, 61.0), "loner")
+        assert loner.parent_bed_id is None
+        garden.commands.execute(MoveItemsCommand([loner], QPointF(-300.0, 0.0)))        # to (600, 400)
+        assert footprints.centre_is_inside(loner, garden.bed) and loner.parent_bed_id is None
+        assert _bases(garden, loner) == (0.0, 0.0)
+
+    def test_a_bed_moved_by_align_or_a_typed_coordinate_leaves_its_plants(
+        self, canvas: CanvasView
+    ) -> None:
+        """Expected: the plant stays at (500, 400), keeps its link, and stands on the
+        ground — the bed is no longer under it. WHY: a mouse drag, the arrow keys and an
+        agent move take a bed's children along; ``CanvasView.align_selected`` /
+        ``distribute_selected`` and the Properties panel's typed coordinate
+        (``MoveItemsCommand([item], delta)``) move the selected items and nothing else."""
+        garden = Garden(canvas)
+        post = _add(garden, RectangleItem(100.0, 800.0, 20.0, 20.0, object_type=ObjectType.TOOL_SHED,
+                                          layer_id=garden.scene.active_layer.id), "post")
+        _select_only(garden, garden.bed, post)
+        canvas.align_selected(AlignMode.LEFT)  # the real action: the bed's left edge to x = 100
+        assert garden.bed.mapRectToScene(garden.bed.rect()).left() == pytest.approx(100.0, abs=5.0)
+        assert not footprints.centre_is_inside(garden.plant, garden.bed)
+        point = footprints.standing_point(garden.plant)
+        assert point is not None and (point.x(), point.y()) == (500.0, 400.0)  # the plant stayed
+        assert garden.plant.parent_bed_id == garden.bed.item_id                 # still linked
+        assert _bases(garden, garden.plant) == (0.0, 0.0)
+        garden.commands.undo()
+        assert _bases(garden, garden.plant) == (38.0, 38.0)
+
+        # the typed coordinate: the command the panel executes for the one item
+        garden.commands.execute(MoveItemsCommand([garden.bed], QPointF(400.0, 0.0)))
+        assert garden.plant.parent_bed_id == garden.bed.item_id
+        assert _bases(garden, garden.plant) == (0.0, 0.0)
+        garden.commands.undo()
+        assert _bases(garden, garden.plant) == (38.0, 38.0)
 
 
 class TestTheParentShapeIsBuiltOncePerWalk:
@@ -1030,33 +1387,65 @@ class TestTheParentShapeIsBuiltOncePerWalk:
         assert _bases(garden, garden.plant) == (0.0, 0.0)            # both walks make their own
 
     def test_a_lookup_lives_for_one_walk_and_is_never_kept(self) -> None:
-        """Review round 3, P2-8. The only thing between the shape cache and a stale lift
-        was a docstring sentence, and the next stories will be tempted to keep "the
-        scene's lookup". The guard: in the application an ``ItemLookup`` is constructed
-        in exactly two functions — the two walks — and only ever bound to a LOCAL name
-        there: never an attribute, a module global, a default argument, a container
-        element or a return value."""
+        """Review round 3, P2-8, strengthened in the last pass. The only thing between
+        the shape cache and a stale lift was a docstring sentence, and the next stories
+        will be tempted to keep "the scene's lookup". Three things are held, by reading
+        every module of the application:
+
+        1. THE CENSUS. The identifier ``ItemLookup`` appears only as an import under its
+           own name, as the class, as a parameter's annotation and as a call inside the
+           two walks. An alias import, ``make = ItemLookup``,
+           ``functools.partial(ItemLookup, items)`` and ``getattr(module, "ItemLookup")``
+           are other appearances and fail here — the first cut did not see them at all.
+        2. THE WALKS. Each binds its lookup to a LOCAL name and only ever hands that
+           name to a taker (``LOOKUP_TAKERS``): a list, a dict, ``.append(lookup)``,
+           ``setattr``, ``return lookup, 1``, ``+=`` and a closure fail here — the first
+           cut saw the construction and reported it as not kept.
+        3. THE TAKERS. The functions with an ``ItemLookup`` parameter are exactly those
+           two, and they use the parameter the same way.
+
+        What is left is stated in the helpers: a spelling that never writes the
+        identifier (``type(lookup)(items)``, ``copy.copy(lookup)``), a function that
+        only shares a taker's name, ``locals()``. And this reads ``src/`` only: tests
+        and scripts construct lookups freely."""
         src = Path(open_garden_planner.__file__).parent
+        census: dict[str, list[tuple[str, str]]] = {}
         constructed: dict[str, set[str]] = {}
         kept: list[str] = []
+        takers: dict[str, list[str]] = {}
         for path in src.rglob("*.py"):
             relative = path.relative_to(src).as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"))
+            appearances = sorted(item_lookup_identifiers(tree))
+            if appearances:
+                census[relative] = appearances
             for where, problem in lookups_constructed(tree):
                 constructed.setdefault(relative, set()).add(where)
                 if problem:
                     kept.append(f"{relative}::{where}: {problem}")
+            for function, parameter in lookup_parameters(tree):
+                takers[function.name] = lookup_escapes(function, parameter)
+        assert census == {
+            "ui/canvas/footprints.py": [("<module>", "class definition"),
+                                        ("item_base_cm", "parameter annotation")],
+            "ui/canvas/sun_shadow_controller.py": [("<module>", "import"),
+                                                   ("collect_shadow_casters", "call")],
+            "ui/view3d/snapshot.py": [("<module>", "import"),
+                                      ("_record_of", "parameter annotation"),
+                                      ("snapshot_records", "call")],
+        }
         assert constructed == {
             "ui/canvas/sun_shadow_controller.py": {"collect_shadow_casters"},  # the 2D caster walk
             "ui/view3d/snapshot.py": {"snapshot_records"},                      # the 3D record walk
         }
         assert kept == []
+        assert takers == {name: [] for name in sorted(LOOKUP_TAKERS)}
 
     @pytest.mark.parametrize(("source", "expected"), [
-        ("def walk(items):\n    lookup = ItemLookup(items)\n    return [base(i, lookup) for i in items]\n",
-         [("walk", "")]),
-        ("def walk(items):\n    lookup: ItemLookup = footprints.ItemLookup(items)\n    use(lookup)\n",
-         [("walk", "")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n"
+         "    return [item_base_cm(i, lookup) for i in items]\n", [("walk", "")]),
+        ("def walk(items):\n    lookup: ItemLookup = footprints.ItemLookup(items)\n"
+         "    _record_of(items[0], lookup=lookup)\n    lookup.get(1)\n", [("walk", "")]),
         ("class C:\n    def walk(self, items):\n        self._lookup = ItemLookup(items)\n",
          [("walk", "bound to something that is not a local name")]),
         ("LOOKUP = ItemLookup([])\n", [("<module>", "constructed outside a function")]),
@@ -1067,16 +1456,61 @@ class TestTheParentShapeIsBuiltOncePerWalk:
         ("def walk(items, lookup=ItemLookup(())):\n    pass\n",
          [("<module>", "constructed outside a function")]),
         ("def walk(items):\n    lookup = ItemLookup(items)\n    self.lookup = lookup\n",
-         [("walk", "the local name is stored or returned: lookup")]),
+         [("walk", "the local name escapes: used as a value")]),
         ("def walk(items):\n    lookup = ItemLookup(items)\n    return lookup\n",
-         [("walk", "the local name is stored or returned: lookup")]),
+         [("walk", "the local name escapes: used as a value")]),
         ("def walk(items):\n    global lookup\n    lookup = ItemLookup(items)\n",
          [("walk", "the local name is declared global or nonlocal: lookup")]),
         ("def other(items):\n    return base(items)\n", []),
+        # the last pass: seen as a construction before, and reported as NOT kept
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    self.kept = [lookup]\n",
+         [("walk", "the local name escapes: used as a value")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    CACHE = {'scene': lookup}\n",
+         [("walk", "the local name escapes: used as a value")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    self.kept.append(lookup)\n",
+         [("walk", "the local name escapes: handed to append")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    setattr(self, 'lookup', lookup)\n",
+         [("walk", "the local name escapes: handed to setattr")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    return lookup, 1\n",
+         [("walk", "the local name escapes: used as a value")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n"
+         "    self.ask = lambda item: item_base_cm(item, lookup)\n",
+         [("walk", "the local name escapes: used in a closure")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    self.kept += [lookup]\n",
+         [("walk", "the local name escapes: used as a value")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    self.get = lookup.get\n",
+         [("walk", "the local name escapes: attribute get taken without a call")]),
+        ("def walk(items):\n    lookup = ItemLookup(items)\n    store(lookup=lookup)\n    return lookup\n",
+         [("walk", "the local name escapes: handed to store; used as a value")]),
     ])
     def test_the_lifetime_guard_sees_how_a_lookup_can_be_kept(self, source: str,
                                                               expected: list) -> None:
         assert lookups_constructed(ast.parse(source)) == expected
+
+    @pytest.mark.parametrize(("source", "expected"), [
+        ("from .footprints import ItemLookup\n", [("<module>", "import")]),
+        ("class ItemLookup:\n    pass\n", [("<module>", "class definition")]),
+        ("def base(item, lookup: ItemLookup):\n    return lookup.get(item)\n",
+         [("base", "parameter annotation")]),
+        ("def walk(items):\n    lookup = footprints.ItemLookup(items)\n", [("walk", "call")]),
+        ("def walk(items):\n    lookup: ItemLookup = make(items)\n", [("walk", "annotation of a name")]),
+        ('def walk(items):\n    """An ItemLookup lives for one walk."""\n', []),  # a docstring may name it
+        # the last pass: not seen at all before
+        ("from .footprints import ItemLookup as Lookup\n", [("<module>", "import under another name")]),
+        ("from .footprints import Other as ItemLookup\n", [("<module>", "import under another name")]),
+        ("make = ItemLookup\n", [("<module>", "used as a value")]),
+        ("def walk(items):\n    return functools.partial(ItemLookup, items)()\n",
+         [("walk", "used as a value")]),
+        ("def walk(items):\n    return getattr(footprints, \"ItemLookup\")(items)\n",
+         [("walk", "named in a string")]),
+        ("class Kept(ItemLookup):\n    pass\n", [("<module>", "used as a value")]),
+        ("def make(items) -> ItemLookup:\n    pass\n", [("make", "used as a value")]),
+        # the stated limit: a spelling that never writes the identifier
+        ("def walk(items, lookup):\n    return type(lookup)(items), copy.copy(lookup)\n", []),
+    ])
+    def test_the_census_sees_every_appearance_of_the_identifier(self, source: str,
+                                                                expected: list) -> None:
+        assert item_lookup_identifiers(ast.parse(source)) == expected
 
     def test_one_shape_per_parent_and_walk(self, canvas: CanvasView, monkeypatch: Any) -> None:
         garden = Garden(canvas)
@@ -1251,8 +1685,7 @@ class TestTheOverlaysOwnEcho:
         #                                             a wait on the timer alone returns here
         garden.commands.undo()                      # an edit nothing announces: 40 cm again
         qtbot.waitUntil(lambda: watch.echo_delivered(count + 1), timeout=5000)
-        assert controller._debounce.isActive()      # the echo started the debounce
-        watch.quiet()
+        watch.quiet()                               # the debounce the echo started has fired
         # exactly ONE extra recompute: the echo's, and it saw the undone height. This is the
         # recompute that landed in the negative control in CI (6 where 1 + 4 was expected).
         assert controller.recompute_count == count + 2

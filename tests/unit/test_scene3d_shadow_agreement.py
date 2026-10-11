@@ -31,8 +31,12 @@ the end hold every copy of the table to the script's.
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
+import os
 import re
+import subprocess
+import sys
 from functools import cache
 from pathlib import Path
 from types import ModuleType
@@ -58,8 +62,6 @@ def _script() -> ModuleType:
     spec = importlib.util.spec_from_file_location("measure_built_world_shadows_under_test", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    import sys
-
     sys.modules[spec.name] = module  # dataclasses resolve their module by name
     spec.loader.exec_module(module)
     return module
@@ -322,6 +324,110 @@ def test_no_document_says_that_tips_always_agree() -> None:
             for path in files
             for match in claim.finditer(" ".join(path.read_text(encoding="utf-8").split()))]
     assert hits == []
+
+
+#: Runs in a CHILD process, where no conftest isolates anything: the script exactly as
+#: documented, twice (the table, then ``--check``), with every way to the owner's
+#: settings and data watched. ``QSettings`` is replaced by a recorder that REFUSES
+#: before any module of the app is imported, so even a script that did construct one
+#: could not touch the real store (the registry key on Windows) from this test.
+_WATCHED_RUN = r"""
+import json, os, runpy, sys
+
+script, report_path = sys.argv[1], sys.argv[2]
+seen = {"qsettings": [], "plans": [], "writes": [], "mkdirs": []}
+WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND
+
+
+def audit(event, args):
+    if event == "open":
+        path, mode, flags = str(args[0]), args[1], args[2]
+        if path.lower().endswith(".ogp"):
+            seen["plans"].append(path)
+        writes = (set(mode) & set("wax+")) if isinstance(mode, str) else (
+            isinstance(flags, int) and flags & WRITING)
+        if writes and path != report_path:
+            seen["writes"].append([path, str(mode)])
+    elif event == "os.mkdir":
+        seen["mkdirs"].append(str(args[0]))
+
+
+sys.addaudithook(audit)
+import PyQt6.QtCore as QtCore
+
+
+def refused(*args, **kwargs):
+    seen["qsettings"].append([str(arg) for arg in args])
+    raise RuntimeError("a measuring script constructed a QSettings")
+
+
+QtCore.QSettings = refused
+codes = []
+for flags in ([], ["--check"]):
+    sys.argv = [script, *flags]
+    try:
+        runpy.run_path(script, run_name="__main__")
+        codes.append("returned")
+    except SystemExit as stop:
+        codes.append(stop.code)
+loaded = sorted(name for name in sys.modules if name.startswith("open_garden_planner"))
+report = dict(seen, codes=codes, qt_application=QtCore.QCoreApplication.instance() is not None,
+              loaded=loaded)
+with open(report_path, "w", encoding="utf-8") as out:
+    json.dump(report, out)
+"""
+
+
+def test_run_as_documented_the_script_reaches_no_settings_no_plan_and_no_app_data(
+    tmp_path: Path,
+) -> None:
+    """The last pass. Outside pytest the app's settings are the OWNER'S (on Windows a
+    registry key no environment variable redirects), and ``ProjectManager.load`` ends
+    by writing the recent-files list into them. A committed script that reached either
+    would have to isolate itself, as ``tests/conftest.py`` does. This one does not need
+    to, and that is measured here, not read: run as its docstring says — in a process of
+    its own, both forms — it
+
+    - constructs no ``QSettings`` (so ``get_settings()`` and ``create_qsettings()``
+      never ran), and no Qt application;
+    - opens no plan file, so ``ProjectManager.load`` never ran;
+    - writes no file and creates no directory, in Python or — as far as a redirected,
+      empty profile shows — through Qt.
+
+    What is watched is what is CONSTRUCTED and OPENED, not what is imported: importing
+    the ``core`` package loads ``app.settings``, ``core.project`` and PyQt6's modules
+    into the script's process (the report's ``loaded`` list says so), so a real store
+    is one call away, and "the script imports nothing of the app" would be false.
+
+    If a later change makes one of the three false, the script must call an
+    ``isolate()`` before its first app import (the pattern:
+    ``scripts/measure_plant_art_3d.py``)."""
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    report_path = tmp_path / "report.json"
+    environment = {
+        **os.environ,
+        "USERPROFILE": str(profile), "HOME": str(profile),
+        "APPDATA": str(profile / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(profile / "AppData" / "Local"),
+        "XDG_CONFIG_HOME": str(profile / "config"), "XDG_DATA_HOME": str(profile / "data"),
+        "XDG_CACHE_HOME": str(profile / "cache"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    done = subprocess.run(
+        [sys.executable, "-c", _WATCHED_RUN, str(SCRIPT), str(report_path)],
+        cwd=ROOT, env=environment, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=600, check=False)
+    assert done.returncode == 0, done.stderr[-2000:]
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["codes"] == [0, 0]            # the table, then --check: no drift
+    assert report["qsettings"] == []            # no settings object, real or otherwise
+    assert report["qt_application"] is False
+    assert report["plans"] == []                # no plan was opened
+    assert report["writes"] == [] and report["mkdirs"] == []
+    assert list(profile.iterdir()) == []        # nothing arrived in the redirected profile
+    assert "open_garden_planner.core.scene3d.builders" in report["loaded"]  # it ran its imports
+    assert done.stdout.count("| Kind | 3D area / 2D area | IoU |") == 2  # it did print its table
 
 
 def test_the_stroke_widths_are_the_2d_presets() -> None:
