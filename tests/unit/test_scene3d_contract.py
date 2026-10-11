@@ -36,6 +36,7 @@ from open_garden_planner.core.scene3d import (
 )
 
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
+HOLE = ((-10.0, -10.0), (-10.0, 10.0), (10.0, 10.0), (10.0, -10.0))  # clockwise
 
 
 def record(item_id: str = "a", **changes: object) -> Record:
@@ -237,6 +238,46 @@ class TestRecord:
         with pytest.raises(ValueError, match="height_cm"):
             record(height_cm=bad)
 
+    def test_footprints_are_outer_rings_counter_clockwise(self) -> None:
+        """Fix round 1: ``footprints`` holds OUTER rings only, and says so by
+        orientation. A clockwise ring is a hole — refused here, so it can never
+        again be extruded as a solid."""
+        with pytest.raises(ValueError, match="OUTER rings.*-10000"):
+            record(footprints=(SQUARE[::-1],))
+        with pytest.raises(ValueError, match="OUTER rings"):
+            record(footprints=(SQUARE, HOLE))  # the pre-fix shape of a closed fence
+        with pytest.raises(ValueError, match="positive area"):
+            record(footprints=(SQUARE[:2],))  # no area
+        with pytest.raises(ValueError, match="positive area"):
+            record(footprints=(((0.0, 0.0), (5.0, 0.0), (9.0, 0.0)),))
+        assert record(footprints=()).plan_area_cm2 == 0.0  # no footprint is not an error
+
+    def test_holes_belong_to_their_outer_ring_and_turn_clockwise(self) -> None:
+        holed = record(holes=((HOLE,),))
+        assert holed.regions == ((SQUARE, (HOLE,)),)
+        assert holed.plan_area_cm2 == 10000.0 - 400.0
+        assert record().regions == ((SQUARE, ()),) and record().plan_area_cm2 == 10000.0
+        with pytest.raises(ValueError, match="clockwise"):
+            record(holes=((HOLE[::-1],),))  # counter-clockwise: that is an outer ring
+        with pytest.raises(ValueError, match="2 entries for 1 footprints"):
+            record(holes=((HOLE,), ()))
+        two = record(footprints=(SQUARE, tuple((x + 200.0, y) for x, y in SQUARE)),
+                     holes=((), (tuple((x + 200.0, y) for x, y in HOLE),)))
+        assert [len(h) for _outer, h in two.regions] == [0, 1]
+
+    def test_no_holes_has_one_spelling(self) -> None:
+        """``holes=((),)`` and ``holes=()`` say the same; they must be one record,
+        or an unchanged item would diff as a geometry change."""
+        spelled_out = record(holes=((),))
+        assert spelled_out.holes == () and spelled_out == record()
+        assert spelled_out.same_geometry(record())
+
+    def test_a_hole_is_geometry(self) -> None:
+        plain, holed = record(), record(holes=((HOLE,),))
+        assert not plain.same_geometry(holed)
+        assert plain.same_transform(holed) and plain.same_material(holed)
+        assert diff(scene(plain), scene(holed)) == SceneDiff(geometry=("a",))
+
     def test_a_record_without_a_height_is_decoration(self) -> None:
         assert record().casts_shadow is True
         assert record(height_cm=None).casts_shadow is False
@@ -263,6 +304,7 @@ def _other(field: str) -> object:
         "path_width_cm": 12.0,
         "height_cm": 41.0,
         "params": Params({"seed": "a", "radius_cm": 3.0}),
+        "holes": ((HOLE,),),
     }[field]
 
 
@@ -385,9 +427,11 @@ def _core_module_file(name: str) -> Path | None:
 
 def test_the_scan_covers_the_whole_package() -> None:
     assert {p.name for p in MODULES} >= {
-        "__init__.py", "legacy.py", "color.py", "record.py", "diff.py", "frame.py",
-        "mesh.py", "sink.py", "build.py", "sync.py",
+        "__init__.py", "legacy.py", "color.py", "record.py", "scene_diff.py", "frame.py",
+        "polygon.py", "mesh.py", "sink.py", "build.py", "sync.py",
     }
+    # fix round 1: the module is `scene_diff`; `core.scene3d.diff` is only the function
+    assert not (PACKAGE / "diff.py").exists()
     assert _package_of(PACKAGE / "record.py") == ["open_garden_planner", "core", "scene3d"]
 
 
@@ -456,3 +500,18 @@ def test_core_modules_the_package_reaches_are_qt_free() -> None:
     assert any(n.split(".")[0] == "PyQt6" for n in _imports(CORE / "object_types.py"))
 
 
+def test_diff_is_the_function_and_the_module_has_its_own_name() -> None:
+    """``core.scene3d.diff`` used to be both a function and a module of that name
+    (the function shadowed the module on the package). The module is
+    ``scene_diff`` now; importing ``diff`` and ``SceneDiff`` from the package —
+    what every consumer does — is unchanged."""
+    import importlib
+
+    from open_garden_planner.core.scene3d import SceneDiff as from_package
+    from open_garden_planner.core.scene3d import diff as function
+
+    module = importlib.import_module("open_garden_planner.core.scene3d.scene_diff")
+    assert callable(function) and function is module.diff and scene3d.diff is module.diff
+    assert from_package is module.SceneDiff
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("open_garden_planner.core.scene3d.diff")

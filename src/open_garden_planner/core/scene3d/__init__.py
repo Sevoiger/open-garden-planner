@@ -11,30 +11,38 @@ The pipeline::
                                                EngineSink   (Qt Quick 3D: L1.2 · RecordingSink: tests)
 
 Modules: ``record`` (the contract: ``Record``, ``Transform``, ``Material``,
-``Params``, three signatures), ``diff``, ``frame`` (scene ↔ engine, local ↔
-scene), ``mesh``, ``sink``, ``build`` (builder seam + default prism builder),
-``sync``, ``color``. Nothing here imports Qt (pinned by an AST scan); numpy and
-the standard library only.
+``Params``, three signatures), ``scene_diff`` (``diff`` and ``SceneDiff``),
+``frame`` (scene ↔ engine, local ↔ scene, the sun vector), ``polygon``
+(orientation, holes, triangulation), ``mesh``, ``sink``, ``build`` (builder seam
++ default prism builder), ``sync``, ``color``. No module here imports Qt (pinned
+by an AST scan); numpy and the standard library only. That is a statement about
+this package's source: importing it still runs ``core/__init__.py``, which loads
+the command system and with it PyQt6.
 
-``legacy`` is the pre-L1.1 contract (the former ``core/scene3d.py``, moved
-verbatim): it feeds the shipped Qt 3D window and the dormant spike until L1.10
-removes both. Every name it had is re-exported here, so no importer changed.
+``legacy`` holds what is left of the pre-L1.1 contract (the former
+``core/scene3d.py``): the ``Scene3DRecord`` collector types, ``extrude_footprint``
+and the scalar ``to_engine_frame``. It feeds the shipped Qt 3D window and the
+dormant spike and goes with them in L1.10. Every name the old module had is
+still exported here, so no importer changed.
 """
 
 from __future__ import annotations
 
 from .build import (
     BUILT_HEIGHT_TOLERANCE,
+    HOLE_COVER_LIMIT,
+    PLAN_AREA_TOLERANCE,
+    PLAN_MARGIN_CM,
     Builder,
     BuilderContractError,
     BuilderRegistry,
     default_builder,
     item_seed,
+    plan_overreach,
     prism_mesh,
     verify_builder,
 )
 from .color import Rgba, srgb8_to_linear, srgb_channel_to_linear, srgb_to_linear
-from .diff import SceneDiff, diff
 from .frame import (
     ENGINE_TO_SCENE,
     SCENE_TO_ENGINE,
@@ -50,6 +58,7 @@ from .frame import (
     pose_ring,
     scene_to_engine_points,
     scene_to_engine_vectors,
+    sun_direction_scene,
 )
 from .legacy import (
     DECAL_LIFT_CM,
@@ -59,9 +68,7 @@ from .legacy import (
     Scene3DRecord,
     extrude_footprint,
     records_from_raw,
-    sun_direction_scene,
     to_engine_frame,
-    triangulate_polygon,
 )
 from .mesh import (
     BENT_NORMAL_KINDS,
@@ -71,6 +78,21 @@ from .mesh import (
     MeshError,
     MeshPart,
     normal_vs_winding,
+)
+from .polygon import (
+    Region,
+    ccw,
+    cw,
+    group_rings,
+    is_flat_ring,
+    is_simple_ring,
+    point_in_regions,
+    point_in_ring,
+    regions_area,
+    ring_area,
+    signed_area,
+    triangulate_polygon,
+    triangulate_region,
 )
 from .record import (
     ANGLE_DECIMALS,
@@ -106,6 +128,7 @@ from .record import (
     quantize_cm,
     quantize_deg,
 )
+from .scene_diff import SceneDiff, diff
 from .sink import (
     EngineSink,
     GroundSpec,
@@ -131,6 +154,7 @@ __all__ = [
     "FLAT_NORMAL_MIN_DOT",
     "FLAT_THICKNESS_CM",
     "GEOMETRY_FIELDS",
+    "HOLE_COVER_LIMIT",
     "LENGTH_DECIMALS",
     "MATERIAL_FIELDS",
     "MATERIAL_KINDS",
@@ -142,6 +166,8 @@ __all__ = [
     "PARAM_SEED",
     "PARAM_SPECIES_KEY",
     "PARAM_SPECIES_NAME",
+    "PLAN_AREA_TOLERANCE",
+    "PLAN_MARGIN_CM",
     "SCENE_TO_ENGINE",
     "SHAPES",
     "SHAPE_CIRCLE",
@@ -169,6 +195,7 @@ __all__ = [
     "Point",
     "Record",
     "RecordingSink",
+    "Region",
     "Rgba",
     "Ring",
     "Scene3DRecord",
@@ -181,6 +208,8 @@ __all__ = [
     "SunState",
     "SyncStateError",
     "Transform",
+    "ccw",
+    "cw",
     "default_builder",
     "diff",
     "engine_model_matrix",
@@ -188,9 +217,15 @@ __all__ = [
     "engine_to_scene_points",
     "engine_to_scene_vectors",
     "extrude_footprint",
+    "group_rings",
+    "is_flat_ring",
+    "is_simple_ring",
     "item_seed",
     "local_frame",
     "normal_vs_winding",
+    "plan_overreach",
+    "point_in_regions",
+    "point_in_ring",
     "pose_point",
     "pose_points",
     "pose_ring",
@@ -198,13 +233,17 @@ __all__ = [
     "quantize_cm",
     "quantize_deg",
     "records_from_raw",
+    "regions_area",
+    "ring_area",
     "scene_to_engine_points",
     "scene_to_engine_vectors",
+    "signed_area",
     "srgb8_to_linear",
     "srgb_channel_to_linear",
     "srgb_to_linear",
     "sun_direction_scene",
     "to_engine_frame",
     "triangulate_polygon",
+    "triangulate_region",
     "verify_builder",
 ]
