@@ -16,7 +16,7 @@ replacements in one file OF THAT COPY, undone after its test run. The checkout
 is never written to, so it is safe to run next to a test run or with uncommitted
 work — what is tested is the working tree as it is on disk.
 
-It is NOT part of the test suite (it takes about half an hour). Run it by hand
+It is NOT part of the test suite (it takes about an hour on a busy machine). Run it by hand
 after changing ``core/plant_art/``, ``core/scene3d/builders/plants.py``, the
 plant lines of ``ui/view3d/snapshot.py``, ``core/plant_renderer.py``'s resolver,
 or their tests::
@@ -47,6 +47,7 @@ RESOLVE = SRC + "core/plant_art/resolve.py"
 RECIPES = SRC + "core/plant_art/recipes.py"
 RENDERER = SRC + "core/plant_renderer.py"
 PLANTS = SRC + "core/scene3d/builders/plants.py"
+MESH = SRC + "core/scene3d/mesh.py"
 SNAPSHOT = SRC + "ui/view3d/snapshot.py"
 GENERATOR = "scripts/generate_plant_sprites.py"
 
@@ -127,8 +128,8 @@ MUTANTS: tuple[Mutant, ...] = (
     one("5 % too tall", PLANTS,
         "height / max(top - bottom, 1e-12)", "1.05 * height / max(top - bottom, 1e-12)", UNIT),
     one("15 % too narrow", PLANTS,
-        "scale = np.array([radius / max(reach, 1e-12), radius / max(reach, 1e-12),",
-        "scale = np.array([0.85 * radius / max(reach, 1e-12), 0.85 * radius / max(reach, 1e-12),", UNIT),
+        "scale = np.array([radius / max(widest, 1e-12), radius / max(widest, 1e-12),",
+        "scale = np.array([0.85 * radius / max(widest, 1e-12), 0.85 * radius / max(widest, 1e-12),", UNIT),
     one("the base is not put on the ground", PLANTS, "        part.pos[:, 2] -= bottom\n", "", UNIT),
     one("the trunk moves with a lopsided crown", PLANTS,
         "    foliage.pos[:, :2] -= shift\n",
@@ -153,6 +154,26 @@ MUTANTS: tuple[Mutant, ...] = (
     one("the report says nothing was pressed onto the ground", PLANTS,
         "        pressed_share=pressed / vertices, set_down=bottom / height,",
         "        pressed_share=0.0, set_down=0.0,", UNIT),
+    # ── where a plant ENDS: the fit's last step (review round 2, P1-A) ────────
+    one("the fit's last step is skipped: nothing bounds where a vertex ends", PLANTS,
+        "    reined = sum(_rein_in(part.pos, REACH_MAX * radius) for part in parts)\n",
+        "    reined = 0\n", UNIT),
+    one("the last step pulls a vertex straight toward the axis (the box shrinks)", PLANTS,
+        "        flat[beyond, major] = np.copysign(kept, flat[beyond, major])\n"
+        "        flat[beyond, minor] = np.copysign(np.sqrt(np.maximum(limit * limit - kept * kept, 0.0)),\n"
+        "                                          flat[beyond, minor])\n",
+        "        flat[beyond] *= (limit / np.hypot(flat[beyond, 0], flat[beyond, 1]))[:, None]\n"
+        "        del minor, each, kept\n", UNIT),
+    one("the last step shrinks the LARGER coordinate", PLANTS,
+        "        major = far.argmax(axis=1)                                # a tie keeps x\n",
+        "        major = far.argmin(axis=1)\n", UNIT),
+    one("the bound on the reach is the gate and a bit", PLANTS,
+        "REACH_MAX: Final = 1.09", "REACH_MAX: Final = 1.12", UNIT),
+    one("the report says no plant was reined in", PLANTS,
+        "        reach=reach, reined_share=reined / vertices)", "        reach=reach, reined_share=0.0)", UNIT),
+    one("the report states the bound, not where the plant ends", PLANTS,
+        "        reach=reach, reined_share=reined / vertices)",
+        "        reach=REACH_MAX, reined_share=reined / vertices)", UNIT),
     # ── built TO the data (review P1-3) ──────────────────────────────────────
     one("lobes do not top out at the height", PLANTS, "    _top_out(centers, radii, p.height)\n", "", UNIT),
     one("a leaf with no headroom stays standing", PLANTS,
@@ -258,19 +279,49 @@ MUTANTS: tuple[Mutant, ...] = (
         "    return round(math.log(height_cm / radius_cm) / math.log(PROPORTION_STEP))",
         "    return 0 * round(math.log(height_cm / radius_cm) / math.log(PROPORTION_STEP))", UNIT),
     one("the cache ignores the seed", PLANTS,
-        "    shape = _built_shape(_form(recipe), int(seed), _proportion_step(height_cm, radius_cm))",
-        "    shape = _built_shape(_form(recipe), 0 * int(seed), _proportion_step(height_cm, radius_cm))",
+        "    form, own, step = _form(recipe), int(seed), _proportion_step(height_cm, radius_cm)",
+        "    form, own, step = _form(recipe), 0 * int(seed), _proportion_step(height_cm, radius_cm)",
         UNIT),
     one("the cache's key ignores a recipe number the builders read", PLANTS,
         '    return _Form(archetype, palette_key(recipe), _number_or_none(recipe.get("leaf_scale")),',
         '    return _Form(archetype, palette_key(recipe), _number_or_none(recipe.get("no_such_key")),', UNIT),
     one("a stretched shape's normals are not renormalised", PLANTS,
-        "            normals = (bent / np.linalg.norm(bent, axis=1, keepdims=True)).astype(np.float32)",
-        "            normals = bent.astype(np.float32)", UNIT),
-    one("a remembered shape can be written to", PLANTS,
-        "        positions.setflags(write=False)\n", "", UNIT),
-    one("the cache remembers one shape only (every tick rebuilds)", PLANTS,
-        "SHAPE_CACHE_SIZE: Final = 1024", "SHAPE_CACHE_SIZE: Final = 1", UNIT + PERF),
+        "            normals = _sealed((bent / np.linalg.norm(bent, axis=1, keepdims=True)).astype(np.float32))",
+        "            normals = _sealed(bent.astype(np.float32))", UNIT),
+    one("a scaled plant's own arrays can be written to", PLANTS,
+        "    return np.frombuffer(array.tobytes(), dtype=np.float32).reshape(array.shape)",
+        "    return array", UNIT),
+    one("a mesh's arrays can be made writeable again (review round 2, P2-6)", MESH,
+        "    return np.frombuffer(data, dtype=np.float32).reshape(-1, width)",
+        "    array = np.array(values, dtype=np.float32).reshape(-1, width)\n"
+        "    array.setflags(write=False)\n    return array", UNIT),
+    one("the cache holds nothing (every tick rebuilds)", PLANTS,
+        "SHAPE_CACHE_BYTES: Final = 256 * 1024 * 1024", "SHAPE_CACHE_BYTES: Final = 1", UNIT + PERF),
+    # ── the cache at its cap (review round 2, P2-2) ──────────────────────────
+    one("at its cap the cache is plain least-recently-used (the cliff)", PLANTS,
+        "            if before is not None and self._asked.get(oldest, 0) > before:\n"
+        "                return                      # everything held is in use: this one is not held\n",
+        "", UNIT),
+    one("the cache has no cap", PLANTS,
+        "        while self._bytes + size > self._max_bytes:\n            oldest = next(iter(self._held))",
+        "        while False and self._bytes + size > self._max_bytes:\n            oldest = next(iter(self._held))",
+        UNIT),
+    one("a shape that was found is not marked as asked for", PLANTS,
+        "                self._held.move_to_end(key)\n", "", UNIT),
+    one("the cache forgets when a shape was asked for", PLANTS,
+        "            before = self._asked.pop(key, None)\n",
+        "            before = self._asked.pop(key, None) and None\n", UNIT),
+    one("a shape larger than the cap empties the cache", PLANTS,
+        "        if key in self._held or size > self._max_bytes:\n", "        if key in self._held:\n", UNIT),
+    one("a smaller cap drops nothing", PLANTS,
+        "            while self._held and self._bytes > self._max_bytes:\n",
+        "            while False and self._bytes > self._max_bytes:\n", UNIT),
+    # ── a growing plant stays the plant it was (review round 2, P2-7) ────────
+    Mutant("a conifer rolls its dice per whorl it has (another tree at each new whorl)", PLANTS, (
+        ("    sits, reaches, cuts = d.u(-0.18, 0.18, most), d.u(0.84, 1.0, most), d.u(0.52, 0.70, most)\n",
+         "    sits, reaches, cuts = d.u(-0.18, 0.18, tiers), d.u(0.84, 1.0, tiers), d.u(0.52, 0.70, tiers)\n"),
+        ("    hangs, turns = d.u(0.05, 0.18, most), d.u(0.0, _TAU, most)\n",
+         "    hangs, turns = d.u(0.05, 0.18, tiers), d.u(0.0, _TAU, tiers)\n")), UNIT),
 )
 
 

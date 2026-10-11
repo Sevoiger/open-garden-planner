@@ -8,22 +8,36 @@ The instruments are the unit tests' own (``tests/unit/test_scene3d_plants.py`` i
 one definition of a side silhouette, of a height quantile, of the size matrix), so what is
 measured here is exactly what is asserted there.
 
-    venv/Scripts/python.exe scripts/measure_plant_art_3d.py truth            # built to the data?
-    venv/Scripts/python.exe scripts/measure_plant_art_3d.py reach --ids 1000 # how far outside the canopy circle
+    venv/Scripts/python.exe scripts/measure_plant_art_3d.py truth --ids 3    # built to the data? (full sweep)
+    venv/Scripts/python.exe scripts/measure_plant_art_3d.py reach --ids 20   # where a plant ends (full sweep)
+    venv/Scripts/python.exe scripts/measure_plant_art_3d.py growth           # does a growing plant stay itself?
     venv/Scripts/python.exe scripts/measure_plant_art_3d.py clones --ids 30  # how alike two ids are
     venv/Scripts/python.exe scripts/measure_plant_art_3d.py shapes           # triangles and bytes per shape
     venv/Scripts/python.exe scripts/measure_plant_art_3d.py scrub --days 180 # a date scrub, tick by tick
+    venv/Scripts/python.exe scripts/measure_plant_art_3d.py cache            # the shape cache at its cap
 
-``truth``   per size group and archetype: the builder's own top before the fit, what the fit
-            repaired (``FitReport``), where the foliage's mass is (z95 / z99), ground-flat triangles.
-``reach``   the farthest vertex from the plant's axis, in canopy radii, over N ids × three
-            proportions × three recipe forms per archetype (the bounding box is exact by the fit;
-            this is the other half of the spread truth).
+The SWEEP (``truth``, ``reach``): every recipe of both tables × EVERY proportion step the tests
+sweep (``SWEEP_STEPS``: height over canopy radius from 1 : 50 to 80 : 1 in 5 % steps) × N ids, a
+different id in every cell. A shape depends on nothing but (recipe form, id, proportion step) — the
+shape cache's key — so this is every kind of shape the builders can produce, not a sample of
+sizes. (Round 1 measured "4,392 builds": 1,912 distinct shapes on 43 of the steps, and stated the
+sample's maxima as bounds; three of them were wrong one proportion step further on.)
+
+``truth``   per archetype: the builder's own top before the fit, what the fit repaired
+            (``FitReport``), where the plant ends (``reach`` — bounded by construction — and how
+            many plants the last step touched), where the foliage's mass is (z95 / z99, with the
+            cell of the minimum), ground-flat triangles, the largest plant.
+``reach``   the same sweep, the fit's report only (cheap: for many ids): the farthest vertex in
+            canopy radii, its distribution, and how many plants the fit's last step reined in.
+``growth``  the same id at every proportion step: how alike a plant is to itself one step on
+            (side-silhouette IoU in the unit box), against two different ids at the same step.
 ``clones``  side-silhouette IoU of every pair of N ids per recipe, as a distribution.
 ``shapes``  the largest plant per archetype and what a remembered shape costs in bytes.
 ``scrub``   both bench plans, the plan date moved day by day: plants that change per tick, shapes
             rebuilt per tick, milliseconds warm and cold — and the same in units of a reference
             workload timed alongside (a shared machine slows everything down together).
+``cache``   N growing plants against a cap that holds exactly M shapes: shapes rebuilt per tick
+            at, one past and far past the cap.
 
 Not part of the suite. ``scrub`` needs Qt (it loads plans into a scene); the others need numpy only.
 """
@@ -31,6 +45,7 @@ Not part of the suite. ``scrub`` needs Qt (it loads plans into a scene); the oth
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib.util
 import os
 import statistics
@@ -48,10 +63,7 @@ sys.path.insert(0, str(REPO / "src"))   # this checkout's package, whatever else
 sys.path.insert(0, str(REPO))           # ... and its tests package
 
 FIELDS = ("built_top", "z_scale", "xy_scale", "clamped_share", "clamped_reach", "pressed_share",
-          "set_down", "centre_shift", "stretch")
-PROPORTIONS = ((100.0, 50.0), (300.0, 40.0), (30.0, 120.0))
-FORMS = ({}, {"leaf_scale": 1.35, "n_out": 10, "frilly": True},
-         {"leaf_scale": 0.55, "n_out": 22, "narrow": True, "heart": False})
+          "set_down", "centre_shift", "reach", "reined_share", "stretch")
 
 
 def load(relative: str, name: str) -> ModuleType:
@@ -67,67 +79,153 @@ def instruments() -> ModuleType:
     return load("tests/unit/test_scene3d_plants.py", "plant_test_instruments")
 
 
-def truth(_args: argparse.Namespace) -> None:
+def truth(args: argparse.Namespace) -> None:
     t = instruments()
-    high: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: defaultdict(lambda: -1e9))
-    low: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: defaultdict(lambda: 1e9))
-    builds = 0
-
-    def take(group: str, recipe: dict, seed: int, height: float, radius: float) -> None:
-        nonlocal builds
-        builds += 1
-        parts = t.build_silhouette(recipe, seed, height, radius)
-        report = t.fit_report(recipe, seed, height, radius)
-        foliage = t.part(parts, t.PART_FOLIAGE).mesh
-        z95, z99 = t.height_quantiles(foliage, (0.95, 0.99))
-        values = {name: getattr(report, name) for name in FIELDS}
-        values.update(z95=z95 / height, z99=z99 / height,
-                      flat=float(t.ground_flat_triangles(foliage, height)))
-        for key in ((group, recipe["a"]), (group, "ALL")):
-            for name, value in values.items():
-                high[key][name] = max(high[key][name], value)
-                low[key][name] = min(low[key][name], value)
-
+    high: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(lambda: -1e9))
+    low: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(lambda: 1e9))
+    where: dict[tuple[str, str], str] = {}
+    reined: dict[str, int] = defaultdict(int)
+    builds: dict[str, int] = defaultdict(int)
+    shapes: set[tuple[object, int, int]] = set()
+    began = time.perf_counter()
     for sprite in t.ALL_SPRITES:
         recipe = t.recipe_of(sprite)
-        for label, (height, radius) in t.sizes_of(sprite).items():
-            group = label if label in ("flat", "tall") else "bundled sizes"
-            for seed in t.SEEDS:
-                take(group, recipe, t.plant_seed(seed), height, radius)
+        form = t.plants._form(recipe)
+        geometry = dataclasses.replace(form, palette="")      # the palette moves no vertex
+        for step, seed, height, radius in t.sweep_cells(sprite, args.ids):
+            parts = t.build_silhouette(recipe, seed, height, radius)
+            report = t.fit_report(recipe, seed, height, radius)
+            foliage = t.part(parts, t.PART_FOLIAGE).mesh
+            z95, z99 = t.height_quantiles(foliage, (0.95, 0.99))
+            values = {name: getattr(report, name) for name in FIELDS}
+            values.update(z95=z95 / height, z99=z99 / height,
+                          flat=float(t.ground_flat_triangles(foliage, height)),
+                          triangles=float(t.triangles(parts)), mesh_reach=t.mesh_reach(parts, radius))
+            shapes.add((geometry, seed, step))
+            cell = f"{sprite.name} at step {step:+d} (h/r {height / radius:.3f}), seed {seed}"
+            for key in (recipe["a"], "ALL"):
+                builds[key] += 1
+                reined[key] += int(report.reined_share > 0.0)
+                for name, value in values.items():
+                    if value > high[key][name]:
+                        high[key][name] = value
+                        where[(key, "max " + name)] = cell
+                    if value < low[key][name]:
+                        low[key][name] = value
+                        where[(key, "min " + name)] = cell
+        t.clear_shape_cache()
+    steps = t.SWEEP_STEPS
+    print(f"{builds['ALL']} builds = {len(t.ALL_SPRITES)} recipes x {len(steps)} proportion steps "
+          f"({steps[0]:+d} .. {steps[-1]:+d}: h/r {t.PROPORTION_STEP ** steps[0]:.4f} .. "
+          f"{t.PROPORTION_STEP ** steps[-1]:.1f}) x {args.ids} ids; {len(shapes)} distinct shapes; "
+          f"{time.perf_counter() - began:.0f} s")
+    print(f"\n{'archetype':9s}  builds  built top       xy scale  clamped   from    shift   pressed  set down  "
+          f"REACH   reined plants   z95    z99    flat  triangles")
+    for archetype in [*sorted(t.ARCHETYPES), "ALL"]:
+        h, lo = high[archetype], low[archetype]
+        print(f"{archetype:9s}  {builds[archetype]:6d}  {lo['built_top']:.4f}..{h['built_top']:.4f}  "
+              f"{h['xy_scale']:.4f}    {100 * h['clamped_share']:.2f} %    {h['clamped_reach']:.4f}  "
+              f"{h['centre_shift']:.4f}  {h['pressed_share']:.3f}    {h['set_down']:.3f}     "
+              f"{h['mesh_reach']:.5f}  {reined[archetype]:5d} ({100 * reined[archetype] / builds[archetype]:.3f} %)  "
+              f"{lo['z95']:.3f}  {lo['z99']:.3f}  {h['flat']:.0f}     {h['triangles']:.0f}")
+    print("\nwhere the extremes are:")
     for archetype in sorted(t.ARCHETYPES):
-        for height, radius in t.EXTREMES:
-            for extra in t.EXTREME_RECIPES:
-                for seed in (11, 12):
-                    take("extremes", {"a": archetype, **extra}, seed, height, radius)
-    print(f"{builds} builds")
-    for group in ("bundled sizes", "flat", "tall", "extremes"):
-        print(f"\n== {group} ==\n{'archetype':9s}  built top       xy scale  clamped  reach   pressed  "
-              f"set down  shift   stretch         z95    z99    flat")
-        for archetype in [*sorted(t.ARCHETYPES), "ALL"]:
-            h, lo = high[(group, archetype)], low[(group, archetype)]
-            print(f"{archetype:9s}  {lo['built_top']:.4f}..{h['built_top']:.4f}  {h['xy_scale']:.3f}     "
-                  f"{100 * h['clamped_share']:.2f} %   {h['clamped_reach']:.3f}   {h['pressed_share']:.3f}    "
-                  f"{h['set_down']:.3f}     {h['centre_shift']:.3f}   {lo['stretch']:.4f}..{h['stretch']:.4f}  "
-                  f"{lo['z95']:.3f}  {lo['z99']:.3f}  {h['flat']:.0f}")
+        for name in ("min z95", "min z99", "max clamped_reach", "max centre_shift", "max xy_scale",
+                     "max clamped_share"):
+            print(f"  {archetype:9s} {name:18s} {where[(archetype, name)]}")
+    print(f"\nREACH_MAX = {t.REACH_MAX}: the largest reach of a mesh, float32, is "
+          f"{high['ALL']['mesh_reach']:.7f} canopy radii")
 
 
 def reach(args: argparse.Namespace) -> None:
     t = instruments()
-    print(f"{args.ids} ids x {len(PROPORTIONS)} proportions x {len(FORMS)} recipe forms per archetype")
-    print(f"{'archetype':9s}  farthest vertex / canopy radius: max   99.9th percentile")
-    overall = 0.0
+    seen: dict[str, list[float]] = defaultdict(list)
+    before: dict[str, list[float]] = defaultdict(list)
+    reined: dict[str, int] = defaultdict(int)
+    worst: dict[str, tuple[float, str]] = {}
+    began = time.perf_counter()
+    for sprite in t.ALL_SPRITES:
+        recipe = t.recipe_of(sprite)
+        for step, seed, height, radius in t.sweep_cells(sprite, args.ids):
+            report = t.fit_report(recipe, seed, height, radius)
+            for key in (recipe["a"], "ALL"):
+                seen[key].append(report.reach)
+                reined[key] += int(report.reined_share > 0.0)
+                before[key].append(100.0 * report.reined_share)
+                if report.reined_share > worst.get(key, (0.0, ""))[0]:
+                    worst[key] = (report.reined_share,
+                                  f"{sprite.name} at step {step:+d}, seed {seed}")
+        t.clear_shape_cache()
+    count = len(seen["ALL"])
+    print(f"{count} plants = {len(t.ALL_SPRITES)} recipes x {len(t.SWEEP_STEPS)} proportion steps x "
+          f"{args.ids} ids; {time.perf_counter() - began:.0f} s; REACH_MAX = {t.REACH_MAX}")
+    print(f"{'archetype':9s}  plants   farthest vertex / canopy radius: max      p99.9   p99     median   "
+          f"plants reined in     most of one plant")
+    for archetype in [*sorted(t.ARCHETYPES), "ALL"]:
+        values = np.array(seen[archetype])
+        share, cell = worst.get(archetype, (0.0, "-"))
+        print(f"{archetype:9s}  {len(values):7d}                                    {values.max():.6f}  "
+              f"{np.percentile(values, 99.9):.4f}  {np.percentile(values, 99):.4f}  {np.median(values):.4f}   "
+              f"{reined[archetype]:6d} ({100 * reined[archetype] / len(values):.4f} %)   "
+              f"{100 * share:.2f} % of its vertices: {cell}")
+
+
+def growth(args: argparse.Namespace) -> None:
+    t = instruments()
+    steps = list(t.SWEEP_STEPS)
+    ids = list(range(args.ids))
+    print(f"{len(ids)} ids per archetype, every proportion step {steps[0]:+d} .. {steps[-1]:+d}; "
+          f"side silhouettes in the unit box, so a pure change of proportion scores 1.0")
+    print(f"{'archetype':9s}  the same id one step on: min    p01    p05    median  |  "
+          f"another id at the same step: median  p95")
     for archetype in sorted(t.ARCHETYPES):
-        seen = []
-        for form in FORMS:
-            for height, radius in PROPORTIONS:
-                for seed in range(args.ids):
-                    parts = t.build_silhouette({"a": archetype, **form}, seed * 7919 + 13, height, radius)
-                    seen.append(max(float(np.hypot(p.mesh.positions[:, 0], p.mesh.positions[:, 1]).max())
-                                    for p in parts) / radius)
-        values = np.array(seen)
-        overall = max(overall, float(values.max()))
-        print(f"{archetype:9s}  {values.max():.3f}   {np.percentile(values, 99.9):.3f}")
-    print(f"{'ALL':9s}  {overall:.3f}")
+        adjacent, other = [], []
+        for seed in ids:
+            previous = None
+            for step in steps:
+                height = 100.0 * t.PROPORTION_STEP ** step
+                grid = t.side_silhouette(t.build_silhouette({"a": archetype}, t.plant_seed(f"grow-{seed}"),
+                                                            height, 100.0), height, 100.0)
+                if previous is not None:
+                    adjacent.append(t.silhouette_iou(previous, grid))
+                previous = grid
+                if step % 6 == 0:
+                    twin = t.side_silhouette(t.build_silhouette(
+                        {"a": archetype}, t.plant_seed(f"grow-{seed}-twin"), height, 100.0), height, 100.0)
+                    other.append(t.silhouette_iou(grid, twin))
+            t.clear_shape_cache()
+        a, o = np.array(adjacent), np.array(other)
+        print(f"{archetype:9s}                           {a.min():.3f}  {np.percentile(a, 1):.3f}  "
+              f"{np.percentile(a, 5):.3f}  {np.median(a):.3f}   |                               "
+              f"{np.median(o):.3f}   {np.percentile(o, 95):.3f}")
+
+
+def cache(args: argparse.Namespace) -> None:
+    t = instruments()
+    recipe = t.SPECIES["leek"]                       # an allium: every id's shape has the same size
+    fit = args.fit
+    plants = [(recipe, t.plant_seed(f"cache-{n}"), 80.0, 10.0) for n in range(4 * fit)]
+    one = t.shape_bytes(*plants[0])
+    t.resize_shape_cache(fit * one)
+    try:
+        print(f"a cap of {fit * one:,} bytes = exactly {fit} shapes of {one:,} bytes; "
+              f"one tick asks for every plant once, in the same order")
+        print("plants  shapes built per tick (ticks 1 .. 6)        seconds per warm tick")
+        for count in (fit - 1, fit, fit + 1, fit + fit // 10, 2 * fit, 4 * fit):
+            t.clear_shape_cache()
+            built, took = [], []
+            for _tick in range(6):
+                misses = t.shape_cache_info().misses
+                began = time.perf_counter()
+                for plant in plants[:count]:
+                    t.build_silhouette(*plant)
+                took.append(time.perf_counter() - began)
+                built.append(t.shape_cache_info().misses - misses)
+            print(f"{count:6d}  {str(built):44s} {statistics.median(took[1:]):.3f}   "
+                  f"(held {t.shape_cache_info().shapes})")
+    finally:
+        t.resize_shape_cache()
+        t.clear_shape_cache()
 
 
 def clones(args: argparse.Namespace) -> None:
@@ -173,8 +271,9 @@ def shapes(_args: argparse.Namespace) -> None:
     print("  " + ", ".join(f"{a} {n:,}" for a, n in sorted(triangles.items(), key=lambda kv: -kv[1])))
     print(f"a remembered shape (123 recipes at mature size): min {min(held):,} bytes, "
           f"mean {sum(held) / len(held):,.0f}, max {max(held):,}")
-    print(f"the cache holds {t.SHAPE_CACHE_SIZE} shapes: at most {t.SHAPE_CACHE_SIZE * max(held) / 1e6:.0f} MB, "
-          f"{t.SHAPE_CACHE_SIZE * sum(held) / len(held) / 1e6:.0f} MB full of average plants")
+    cap = t.SHAPE_CACHE_BYTES
+    print(f"the cache holds {cap / 2**20:.0f} MB: {cap / max(held):,.0f} of the largest shapes, "
+          f"{cap * len(held) / sum(held):,.0f} average ones")
 
 
 def scrub(args: argparse.Namespace) -> None:
@@ -207,12 +306,12 @@ def scrub(args: argparse.Namespace) -> None:
             for records in snapshots[1:]:
                 if mode == "cold":
                     budget.clear_shape_cache()
-                misses, builds = budget.shape_cache_info()[1], sync.build_count
+                misses, builds = budget.shape_cache_info().misses, sync.build_count
                 began = time.perf_counter()
                 sync.apply(records)
                 times.append((time.perf_counter() - began) * 1000.0)
                 changed.append(sync.build_count - builds)
-                built.append(budget.shape_cache_info()[1] - misses)
+                built.append(budget.shape_cache_info().misses - misses)
             unit = statistics.median([unit, budget.unit_ms()])
             ordered = sorted(times)
             print(f"  {mode}: {statistics.mean(changed):5.1f} plants change per tick (max {max(changed)}), "
@@ -225,10 +324,18 @@ def scrub(args: argparse.Namespace) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("truth").set_defaults(run=truth)
+    sub = commands.add_parser("truth")
+    sub.add_argument("--ids", type=int, default=3)
+    sub.set_defaults(run=truth)
     sub = commands.add_parser("reach")
-    sub.add_argument("--ids", type=int, default=1000)
+    sub.add_argument("--ids", type=int, default=20)
     sub.set_defaults(run=reach)
+    sub = commands.add_parser("growth")
+    sub.add_argument("--ids", type=int, default=6)
+    sub.set_defaults(run=growth)
+    sub = commands.add_parser("cache")
+    sub.add_argument("--fit", type=int, default=200)
+    sub.set_defaults(run=cache)
     sub = commands.add_parser("clones")
     sub.add_argument("--ids", type=int, default=30)
     sub.set_defaults(run=clones)
