@@ -31,7 +31,7 @@ import os
 import statistics
 import sys
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -142,5 +142,40 @@ class TestSnapshotBudget:
         median_ms, max_ms = _timed(tick)
         assert median_ms <= budget_ms, (
             f"snapshot + diff median {median_ms:.2f} ms (max {max_ms:.2f} ms) exceeds "
+            f"{budget_ms:.0f} ms"
+        )
+
+    def test_a_date_scrub_tick_fits_the_same_budget_and_cuts_nothing(
+        self, plan: tuple[CanvasScene, int, float], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Scrubbing the sim date gives every DATED plant a new canopy on every tick
+        (bench_large: 80 of its 424 records). After fix round 3 the snapshot cut a
+        24-gon for each new radius, and this tick went from 12 ms to 33; a ring that
+        is convex by construction is judged by arithmetic now. The op count is the
+        gate — not one region is cut by the snapshot — and the budget the statement
+        (a new date on every run, so nothing is answered from memory)."""
+        from open_garden_planner.core.scene3d import polygon
+
+        scene, records, budget_ms = plan
+        cuts = []
+        real = polygon._cut
+        monkeypatch.setattr(polygon, "_cut", lambda *args: (cuts.append(1), real(*args))[1])
+        day = date(2026, 3, 1)
+        last = [snapshot_records(scene, day)]
+        cuts.clear()  # the first snapshot cuts the plan's polygons and strokes, once
+        changed: list[int] = []
+        ticks = iter(range(1, 1_000))
+
+        def tick() -> None:
+            now = snapshot_records(scene, day + timedelta(days=3 * next(ticks)))
+            changed.append(len(diff(last[0], now).geometry))
+            last[0] = now
+
+        median_ms, max_ms = _timed(tick)
+        assert cuts == []
+        if records == 424:
+            assert statistics.median(changed) >= 40  # … and it IS a scrub: the plants change every tick
+        assert median_ms <= budget_ms, (
+            f"a date-scrub snapshot + diff: median {median_ms:.2f} ms (max {max_ms:.2f} ms) exceeds "
             f"{budget_ms:.0f} ms"
         )

@@ -1331,3 +1331,191 @@ class TestPayingForARegion:
                 assert pay_for_region(square, (), work)
                 paid += 1
         assert paid == 5 and work.spent == 5 * each  # ten squares that each fit; five and a half paid for
+
+
+# ── fix round 4 ──────────────────────────────────────────────────────────────
+
+
+class TestWhatASnapshotAsksForIsNeverDropped:
+    """Review of fix round 3, P1-A. A memory that drops the least recently asked
+    answer when it is full recomputes the WHOLE plan on every tick once the plan
+    is larger than the memory: a snapshot asks in the same order each time, so
+    every answer is the oldest when its turn comes. What a snapshot asks for is
+    LIVE now — for that snapshot and the next — and only the rest is bounded."""
+
+    @staticmethod
+    def memory(cap: int = 1_000):
+        calls: list[int] = []
+
+        @ring_keyed(cap)
+        def length(ring) -> int:
+            calls.append(len(ring))
+            return len(ring)
+
+        return length, calls
+
+    @staticmethod
+    def rings(count: int, size: int = 300):
+        return [tuple((float(k), float(j)) for k in range(size)) for j in range(count)]
+
+    def test_a_plan_above_the_cap_is_answered_from_memory_tick_after_tick(self) -> None:
+        length, calls = self.memory()
+        plan = self.rings(10)  # 3,080 vertices: three times the cap
+        for tick in range(4):
+            with polygon_module.snapshot_generation():
+                assert [length(ring) for ring in plan] == [300] * 10
+            assert len(calls) == 10, tick  # computed in the first tick, and never again
+        assert length.cache_info().vertices == 10 * 308 and length.cache_info().entries == 10
+
+    def test_what_the_plan_no_longer_asks_for_is_stale_two_snapshots_later(self) -> None:
+        length, calls = self.memory()
+        plan = self.rings(10)
+        with polygon_module.snapshot_generation():
+            for ring in plan:
+                length(ring)
+        with polygon_module.snapshot_generation():  # eight items are deleted: two are asked
+            length(plan[0]), length(plan[1])
+        assert length.cache_info().entries == 10  # asked by the snapshot before: still live
+        with polygon_module.snapshot_generation():
+            length(plan[0]), length(plan[1])
+        info = length.cache_info()  # the eight are stale: 2,464 vertices of them, 750 are kept
+        assert info.entries == 4 and info.vertices - 2 * 308 <= 750
+        assert len(calls) == 10
+
+    def test_a_memory_the_snapshot_did_not_ask_is_settled_too(self) -> None:
+        length, _calls = self.memory()
+        with polygon_module.snapshot_generation():
+            for ring in self.rings(10):
+                length(ring)
+        with polygon_module.snapshot_generation():
+            pass
+        assert length.cache_info().entries == 10
+        with polygon_module.snapshot_generation():
+            pass  # nothing asks: the plan's last outline is gone — and the memory is settled all the same
+        assert length.cache_info().vertices <= 750
+
+    def test_outside_a_snapshot_nothing_is_live(self) -> None:
+        """A builder's own rings, a script's loop: asked for outside any snapshot,
+        an answer is stale from the start — plain least-recently-asked, by vertices."""
+        length, calls = self.memory()
+        for ring in self.rings(50):
+            length(ring)
+        assert length.cache_info().vertices <= 1_000 and len(calls) == 50
+        plan = self.rings(3)
+        with polygon_module.snapshot_generation():
+            for ring in plan:
+                length(ring)
+        for ring in self.rings(50, size=200):  # … and it never pushes out what a snapshot asked for
+            length(ring)
+        calls.clear()
+        assert [length(ring) for ring in plan] == [300] * 3 and calls == []
+        length(plan[0])  # asked outside a snapshot, a live answer stays live — and gets no younger
+        with polygon_module.snapshot_generation():
+            pass
+        with polygon_module.snapshot_generation():
+            pass
+        assert length.cache_info().vertices <= 1_000  # the three are stale now, like the rest
+
+    def test_a_snapshot_inside_a_snapshot_is_still_a_snapshot(self) -> None:
+        assert not polygon_module._snapshotting
+        with polygon_module.snapshot_generation() as outer:
+            with polygon_module.snapshot_generation() as inner:
+                assert inner == outer + 1 and polygon_module._snapshotting
+            assert polygon_module._snapshotting
+        assert not polygon_module._snapshotting
+
+    def test_clearing_forgets_what_was_live(self) -> None:
+        length, calls = self.memory()
+        with polygon_module.snapshot_generation():
+            for ring in self.rings(10):
+                length(ring)
+        length.cache_clear()
+        assert length.cache_info() == (0, 0, 1_000, 0, 0)
+        for ring in self.rings(50):
+            length(ring)
+        assert length.cache_info().vertices <= 1_000  # nothing of the old plan is counted as live
+
+
+class TestConvexByArithmetic:
+    """Review of fix round 3, P2-1. A circle's, an ellipse's, a rectangle's ring is
+    convex by construction; asking the cut predicate of it triangulated a 24-gon
+    per new radius. ``is_convex_ring`` is arithmetic on its corners."""
+
+    @pytest.mark.parametrize(
+        ("label", "ring", "convex"),
+        [("a square", SQUARE, True),
+         ("a square, clockwise", SQUARE[::-1], False),
+         ("an L (a corner that turns right)", L_SHAPE, False),
+         ("a bow-tie", BOW_TIE, False),
+         ("a point on an edge (a corner that does not turn)",
+          ((0.0, 0.0), (50.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)), False),
+         ("a vertex placed twice", ((0.0, 0.0), (100.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)), False),
+         ("a triangle", ((0.0, 0.0), (10.0, 0.0), (0.0, 10.0)), True),
+         ("a bed of 120 m by 5 mm (a sliver for its reach: the cut decides)",
+          ((-6000.0, -0.25), (6000.0, -0.25), (6000.0, 0.25), (-6000.0, 0.25)), False),
+         ("a bed of 20 cm by 5 mm (small: floats cannot blur it)",
+          ((-10.0, -0.25), (10.0, -0.25), (10.0, 0.25), (-10.0, 0.25)), True),
+         ("a spike that turns back on itself", ((0.0, 0.0), (10.0, 0.0), (5.0, 0.0)), False),
+         ("two points", ((0.0, 0.0), (10.0, 0.0)), False), ("nothing", (), False)],
+    )
+    def test_what_is_convex(self, label: str, ring, convex: bool) -> None:
+        assert polygon_module.is_convex_ring(ring) is convex, label
+        if convex:
+            assert is_buildable_region(ring)
+
+    def test_a_sliver_the_cut_cannot_prove_is_not_called_convex(self) -> None:
+        """Found by the sweep below: 120 m by 2 µm, turned. Every corner turns left
+        — and the cut's proof fails on it, its two sums of areas a few 1e-9 apart.
+        Called convex, it would be a record the default builder cannot build."""
+        ring = ((4984.7008522, 3327.8602089), (4984.7007352, 3327.8603842),
+                (-4984.7008522, -3327.8602089), (-4984.7007352, -3327.8603842))
+        assert not is_buildable_region(ring)
+        assert not polygon_module.is_convex_ring(ring)
+
+    def test_convex_by_arithmetic_implies_buildable_by_the_cut(self) -> None:
+        """The promise "every region of every record satisfies ``is_buildable_region``"
+        must survive not asking it: over 2,000 circles, ellipses and rectangles from a
+        tenth of a micrometre to ten kilometres, turned, on the record grid."""
+        from open_garden_planner.core.scene3d import quantize_cm
+
+        rng = random.Random(2026)
+        convex = degenerate_but_cut = 0
+        for k in range(2_000):
+            a, b = (10.0 ** rng.uniform(-7.0, 6.0) for _ in range(2))
+            if k % 3 == 0:
+                a = b  # a circle
+            turn = rng.uniform(0.0, 2.0 * math.pi) if k % 2 else 0.0
+            corners = ([(a * math.cos(2.0 * math.pi * j / 24), b * math.sin(2.0 * math.pi * j / 24))
+                        for j in range(24)] if k % 3 != 2 else [(-a, -b), (a, -b), (a, b), (-a, b)])
+            ring = tuple((quantize_cm(x * math.cos(turn) - y * math.sin(turn)),
+                          quantize_cm(x * math.sin(turn) + y * math.cos(turn))) for x, y in corners)
+            if polygon_module.is_convex_ring(ring):
+                convex += 1
+                assert is_buildable_region(ring), (k, a, b, turn)
+            elif signed_area(ring) > 0.0 and is_buildable_region(ring):
+                degenerate_but_cut += 1  # squeezed to a few grid steps: the cut still decides, as before
+        assert convex > 1_200 and degenerate_but_cut > 0
+
+    def test_it_reads_plain_pairs_of_any_kind(self) -> None:
+        assert polygon_module.is_convex_ring([[0, 0], [4, 0], [4, 3], [0, 3]])
+
+
+class TestTheStackWithoutLevelSegments:
+    """Review of fix round 3, P2-3: the clipper's sweep does not CARRY a level
+    edge, it walks along it. For a path that is inflated the level segments are
+    left out of the stack (``flat=False``)."""
+
+    def test_a_level_line_has_no_stack(self) -> None:
+        line = [(200.0 * k, 0.0) for k in range(1_000)]
+        assert stack_height([line], closed=False, reach=7.0) == 999  # counted: every segment
+        assert stack_height([line], closed=False, reach=7.0, flat=False) == 0
+        assert stack_height([[(y, x) for x, y in line]], closed=False, reach=7.0, flat=False) == 2
+
+    def test_only_the_level_segments_are_left_out(self) -> None:
+        stairs = [(50.0 * (k // 2 + k % 2), 0.001 * (k // 2)) for k in range(1_000)]  # a level run, a rise, …
+        assert stack_height([stairs], closed=False, reach=7.0) == 999
+        assert stack_height([stairs], closed=False, reach=7.0, flat=False) == 499  # the rises
+        teeth = [(k * 30.0, 1000.0 + k if k % 2 else -float(k)) for k in range(400)]
+        assert stack_height([teeth], closed=False, flat=False) == stack_height([teeth], closed=False) == 399
+        assert stack_height([SQUARE], closed=True, flat=False) == 2  # its two upright sides
+        assert stack_height([[(0.0, 0.0), (5.0, 0.0)]], closed=False, flat=False) == 0

@@ -13,16 +13,18 @@ Two collectors live here until L1.10 removes Qt 3D:
   one ``core.scene3d.Record`` per item, in the item-local frame with a rigid
   transform, for ``SceneSync`` and the Qt Quick 3D sink.
 
-Three things on record about the contract-v2 half (review of fix round 1):
+Four things on record about the contract-v2 half (reviews of fix rounds 1 and 3):
 
 - What it remembers is module-global and never cleared. ``_polyline_regions``
-  and ``_polygon_regions`` are keyed by whole rings and bounded by the VERTICES
-  they hold (``core.scene3d.polygon.ring_keyed``: 262,144 each, keys and
-  answers together), not by the number of answers: an outline of 4,000
-  vertices that is being edited adds an answer per tick, and 2,048 of those
-  were a gigabyte. ``_circle_ring``, ``_circle_regions`` and ``_material`` are
-  keyed by a number or a few short strings (``lru_cache``, 1,024 to 4,096
-  entries of at most 24 vertices).
+  and ``_polygon_regions`` are keyed by whole rings (``core.scene3d.polygon.
+  ring_keyed``). What the plan asks for is LIVE and never dropped: a snapshot
+  is one ``snapshot_generation``, and an answer asked for in this snapshot or
+  the one before stays, so an unchanged plan costs lookups whatever its size.
+  What is bounded is the STALE answers — an outline of 4,000 vertices that is
+  being edited leaves one per tick, and 2,048 of those were a gigabyte: at
+  most 262,144 vertices each, keys and answers together. ``_circle_ring``,
+  ``_circle_regions`` and ``_material`` are keyed by a number or a few short
+  strings (``lru_cache``, 1,024 to 4,096 entries of at most 24 vertices).
 - The outline of an item comes out of a plan file, and anybody can write one.
   So the INPUT is bounded before the work (an item's stored vertex count before
   one vertex is read; the pairs of a path before the clipper sees it; what the
@@ -88,9 +90,11 @@ from open_garden_planner.core.scene3d.polygon import (
     RegionTooLargeError,
     WorkBudget,
     is_buildable_region,
+    is_convex_ring,
     pay_for_region,
     regions_area,
     ring_keyed,
+    snapshot_generation,
     stack_height,
     touching_pairs,
 )
@@ -196,7 +200,8 @@ class SkipReason(StrEnum):
     #: is wrong with its shape; the 2D plan shows it as it is.
     OUTLINE_TOO_LARGE = "outline_too_large"
     #: One of its lengths — height, width, radius, a coordinate, its position —
-    #: is beyond ``core.scene3d.MAX_LENGTH_CM`` or infinite (a hand-edited plan).
+    #: is out of range: beyond ``core.scene3d.MAX_LENGTH_CM`` or infinite, or a
+    #: height below ``MIN_HEIGHT_CM`` (a hand-edited plan).
     OUT_OF_RANGE = "out_of_range"
 
 
@@ -246,7 +251,7 @@ _LOG_TEXT: dict[SkipReason, str] = {
     SkipReason.DUPLICATE_ID: "another item already has this id",
     SkipReason.OUTLINE_UNBUILDABLE: "its outline cannot be made into regions a builder can build",
     SkipReason.OUTLINE_TOO_LARGE: "its outline is too large for the 3D view",
-    SkipReason.OUT_OF_RANGE: "one of its lengths is beyond what a plan can hold",
+    SkipReason.OUT_OF_RANGE: "one of its lengths is outside what a plan can hold",
 }
 
 
@@ -335,7 +340,7 @@ _OFFSET_CROSSING_UNITS: Final = 5_000  # … and per pair whose centre lines cro
 _UNION_VERTEX_UNITS: Final = 500  # a union: per vertex …
 _UNION_STACK_UNITS: Final = 15  # … per vertex and edge in the stack
 _UNION_CROSSING_UNITS: Final = 600  # … per pair of edges that cross
-_STRICT_VERTEX_UNITS: Final = 1_000  # the same with StrictlySimple: per vertex …
+_STRICT_VERTEX_UNITS: Final = 1_000  # the same with StrictlySimple (``_strict_rings``): per vertex …
 _STRICT_SQUARE_UNITS: Final = 3  # … per vertex² of each ring that comes back (it compares them all)
 _STRICT_CROSSING_UNITS: Final = 2_500  # … per pair of edges that cross
 _BAND_CROSSING_UNITS: Final = 8_000  # a band along the union's rings: per such pair
@@ -481,13 +486,47 @@ def _matches_outline(outline: Ring, regions: tuple[Region, ...]) -> bool:
     return bool(np.all((winding != 0)[judged] == covered[judged]))
 
 
-def _clip_tree(subject: list[list[tuple[int, int]]], fill: int, *, strictly_simple: bool = False,
+def _strict_rings(subject: list[list[tuple[int, int]]], fill: int) -> list[Any]:
+    """The union of ``subject`` under ``fill`` with ``StrictlySimple`` — rings that
+    do not touch themselves — as a FLAT list (``Execute``): outer rings
+    counter-clockwise, holes clockwise. [] when no ring of ``subject`` has an area.
+
+    Never as a tree. ``StrictlySimple`` together with ``Execute2`` costs by the
+    rings it makes and the splits it tries, not by anything a price can be read
+    off beforehand: one two-level zigzag of 340 vertices held it for 3.6 s inside
+    the budget (pyclipper alone: 4,382 ms as a tree, 19 ms as a list; review of
+    fix round 3). Which hole belongs to which ring is ``group_rings``' to say —
+    counted, and paid for before it runs."""
+    clipper = pyclipper.Pyclipper()
+    clipper.StrictlySimple = True
+    try:
+        clipper.AddPaths(subject, pyclipper.PT_SUBJECT, True)
+    except pyclipper.ClipperException:
+        return []
+    return list(clipper.Execute(pyclipper.CT_UNION, fill, fill))
+
+
+def _grouped(made: list[Any], budget: WorkBudget) -> tuple[Region, ...]:
+    """Rings on the clipper grid, oriented, → regions: paid for, read, and sorted
+    by ``group_rings`` out of ``budget``. () when they cannot be sorted (a hole
+    in no outer ring: the reading does not hold)."""
+    _pay_for_reading(made, budget)
+    rings = [_quantized((x / CLIPPER_SCALE, y / CLIPPER_SCALE) for x, y in ring) for ring in made]
+    try:
+        return group_rings(rings, budget)
+    except RegionTooLargeError:
+        raise
+    except ValueError:
+        return ()
+
+
+def _clip_tree(subject: list[list[tuple[int, int]]], fill: int, *,
                band: list[list[tuple[int, int]]] | None = None) -> Any:
     """The union of ``subject`` under ``fill`` as a pyclipper PolyTree — minus a
     band ``_SEPARATION`` wide along every ring of ``band``, when one is given.
-    None when no ring of ``subject`` has an area."""
+    None when no ring of ``subject`` has an area. (Without ``StrictlySimple``:
+    see ``_strict_rings``.)"""
     clipper = pyclipper.Pyclipper()
-    clipper.StrictlySimple = strictly_simple
     try:
         clipper.AddPaths(subject, pyclipper.PT_SUBJECT, True)
     except pyclipper.ClipperException:
@@ -507,8 +546,9 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ri
 
     Three readings of the rings' union under ``fill``, the first that holds:
 
-    1. the union with ``StrictlySimple``, read as a PolyTree — rings that do not
-       touch themselves, pyclipper's own hierarchy, the outline's own vertices;
+    1. the union with ``StrictlySimple`` — rings that do not touch themselves,
+       the outline's own vertices — as a flat list (``_strict_rings``), sorted
+       into outer rings and their holes by ``group_rings``;
     2. the plain union with a band of ``_SEPARATION`` cut away along its rings —
        for parts that meet in a point: drawn apart by a hair, each can be built;
     3. the rings themselves with that band cut away along every one of THEM —
@@ -571,8 +611,7 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ri
         return bool((area - rim if drawn_in else area - 1e-6) <= got <= area + 1e-6)
 
     budget.spend(_STRICT_SQUARE_UNITS * sum(len(path) ** 2 for path in paths))
-    strict = _clip_tree(rings, fill, strictly_simple=True)
-    regions = read(strict) if strict is not None else ()
+    regions = _grouped(_strict_rings(rings, fill), budget)
     if holds(regions, drawn_in=False):
         return regions
     for band, along, per_crossing in ((paths, made, _BAND_CROSSING_UNITS),
@@ -606,7 +645,7 @@ def _stroke_regions(path: Ring, width_cm: float,
     near, crossings = touching_pairs(path, budget, closed=False, reach=reach)
     budget.spend(_CLIP_UNITS + _OFFSET_NEAR_UNITS * near + _OFFSET_CROSSING_UNITS * crossings
                  + len(path) * (_OFFSET_POINT_UNITS + _OFFSET_STACK_UNITS
-                                * stack_height((path,), closed=False, reach=reach)))
+                                * stack_height((path,), closed=False, reach=reach, flat=False)))
     made = polyline_footprint(list(path), width_cm)
     _pay_for_reading(made, budget)
     rings = [_quantized(ring) for ring in made]
@@ -678,13 +717,23 @@ _OUTLINE_CHECK_UNITS: Final = 20
 _REGION_CHECK_UNITS: Final = 5
 
 
+def _convex_region(ring: Ring) -> bool:
+    """THE predicate for a ring that is convex BY CONSTRUCTION — a circle's, an
+    ellipse's, a rectangle's: buildable when arithmetic says it is strictly
+    convex on the record grid too (``is_convex_ring``; no cut — a date scrub
+    gives every dated plant a new radius per tick, and cutting each 24-gon made
+    that snapshot 2.9 times slower), and only a ring that is NOT is asked the
+    cut: a shape squeezed to a few grid steps, whose verdict stays what it was."""
+    return is_convex_ring(ring) or is_buildable_region(ring)
+
+
 @lru_cache(maxsize=4096)
 def _circle_regions(radius_cm: float) -> tuple[Region, ...] | _Refused:
-    """A circle's footprint ring as its one region — asked the predicate like
-    every other shape (a radius of 2e-7 cm leaves a ring on the record grid that
-    is no polygon at all)."""
+    """A circle's footprint ring as its one region — judged like every other
+    shape (a radius of 2e-7 cm leaves a ring on the record grid that is no
+    polygon at all)."""
     ring = _circle_ring(radius_cm)
-    return ((ring, ()),) if is_buildable_region(ring) else _NO_READING
+    return ((ring, ()),) if _convex_region(ring) else _NO_READING
 
 
 def _outline_regions(ring: Ring,
@@ -788,9 +837,9 @@ def _drawn_vertices(item: Any) -> int:
     hold a polyline of 200,000 points). 0 for the shapes whose vertex count is
     the code's and not the plan's: a rectangle's 4, an ellipse's and a circle's 24."""
     if isinstance(item, PolylineItem):
-        return len(item.points)
+        return item.point_count  # a count: ``len(item.points)`` would copy all of them first
     if isinstance(item, PolygonItem):
-        return int(item.polygon().count())
+        return int(item.polygon().count())  # Qt shares the polygon's data: no copy either
     return 0
 
 
@@ -846,7 +895,7 @@ def _regions_of(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, 
     if len(ring) < 3 or ring_area(ring) == 0.0:
         return (), (), None, None, False
     outer = ccw(ring)
-    if not is_buildable_region(outer):  # … and asked like every other shape: a sliver of
+    if not _convex_region(outer):  # … and judged like every other shape: a sliver of
         raise _UnbuildableOutline(_NO_READING.why)  # 2e-7 cm is no polygon on the record grid
     return ((outer, ()),), (), None, None, False
 
@@ -926,6 +975,7 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     )
 
 
+@snapshot_generation()  # what a snapshot asks for stays remembered while the plan keeps asking
 def snapshot_records(
     scene: QGraphicsScene,
     at_date: date | None = None,
