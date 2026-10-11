@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Sequence
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import pyclipper
 
@@ -76,7 +76,28 @@ class ShadowCaster(NamedTuple):
 
 #: What the shadow functions accept as a caster: a ``ShadowCaster`` or the
 #: pre-L1.6 pair ``(footprint, height_cm)`` — a pair stands on the ground.
+#: Nothing else: ``caster_fields`` refuses any other shape, so a third element
+#: can only ever be a base when a ``ShadowCaster`` says so.
 CasterLike = ShadowCaster | tuple[Sequence[Point], float | None]
+
+
+def caster_fields(caster: CasterLike) -> tuple[Sequence[Point], float | None, float]:
+    """``(footprint, height_cm, base_cm)`` of a caster — by TYPE, never by length.
+
+    A ``ShadowCaster`` carries its base; an exact ``(footprint, height_cm)``
+    tuple stands on the ground. Anything else — a list, a longer or shorter
+    tuple, another named tuple — raises ``TypeError``: a caller that built a
+    3-tuple for some other reason must not have its third element read as a
+    height above ground.
+    """
+    if isinstance(caster, ShadowCaster):
+        return caster.footprint, caster.height_cm, caster.base_cm
+    if type(caster) is tuple and len(caster) == 2:
+        return caster[0], caster[1], 0.0
+    raise TypeError(
+        "a shadow caster is a ShadowCaster or a (footprint, height_cm) tuple, "
+        f"not {type(caster).__name__} of length {len(caster) if hasattr(caster, '__len__') else '?'}"
+    )
 
 # Integer grid for pyclipper: 1 unit = 1/1000 cm (offset_tool precedent).
 CLIPPER_SCALE = 1000
@@ -199,12 +220,12 @@ def compute_scene_shadows(
     direction = shadow_direction_scene(azimuth_deg)
     all_paths: list[list[tuple[int, int]]] = []
     for caster in casters:
-        parts: Sequence[Any] = caster
-        length = shadow_length_cm(parts[1], elevation_deg)
+        footprint, height_cm, base_cm = caster_fields(caster)
+        length = shadow_length_cm(height_cm, elevation_deg)
         if length is None:
             continue
-        start = base_offset_cm(parts[2], elevation_deg) if len(parts) > 2 else 0.0
-        all_paths.extend(_caster_paths_int(parts[0], length, direction, start))
+        all_paths.extend(_caster_paths_int(
+            footprint, length, direction, base_offset_cm(base_cm, elevation_deg)))
     return [_from_int(p) for p in _union_int(all_paths)]
 
 

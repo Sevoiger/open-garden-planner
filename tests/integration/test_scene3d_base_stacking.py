@@ -22,12 +22,14 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 from PyQt6.QtCore import QPointF
 
 import open_garden_planner
 from open_garden_planner.core import ProjectManager
 from open_garden_planner.core.commands import (
+    ChangePropertyCommand,
     CreateItemCommand,
     MoveItemsCommand,
     ResizeItemCommand,
@@ -44,6 +46,11 @@ from open_garden_planner.core.scene3d import (
     SceneSync,
     default_builder,
     diff,
+)
+from open_garden_planner.core.shade_aggregation import (
+    SAMPLE_STEP_MINUTES,
+    HeatmapGrid,
+    daylight_samples,
 )
 from open_garden_planner.core.shadow_geometry import (
     ShadowCaster,
@@ -62,6 +69,7 @@ from open_garden_planner.ui.canvas.geometry_apply import (
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
+from open_garden_planner.ui.canvas.sun_heatmap import SunHeatmapController
 from open_garden_planner.ui.canvas.sun_shadow_controller import (
     SunShadowController,
     SunShadowOverlayItem,
@@ -461,6 +469,67 @@ class TestTheLinkAloneNeverLifts:
         }
 
 
+class TestHeatmapEndToEnd:
+    """Review round 1, P2-3: a raised plant through the real ``SunHeatmapController``
+    and its worker thread — the tip shift, read off the hours-of-sun grid."""
+
+    def test_the_raised_plant_s_tip_is_in_the_grid(self, qtbot: Any) -> None:
+        scene = CanvasScene(1000.0, 1000.0)
+        view = CanvasView(scene)
+        qtbot.addWidget(view)
+        layer = scene.active_layer.id
+        bed = RectangleItem(350.0, 150.0, 300.0, 300.0, object_type=ObjectType.RAISED_BED,
+                            layer_id=layer)                      # 3 m x 3 m, 40 cm high
+        plant = CircleItem(500.0, 300.0, 30.0, object_type=ObjectType.PERENNIAL, layer_id=layer)
+        plant.metadata[METADATA_KEY] = 60.0                      # in the bed's middle
+        commands = view.command_manager
+        commands.execute(CreateItemCommand(scene, bed, "bed"))
+        commands.execute(CreateItemCommand(scene, plant, "plant"))
+        assert plant.parent_bed_id == bed.item_id
+        winter = date(2026, 12, 21)  # a low sun: at noon the shadows run due north, far
+
+        def hours_of_sun() -> tuple[np.ndarray, HeatmapGrid]:
+            controller = SunHeatmapController(scene, lambda: BERLIN)
+            with qtbot.waitSignal(controller.finished, timeout=60000) as blocker:
+                assert controller.run_for_day(winter)
+            assert blocker.args == [True]
+            assert controller.last_minutes is not None and controller.last_grid is not None
+            return controller.last_minutes.copy(), controller.last_grid
+
+        raised, grid = hours_of_sun()
+        commands.execute(SetParentBedCommand(scene, plant, bed.item_id, None))  # same plan, plant
+        ground, grid_ground = hours_of_sun()                                    # on the ground
+        assert grid == grid_ground and raised.shape == ground.shape
+
+        # Lifting the plant only ADDS shade: what it shaded from the ground lies inside the
+        # bed's own shadow or inside its raised shadow.
+        assert np.all(raised <= ground)
+        lost = ground - raised
+        assert lost.max() >= SAMPLE_STEP_MINUTES  # … and it really does add some
+
+        # The tip, due north of the plant at solar noon: r + (base + h) / tan a.
+        noon = max(daylight_samples(BERLIN["latitude"], BERLIN["longitude"], winter),
+                   key=lambda sample: sample.elevation_deg)
+        assert 13.0 < noon.elevation_deg < 15.0 and abs(noon.azimuth_deg - 180.0) < 3.0
+        tan_a = math.tan(math.radians(noon.elevation_deg))
+        raised_tip = 30.0 + (38.0 + 60.0) / tan_a   # about 4.2 m north of the plant's centre
+        ground_tip = 30.0 + 60.0 / tan_a            # about 2.7 m: where the tip was before L1.6
+        bed_reach = 150.0 + 40.0 / tan_a            # the bed's own shadow, from the plant's centre
+        assert ground_tip < bed_reach < raised_tip  # from the ground the tip never left the bed's
+
+        _row, column = grid.cell_at(500.0, 300.0)
+        rows = np.nonzero(lost[:, column] > 0.0)[0]
+        north = (rows + 0.5) * grid.cell_cm + grid.y0_cm - 300.0  # cm north of the plant's centre
+        assert north.min() > bed_reach - 2.0 * grid.cell_cm   # nothing changed under the bed's shadow
+        # the farthest cell that lost sun to the plant is the raised tip, to a cell and the
+        # few centimetres the nearest 15-minute sample misses true noon by
+        assert north.max() == pytest.approx(raised_tip, abs=2.0 * grid.cell_cm)
+        assert north.max() - ground_tip == pytest.approx(38.0 / tan_a, abs=2.0 * grid.cell_cm)
+        # … and every cell between the bed's shadow and that tip lost at least one sample
+        between = lost[rows.min():rows.max() + 1, column]
+        assert np.all(between >= SAMPLE_STEP_MINUTES)
+
+
 class TestOneCasterWalk:
     """Gate G4's drift guard: the heatmap and the overlay consume the same casters,
     and 3D takes its base from the same function."""
@@ -485,6 +554,12 @@ class TestOneCasterWalk:
                     name = getattr(node.func, "id", getattr(node.func, "attr", ""))
                     calls.setdefault(name, set()).add(relative)
         assert calls["ShadowCaster"] == {"ui/canvas/sun_shadow_controller.py"}  # one maker
+        # … and every consumer: nobody else turns casters into shadows (review P2-4)
+        assert calls["compute_scene_shadows"] == {
+            "ui/canvas/sun_shadow_controller.py",   # the overlay's recompute
+            "core/shade_aggregation.py",            # the heatmap, once per daylight sample
+        }
+        assert calls["caster_fields"] == {"core/shadow_geometry.py"}  # the ONE unpacking, by type
         assert calls["collect_shadow_casters"] == {
             "ui/canvas/sun_shadow_controller.py",   # the overlay
             "ui/canvas/sun_heatmap.py",             # the heatmap
@@ -542,7 +617,8 @@ class TestOneCasterWalk:
         assert ground_tip < bed_tip < raised_tip
         controller.set_enabled(False)
 
-    def test_a_bed_height_change_recomputes_the_overlay(self, canvas: CanvasView) -> None:
+    def test_the_overlay_s_key_carries_the_base(self, canvas: CanvasView) -> None:
+        """Footprint and height unchanged, only the base differs: still a recompute."""
         garden = Garden(canvas)
         controller = SunShadowController(garden.scene, lambda: BERLIN)
         controller.set_sim_datetime(datetime(2026, 6, 21, 12, 0, tzinfo=UTC))
@@ -553,4 +629,72 @@ class TestOneCasterWalk:
         garden.plant.parent_bed_id = None  # only the BASE changes: footprint and height stay
         controller.recompute_now()
         assert controller.recompute_count == count + 1
+        controller.set_enabled(False)
+
+    def test_a_bed_height_change_and_a_re_parent_recompute_the_overlay_through_the_command_stack(
+        self, canvas: CanvasView, qtbot: Any
+    ) -> None:
+        """Neither edit repaints anything — a height is metadata, the link a Python
+        attribute — so ``scene.changed`` never fires for them (#173). What reaches
+        the overlay is the command stack's ``stack_changed``, wired to
+        ``schedule_recompute`` exactly as ``application.py`` does (its connect line
+        is pinned by ``test_shadow_overlay.py::test_app_wires_stack_changed_to_sun_controller``).
+        Nobody calls ``recompute_now`` here."""
+        garden = Garden(canvas)
+        instant = datetime(2026, 6, 21, 18, 0, tzinfo=UTC)
+        position = solar_position(BERLIN["latitude"], BERLIN["longitude"], instant)
+        tan_a = math.tan(math.radians(position.elevation_deg))
+        direction = shadow_direction_scene(position.azimuth_deg)
+        controller = SunShadowController(garden.scene, lambda: BERLIN)
+        controller.set_sim_datetime(instant)
+        controller.set_enabled(True)
+        garden.commands.stack_changed.connect(controller.schedule_recompute)  # the app's wiring
+        overlay = next(i for i in garden.scene.items() if isinstance(i, SunShadowOverlayItem))
+        plant_far = max(x * direction[0] + y * direction[1]
+                        for x, y in next(c for c in collect_shadow_casters(garden.scene)
+                                         if c.height_cm == 60.0).footprint)
+
+        def tip() -> float:
+            """How far the overlay reaches beyond the plant's footprint, in cm."""
+            path = overlay.path()
+            return max(path.elementAt(i).x * direction[0] + path.elementAt(i).y * direction[1]
+                       for i in range(path.elementCount())) - plant_far
+
+        def settled(expected_count: int) -> None:
+            qtbot.wait(400)  # the debounce, then quiet
+            assert controller.recompute_count == expected_count
+
+        qtbot.wait(400)  # the echoes of creating the items
+        count = controller.recompute_count
+        assert tip() == pytest.approx((38.0 + 60.0) / tan_a, abs=0.01)
+
+        def set_height(item: Any, value: float | None) -> None:  # the properties panel's apply_func
+            if value is None:
+                item.metadata.pop(METADATA_KEY, None)
+            else:
+                item.metadata[METADATA_KEY] = value
+
+        garden.commands.execute(
+            ChangePropertyCommand(garden.bed, "object height", None, 75.0, set_height))
+        settled(count + 1)
+        assert tip() == pytest.approx((73.0 + 60.0) / tan_a, abs=0.01)  # the plant rose with its bed
+
+        garden.commands.execute(
+            SetParentBedCommand(garden.scene, garden.plant, garden.bed.item_id, None))
+        settled(count + 2)
+        # unlinked, the plant casts from the ground and ends inside the 75 cm bed's own shadow,
+        # which is now the overlay's far edge — about 90 cm short of where the raised tip was
+        assert 60.0 / tan_a < tip() < (73.0 + 60.0) / tan_a - 50.0
+
+        garden.commands.undo()  # linked again
+        settled(count + 3)
+        assert tip() == pytest.approx((73.0 + 60.0) / tan_a, abs=0.01)
+        garden.commands.undo()  # the bed is 40 cm again
+        settled(count + 4)
+        assert tip() == pytest.approx((38.0 + 60.0) / tan_a, abs=0.01)
+
+        # negative control: without the wiring the same edit goes unseen
+        garden.commands.stack_changed.disconnect(controller.schedule_recompute)
+        garden.commands.redo()
+        settled(count + 4)
         controller.set_enabled(False)

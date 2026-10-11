@@ -235,6 +235,49 @@ class TestBaseZeroIsToday:
         assert _reach(fallback, direction) == pytest.approx(_reach(reference, direction), abs=1e-3)
 
 
+class TestACasterIsATypeNotALength:
+    """Review round 1, P2-4: a third element is a base only when a ``ShadowCaster``
+    says so. Before, any 3-tuple's last element was read as a height above ground."""
+
+    def test_the_two_accepted_shapes(self) -> None:
+        assert sg.caster_fields(ShadowCaster(SQUARE, 60.0, 38.0)) == (SQUARE, 60.0, 38.0)
+        assert sg.caster_fields(ShadowCaster(SQUARE, 60.0)) == (SQUARE, 60.0, 0.0)
+        assert sg.caster_fields((SQUARE, 60.0)) == (SQUARE, 60.0, 0.0)
+        assert sg.caster_fields((SQUARE, None)) == (SQUARE, None, 0.0)
+
+    @pytest.mark.parametrize("bad", [
+        (SQUARE, 60.0, 38.0),           # a bare 3-tuple: is the third a base, a name, an id?
+        (SQUARE, 60.0, "item-7"),
+        (SQUARE,),
+        (),
+        [SQUARE, 60.0],                 # a list is not the pair
+        (SQUARE, 60.0, 38.0, 1.0),
+    ], ids=["3-tuple", "3-tuple-with-id", "1-tuple", "empty", "list", "4-tuple"])
+    def test_anything_else_is_refused(self, bad: object) -> None:
+        with pytest.raises(TypeError, match="ShadowCaster or a \\(footprint, height_cm\\) tuple"):
+            sg.caster_fields(bad)  # type: ignore[arg-type]
+        with pytest.raises(TypeError):
+            compute_scene_shadows([bad], 35.0, 180.0)  # type: ignore[list-item]
+
+    def test_another_named_tuple_is_not_a_caster(self) -> None:
+        from typing import NamedTuple
+
+        class Lookalike(NamedTuple):
+            footprint: list[tuple[float, float]]
+            height_cm: float
+
+        with pytest.raises(TypeError):
+            sg.caster_fields(Lookalike(SQUARE, 60.0))  # type: ignore[arg-type]
+
+    def test_the_heatmap_refuses_it_too(self) -> None:
+        from datetime import date
+
+        grid = HeatmapGrid.for_rect(-200.0, -200.0, 500.0, 500.0, cell_cm=50.0)
+        with pytest.raises(TypeError):
+            compute_heatmap([(SQUARE, 60.0, 38.0)], 52.52, 13.405, date(2026, 6, 21), grid,  # type: ignore[list-item]
+                            point_rasterizer_reference)
+
+
 class TestHeatmapConsumesTheBase:
     def test_every_sample_rasterises_the_raised_shadow(self) -> None:
         """The heatmap worker hands its casters to the same shadow function as the
