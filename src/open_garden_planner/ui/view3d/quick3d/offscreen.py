@@ -31,7 +31,8 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from PyQt6.QtGui import QGuiApplication, QImage
+from PyQt6.QtCore import QCoreApplication
+from PyQt6.QtGui import QImage
 
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
@@ -56,14 +57,14 @@ class RenderError(RuntimeError):
     """An offscreen render that must not be trusted (QML or shader error, no image)."""
 
 
-_APPLICATION: list[QGuiApplication] = []  # keeps an application we had to create alive
+_APPLICATION: list[QCoreApplication] = []  # keeps an application we had to create alive
 
 
-def ensure_application() -> QGuiApplication:
+def ensure_application() -> QCoreApplication:
     """The running application, or a new ``QApplication`` when there is none
     (a self-test, a script). Never call anything of Qt Quick 3D before this:
     ``QQuick3D.idealSurfaceFormat()`` without an application segfaults on Linux."""
-    app = QGuiApplication.instance()
+    app = QCoreApplication.instance()
     if app is None:
         from PyQt6.QtWidgets import QApplication
 
@@ -76,8 +77,9 @@ def image_rgba(image: QImage) -> NDArray[np.uint8]:
     """A ``QImage`` as an ``(height, width, 4)`` uint8 array, RGBA, row 0 on top."""
     converted = image.convertToFormat(QImage.Format.Format_RGBA8888)
     bits = converted.constBits()
-    bits.setsize(converted.sizeInBytes())
-    rows = np.frombuffer(bytes(bits), np.uint8).reshape(
+    if bits is None:
+        raise RenderError("the image has no pixel data")
+    rows = np.frombuffer(bits.asstring(converted.sizeInBytes()), np.uint8).reshape(
         converted.height(), converted.bytesPerLine() // 4, 4)
     return rows[:, :converted.width(), :].copy()
 

@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from typing import ClassVar, Final
 
-from PyQt6.QtCore import QByteArray, QObject
+from PyQt6.QtCore import QByteArray
 from PyQt6.QtGui import QVector3D
-from PyQt6.QtQuick3D import QQuick3DGeometry
+from PyQt6.QtQuick3D import QQuick3DGeometry, QQuick3DObject
 
 from open_garden_planner.core.scene3d import (
     COLOR_OFFSET,
@@ -40,7 +40,7 @@ class BufferGeometry(QQuick3DGeometry):
     #: recolour uploads nothing" (the render tier reads it around each edit).
     uploads: ClassVar[int] = 0
 
-    def __init__(self, buffers: EngineBuffers, parent: QObject | None = None) -> None:
+    def __init__(self, buffers: EngineBuffers, parent: QQuick3DObject | None = None) -> None:
         super().__init__(parent)
         self.vertex_count = buffers.vertex_count
         self.setStride(VERTEX_STRIDE)
@@ -53,5 +53,6 @@ class BufferGeometry(QQuick3DGeometry):
         self.addAttribute(_SEMANTIC.TexCoordSemantic, UV_OFFSET, _F32)
         self.addAttribute(_SEMANTIC.IndexSemantic, 0, _U32)
         self.setBounds(QVector3D(*buffers.bounds_min), QVector3D(*buffers.bounds_max))
-        self.update()
+        # QQuick3DObject.update() exists at runtime; PyQt6 6.11's stubs do not declare it
+        self.update()  # type: ignore[attr-defined]
         BufferGeometry.uploads += 1

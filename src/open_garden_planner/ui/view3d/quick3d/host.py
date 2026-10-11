@@ -331,7 +331,10 @@ class Quick3DHost:
 
     def graphics_api(self) -> str:
         """``Direct3D11Rhi``, ``OpenGLRhi``, … — or ``Unknown`` before a device exists."""
-        api = self._view.rendererInterface().graphicsApi()
+        interface = self._view.rendererInterface()
+        if interface is None:
+            return "Unknown"
+        api = interface.graphicsApi()
         return str(getattr(api, "name", api))
 
     # ── camera and look ──────────────────────────────────────────────────────
@@ -345,7 +348,7 @@ class Quick3DHost:
     def set_camera(self, eye_scene: tuple[float, float, float],
                    target_scene: tuple[float, float, float], fov_deg: float = 40.0) -> None:
         """Perspective: the eye and the point it looks at, scene frame (E, N, up)."""
-        shot = PerspectiveShot(tuple(eye_scene), tuple(target_scene), fov_deg)  # validates
+        shot = PerspectiveShot(eye_scene, target_scene, fov_deg)  # validates
         self._root.setProperty("topDown", False)
         self._root.setProperty("camPos", _engine_vector(shot.eye))
         self._root.setProperty("camTarget", _engine_vector(shot.target))
@@ -354,7 +357,7 @@ class Quick3DHost:
 
     def set_top_down(self, center_scene: tuple[float, float], px_per_cm: float) -> None:
         """Orthographic, straight down, north up: the truth view (``shots.TopDownShot``)."""
-        shot = TopDownShot(tuple(center_scene), px_per_cm)  # validates
+        shot = TopDownShot(center_scene, px_per_cm)  # validates
         self._root.setProperty("camTarget", _engine_vector((*shot.center, 0.0)))
         self._root.setProperty("topDownScale", float(shot.px_per_cm))
         self._root.setProperty("topDown", True)
