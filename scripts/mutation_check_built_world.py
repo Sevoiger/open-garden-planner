@@ -134,6 +134,11 @@ MUTANTS: tuple[Mutant, ...] = (
            "            local = item.mapFromScene(scene_point)\n"
            "            if item.contains(local):\n",
            (STACKING,), "one_point_in_bed_predicate"),
+    Mutant("a plant keeps its base when its parent got no record (38 cm over nothing)",
+           SRC + "ui/view3d/snapshot.py",
+           "    _ground_items_without_a_parent_record(records)\n    return records\n",
+           "    return records\n",
+           (STACKING,), "without_a_record or stacked_higher"),
     # ── the shared 2D caster ────────────────────────────────────────────────
     Mutant("a bare 3-tuple is a caster again (round 0)",
            SRC + "core/shadow_geometry.py",
@@ -203,6 +208,14 @@ MUTANTS: tuple[Mutant, ...] = (
            "    if style is None or name in _reported_styles:\n        return\n",
            "    if style is None:\n        return\n",
            (BUILDER_TESTS,), "reported_once_per_name"),
+    Mutant("the warning memory starts over when it is full (65 names: 65 lines per rebuild pass)",
+           BUILDERS + "lines.py",
+           "        if _NO_MORE not in _reported_styles:\n"
+           "            _reported_styles.add(_NO_MORE)\n",
+           "        _reported_styles.clear()\n"
+           "        if _NO_MORE not in _reported_styles:\n"
+           "            _reported_styles.add(_NO_MORE)\n",
+           (BUILDER_TESTS,), "memory_of_reported"),
     Mutant("an unknown style is built plain without a word",
            BUILDERS + "lines.py",
            "    if solid == fences.PLAIN:\n        _report_plain(record)\n",
