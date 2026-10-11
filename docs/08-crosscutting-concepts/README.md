@@ -3316,6 +3316,19 @@ plant no shadow either. It reads nothing but the radius: two ids, any species or
 the same dome. It cannot be taken for a plant: no leaves, no trunk, a third of the saturation of
 the palest real foliage, never taller than 25 cm.
 
+What the marker SAYS is exactly "no source of the plan gives this plant a height" (`height_cm is
+None`: no typed height, no measurement, no species size) — and nothing else. A typed height that
+is infinite or beyond `MAX_LENGTH_CM` (10 km; a hand-edited plan) gives the plant no record at
+all: it is left out and reported as `out_of_range` (§8.26.1), not shown as a marker — until the
+scene contract's second fix round an infinite height silently became `height_cm=None`, a marker
+saying "no height" about a plant that had one. A typed height that is no positive number (0, a
+negative, NaN, text) is no typed height, for 3D as for the 2D shadow, and the next source
+decides. Pinned by
+`tests/integration/test_scene3d_plants.py::test_the_placeholder_means_the_plan_gives_no_height_and_nothing_else`.
+The builder holds at the edge of what a record can carry: all thirteen archetypes build an exact,
+valid plant at 1e6 × 0.01 cm and at 0.0001 × 1e6 cm (proportion steps +378 and −472; a scratch
+probe, not a test).
+
 Who gets it — more plants than one would guess, and the owner should know before the first
 board:
 
