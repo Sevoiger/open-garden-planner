@@ -51,6 +51,35 @@ lost its solid, and the tiles in which two records swapped places. Every other
 tile is handed out as the SAME object as before — which is how the sink knows
 not to upload it.
 
+What a bake may cost — the bounds (a plan file is untrusted input, §8.11)
+-------------------------------------------------------------------------
+A record is painted once into every tile its paint reaches, so the cost of a
+tile is the SUM over its records, and three things are bounded per tile, each
+before the work it bounds:
+
+- at most ``TILE_RECORDS`` records are painted into one tile — the TOPMOST ones
+  (the lower ones are left out: under 256 layers of paint they would hardly be
+  seen), and
+- only while their outline vertices together stay within ``TILE_VERTICES`` (the
+  topmost record is always painted: one outline is at most the snapshot's
+  ``MAX_ITEM_VERTICES``);
+- the ELEMENTS a path style draws — stones, planks, posts, dots: as many as the
+  line is long, whatever its vertex count — are generated only inside the tile
+  (``path_style_paint``: the walk is clipped to the tile, keeping the pattern's
+  phase), and at most ``TILE_ELEMENTS`` per tile, all its paths together.
+
+A tile that hit one of them is counted (``capped_tiles``) and logged once.
+What is NOT bounded here because it is elsewhere: the vertices of one outline
+(the snapshot refuses an item above ``MAX_ITEM_VERTICES`` before one vertex is
+read), the tiles and pixels of a plan (``GroundGrid``: 256 tiles, 4096 × 4096
+px) and the dashes of a dashed pen (Qt's dasher skips what lies outside the
+image — measured: a dashed line of 19 km costs what one of 100 m costs).
+
+Memory: the tiles of the largest ground are 64 MB (``MAX_GROUND_PIXELS`` × 4
+bytes), held ONCE on this side — the baker's tiles are the very objects the
+sync and the sink hold; a bare tile's bytes are shared by all bare tiles of its
+size (at most four sizes). The records it keeps are the snapshot's own.
+
 GUI thread only (``QPixmap`` brushes and sprites). ``QtGui`` only: this module
 imports no Qt Quick module and nothing of the engine package.
 """
@@ -90,9 +119,11 @@ from open_garden_planner.core.scene3d import (
     TileKey,
 )
 from open_garden_planner.core.scene3d.frame import cos_sin
+from open_garden_planner.core.scene3d.ground import check_grid_settings
 from open_garden_planner.ui.canvas.items.path_style_paint import PathStylePaint
 
-__all__ = ["GroundBaker", "paint_bounds", "paint_record"]
+__all__ = ["TILE_ELEMENTS", "TILE_RECORDS", "TILE_VERTICES", "GroundBaker", "paint_bounds",
+           "paint_record"]
 
 _log = logging.getLogger(__name__)
 
@@ -115,6 +146,20 @@ _OUTLINE_REACH: Final = (1.0, 2.0)
 #: … and the pixels an antialiased edge and a sprite's whole-centimetre alignment
 #: can spill, whatever the resolution.
 _SPILL_PX: Final = 2.0
+#: How far outside a tile a style's elements are still generated, as a multiple of
+#: the line's width plus a constant: an element's own reach (``_PATH_REACH``) and
+#: one more element — the chain-link mesh is drawn from each element to the next.
+_ELEMENT_REACH: Final = (2.5, 8.0)
+
+#: The bounds of ONE tile (module docstring, "What a bake may cost"). Measured on
+#: the development box: a record costs 0.02–0.15 ms to paint into a tile (1.3 ms
+#: when it fills the tile with a turned texture), an outline 1 µs a vertex, a style
+#: element 2–5 µs — so a tile at all three bounds costs about a third of a second
+#: and a full bake of the largest ground (64 tiles) about twenty; a plan that is
+#: not built to reach them is three orders of magnitude below.
+TILE_RECORDS: Final = 256
+TILE_VERTICES: Final = 262_144
+TILE_ELEMENTS: Final = 16_384
 
 
 def _object_type(kind: str) -> ObjectType | None:
@@ -158,6 +203,15 @@ def _box(points: Iterable[tuple[float, float]]) -> tuple[float, float, float, fl
     if not xs:
         return None
     return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _vertices(record: Record) -> int:
+    """How many outline vertices painting the record walks."""
+    if record.shape == SHAPE_POLYLINE:
+        return len(record.path)
+    if record.outline:
+        return len(record.outline)
+    return sum(len(outer) + sum(len(hole) for hole in holes) for outer, holes in record.regions)
 
 
 def _local_box(record: Record) -> tuple[float, float, float, float] | None:
@@ -294,14 +348,32 @@ def _paint_filled(painter: QPainter, record: Record, paint: Paint, ox: float, oy
         _paint_regions(painter, record, ox, oy)
 
 
-def _paint_polyline(painter: QPainter, record: Record, paint: Paint, ox: float, oy: float) -> None:
+def _element_clip(painter: QPainter, width_cm: float) -> tuple[float, float, float, float] | None:
+    """The painter's device, as a box in the coordinates it paints in now, grown by
+    what a style's element can reach: outside of it no element need be generated.
+    None when the painter's transform cannot be inverted (nothing would be seen)."""
+    inverse, invertible = painter.transform().inverted()
+    if not invertible:
+        return None
+    box = inverse.mapRect(QRectF(painter.viewport()))
+    scale = abs(painter.transform().determinant()) ** 0.5
+    factor, constant = _ELEMENT_REACH
+    grow = factor * width_cm + constant + _SPILL_PX / max(scale, 1e-9)
+    return (box.left() - grow, box.top() - grow, box.right() + grow, box.bottom() + grow)
+
+
+def _paint_polyline(painter: QPainter, record: Record, paint: Paint, ox: float, oy: float,
+                    max_elements: int | None) -> int:
     """A path or a line: its style's painter (shared with ``PolylineItem``), else
-    the plain stroke of ``QGraphicsPathItem.paint``."""
+    the plain stroke of ``QGraphicsPathItem.paint``. Returns the style elements
+    it generated — only those inside the painter's device, at most
+    ``max_elements``."""
     points = _item_points(record.path, ox, oy)
     if len(points) < 2:
-        return
+        return 0
     material = record.material
-    pen = _pen(material, paint, record.path_width_cm or 0.0)
+    width_cm = record.path_width_cm or 0.0
+    pen = _pen(material, paint, width_cm)
     path = QPainterPath()
     path.moveTo(points[0])
     for point in points[1:]:
@@ -313,14 +385,20 @@ def _paint_polyline(painter: QPainter, record: Record, paint: Paint, ox: float, 
             style = PathFenceStyle[style_name]
         except KeyError:
             style = PathFenceStyle.NONE
-    if PathStylePaint(points, pen, path).paint(painter, style):
-        return
+    if style is not PathFenceStyle.NONE:
+        clip = _element_clip(painter, width_cm)
+        if clip is None:
+            return 0
+        styled = PathStylePaint(points, pen, path, clip=clip, max_elements=max_elements)
+        if styled.paint(painter, style):
+            return styled.elements
     painter.setPen(pen)
     painter.setBrush(_brush(material))  # none for a line; a filled one is filled, as on the canvas
     painter.drawPath(path)
+    return 0
 
 
-def paint_record(painter: QPainter, record: Record) -> None:
+def paint_record(painter: QPainter, record: Record, *, max_elements: int | None = None) -> int:
     """Paint one record's surface as the 2D canvas paints the item.
 
     ``painter``'s transform must map SCENE centimetres to the device (east to +x;
@@ -328,6 +406,10 @@ def paint_record(painter: QPainter, record: Record) -> None:
     coordinate frame (module docstring); the painter is left as it was found.
     Antialiasing and smooth pixmap transforms are the caller's to switch on — the
     canvas and its exports paint with both.
+
+    Returns the number of path-style ELEMENTS generated (0 for anything but a
+    styled path). They are generated only inside the painter's device — what lies
+    beside the image is never drawn — and at most ``max_elements`` of them.
     """
     paint = record.material.paint or _PLAIN_PAINT
     origin = record.params.get(PARAM_PAINT_ORIGIN)
@@ -348,9 +430,10 @@ def paint_record(painter: QPainter, record: Record) -> None:
         if paint.opacity < 1.0:
             painter.setOpacity(painter.opacity() * paint.opacity)
         if record.shape == SHAPE_POLYLINE:
-            _paint_polyline(painter, record, paint, ox, oy)
-        elif record.shape in (SHAPE_CIRCLE, SHAPE_ELLIPSE, SHAPE_RECTANGLE, SHAPE_POLYGON):
+            return _paint_polyline(painter, record, paint, ox, oy, max_elements)
+        if record.shape in (SHAPE_CIRCLE, SHAPE_ELLIPSE, SHAPE_RECTANGLE, SHAPE_POLYGON):
             _paint_filled(painter, record, paint, ox, oy)
+        return 0
     finally:
         painter.restore()
 
@@ -364,6 +447,7 @@ class _Painted:
 
     record: Record
     tiles: frozenset[TileKey]
+    vertices: int
 
 
 class GroundBaker:
@@ -378,12 +462,16 @@ class GroundBaker:
     ``bare_rgb``: the colour of ground no item covers (``MEADOW_RGB`` — a caller
     whose look has another meadow albedo passes that one; the parity tests pass
     the canvas's own background colour). ``tile_px`` / ``max_pixels``: the grid
-    (``GroundGrid.for_plan``).
+    (``GroundGrid.for_plan``) — validated HERE, where they enter
+    (``ground.check_grid_settings``): they can make a ground coarser, never
+    larger than the stated bounds.
 
     Instruments, for tests and diagnostics: ``last_repainted`` (the tiles the
     last ``bake`` painted anew), ``last_changed`` (those of them whose picture
     came out different — what a sink uploads), ``last_examined`` (the records it
-    looked at), ``tiles_painted`` and ``records_painted`` (running totals) and
+    looked at), ``tiles_painted``, ``records_painted`` and ``elements_generated``
+    (running totals), ``capped_tiles`` (tiles painted with a bound of the module
+    docstring in force: records left out, or a style's elements cut short) and
     ``failures`` (items whose paint raised: such an item is left out of the tile,
     the rest of it is painted, the failure is logged once).
     """
@@ -392,6 +480,7 @@ class GroundBaker:
                  max_pixels: int = MAX_GROUND_PIXELS) -> None:
         if len(bare_rgb) != 3 or not all(type(c) is int and 0 <= c <= 255 for c in bare_rgb):
             raise ValueError(f"bare_rgb is three ints in 0..255, got {bare_rgb!r}")
+        check_grid_settings(tile_px, max_pixels)  # before anything is allocated with them
         self._bare_rgb = (bare_rgb[0], bare_rgb[1], bare_rgb[2])
         self._tile_px = tile_px
         self._max_pixels = max_pixels
@@ -408,6 +497,9 @@ class GroundBaker:
         self.last_examined = 0
         self.tiles_painted = 0
         self.records_painted = 0
+        self.elements_generated = 0
+        self.capped_tiles = 0
+        self._cap_reported = False
 
     # ── what it holds ────────────────────────────────────────────────────────
 
@@ -434,8 +526,10 @@ class GroundBaker:
         return tuple(self._tiles[key] for key in grid.tile_keys())
 
     def image(self) -> QImage:
-        """The whole ground as ONE north-up image (tests and diagnostics; the
-        engine gets the tiles). Null before the first ``bake``."""
+        """The whole ground as ONE north-up image. A TEST AND TOOL HELPER — the
+        engine gets the tiles, and nothing in the product calls this: it allocates
+        the whole ground a second time (at most ``max_pixels`` × 4 bytes, 64 MB).
+        Null before the first ``bake``."""
         grid = self._grid
         if grid is None:
             return QImage()
@@ -515,7 +609,7 @@ class GroundBaker:
             tiles = frozenset(grid.tiles_touching(*bounds))
             if not tiles:
                 continue  # beside the plan: nothing of it is on the ground
-            self._painted[item_id] = _Painted(record, tiles)
+            self._painted[item_id] = _Painted(record, tiles, _vertices(record))
             for key in tiles:
                 self._members.setdefault(key, set()).add(item_id)
             dirty |= tiles
@@ -535,7 +629,7 @@ class GroundBaker:
         for key in repainted:
             order = tuple(sorted(self._members.get(key, ()),
                                  key=(position or {}).__getitem__))
-            tile = self._paint_tile(grid, key, [self._painted[item_id].record for item_id in order])
+            tile = self._paint_tile(grid, key, [self._painted[item_id] for item_id in order])
             self._order[key] = order
             previous = self._tiles.get(key)
             if previous is None or previous != tile:  # the same picture again is the same tile
@@ -547,11 +641,30 @@ class GroundBaker:
 
     # ── internals ────────────────────────────────────────────────────────────
 
-    def _paint_tile(self, grid: GroundGrid, key: TileKey, records: list[Record]) -> GroundTile:
-        """One tile, from scratch: bare ground, then ``records`` bottom to top."""
+    def _admitted(self, painted: list[_Painted]) -> tuple[list[Record], bool]:
+        """The records of one tile that ARE painted, bottom to top, and whether any
+        was left out: the topmost ``TILE_RECORDS``, and of those only as many as
+        keep the vertices within ``TILE_VERTICES`` — decided before one is painted."""
+        if len(painted) <= TILE_RECORDS and sum(entry.vertices for entry in painted) <= TILE_VERTICES:
+            return [entry.record for entry in painted], False
+        records: list[Record] = []
+        vertices = 0
+        for entry in reversed(painted):
+            if records and (len(records) >= TILE_RECORDS
+                            or vertices + entry.vertices > TILE_VERTICES):
+                break
+            records.append(entry.record)
+            vertices += entry.vertices
+        records.reverse()
+        return records, True
+
+    def _paint_tile(self, grid: GroundGrid, key: TileKey, painted: list[_Painted]) -> GroundTile:
+        """One tile, from scratch: bare ground, then its records bottom to top —
+        within the tile's bounds (module docstring)."""
         x0, y0, width, height = grid.tile_px_rect(key)
         east, north, width_cm, depth_cm = grid.tile_cm_rect(key)
         self.tiles_painted += 1
+        records, capped = self._admitted(painted)
         if not records:
             pixels = self._bare_pixels.get((width, height))
             if pixels is None:
@@ -571,15 +684,29 @@ class GroundBaker:
             # scene (east, north) → this tile's pixels, north up: row 0 is its north edge.
             # Whole-pixel offsets of ONE grid: every tile is a crop of the same image.
             painter.setTransform(QTransform(scale, 0.0, 0.0, -scale, float(-x0), float(y0 + height)))
+            elements_left = TILE_ELEMENTS
             for record in records:
                 self.records_painted += 1
                 self.failures.pop(record.item_id, None)
                 try:
-                    paint_record(painter, record)
+                    used = paint_record(painter, record, max_elements=elements_left)
                 except Exception as error:  # one item must not blank a tile
                     self._report(record, error)
+                    continue
+                self.elements_generated += used
+                elements_left -= used
+                capped = capped or (used > 0 and elements_left <= 0)
         finally:
             painter.end()
+        if capped:
+            self.capped_tiles += 1
+            if not self._cap_reported:
+                self._cap_reported = True
+                _log.warning(
+                    "3D ground: tile %s holds more than one tile is painted with (%d records, "
+                    "%d outline vertices, %d path-style elements); the rest is left out. "
+                    "Further tiles are only counted", key, TILE_RECORDS, TILE_VERTICES,
+                    TILE_ELEMENTS)
         bits = image.constBits()
         if bits is None:
             raise MemoryError(f"ground tile {key} has no pixel data")

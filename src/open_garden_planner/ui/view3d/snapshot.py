@@ -913,7 +913,12 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
         # No solid can be built of this outline. An item that is PAINTED on the ground
         # needs none — the bake fills and strokes what was drawn — so the verdict waits
         # until the item's height is known (below): only then is it left out.
-        if shape not in (OUTLINE_POLYGON, OUTLINE_POLYLINE):
+        # … but never an outline beyond the SIZE bound: that one is not copied, kept or
+        # painted, whatever the item is (the first statement of this function has
+        # already answered it from the stored vertex count; said again here, where the
+        # copy would be made)
+        if (shape not in (OUTLINE_POLYGON, OUTLINE_POLYLINE)
+                or len(outline.points) > MAX_ITEM_VERTICES):
             raise
         refused = error
         regions, path, width, radius, resolved = _drawn_only(outline, frame)

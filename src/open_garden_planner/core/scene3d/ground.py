@@ -25,6 +25,15 @@ texture and bake the moiré into the ground.
 A tile's ``pixels`` are RGBA8, opaque, row 0 on the NORTH edge — the image as a
 map shows it. An engine that samples it bottom-up flips it once (Qt Quick 3D:
 ``flipV``).
+
+BOUNDS. A plan's size comes out of a plan file, and anybody can write one. So
+the grid is bounded by construction, before a tile exists: a side longer than
+``MAX_PLAN_CM`` (or not a positive finite number) is refused; the pixels of all
+tiles together stay within ``max_pixels`` AND their number within
+``max_tiles`` — pixels alone do not bound it: a plan of 10 km by 1 cm is one
+row of 1-pixel-high tiles, each of them a tile object, a painted image and an
+engine texture. ``tiles_touching`` clamps a box to the grid before it does any
+arithmetic with it, so a box at infinity names no tile and overflows nothing.
 """
 
 from __future__ import annotations
@@ -33,6 +42,8 @@ import math
 from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
+
+from .record import MAX_LENGTH_CM
 
 if TYPE_CHECKING:
     from .record import Record
@@ -49,6 +60,18 @@ TILE_PX: Final = 512
 #: more, its mipmaps) on the graphics card. A plan of 24 × 16 m needs 3.8 million
 #: at 1 px/cm; one of 50 × 30 m 15 million; beyond that the resolution halves.
 MAX_GROUND_PIXELS: Final = 4096 * 4096
+#: The most tiles a ground may have (module docstring, "Bounds"). A plan whose
+#: pixels fit ``MAX_GROUND_PIXELS`` in full tiles has at most 64; only a plan much
+#: longer than wide comes near this number, and it halves its resolution until it
+#: is under it.
+MAX_GROUND_TILES: Final = 256
+#: The longest side a plan may have: what a record can hold (``record.MAX_LENGTH_CM``,
+#: 10 km) — no item can lie on ground beyond it.
+MAX_PLAN_CM: Final = MAX_LENGTH_CM
+#: The sides a tile may have, in pixels: below, a ground is thousands of tiles; above,
+#: one tile is more than an engine texture should be.
+MIN_TILE_PX: Final = 16
+MAX_TILE_PX: Final = 4096
 #: Albedo of plan ground no item covers, 8-bit sRGB: the ONE meadow albedo, shared
 #: with the endless meadow around the plan (``quick3d.look.NEUTRAL_DAY``, pinned
 #: equal by a test) — never the canvas's beige. A plan whose bare ground differs
@@ -133,25 +156,31 @@ class GroundGrid:
 
     @classmethod
     def for_plan(cls, width_cm: float, depth_cm: float, *, tile_px: int = TILE_PX,
-                 max_pixels: int = MAX_GROUND_PIXELS) -> GroundGrid:
+                 max_pixels: int = MAX_GROUND_PIXELS,
+                 max_tiles: int = MAX_GROUND_TILES) -> GroundGrid:
         """The grid of a plan of ``width_cm`` × ``depth_cm``: the finest resolution
-        of 1, 1/2, 1/4 … px/cm whose pixels, all tiles together, stay within
-        ``max_pixels``."""
+        of 1, 1/2, 1/4 … px/cm at which the ground has at most ``max_pixels``
+        pixels and at most ``max_tiles`` tiles. ``ValueError`` for a size that is
+        not a positive finite length up to ``MAX_PLAN_CM``, and for a grid setting
+        outside its range — all checked before any arithmetic."""
+        check_grid_settings(tile_px, max_pixels, max_tiles)
         for name, value in (("width_cm", width_cm), ("depth_cm", depth_cm)):
             if not math.isfinite(value) or value <= 0.0:
                 raise ValueError(f"a plan's {name} must be a positive length, got {value!r}")
-        if tile_px < 1 or max_pixels < 1:
-            raise ValueError(f"tile_px and max_pixels must be positive, got {tile_px}, {max_pixels}")
+            if value > MAX_PLAN_CM:
+                raise ValueError(f"a plan's {name} of {value!r} cm is beyond what a plan can "
+                                 f"hold ({MAX_PLAN_CM:g} cm)")
         px_per_cm = 1.0
-        while True:
+        while True:  # at most 50 halvings: both sides are at most 1e6 cm
             width_px = max(1, math.ceil(width_cm * px_per_cm - 1e-9))
             height_px = max(1, math.ceil(depth_cm * px_per_cm - 1e-9))
-            if width_px * height_px <= max_pixels or (width_px == 1 and height_px == 1):
+            columns, rows = -(-width_px // tile_px), -(-height_px // tile_px)
+            if ((width_px * height_px <= max_pixels and columns * rows <= max_tiles)
+                    or (width_px == 1 and height_px == 1)):
                 break
             px_per_cm /= 2.0
         return cls(width_cm=width_cm, depth_cm=depth_cm, px_per_cm=px_per_cm, tile_px=tile_px,
-                   width_px=width_px, height_px=height_px,
-                   columns=-(-width_px // tile_px), rows=-(-height_px // tile_px))
+                   width_px=width_px, height_px=height_px, columns=columns, rows=rows)
 
     @property
     def tile_count(self) -> int:
@@ -188,15 +217,31 @@ class GroundGrid:
         if not (east0 <= east1 and north0 <= north1):  # also False for a NaN
             return
         scale, tile = self.px_per_cm, self.tile_px
-        first_column = max(0, math.floor(east0 * scale / tile))
-        last_column = min(self.columns - 1, math.ceil(east1 * scale / tile) - 1)
-        first_row = max(0, math.floor(north0 * scale / tile))
-        last_row = min(self.rows - 1, math.ceil(north1 * scale / tile) - 1)
-        if east1 * scale <= 0.0 or north1 * scale <= 0.0:
-            return
-        for row in range(first_row, last_row + 1):
-            for column in range(first_column, last_column + 1):
+        # clamped to the grid FIRST: what follows only ever sees numbers between 0 and
+        # the grid's own size, whatever came in (an infinity too)
+        x0, x1 = max(east0 * scale, 0.0), min(east1 * scale, float(self.width_px))
+        y0, y1 = max(north0 * scale, 0.0), min(north1 * scale, float(self.height_px))
+        if not (x0 < x1 and y0 < y1):
+            return  # beside the grid, or only touching its edge
+        last_column = min(self.columns - 1, math.ceil(x1 / tile) - 1)
+        last_row = min(self.rows - 1, math.ceil(y1 / tile) - 1)
+        for row in range(int(y0 // tile), last_row + 1):
+            for column in range(int(x0 // tile), last_column + 1):
                 yield (column, row)
+
+
+def check_grid_settings(tile_px: int, max_pixels: int, max_tiles: int = MAX_GROUND_TILES) -> None:
+    """``ValueError`` for a grid setting outside its range: ``tile_px`` within
+    ``MIN_TILE_PX`` … ``MAX_TILE_PX``, ``max_pixels`` within 1 …
+    ``MAX_GROUND_PIXELS``, ``max_tiles`` within 1 … ``MAX_GROUND_TILES`` — the
+    ceilings are hard: a setting can make a ground coarser, never larger than the
+    stated memory bound. Called where the numbers ENTER (a baker's constructor),
+    before anything is allocated with them."""
+    for name, value, low, high in (("tile_px", tile_px, MIN_TILE_PX, MAX_TILE_PX),
+                                   ("max_pixels", max_pixels, 1, MAX_GROUND_PIXELS),
+                                   ("max_tiles", max_tiles, 1, MAX_GROUND_TILES)):
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f"{name} must be an int within {low} … {high}, got {value!r}")
 
 
 @runtime_checkable

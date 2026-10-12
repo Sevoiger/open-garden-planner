@@ -12,17 +12,64 @@ A painter reads three things and nothing else: the polyline's points in the
 ITEM's own coordinates (two styles derive a colour from them), its pen (width
 and colour) and its path. Selection is the item's own business and is drawn by
 the item, after the style.
+
+WHAT A STYLE COSTS, AND ITS BOUND. A style draws ELEMENTS along the line —
+stones, planks, posts, bars, dots — one every ``spacing``: their number is the
+line's LENGTH over the spacing, whatever its vertex count (two points a
+kilometre apart are 25,000 gravel dots). The canvas item paints them all, as it
+always has. A caller that paints a line into a small window — the ground bake,
+one tile at a time — passes that window as ``clip`` and a ``max_elements``:
+
+- only the elements inside ``clip`` are generated. Segments outside it are
+  stepped over by arithmetic, a long segment is entered at its first element
+  inside — and every element keeps its GLOBAL index and its place on the line,
+  so the pattern's phase is the canvas's and two neighbouring windows meet
+  without a seam;
+- a segment is walked with the canvas's own running sum (element for element
+  the same floats) while that is cheap — ``EXACT_WALK`` steps in all — and by
+  multiplication beyond (the same places to a few units in the last place);
+- after ``max_elements`` elements the walk stops and ``truncated`` says so.
+
+A spacing that is not positive draws no elements (it used to never return).
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterator, Sequence
+from typing import Final
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 
 from open_garden_planner.core.object_types import PathFenceStyle
+
+#: How many steps of a clipped walk are taken with the canvas's own running sum
+#: before the walk switches to arithmetic (module docstring).
+EXACT_WALK: Final = 16_384
+
+Element = tuple[QPointF, float, float, float, float]
+"""``(point, dir_x, dir_y, normal_x, normal_y)`` — one place along the line."""
+
+
+def _inside(px: float, py: float, dir_x: float, dir_y: float, length: float,
+            clip: tuple[float, float, float, float]) -> tuple[float, float] | None:
+    """The part ``[t0, t1]`` of the segment ``p + dir · t``, ``0 <= t <= length``,
+    that lies inside the box ``clip`` (x0, y0, x1, y1) — None when none does."""
+    t0, t1 = 0.0, length
+    for origin, direction, low, high in ((px, dir_x, clip[0], clip[2]),
+                                         (py, dir_y, clip[1], clip[3])):
+        if direction == 0.0:
+            if not low <= origin <= high:
+                return None
+            continue
+        first, second = (low - origin) / direction, (high - origin) / direction
+        if first > second:
+            first, second = second, first
+        t0, t1 = max(t0, first), min(t1, second)
+        if t0 > t1:
+            return None
+    return (t0, t1)
 
 
 class PathStylePaint:
@@ -30,13 +77,23 @@ class PathStylePaint:
 
     ``points``: the polyline in item coordinates. ``pen``: the item's pen.
     ``path``: the item's path through those points (built from them when not
-    given).
+    given). ``clip``: the window ``(x0, y0, x1, y1)``, in item coordinates, outside
+    of which no element need be generated — the caller grows it by an element's
+    reach; None (the canvas item) generates them all. ``max_elements``: where a
+    clipped walk stops. After ``paint``: ``elements`` generated, ``truncated``.
     """
 
     def __init__(self, points: Sequence[QPointF], pen: QPen,
-                 path: QPainterPath | None = None) -> None:
+                 path: QPainterPath | None = None, *,
+                 clip: tuple[float, float, float, float] | None = None,
+                 max_elements: int | None = None) -> None:
         self._points = list(points)
         self._pen = pen
+        self._clip = clip
+        self._max_elements = max_elements
+        self._exact_left = EXACT_WALK
+        self.elements = 0
+        self.truncated = False
         if path is None:
             path = QPainterPath()
             if self._points:
@@ -126,7 +183,7 @@ class PathStylePaint:
             QColor(color.red(), color.green() - 5, color.blue() + 5),
         ]
         spacing = 4.0
-        for i, (pt, _dir_x, _dir_y, nx, ny) in enumerate(self._walk_path(spacing)):
+        for i, (pt, _dir_x, _dir_y, nx, ny) in self._walk_indexed(spacing):
             dot_color = dot_colors[i % len(dot_colors)]
             painter.setBrush(QBrush(dot_color))
             # Vary position slightly across width
@@ -221,7 +278,7 @@ class PathStylePaint:
         plank_w = width * 0.3
         half_w = width / 2.0
 
-        for i, (pt, dir_x, dir_y, _nx, _ny) in enumerate(self._walk_path(plank_spacing)):
+        for i, (pt, dir_x, dir_y, _nx, _ny) in self._walk_indexed(plank_spacing):
             # Alternate plank color slightly
             shade = 10 if i % 2 == 0 else -10
             plank_color = QColor(
@@ -241,6 +298,12 @@ class PathStylePaint:
             painter.restore()
 
         # Side rails
+        # … stroked, not filled. Without this the rails were drawn with the brush the LAST
+        # plank left behind: Qt fills an open path as if it were closed, so a path with
+        # a bend got a patch in that plank's colour between its rail and the rail's
+        # chord — over its own planks (found by L1.5's parity test: the patch's colour
+        # depends on the last element, which a tile does not always draw).
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         rail_pen = QPen(color.darker(140))
         rail_pen.setWidthF(1.5)
         painter.setPen(rail_pen)
@@ -377,15 +440,18 @@ class PathStylePaint:
         mesh_spacing = width * 0.8
         half_w = width
 
-        zigzag_up = True
+        # the zigzag by the element's INDEX (up on even ones), a line only between two
+        # neighbours: a clipped walk leaves elements out, and must neither flip the
+        # zigzag nor span the gap
         prev_pt: QPointF | None = None
-        for pt, _dir_x, _dir_y, nx, ny in self._walk_path(mesh_spacing):
-            offset = half_w * (0.5 if zigzag_up else -0.5)
+        prev_index = -2
+        for i, (pt, _dir_x, _dir_y, nx, ny) in self._walk_indexed(mesh_spacing):
+            offset = half_w * (0.5 if i % 2 == 0 else -0.5)
             mesh_pt = QPointF(pt.x() + nx * offset, pt.y() + ny * offset)
-            if prev_pt is not None:
+            if prev_pt is not None and i == prev_index + 1:
                 painter.drawLine(prev_pt, mesh_pt)
             prev_pt = mesh_pt
-            zigzag_up = not zigzag_up
+            prev_index = i
 
         # Posts at intervals
         post_spacing = width * 8.0
@@ -419,7 +485,7 @@ class PathStylePaint:
         half_w = width / 2.0
         painter.setPen(Qt.PenStyle.NoPen)
 
-        for i, (pt, _dir_x, _dir_y, nx, ny) in enumerate(self._walk_path(bump_spacing)):
+        for i, (pt, _dir_x, _dir_y, nx, ny) in self._walk_indexed(bump_spacing):
             shade = 15 if i % 2 == 0 else -15
             leaf_color = QColor(
                 max(0, min(255, color.red() + shade)),
@@ -456,7 +522,7 @@ class PathStylePaint:
         stone_spacing = width * 0.6
         half_w = width / 2.0
 
-        for i, (pt, dir_x, dir_y, nx, ny) in enumerate(self._walk_path(stone_spacing)):
+        for i, (pt, dir_x, dir_y, nx, ny) in self._walk_indexed(stone_spacing):
             # Vary stone color
             shade = ((i * 17) % 30) - 15
             stone_color = QColor(
@@ -484,6 +550,12 @@ class PathStylePaint:
             painter.restore()
 
         # Border lines
+        # … stroked, not filled. Without this the borders were drawn with the brush the LAST
+        # stone left behind: Qt fills an open path as if it were closed, so a path with
+        # a bend got a patch in that stone's colour between its border and the border's
+        # chord — over its own stones (found by L1.5's parity test: the patch's colour
+        # depends on the last element, which a tile does not always draw).
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         border_pen = QPen(color.darker(140))
         border_pen.setWidthF(0.8)
         painter.setPen(border_pen)
@@ -496,18 +568,35 @@ class PathStylePaint:
 
     # ── Helper methods ──
 
-    def _walk_path(
-        self, spacing: float
-    ) -> Iterator[tuple[QPointF, float, float, float, float]]:
+    def _walk_path(self, spacing: float) -> Iterator[Element]:
         """Walk along the polyline yielding points at regular intervals.
 
         Yields:
             Tuples of (point, dir_x, dir_y, normal_x, normal_y)
         """
-        points = self._points
-        if len(points) < 2:
-            return
+        for _index, element in self._walk_indexed(spacing):
+            yield element
 
+    def _admit(self) -> bool:
+        """Count one more element of a clipped walk; False when it is one too many."""
+        if self._max_elements is not None and self.elements >= self._max_elements:
+            self.truncated = True
+            return False
+        self.elements += 1
+        return True
+
+    def _walk_indexed(self, spacing: float) -> Iterator[tuple[int, Element]]:
+        """``_walk_path`` with every element's index along the WHOLE line — what a
+        style alternates its colours by. Without a clip: every element, by the
+        running sum the painters have always used. With one: only the elements
+        inside it (module docstring), their indices unchanged.
+        """
+        points = self._points
+        if len(points) < 2 or not spacing > 0.0:  # also False for a NaN
+            return
+        clip = self._clip
+
+        index = 0
         dist_remaining = 0.0
         for seg_idx in range(len(points) - 1):
             p1 = points[seg_idx]
@@ -523,10 +612,39 @@ class PathStylePaint:
             nx, ny = -dir_y, dir_x  # Normal
 
             t = dist_remaining
-            while t <= seg_len:
-                pt = QPointF(p1.x() + dir_x * t, p1.y() + dir_y * t)
-                yield (pt, dir_x, dir_y, nx, ny)
-                t += spacing
+            if clip is None:
+                while t <= seg_len:
+                    pt = QPointF(p1.x() + dir_x * t, p1.y() + dir_y * t)
+                    yield index, (pt, dir_x, dir_y, nx, ny)
+                    index += 1
+                    t += spacing
+            elif t <= seg_len:
+                count = int((seg_len - t) // spacing) + 1  # the elements this segment holds
+                span = _inside(p1.x(), p1.y(), dir_x, dir_y, seg_len, clip)
+                if span is not None and count <= self._exact_left:
+                    # the canvas's own walk, sum for sum; only what is inside is handed out
+                    self._exact_left -= count
+                    while t <= seg_len:
+                        if span[0] <= t <= span[1]:
+                            if not self._admit():
+                                return
+                            pt = QPointF(p1.x() + dir_x * t, p1.y() + dir_y * t)
+                            yield index, (pt, dir_x, dir_y, nx, ny)
+                        index += 1
+                        t += spacing
+                else:
+                    if span is not None:  # a long segment: enter it at its first element inside
+                        step = max(0, math.ceil((span[0] - t) / spacing))
+                        last = min(count - 1, math.floor((span[1] - t) / spacing))
+                        while step <= last:
+                            if not self._admit():
+                                return
+                            at = t + step * spacing
+                            pt = QPointF(p1.x() + dir_x * at, p1.y() + dir_y * at)
+                            yield index + step, (pt, dir_x, dir_y, nx, ny)
+                            step += 1
+                    index += count
+                    t += count * spacing
 
             dist_remaining = t - seg_len
 
