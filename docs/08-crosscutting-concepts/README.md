@@ -2861,8 +2861,12 @@ asked (fix round 3), bounded the memory and **recomputed the plan on every tick*
 was larger than the cap: a snapshot asks in the same order every time, so each answer was the
 oldest when its turn came — 160 polygons of 1,000 vertices re-cut all 160 regions per idle tick
 (4.6 to 5.3 s where 0.2 s had been), 110 closed fences took 14 s. *A cache must hold its
-working set; bound what is beyond it.* The live answers cost memory in proportion to the plan
-— their rings are the records' own, so little beyond what the records hold. One consequence
+working set; bound what is beyond it.* The live answers cost memory in proportion to the plan:
+an answer's rings are the records' own, and its key is the outline as drawn — the same ring
+when that turns counter-clockwise, one more copy of it (104 bytes a vertex) when it does not.
+The generation is the PROCESS's clock, not a scene's: the app snapshots one scene. Were
+several scenes snapshotted in turn, the answers of one would be stale by the time its turn
+came again, and bounded by the cap as before. One consequence
 worth knowing: the CUT of a region is asked for when it is made and when the solid is built,
 not on idle ticks, so in a plan above the cap it goes stale and may be dropped — a full rebuild
 (a new sync, `reset()`) then cuts those regions again, once. `cut_region`,
