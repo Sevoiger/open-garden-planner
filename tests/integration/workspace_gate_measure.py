@@ -488,7 +488,7 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
     plus 25 MB kept alive per reload — the gate must FAIL on it)."""
     variant = str(args.get("variant", "rebuild_on"))
     reloads = int(args.get("reloads", 20))
-    plan = str(args["plan"])
+    plan = str(window._project_manager.current_file)  # the plan main() was started on
     yield from _enter_and_wait(window, "split")
     workspace = window._workspace
     controller = workspace.controller
@@ -498,8 +498,22 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
     gpu_before = gpu_dedicated_mb()
     curve: list[float] = []
     gpu_curve: list[float | None] = []
+    presented: list[int] = []
+    release_ms: list[float] = []
+    hitch_ms: list[float] = []
+    same: list[bool] = []
     uploads_before = getattr(controller.sync.sink, "geometry_uploads", None)
+    trace = bool(args.get("trace", False))  # where PYTHON-side memory grows, if it does
+    traced: dict[str, Any] = {}
+    if trace:
+        import tracemalloc
+
+        tracemalloc.start(8)
     for _index in range(reloads):
+        if trace and _index in (reloads // 4, (3 * reloads) // 4):
+            gc.collect()
+            traced[str(_index)] = tracemalloc.take_snapshot()
+        frames = host.health().frames_presented
         window._load_project_file(plan)
         _pump_until(lambda: not controller.dirty, 30.0)
         if variant in ("rebuild_on", "control"):
@@ -508,14 +522,46 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
         if variant == "control":
             kept.append(b"\x01" * (25 * 1024 * 1024))
         _grab(host)
+        # two PRESENTED frames after the readback: what a destroyed Model held is
+        # released at the end of a presented frame, never by a readback (measured)
+        wanted = host.health().frames_presented + 2
+        _pump_until(lambda wanted=wanted: host.health().frames_presented >= wanted, 2.0)
         _pump(30)
+        if args.get("poke_release"):  # an experiment: Qt's own release, poked from outside
+            before_release = _grab(host)[1]
+            started = time.perf_counter()
+            host._view.releaseResources()
+            release_ms.append(round((time.perf_counter() - started) * 1000.0, 1))
+            took, after_release = _grab(host)
+            hitch_ms.append(round(took, 1))
+            same.append(before_release == after_release)
+            wanted = host.health().frames_presented + 2
+            _pump_until(lambda wanted=wanted: host.health().frames_presented >= wanted, 2.0)
+        presented.append(host.health().frames_presented - frames)
         gc.collect()
         curve.append(round(private_mb(), 2))
         gpu = gpu_dedicated_mb()
         gpu_curve.append(gpu.get("process_dedicated_mb") if gpu.get("available") else None)
     second_half = curve[len(curve) // 2:]
     gpu_values = [value for value in gpu_curve if value is not None]
-    step("soak", variant=variant, reloads=reloads, curve_mb=curve,
+    python_growth: dict[str, Any] = {}
+    if trace and len(traced) == 2:
+        import tracemalloc
+
+        early, late = (traced[key] for key in sorted(traced, key=int))
+        between = (3 * reloads) // 4 - reloads // 4
+        stats = late.compare_to(early, "traceback")
+        python_growth = {
+            "reloads_between": between,
+            "total_mb_per_reload": round(sum(s.size_diff for s in stats) / 1048576.0 / between, 3),
+            "top": [{"mb_per_reload": round(s.size_diff / 1048576.0 / between, 3),
+                     "count_per_reload": round(s.count_diff / between, 1),
+                     "where": [f"{frame.filename.replace(os.sep, '/').rsplit('/', 3)[-1]}:"
+                               f"{frame.lineno}" for frame in s.traceback][-6:]}
+                    for s in stats[:8]],
+        }
+        tracemalloc.stop()
+    step("soak", variant=variant, reloads=reloads, curve_mb=curve, python_growth=python_growth,
          slope_second_half_mb_per_reload=round(theil_sen(second_half), 3),
          slope_all_mb_per_reload=round(theil_sen(curve), 3),
          growth_mb=round(curve[-1] - curve[0], 2),
@@ -524,7 +570,9 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
              round(theil_sen(gpu_values[len(gpu_values) // 2:]), 3) if len(gpu_values) > 3 else None),
          geometry_uploads=(getattr(controller.sync.sink, "geometry_uploads", 0) - uploads_before
                            if uploads_before is not None else None),
-         kept_mb=25 * len(kept), parts=host.part_count(), facts=facts(window))
+         kept_mb=25 * len(kept), parts=host.part_count(),
+         frames_presented_per_reload=presented, release_ms=release_ms,
+         grab_after_release_ms=hitch_ms, same_image_after_release=same, facts=facts(window))
     yield 100
 
 

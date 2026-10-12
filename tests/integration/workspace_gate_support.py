@@ -88,19 +88,30 @@ def app_log_of(scratch: Path, store: str) -> str:
 
 def run_gate(scratch: Path, scenario: str, *, plan: Path | None = PLANS / "bench_small.ogp",
              store: str | None = None, command: list[str] | None = None,
-             software: bool = False, **arguments: Any) -> GateRun:
+             software: bool = False, timer_paced: bool = False,
+             **arguments: Any) -> GateRun:
     """Run one scenario in a fresh process and return what happened.
 
     ``command``: what to start instead of the source child — the frozen gate exe.
     ``software``: start the process with Qt's own software switch (the render tier's
     WARP run); the workspace's compatibility mode is a different, per-window route.
+    ``timer_paced``: Qt's own ``QT_D3D_NO_VBLANK_THREAD=1``. On Windows Qt asks a
+    display-vblank thread for its update requests, and with the display asleep that
+    thread is silent: a visible window presents its first frame and no more. With the
+    switch Qt paces them by timer, so frames are PRESENTED whatever the display does
+    — the ordinary render path, which a scenario that measures what the end of a
+    presented frame releases needs (the memory soak).
     """
     spec, out, name = write_spec(scratch, scenario, store=store, **arguments)
     argv = [*(command or [sys.executable, str(CHILD)]), *([str(plan)] if plan else [])]
+    extra = {}
+    if software:
+        extra["QSG_RHI_PREFER_SOFTWARE_RENDERER"] = "1"
+    if timer_paced:
+        extra["QT_D3D_NO_VBLANK_THREAD"] = "1"
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
         argv, capture_output=True, text=True, timeout=GATE_TIMEOUT_S, cwd=scratch,
-        env=render_env(scratch, OGP_QUICK3D="1", OGP_WORKSPACE_GATE=str(spec),
-                       **({"QSG_RHI_PREFER_SOFTWARE_RENDERER": "1"} if software else {})))
+        env=render_env(scratch, OGP_QUICK3D="1", OGP_WORKSPACE_GATE=str(spec), **extra))
     report = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else {}
     return GateRun(proc.returncode, report, driver_messages(proc.stderr), proc.stderr, name,
                    app_log_of(scratch, name))
