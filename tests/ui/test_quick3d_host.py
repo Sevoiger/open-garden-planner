@@ -45,7 +45,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent, QObject
@@ -816,16 +816,26 @@ class TestStateMachine:
         ((319, 240), 1.0, (320, 240), False), ((321, 240), 1.0, (320, 240), False),
         ((320, 239), 1.0, (320, 240), False), ((320, 242), 1.0, (320, 240), False),
         ((640, 480), 2.0, (320, 240), True), ((638, 480), 2.0, (320, 240), False),
-        # a fractional ratio rounds: 447 x 1.5 = 670.5 is 670 or 671 device pixels
-        ((670, 750), 1.5, (447, 500), True), ((671, 750), 1.5, (447, 500), True),
+        # a fractional ratio rounds: 447 x 1.5 = 670.5 — Qt gives 671; 670 is as far off (half
+        # a pixel) and is no window's frame at 1.5 (446 gives 669)
+        ((671, 750), 1.5, (447, 500), True), ((670, 750), 1.5, (447, 500), True),
         ((669, 750), 1.5, (447, 500), False), ((672, 750), 1.5, (447, 500), False),
+        # review round 5, measured on a real window at 125 %: a 442 px pane has a 553 px frame
+        # (552.5 rounds up), a 443 px pane a 554 px one — and "less than one pixel off" took
+        # the 553 px frame for the 443 px pane (0.75 off 553.75)
+        ((553, 625), 1.25, (442, 500), True), ((554, 625), 1.25, (443, 500), True),
+        ((553, 625), 1.25, (443, 500), False), ((554, 625), 1.25, (442, 500), False),
+        ((553, 624), 1.25, (442, 500), False),
+        # the same at 110 %: 446 -> 491 px (490.6), 447 -> 492 px (491.7)
+        ((492, 550), 1.1, (447, 500), True), ((491, 550), 1.1, (447, 500), False),
     ])
     def test_the_size_check_is_exact_to_the_device_pixel(
             self, image: tuple[int, int], ratio: float, window: tuple[int, int], fits: bool) -> None:
         """What sentence 1 of the contract rests on. The check allowed TWO pixels until
         review round 4: a pane moved by one pixel, and the frame of the size it had before
         passed for the current one (measured: a 447 x 500 frame for a 448 x 500 window,
-        handed out). One pixel is another size."""
+        handed out). And "less than one" until round 5 — true at 100 %, 150 % and 200 %, and
+        not in between. The rule is Qt's own rounding: half a device pixel."""
         from PyQt6.QtGui import QImage
 
         from open_garden_planner.ui.view3d.quick3d.host import Quick3DHost
@@ -837,12 +847,59 @@ class TestStateMachine:
         if not fits:
             assert f"{image[0]} x {image[1]} px image for a {window[0]} x {window[1]} window" in found
 
+    RATIOS: ClassVar = (1.0, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0)
+
+    @pytest.mark.parametrize("ratio", RATIOS)
+    def test_the_size_check_is_qts_own_rounding_at_every_ratio(self, ratio: float) -> None:
+        """Review round 5, P1-1 — the arithmetic, for every logical width from 2 to 3000 at
+        twelve ratios: the frame QT makes for a window (``QSize * ratio``, asked of Qt
+        here) is never refused, and the frame of a window one or two logical pixels
+        smaller or larger is never taken for it. Before: 750 of 11,993 neighbour frames
+        passed at 1.25, and every ratio strictly between 1 and 1.5 had some."""
+        from PyQt6.QtCore import QSize
+
+        from open_garden_planner.ui.view3d.quick3d.host import Quick3DHost
+
+        class Frame:  # the three questions the check asks of an image
+            def __init__(self, size: QSize) -> None:
+                self._size = size
+
+            def width(self) -> int:
+                return self._size.width()
+
+            def height(self) -> int:
+                return self._size.height()
+
+            def devicePixelRatio(self) -> float:  # noqa: N802 - Qt's name
+                return ratio
+
+        def frame_of(width: int) -> Frame:
+            return Frame(QSize(width, 300) * ratio)  # Qt's own rounding, not a formula of ours
+
+        other_size = Quick3DHost._other_size  # noqa: SLF001
+        refused_right, accepted_neighbour, pairs = [], [], 0
+        for width in range(2, 3001):
+            window = _facts(size=(width, 300))
+            if other_size(frame_of(width), window) is not None:
+                refused_right.append(width)
+            for neighbour in (width - 2, width - 1, width + 1, width + 2):
+                if neighbour >= 2:
+                    pairs += 1
+                    if other_size(frame_of(neighbour), window) is None:
+                        accepted_neighbour.append((neighbour, width))
+        assert pairs == 11_993
+        assert refused_right == [], f"Qt's own frame refused at {ratio}: {refused_right[:5]}"
+        assert accepted_neighbour == [], (
+            f"at {ratio} the frame of another window passed {len(accepted_neighbour)} times of "
+            f"{pairs}, e.g. (its window, the window asked for) {accepted_neighbour[:3]}")
+
     def test_pick_and_project_answer_for_a_frame_of_the_windows_size(self, host) -> None:
         """Measured on Direct3D 11: right after a resize, with no frame in between, a pick
         MISSES the box under the cursor — the engine picks with the viewport of the frame
         it rendered last. So ``pick`` and ``project`` take a frame themselves when the
         host has none since the last resize — ONE, not one per call — and refuse when
-        that frame has another size, without asking the scene."""
+        that frame has another size, without asking the scene and without a second frame
+        (the test below)."""
         from open_garden_planner.ui.view3d.quick3d.host import HostStateError
 
         asked: list[str] = []
@@ -864,7 +921,80 @@ class TestStateMachine:
             with pytest.raises(HostStateError, match=STALE):
                 call()
         assert asked == [], "refused on the evidence of the frame: the scene is not asked"
-        assert host.stale_frames == 2 and host.state.value == "live"
+        assert (host.stale_frames, len(taken)) == (1, 4), "ONE frame for the two refusals"
+        assert host.state.value == "live"
+
+    def test_while_the_render_target_is_behind_a_tick_costs_one_frame(
+            self, host, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Review round 5, P1-2. ``pick()`` / ``project()`` took a probe frame on EVERY
+        call while the render target was behind: 200 ``project()`` of one tick, 200
+        frames, all refused — 0.4 s on the GPU, 0.8 s on WARP, for nothing. Now a refusal
+        stands until the host sees something else than it saw then (a sign of progress,
+        another size) or ``REPROBE_S`` has passed: 200 refused calls, ONE frame — and a
+        host that recovered is asked again at once when a sign came, and after
+        ``REPROBE_S`` at the latest when none did."""
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+        from open_garden_planner.ui.view3d.quick3d.host import HostStateError
+
+        asked: list[str] = []
+        host._call = lambda name, *_a: asked.append(name) or {"hit": False, "x": 7.0, "y": 9.0}  # noqa: SLF001
+        monkeypatch.setattr(host_module, "REPROBE_S", 3600.0)  # the clock is not what is tested first
+        taken = _frames(host, (49, 240))
+        _force(host)
+
+        def refused(call: Any, times: int) -> None:
+            for _ in range(times):
+                with pytest.raises(HostStateError, match=STALE):
+                    call()
+
+        refused(lambda: host.project(0.0, 0.0, 0.0), 200)
+        assert (len(taken), host.probes, host.stale_frames) == (1, 1, 1), "200 refusals, one frame"
+        refused(lambda: host.pick(1.0, 1.0), 200)
+        assert (len(taken), host.probes, host.stale_frames) == (1, 1, 1), "and none for pick()"
+        assert asked == [] and host.state.value == "live"
+        # a caller's own grab() always takes a frame — and its refusal stands for the others
+        refused(lambda: host.grab("wanted"), 2)
+        assert (len(taken), host.probes) == (3, 1)
+        refused(lambda: host.pick(1.0, 1.0), 50)
+        assert len(taken) == 3
+
+        # a sign of progress, and the frame still does not fit: ONE more frame
+        _sign(host, "expose")
+        refused(lambda: host.project(0.0, 0.0, 0.0), 200)
+        assert (len(taken), host.probes) == (4, 2)
+        # the host recovered, and a sign says so: the very next call answers
+        _frames(host, (320, 240))
+        _sign(host, "expose")
+        assert host.project(0.0, 0.0, 0.0) == (7.0, 9.0) and host.pick(1.0, 1.0) is None
+        assert host.probes == 3 and asked == ["projectToView", "pickAt"]
+
+        # behind again — and it recovers WITHOUT a sign the watch counts: refused for
+        # REPROBE_S at the most, then asked again
+        _sign(host, "resize")
+        taken = _frames(host, (49, 240))
+        refused(lambda: host.pick(1.0, 1.0), 3)
+        assert len(taken) == 1
+        _frames(host, (320, 240))
+        refused(lambda: host.pick(1.0, 1.0), 3)  # nothing told the host: the refusal stands
+        monkeypatch.setattr(host_module, "REPROBE_S", 0.0)  # ... until the time is up
+        assert host.pick(1.0, 1.0) is None
+
+        # another size is something else than the host saw: it looks again at once
+        monkeypatch.setattr(host_module, "REPROBE_S", 3600.0)
+        _sign(host, "resize")
+        taken = _frames(host, (49, 240))
+        refused(lambda: host.pick(1.0, 1.0), 3)
+        assert len(taken) == 1
+        host._frames_stubbed = False  # noqa: SLF001
+        _force(host, size=(200, 240), root_width=200.0)  # the pane has another size now
+        assert host.pick(1.0, 1.0) is None, "new facts: a new frame, at once"
+
+    def test_the_time_a_refusal_stands_is_short_and_stated(self) -> None:
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+        from open_garden_planner.ui.view3d.quick3d import lifecycle
+
+        assert host_module.REPROBE_S == lifecycle.REPROBE_S == 0.25
+        assert "``REPROBE_S`` (0.25 s)" in (lifecycle.__doc__ or "")
 
     def test_the_one_offscreen_frame_in_another_size_is_an_engine_error(self, host) -> None:
         """There is no "later" for the offscreen frame — the host is spent by it — so a
@@ -911,12 +1041,15 @@ class TestStateMachine:
 
 
 class TestWaitReady:
-    """The contract's sentences 2 and 3 (``lifecycle.py``): ``wait_ready(timeout_s)`` is
-    back within ``timeout_s``, event delivery included; True means a frame of the
+    """The contract's sentences 2 and 3 (``lifecycle.py``): ``wait_ready(timeout_s)``
+    starts no pass of the event loop once ``timeout_s`` is up; True means a frame of the
     window's size was just taken; and when nothing is on its way it says False promptly —
-    ``STALL_S`` after the last sign of progress — never at the deadline."""
+    after ``STALL_S`` of silence — never at the deadline."""
 
-    def test_the_default_timeout_is_safe_for_one_call_on_the_gui_thread(self) -> None:
+    def test_the_default_timeout_is_one_second_and_the_docstring_says_what_the_call_is(self) -> None:
+        """Review round 5: the docstring said the default was "safe for one call on the
+        GUI thread". It is a nested event loop that takes user input; the workspace needs
+        it nowhere on the GUI thread, and the text says so."""
         import inspect
 
         from open_garden_planner.ui.view3d.quick3d import host as host_module
@@ -924,8 +1057,11 @@ class TestWaitReady:
 
         default = inspect.signature(host_module.Quick3DHost.wait_ready).parameters["timeout_s"].default
         assert default == lifecycle.WAIT_READY_DEFAULT_S == 1.0, "10 s was not safe"
-        text = host_module.Quick3DHost.wait_ready.__doc__ or ""
-        assert "never call it from a" in text and "timer slot" in text and "except HostStateError" in text
+        text = " ".join((host_module.Quick3DHost.wait_ready.__doc__ or "").split())
+        for words in ("NESTED EVENT LOOP", "takes user input", "nowhere on the GUI thread",
+                      "Never call it from a timer slot", "except HostStateError",
+                      "PLUS whatever was queued when its last pass began"):
+            assert words in text, words
 
     def test_true_means_a_frame_of_the_windows_size_was_just_taken(self, host) -> None:
         taken = _frames(host, (320, 240))
@@ -1043,8 +1179,11 @@ class TestWaitReady:
         ({"minimised": True}, 5.0, [5000]), ({"size": (0, 240)}, 5.0, [5000]),
         ({"visible": False}, 5.0, []), ({"surface_created": False, "visible": False}, 5.0, []),
         ({}, 0.0, []),
+        # review round 5, P2-3: these raised OverflowError (Qt takes milliseconds in a C int)
+        ({}, float("inf"), [86_400_000]), ({}, 3.0e6, [86_400_000]), ({}, float("nan"), []),
+        ({}, -float("inf"), []),
     ], ids=["live", "live, 0.25 s", "starting", "minimised", "collapsed", "not visible", "new",
-            "no timeout"])
+            "no timeout", "infinity", "34 days", "not a number", "minus infinity"])
     def test_it_delivers_pending_events_once_and_inside_its_time(
             self, host, monkeypatch: pytest.MonkeyPatch, changes: dict[str, Any], timeout: float,
             expected: list[int]) -> None:
@@ -1068,6 +1207,81 @@ class TestWaitReady:
         _force(host, **changes)
         host.wait_ready(timeout)
         assert limits == expected
+
+    @pytest.mark.parametrize("timeout", [float("inf"), 3.0e6, 1.0e300],
+                             ids=["infinity", "34 days", "1e300"])
+    def test_a_timeout_without_end_still_ends_after_the_stall_bound(self, host, timeout: float) -> None:
+        """Review round 5, P2-3: ``wait_ready(float("inf"))`` raised ``OverflowError``. A
+        timeout is clamped to a day — and sentence 3 holds whatever it is: nothing comes,
+        False after ``STALL_S``."""
+        from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
+
+        _force(host, scene_graph=False, exposed=False)
+        started = time.perf_counter()
+        assert host.wait_ready(timeout) is False and host.state.value == "starting"
+        assert STALL_S - 0.05 <= time.perf_counter() - started < STALL_S + 0.8
+
+    def test_a_busy_pass_of_the_event_loop_is_not_silence(self, host) -> None:
+        """Review round 5, P2-2. The stall bound counted WALL time: with the GUI thread
+        busy for 0.7 s inside the wait — a handler of something else — and the repaint
+        posted right after it, ``wait_ready(5)`` said False after 0.75 s and True when
+        asked again. Silence is time the event loop was idle; a pass that overran its
+        step is not counted, however long it took."""
+        from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
+
+        taken = _frames(host, (49, 240))
+        _force(host)
+        passes: list[float] = []
+
+        def run_events(milliseconds: int) -> bool:
+            passes.append(milliseconds)
+            if len(passes) == 1:
+                time.sleep(STALL_S + 0.2)  # another object's handler: a plan load, a repaint
+            elif len(passes) == 2:
+                _frames(host, (320, 240))  # the repaint that was queued behind it arrives
+                _sign(host, "expose")
+            return True
+
+        host._run_events = run_events  # noqa: SLF001
+        started = time.perf_counter()
+        assert host.wait_ready(5.0) is True, "the host was busy, not silent"
+        assert STALL_S + 0.2 <= time.perf_counter() - started < STALL_S + 1.0
+        assert len(passes) == 2 and taken == [(49, 240)]
+        assert host.longest_quiet_s < 0.1, "the busy pass is no quiet spell either"
+
+    def test_idle_passes_add_up_to_silence_whatever_a_busy_one_took(
+            self, host, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The other half: a busy pass does not START the stall bound again — it is simply
+        not counted. Idle time before it and idle time after it add up to ``STALL_S``.
+        (On a clock of its own: how long a pass "took" is what is under test, and a
+        loaded machine must not decide it.)"""
+        from types import SimpleNamespace
+
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+        from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
+
+        now = [1000.0]
+        monkeypatch.setattr(host_module, "time", SimpleNamespace(perf_counter=lambda: now[0]))
+        _force(host, scene_graph=False, exposed=False)
+        # an idle pass; a pass in which somebody's handler ran (binary fractions: the clock
+        # must add them up without a rounding error deciding the count)
+        idle, busy = 1 / 64, 0.25
+        took: list[float] = []
+
+        def run_events(_milliseconds: int) -> bool:
+            took.append(busy if len(took) == 5 else idle)
+            now[0] += took[-1]
+            return True
+
+        host._run_events = run_events  # noqa: SLF001
+        assert host.wait_ready(30.0) is False
+        assert took.count(busy) == 1 and took[5] == busy
+        idle_passes = took.count(idle)
+        assert idle_passes == round(STALL_S / idle) == 32, (
+            f"{idle_passes} idle passes of {idle} s before it gave up: silence must be the "
+            f"idle time alone — {STALL_S} s of it, neither less (the busy pass counted) nor "
+            "more (the busy pass started the count again)")
+        assert now[0] - 1000.0 == STALL_S + busy
 
     def test_it_comes_back_at_once_when_no_event_loop_can_run(self, host) -> None:
         """Review round 3, P2-1. Once the application is quitting ``QEventLoop.exec()``
