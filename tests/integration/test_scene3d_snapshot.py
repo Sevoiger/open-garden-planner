@@ -1726,29 +1726,64 @@ def _strict_reading(grid: Any) -> tuple[Any, ...]:
 
 
 def _watch_clipper(monkeypatch: pytest.MonkeyPatch, kept: list[Any] | None = None) -> list[str]:
-    """Every question a resolution asks the clipper, in order: "plain" (the union,
-    as a tree), "strict" (the union with StrictlySimple, as a flat list) or "band"
-    (a difference with a band, as a tree). ``kept`` collects the answers."""
+    """Every question a resolution asks the clipper, in order: "plain" (the union)
+    and "strict" (the union with StrictlySimple) — flat lists, both — or "band"
+    (a difference with a band: the one tree). ``kept`` collects the answers."""
     asked: list[str] = []
-    tree, strict = snapshot_module._clip_tree, snapshot_module._strict_rings
+    plain, strict, band_tree = (snapshot_module._plain_rings, snapshot_module._strict_rings,
+                                snapshot_module._band_tree)
 
-    def clip_tree(subject: Any, fill: int, *, band: Any = None) -> Any:
-        asked.append("plain" if band is None else "band")
-        answer = tree(subject, fill, band=band)
-        if kept is not None:
-            kept.append(answer)
-        return answer
+    def watched(name: str, real: Any) -> Any:
+        def ask(*args: Any) -> Any:
+            asked.append(name)
+            answer = real(*args)
+            if kept is not None:
+                kept.append(answer)
+            return answer
 
-    def strict_rings(subject: Any, fill: int) -> Any:
-        asked.append("strict")
-        answer = strict(subject, fill)
-        if kept is not None:
-            kept.append(answer)
-        return answer
+        return ask
 
-    monkeypatch.setattr(snapshot_module, "_clip_tree", clip_tree)
-    monkeypatch.setattr(snapshot_module, "_strict_rings", strict_rings)
+    monkeypatch.setattr(snapshot_module, "_plain_rings", watched("plain", plain))
+    monkeypatch.setattr(snapshot_module, "_strict_rings", watched("strict", strict))
+    monkeypatch.setattr(snapshot_module, "_band_tree", watched("band", band_tree))
     return asked
+
+
+def _watch_pyclipper(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int, bool]]:
+    """Every question put to a ``pyclipper.Pyclipper`` itself — below the snapshot's
+    own seams, so that no seam can hide a tree: ("list" | "tree", the clip type,
+    StrictlySimple), in order."""
+    import pyclipper
+
+    asked: list[tuple[str, int, bool]] = []
+    real = pyclipper.Pyclipper
+
+    class Watched:
+        def __init__(self) -> None:
+            self._clipper = real()
+            self.StrictlySimple = False
+
+        def AddPaths(self, *args: Any) -> Any:  # noqa: N802 - pyclipper's name
+            return self._clipper.AddPaths(*args)
+
+        def Execute(self, *args: Any) -> Any:  # noqa: N802
+            self._clipper.StrictlySimple = self.StrictlySimple
+            asked.append(("list", args[0], self.StrictlySimple))
+            return self._clipper.Execute(*args)
+
+        def Execute2(self, *args: Any) -> Any:  # noqa: N802
+            self._clipper.StrictlySimple = self.StrictlySimple
+            asked.append(("tree", args[0], self.StrictlySimple))
+            return self._clipper.Execute2(*args)
+
+    monkeypatch.setattr(pyclipper, "Pyclipper", Watched)
+    return asked
+
+
+def _no_clipper(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The clipper must not be asked anything: neither union, no band."""
+    monkeypatch.setattr(snapshot_module, "_union_rings", _never("the clipper was asked"))
+    monkeypatch.setattr(snapshot_module, "_band_tree", _never("the clipper was asked"))
 
 
 def _comb(teeth: int) -> tuple[tuple[float, float], ...]:
@@ -1788,7 +1823,7 @@ class TestOutlinesTooLargeToCut:
         scene.addItem(fence)
         scene.addItem(shed)
         monkeypatch.setattr(snapshot_module, "_resolved_regions", _never("the outline was resolved"))
-        monkeypatch.setattr(snapshot_module, "_clip_tree", _never("the clipper was asked"))
+        _no_clipper(monkeypatch)
         snapshot, skipped = snapshot_with_report(scene)
         assert list(snapshot) == [str(shed.item_id)]  # the shed's 10,200 units fit
         (report,) = skipped
@@ -2048,7 +2083,7 @@ class TestTheInputIsBoundedBeforeTheWork:
         canvas.scene().addItem(large)
         monkeypatch.setattr(polygon_module, "_is_simple", _never("the simplicity test ran"))
         monkeypatch.setattr(polygon_module, "touching_pairs", _never("its pairs were counted"))
-        monkeypatch.setattr(snapshot_module, "_clip_tree", _never("the clipper was asked"))
+        _no_clipper(monkeypatch)
         snapshot, skipped = snapshot_with_report(canvas.scene())
         assert snapshot == {} and [s.reason for s in skipped] == [SkipReason.OUTLINE_TOO_LARGE]
         assert polygon_module._examined.cache_info().entries == 0
@@ -2099,7 +2134,7 @@ class TestTheInputIsBoundedBeforeTheWork:
         scene = canvas.scene()
         scene.addItem(house)
         scene.addItem(shed)
-        monkeypatch.setattr(snapshot_module, "_clip_tree", _never("the clipper was asked"))
+        _no_clipper(monkeypatch)
         snapshot, skipped = snapshot_with_report(scene)
         assert list(snapshot) == [str(shed.item_id)]
         assert [(s.item_id, s.reason) for s in skipped] == [(str(house.item_id), SkipReason.OUTLINE_TOO_LARGE)]
@@ -2278,7 +2313,7 @@ class TestTheInputIsBoundedBeforeTheWork:
         prices = snapshot_module
         bow = ((0.0, 0.0), (400.0, 300.0), (400.0, 0.0), (0.0, 300.0))
         grid = [snapshot_module._to_grid(bow)]
-        answers: list[Any] = []  # the plain union's tree, the strict union's rings, then a tree per band
+        answers: list[Any] = []  # the plain union's rings, the strict union's rings, then a tree per band
 
         def reading(rings: list[Any]) -> int:
             return prices._RING_UNITS * len(rings) + prices._RING_VERTEX_UNITS * sum(len(r) for r in rings)
@@ -2293,7 +2328,7 @@ class TestTheInputIsBoundedBeforeTheWork:
         whole = WorkBudget(budget=10**12)
         regions = snapshot_module._resolved_regions(grid, pyclipper.PFT_NONZERO, bow, whole, 1)
         assert len(regions) == 2 and asked == ["plain", "strict"]
-        paths = pyclipper.PolyTreeToPaths(answers[0])
+        paths = answers[0]
         assert sorted(len(path) for path in paths) == [3, 3] == sorted(len(ring) for ring in answers[1])
         # (two outer rings and no hole: sorting them asks nothing, and costs nothing)
         first = (two_unions + reading(paths) + prices._STRICT_SQUARE_UNITS * 18 + reading(answers[1]))
@@ -3070,38 +3105,22 @@ class TestTheTwoLevelZigzag:
     for a flat list now, and ``group_rings`` — counted, paid before it runs —
     says which hole is whose."""
 
-    def test_the_strict_union_is_never_asked_for_a_tree(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_union_is_ever_asked_for_a_tree(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Neither union — strict (review of fix round 3) nor plain (review of fix
+        round 4: this test pinned the plain union's tree as expected). The one
+        tree left is a band reading's DIFFERENCE, never with StrictlySimple."""
         import pyclipper
 
-        strict_flags: list[tuple[str, bool]] = []
-        real = pyclipper.Pyclipper
-
-        class Watched:
-            def __init__(self) -> None:
-                self._clipper = real()
-                self.StrictlySimple = False
-
-            def AddPaths(self, *args: Any) -> Any:  # noqa: N802 - pyclipper's name
-                return self._clipper.AddPaths(*args)
-
-            def Execute(self, *args: Any) -> Any:  # noqa: N802
-                self._clipper.StrictlySimple = self.StrictlySimple
-                strict_flags.append(("list", self.StrictlySimple))
-                return self._clipper.Execute(*args)
-
-            def Execute2(self, *args: Any) -> Any:  # noqa: N802
-                self._clipper.StrictlySimple = self.StrictlySimple
-                strict_flags.append(("tree", self.StrictlySimple))
-                return self._clipper.Execute2(*args)
-
-        monkeypatch.setattr(pyclipper, "Pyclipper", Watched)
+        asked = _watch_pyclipper(monkeypatch)
         snapshot_module._polygon_regions.cache_clear()
         for outline in (((0.0, 0.0), (400.0, 300.0), (400.0, 0.0), (0.0, 300.0)),  # resolved at once
                         TestWhatPyclipperGetsWrong.CASES["a hole hung under the wrong ring"][0],  # by a band
-                        tuple(_two_level(120))):
+                        tuple(_two_level(120)), _bridged_holes(40), _touching_holes(20)):
             snapshot_module._polygon_regions(outline)
-        assert ("list", True) in strict_flags and ("tree", False) in strict_flags
-        assert ("tree", True) not in strict_flags  # never StrictlySimple AND a tree
+        union, difference = pyclipper.CT_UNION, pyclipper.CT_DIFFERENCE
+        assert ("list", union, False) in asked and ("list", union, True) in asked  # both unions: lists
+        assert ("tree", difference, False) in asked  # the hole hung under the wrong ring: read off a band's tree
+        assert {question for question in asked if question[0] == "tree"} == {("tree", difference, False)}
         snapshot_module._polygon_regions.cache_clear()
 
     @pytest.mark.parametrize("turn_deg", [0.0, 30.0], ids=["as the review drew it", "turned 30 degrees"])
@@ -3238,3 +3257,236 @@ class TestTheCountIsNotACopy:
         line = PolylineItem([QPointF(float(k), 0.0) for k in range(5)], object_type=ObjectType.FENCE)
         monkeypatch.setattr(PolylineItem, "points", property(_never("the points were copied")))
         assert snapshot_module._drawn_vertices(line) == 5
+
+
+# ── fix round 5: no union is a tree; a stated order; one call that forgets ───
+
+
+def _bridged_holes(holes: int, shear: float = 0.0) -> tuple[tuple[float, float], ...]:
+    """The review's ``column_keyholes`` (and, sheared, ``slanted_keyholes``): ONE
+    ring — a slab 60 cm wide with triangular holes one above the other, each
+    joined to the left wall by a level bridge walked out and back. No level line
+    crosses more than a handful of its edges."""
+    ring = [(0.0, 0.0), (60.0, 0.0), (60.0, holes * 30.0), (0.0, holes * 30.0)]
+    for k in reversed(range(holes)):
+        y = k * 30.0 + 15.0
+        ring += [(0.0, y), (20.0, y), (30.0, y + 6.0), (30.0, y - 6.0), (20.0, y), (0.0, y)]
+    return tuple((round(x + shear * y, 3), round(y + 0.3 * shear * x, 3)) for x, y in ring)
+
+
+def _touching_holes(holes: int) -> tuple[tuple[float, float], ...]:
+    """The review's ``column_pinholes``: the same slab with holes that TOUCH the
+    wall they hang on — a triangle out of the wall and straight back."""
+    ring = [(0.0, 0.0), (60.0, 0.0), (60.0, holes * 30.0), (0.0, holes * 30.0)]
+    for k in reversed(range(holes)):
+        y = k * 30.0 + 15.0
+        ring += [(0.0, y), (12.0, y + 6.0), (12.0, y - 6.0), (0.0, y)]
+    return tuple(ring)
+
+
+class TestOneRingWithManyHoles:
+    """Review of fix round 4, the P1. The PLAIN union was still asked for a
+    PolyTree (``Execute2``) and the tree thrown away on the next line. A tree
+    costs by the rings it makes and joins; the union's price is read off
+    vertices, stack and crossings. One ring — a slab with 720 triangular holes,
+    each bridged to its wall, 4,324 vertices — held the GUI thread for 5.3 s
+    inside the budget (sheared, so that nothing is level: 3.9 s); as a list the
+    same union takes milliseconds. Both unions are lists now, and the one tree
+    left is a band reading's difference. Every test here counts questions; none
+    reads a clock."""
+
+    @pytest.mark.parametrize("shear", [0.0, 0.37], ids=["level", "sheared"])
+    def test_the_review_s_slab_asks_for_two_lists_and_no_tree(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch, fresh_outlines: None, shear: float
+    ) -> None:
+        import pyclipper
+
+        questions = _watch_pyclipper(monkeypatch)
+        house = PolygonItem([QPointF(x, y) for x, y in _bridged_holes(720, shear)], object_type=ObjectType.HOUSE)
+        shed = _rectangle()
+        scene = canvas.scene()
+        scene.addItem(house)
+        scene.addItem(shed)
+        snapshot, skipped = snapshot_with_report(scene)
+        assert list(snapshot) == [str(shed.item_id)]  # a region with 720 holes: their bridges are beyond the budget
+        assert [(s.item_id, s.reason) for s in skipped] == [(str(house.item_id), SkipReason.OUTLINE_TOO_LARGE)]
+        assert questions == [("list", pyclipper.CT_UNION, False), ("list", pyclipper.CT_UNION, True)]
+        questions.clear()
+        assert snapshot_with_report(scene) == (snapshot, skipped) and questions == []  # remembered
+
+    @pytest.mark.parametrize("shear", [0.0, 0.37], ids=["level", "sheared"])
+    def test_a_slab_of_a_hundred_bridged_holes_is_built(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch, fresh_outlines: None, shear: float
+    ) -> None:
+        """What such a ring is for — a polygon with holes exported as one ring —
+        is built: one region, its hundred holes, read off the strict union."""
+        asked = _watch_clipper(monkeypatch)
+        house = PolygonItem([QPointF(x, y) for x, y in _bridged_holes(100, shear)], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(house)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert skipped == [] and asked == ["plain", "strict"]
+        record = snapshot[str(house.item_id)]
+        assert len(record.footprints) == 1 and [len(group) for group in record.holes] == [100]
+        assert {len(hole) for hole in record.holes[0]} == {3}
+        assert record.params["outline_resolved"] is True
+        slab, holes = 60.0 * 3000.0, 100 * 0.5 * 12.0 * 10.0
+        assert record.plan_area_cm2 == pytest.approx((slab - holes) * (1.0 - 0.3 * shear * shear), rel=1e-4)
+
+    def test_holes_that_touch_the_wall_are_read_off_a_band_the_one_tree(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch, fresh_outlines: None
+    ) -> None:
+        """The touching-holes family. A hole that touches its outer ring in a point
+        cannot be bridged, so the strict reading does not hold; with a band cut
+        away along the union's rings the holes open into notches of ONE ring —
+        read off the only tree the resolution asks for, a difference."""
+        import pyclipper
+
+        questions = _watch_pyclipper(monkeypatch)
+        asked = _watch_clipper(monkeypatch)
+        house = PolygonItem([QPointF(x, y) for x, y in _touching_holes(60)], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(house)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert skipped == [] and asked == ["plain", "strict", "band"]
+        record = snapshot[str(house.item_id)]
+        assert len(record.footprints) == 1 and record.holes == () and record.params["outline_resolved"] is True
+        assert record.plan_area_cm2 == pytest.approx(60.0 * 1800.0 - 60 * 0.5 * 12.0 * 12.0, rel=1e-3)
+        assert questions == [("list", pyclipper.CT_UNION, False), ("list", pyclipper.CT_UNION, True),
+                             ("tree", pyclipper.CT_DIFFERENCE, False)]
+
+    def test_more_touching_holes_than_the_budget_covers_are_refused_before_any_band(
+        self, canvas: CanvasView, monkeypatch: pytest.MonkeyPatch, fresh_outlines: None
+    ) -> None:
+        """110 of them, 444 vertices: the bridge search for the strict reading's
+        region runs the budget out (it is the dearest family there is — three to
+        seven times its price, stated in section 8.27.1). Refused; no band, no tree."""
+        asked = _watch_clipper(monkeypatch)
+        house = PolygonItem([QPointF(x, y) for x, y in _touching_holes(110)], object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(house)
+        snapshot, skipped = snapshot_with_report(canvas.scene())
+        assert snapshot == {} and [s.reason for s in skipped] == [SkipReason.OUTLINE_TOO_LARGE]
+        assert asked == ["plain", "strict"]
+
+
+class TestTheOrderOfARecordsRegions:
+    """Review of fix round 4. With the plain union asked for a list instead of a
+    tree, seven outlines of 13,740 came back as the same regions in another
+    order: a record's signature must not follow a clipper mode. The order is a
+    stated property now — by the smallest vertex of the outer ring — and every
+    answer of the clipper is put in it before it is judged."""
+
+    def test_regions_stand_by_the_smallest_vertex_of_their_outer_ring(self) -> None:
+        hole = ((0.4, 3.2), (0.6, 3.4), (0.6, 3.2))
+        second_hole = ((0.2, 3.1), (0.3, 3.2), (0.3, 3.1))
+        right = (((5.0, 0.0), (6.0, 0.0), (6.0, 1.0)), ())
+        upper = (((0.0, 3.0), (1.0, 3.0), (1.0, 4.0)), (hole, second_hole))
+        lower = (((1.0, 2.0), (0.0, 1.0), (1.0, 1.0)), ())  # its smallest vertex is not its first
+        assert snapshot_module._in_order((right, upper, lower)) == (lower, upper, right)
+        assert snapshot_module._in_order((upper, lower, right)) == (lower, upper, right)
+        assert snapshot_module._in_order((upper,))[0][1] == (hole, second_hole)  # holes: as the reading gave them
+        # two outer rings that share their smallest vertex: by their vertices as they come
+        fan_up, fan_right = ((0.0, 0.0), (1.0, 2.0), (0.0, 2.0)), ((0.0, 0.0), (2.0, 0.0), (2.0, 1.0))
+        assert snapshot_module._in_order(((fan_right, ()), (fan_up, ()))) == ((fan_up, ()), (fan_right, ()))
+        assert snapshot_module._in_order(()) == ()
+
+    OUTLINES: dict[str, tuple[tuple[float, float], ...]] = {
+        "a bow-tie (two regions, the strict reading)": ((0.0, 0.0), (400.0, 300.0), (400.0, 0.0), (0.0, 300.0)),
+        "twenty diamonds tip to tip": tuple(
+            [(40.0 * k, 30.0 if k % 2 else 0.0) for k in range(41)]
+            + [(40.0 * k, -30.0 if k % 2 else 0.0) for k in range(39, 0, -1)]),
+        "a piece handed out the wrong way round (a band reading)":
+            TestWhatPyclipperGetsWrong.CASES["a piece handed out the wrong way round"][0],
+        "a hole hung under the wrong ring (a band reading)":
+            TestWhatPyclipperGetsWrong.CASES["a hole hung under the wrong ring"][0],
+    }
+
+    @pytest.mark.parametrize("name", list(OUTLINES))
+    def test_the_order_is_not_the_clipper_s(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_outlines: None, name: str
+    ) -> None:
+        """Whatever order the clipper hands its rings out in — turned round here,
+        for both unions and for what is read off a band's tree — the answer is the
+        same regions in the same order."""
+        outline = self.OUTLINES[name]
+        expected, resolved = snapshot_module._polygon_regions(outline)
+        assert resolved and len(expected) > 1
+        assert [min(outer) for outer, _holes in expected] == sorted(min(outer) for outer, _holes in expected)
+        union, tree_regions = snapshot_module._union_rings, snapshot_module._tree_regions
+        monkeypatch.setattr(snapshot_module, "_union_rings", lambda subject, fill, *, strictly_simple:
+                            union(subject, fill, strictly_simple=strictly_simple)[::-1])
+        monkeypatch.setattr(snapshot_module, "_tree_regions", lambda tree: tree_regions(tree)[::-1])
+        snapshot_module._polygon_regions.cache_clear()
+        assert snapshot_module._polygon_regions(outline) == (expected, True)
+
+    def test_a_stroke_s_regions_are_put_in_order_too(
+        self, monkeypatch: pytest.MonkeyPatch, fresh_outlines: None
+    ) -> None:
+        """A stroke is one connected ring with its holes, so there is nothing to
+        order — until the clipper says otherwise. Whatever ``group_rings`` returns
+        is put in order before it is judged."""
+        from open_garden_planner.core.scene3d.polygon import WorkBudget
+
+        left = (((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)), ())
+        right = (((50.0, 0.0), (60.0, 0.0), (60.0, 10.0), (50.0, 10.0)), ())
+        monkeypatch.setattr(snapshot_module, "group_rings", lambda _rings, _work=None: (right, left))
+        path = ((0.0, 0.0), (100.0, 0.0))
+        assert snapshot_module._stroke_regions(path, 10.0, WorkBudget(budget=10**12)) == (left, right)
+
+    def test_a_record_carries_them_in_that_order(self, canvas: CanvasView, fresh_outlines: None) -> None:
+        house = PolygonItem([QPointF(x, y) for x, y in self.OUTLINES["twenty diamonds tip to tip"]],
+                            object_type=ObjectType.HOUSE)
+        canvas.scene().addItem(house)
+        record = snapshot_records(canvas.scene())[str(house.item_id)]
+        assert len(record.footprints) == 20
+        smallest = [min(ring) for ring in record.footprints]
+        assert smallest == sorted(smallest) and len(set(smallest)) == 20
+
+
+class TestForgettingEverything:
+    """Review of fix round 4, P2-3. What a snapshot asks for is never dropped
+    while snapshots go on — so a plan that is gone stayed remembered until two
+    more snapshots had run (measured: 321,280 vertices, about 30 MB, after
+    ``scene.clear()``), and with the 3D view closed none runs. One public call
+    drops everything, live and stale."""
+
+    def test_one_call_drops_it_all_and_the_next_snapshot_is_a_first_one(
+        self, canvas: CanvasView, fresh_outlines: None, work_done: dict[str, int]
+    ) -> None:
+        import inspect
+
+        from open_garden_planner.core.scene3d import polygon as polygon_module
+        from open_garden_planner.core.scene3d import record as record_module
+        from open_garden_planner.ui.view3d.snapshot import clear_outline_cache
+
+        assert not inspect.signature(clear_outline_cache).parameters  # one call, nothing to say
+        assert clear_outline_cache.__module__ == snapshot_records.__module__  # next to the snapshot
+        scene = canvas.scene()
+        for k in range(3):
+            ring = _traced_ring(100, 40 + k, 1000.0 * k, 0.0)
+            scene.addItem(PolygonItem([QPointF(x, y) for x, y in ring], object_type=ObjectType.HEDGE_POLYGON))
+        fence_ring = _traced_ring(40, 7, 500.0, 2000.0, radius=300.0)
+        for item in (_fence([*fence_ring, fence_ring[0]]), _circle(), _ellipse(),
+                     PolygonItem([QPointF(0.0, 0.0), QPointF(400.0, 300.0), QPointF(400.0, 0.0), QPointF(0.0, 300.0)],
+                                 object_type=ObjectType.HOUSE)):
+            scene.addItem(item)
+        first = snapshot_with_report(scene)
+        assert len(first[0]) == 7 and first[1] == []
+        first_tick = dict(work_done)
+        assert first_tick["cuts"] >= 6 and first_tick["strokes"] == 1 and first_tick["outlines"] == 4
+        memories = (polygon_module._examined, polygon_module.ring_area, record_module._ring_facts,
+                    snapshot_module._polygon_regions, snapshot_module._polyline_regions)
+        circles = (snapshot_module._circle_ring, snapshot_module._circle_regions, snapshot_module._convex_region)
+        assert all(memory.cache_info().entries for memory in memories)
+        assert all(cache.cache_info().currsize for cache in circles)
+        work_done.update(cuts=0, strokes=0, outlines=0)
+        assert snapshot_with_report(scene) == first
+        assert work_done == {"cuts": 0, "strokes": 0, "outlines": 0}  # remembered, all of it LIVE
+
+        clear_outline_cache()
+        assert [(memory.cache_info().entries, memory.cache_info().vertices) for memory in memories] == [(0, 0)] * 5
+        assert all(memory.cache_info().entries == 0 for memory in polygon_module._memories)  # every one there is
+        assert [cache.cache_info().currsize for cache in circles] == [0, 0, 0]
+        assert snapshot_with_report(scene) == first
+        assert work_done == first_tick  # a first tick again: every outline judged and cut once more
+        clear_outline_cache()
+        clear_outline_cache()  # with nothing held: nothing happens
+        assert snapshot_with_report(scene) == first

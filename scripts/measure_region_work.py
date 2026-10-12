@@ -23,7 +23,9 @@ It prints three tables.
    one stroke, a wall traced finer than it is wide, a line whose every segment
    lies level with every other, a straight fence in three directions, a wide
    path with close points) and drawn outlines (a regular polygon — a DXF circle
-   —, a traced pond, one that crosses itself, the two-level zigzag).
+   —, a traced pond, one that crosses itself, the two-level zigzag, and ONE
+   ring with many holes: bridged to its edge, level and sheared, in a row of
+   frames, and touching its wall).
 3. REFUSALS. Outlines built to cost the clipper as much as they can: what
    saying no costs — in units, which are bounded, and in time. For each, what
    the clipper would have taken had it been asked (the reason the price exists).
@@ -31,8 +33,13 @@ It prints three tables.
 The price of a step is right when a unit CHARGED takes no longer than a unit of
 the reference (a plain traced outline, the first row of table 1). Every row of
 tables 2 and 3 ends with that ratio — cost to price — and the script ends with
-the worst of them. The time columns are this machine at this moment — quote them
-with their conditions. The unit columns are exact.
+the worst of them and FAILS (exit code 1) when a row stands above
+``MAX_COST_TO_PRICE``: a price list fitted to families is only as good as the
+families, and twice the hole in it was a way of asking the clipper that nobody
+had put in the table (a union as a tree: 14 to 76 times its price). The
+time columns are this machine at this moment — quote them with their
+conditions; a ratio is two of them, so run the gate on a machine that is doing
+nothing else. The unit columns are exact.
 
 Imports ``ui.view3d.snapshot`` (and with it PyQt6); no window, no application,
 no plan. It isolates itself all the same (``scripts/script_isolation.py``): the
@@ -71,6 +78,15 @@ from open_garden_planner.core.shadow_geometry import polyline_footprint  # noqa:
 from open_garden_planner.ui.view3d import snapshot  # noqa: E402
 
 Path2 = tuple[tuple[float, float], ...]
+
+#: The most a unit CHARGED may take, in units of the reference, in any row of tables 2
+#: and 3 — above it the script fails. Set from what is measured (2026-10-12, the
+#: development box, beside other test runs): every row but one family stands at 2.0 or
+#: below; a slab whose holes TOUCH its wall stands at 3.6 to 8.1 (the bridge search of
+#: the cut, ``_bridge_position``, is priced too low for holes that touch — known, stated
+#: in section 8.27.1, and not re-priced here). The two defects this gate exists for —
+#: a union asked for a tree, strict and plain — stood at 14 to 76.
+MAX_COST_TO_PRICE = 12.0
 
 
 def _ring(points: list[tuple[float, float]]) -> Ring:
@@ -233,12 +249,66 @@ def two_level(vertices: int, turn_deg: float = 0.0) -> Path2:
     return tuple((round(x * c - y * s, 3), round(x * s + y * c, 3)) for x, y in points)
 
 
+def bridged_holes(holes: int, shear: float = 0.0) -> Path2:
+    """ONE ring: a slab 60 cm wide with ``holes`` triangular holes one above the
+    other, each joined to the left wall by a level bridge walked out and back —
+    how a polygon with holes is exported as a single ring. No level line crosses
+    more than a handful of its edges. ``shear`` leans it: nothing level, nothing
+    upright. (Review of fix round 4: 720 of them held the plain union for 5.3 s
+    as a tree.)"""
+    ring = [(0.0, 0.0), (60.0, 0.0), (60.0, holes * 30.0), (0.0, holes * 30.0)]
+    for k in reversed(range(holes)):  # down the left wall
+        y = k * 30.0 + 15.0
+        ring += [(0.0, y), (20.0, y), (30.0, y + 6.0), (30.0, y - 6.0), (20.0, y), (0.0, y)]
+    return tuple((round(x + shear * y, 3), round(y + 0.3 * shear * x, 3)) for x, y in ring)
+
+
+def touching_holes(holes: int) -> Path2:
+    """The same slab with holes that TOUCH the wall they hang on: a triangle out
+    of the wall and straight back, no bridge. (The cut's bridge search takes 3
+    to 7 times its price here — the dearest family in the table.)"""
+    ring = [(0.0, 0.0), (60.0, 0.0), (60.0, holes * 30.0), (0.0, holes * 30.0)]
+    for k in reversed(range(holes)):
+        y = k * 30.0 + 15.0
+        ring += [(0.0, y), (12.0, y + 6.0), (12.0, y - 6.0), (0.0, y)]
+    return tuple(ring)
+
+
+def row_of_keyholes(holes: int) -> Path2:
+    """A long rectangle with ``holes`` square holes, each bridged to the bottom edge."""
+    ring = [(0.0, 0.0)]
+    for k in range(holes):
+        x = k * 100.0 + 50.0
+        ring += [(x, 0.0), (x, 30.0), (x - 20.0, 30.0), (x - 20.0, 70.0), (x + 20.0, 70.0), (x + 20.0, 30.0),
+                 (x, 30.0), (x, 0.0)]
+    return (*ring, (holes * 100.0, 0.0), (holes * 100.0, 100.0), (0.0, 100.0))
+
+
+def row_of_frames(frames: int) -> Path2:
+    """``frames`` diamonds in a row, touching corner to corner, each with a square
+    hole reached over a bridge from its bottom corner: as many regions as holes."""
+    ring: list[tuple[float, float]] = []
+    for k in range(frames):  # lower halves, left to right
+        x = k * 100.0
+        ring += [(x, 0.0), (x + 50.0, -50.0), (x + 50.0, -20.0), (x + 30.0, 0.0), (x + 50.0, 20.0),
+                 (x + 70.0, 0.0), (x + 50.0, -20.0), (x + 50.0, -50.0)]
+    ring.append((frames * 100.0, 0.0))
+    for k in reversed(range(frames)):  # upper halves, back
+        ring += [(k * 100.0 + 50.0, 50.0)] + ([(k * 100.0, 0.0)] if k else [])
+    return tuple(ring)
+
+
 POLYGONS: tuple[tuple[str, str, Callable[[int], Path2], int, int], ...] = (
     ("a regular polygon (a DXF circle)", "vertices", regular, 100, 8000),
     ("a traced pond", "vertices", lambda vertices: traced(vertices)[0], 100, 8000),
     ("a drawn outline that crosses itself", "vertices", lambda vertices: crossed(vertices), 100, 8000),
     ("a two-level zigzag", "vertices", two_level, 8, 400),
     ("… turned 30 degrees", "vertices", lambda vertices: two_level(vertices, 30.0), 8, 400),
+    ("a slab with holes bridged to its wall", "holes", bridged_holes, 4, 1200),
+    ("… sheared (nothing level, nothing upright)", "holes", lambda holes: bridged_holes(holes, 0.37), 4, 1200),
+    ("a row of square holes bridged to the edge", "holes", row_of_keyholes, 4, 400),
+    ("a row of frames (diamonds with a bridged hole each)", "frames", row_of_frames, 4, 400),
+    ("a slab whose holes touch its wall", "holes", touching_holes, 4, 400),
 )
 
 
@@ -379,6 +449,30 @@ def measure_refusal(label: str, run: Callable[[WorkBudget], object],
     print(f"    {verdict} {label}: {charged / 1e6:6.1f} M units charged, {took:8.3f} ms{ratio}{asked}")
 
 
+def _union_as_a_tree(grid: list[list[tuple[int, int]]]) -> object:
+    """What the snapshot must never ask: the plain union as a PolyTree."""
+    clipper = snapshot.pyclipper.Pyclipper()
+    clipper.AddPaths(grid, snapshot.pyclipper.PT_SUBJECT, True)
+    return clipper.Execute2(snapshot.pyclipper.CT_UNION, snapshot.pyclipper.PFT_NONZERO,
+                            snapshot.pyclipper.PFT_NONZERO)
+
+
+def gate(ratios: list[tuple[float, str]], bound: float = MAX_COST_TO_PRICE) -> int:
+    """The verdict of the table: 0 when no row's cost to price is above ``bound``,
+    1 — and every such row named — when one is. A row above 1 took longer than
+    its units say; a row above the bound is a step whose price does not follow
+    its cost."""
+    worst, what = max(ratios)
+    print(f"the worst cost to price of {len(ratios)} rows: {worst:.2f} ({what}); the bound is {bound:g}")
+    above = sorted((row for row in ratios if row[0] > bound), reverse=True)
+    for ratio, row in above:
+        print(f"    ABOVE THE BOUND: {ratio:.2f} — {row}")
+    if above:
+        print("FAILED: a step is priced below what it costs. Find which call it is (measure it alone, in each "
+              "form it can be made) before touching a price.")
+    return 1 if above else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     script_isolation.isolate()
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
@@ -419,20 +513,27 @@ def main(argv: list[str] | None = None) -> int:
         ring = scribble(vertices)
         grid = [snapshot._to_grid(ring)]
         measure_refusal(f"an outline scribbled over {vertices:,} vertices", _polygon(ring),
-                        (lambda grid=grid: snapshot._clip_tree(grid, 1, band=grid)) if vertices <= 400 else None,
+                        (lambda grid=grid: snapshot._band_tree(grid, 1, grid)) if vertices <= 400 else None,
                         reference)
     for vertices, turn in ((200, 0.0), (340, 0.0), (340, 30.0), (800, 0.0)):
         ring = two_level(vertices, turn)
         measure_refusal(f"a two-level zigzag of {vertices} vertices" + (f", turned {turn:g} degrees" if turn else ""),
                         _polygon(ring), None, reference)
+    for holes, shear in ((580, 0.0), (720, 0.0), (720, 0.37)):
+        ring = bridged_holes(holes, shear)
+        grid = [snapshot._to_grid(ring)]
+        measure_refusal(f"a slab with {holes} bridged holes" + (", sheared" if shear else "")
+                        + " (the clipper alone: its union as a TREE)", _polygon(ring),
+                        lambda grid=grid: _union_as_a_tree(grid), reference)
+    for holes in (110, 200):
+        measure_refusal(f"a slab with {holes} holes that touch its wall", _polygon(touching_holes(holes)),
+                        None, reference)
     ring = traced(10_000)[0]
     measure_refusal("a plain outline of 10,000 vertices", _polygon(ring), None, reference)
     print("\n(an item of more than MAX_ITEM_VERTICES vertices is refused before one of them is read: "
           "one comparison)")
-    worst, what = max(RATIOS)
-    print(f"\nthe worst cost to price of {len(RATIOS)} rows: {worst:.2f} ({what}); above 1 a row took longer "
-          f"than its units say — the reference unit took {reference:.2f} ns")
-    return 0
+    print(f"\n(the reference unit took {reference:.2f} ns)")
+    return gate(RATIOS)
 
 
 if __name__ == "__main__":

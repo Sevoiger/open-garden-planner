@@ -59,6 +59,7 @@ from tests.integration.ground_bake_support import (
     difference,
     ncc,
 )
+from tests.integration.ground_bake_support import rgba as ground_rgba
 from tests.integration.test_scene3d_snapshot import (
     work_done,  # noqa: F401 - the contract story's counters of what an idle tick must not do
 )
@@ -492,6 +493,55 @@ class TestStacking:
         command.execute()
         assert bake.step().reordered
         assert bake.baker.last_repainted == ()
+
+
+class TestTheOrderOfRegionsDoesNotMatter:
+    def test_a_record_of_several_regions_is_one_picture_in_any_order(self, qtbot: Any) -> None:
+        """The contract states the order of a record's regions (the scene contract's
+        fifth round) and leaves the order of a region's holes open: the ground
+        depends on neither. Two outer rings ten centimetres apart under a pen sixteen
+        wide, two holes, an island in one of them, fill and pen both translucent —
+        painted ring by ring that blends twice where the strokes meet, and in an
+        order. It is ONE path in ONE call: one fill, one stroke."""
+        from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
+
+        def outer(x0: float, y0: float, x1: float, y1: float) -> tuple[tuple[float, float], ...]:
+            return ((x0, y0), (x1, y0), (x1, y1), (x0, y1))  # counter-clockwise
+
+        def hole(x0: float, y0: float, x1: float, y1: float) -> tuple[tuple[float, float], ...]:
+            return ((x0, y0), (x0, y1), (x1, y1), (x1, y0))  # clockwise
+
+        big, small = outer(-200.0, -150.0, 60.0, 150.0), outer(70.0, -150.0, 200.0, 150.0)
+        hole_a, hole_b = hole(-180.0, -130.0, -100.0, 130.0), hole(-90.0, -130.0, 40.0, 130.0)
+        island = outer(-60.0, -100.0, 10.0, 100.0)  # inside hole_b: a region of its own
+
+        def baked(footprints: Any, holes: Any, turn: float = 0.0) -> tuple[tuple[bytes, ...], Any]:
+            record = Record(
+                item_id="r", kind="TERRACE_PATIO", shape="polygon", footprints=footprints,
+                holes=holes, transform=Transform(550.0, 350.0, rotation_deg=turn),
+                material=Material("TERRACE_PATIO", fill_rgba=(200, 60, 40, 120),
+                                  stroke_rgba=(20, 30, 160, 140), paint=Paint(stroke_width_cm=16.0)),
+                params=Params({"seed": "r"}))
+            baker = GroundBaker()
+            tiles = baker.bake({"r": record}, None, (), PLAN_W, PLAN_D)
+            assert baker.failures == {} and baker.painted_ids() == ("r",)
+            return tuple(tile.pixels for tile in tiles), ground_rgba(baker.image())[..., :3]
+
+        for turn in (0.0, 17.0):
+            as_stated, _image = baked((big, small, island), ((hole_a, hole_b), (), ()), turn)
+            assert baked((island, small, big), ((), (), (hole_b, hole_a)), turn)[0] == as_stated
+            assert baked((small, big, island), ((), (hole_b, hole_a), ()), turn)[0] == as_stated
+        _pixels, image = baked((big, small, island), ((hole_a, hole_b), (), ()))
+
+        def at(x: float, y: float) -> tuple[int, ...]:
+            return tuple(int(v) for v in image[int(PLAN_D - (350.0 + y)), int(550.0 + x)])
+
+        meadow = tuple(MEADOW_RGB)
+        assert at(-140.0, 0.0) == meadow and at(-75.0, 0.0) == meadow  # the holes are open
+        assert at(-25.0, 0.0) not in (meadow, at(-206.0, 0.0))        # the island is filled
+        # where the two outer rings' strokes overlap, the pen is blended ONCE: the
+        # colour of one stroke over meadow (taken left of the big ring)
+        assert at(65.0, 0.0) == at(-206.0, 0.0) != meadow
 
 
 # ── G4: the live scene is never touched ───────────────────────────────────────

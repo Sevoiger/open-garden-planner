@@ -582,9 +582,16 @@ def _paint_filled(painter: QPainter, record: Record, paint: Paint, ox: float, oy
         elif len(rings) == 1:
             # the polygon AS DRAWN, with the canvas's fill rule (QGraphicsPolygonItem's)
             painter.drawPolygon(QPolygonF(rings[0]), Qt.FillRule.OddEvenFill)
-        else:  # every region — outer rings minus their holes — as one path
+        else:
+            # Every region — outer rings minus their holes — as ONE path in ONE call:
+            # one fill and one stroke, so nothing is blended twice and the picture does
+            # not depend on the order of a record's regions or of a region's holes (the
+            # contract states the first and leaves the second open). Non-zero winding
+            # with the contract's orientations (outer rings counter-clockwise, holes
+            # clockwise): a hole is open, an island in it is filled — and two outer
+            # rings that overlapped would be covered once, where odd-even would cancel.
             path = QPainterPath()
-            path.setFillRule(Qt.FillRule.OddEvenFill)
+            path.setFillRule(Qt.FillRule.WindingFill)
             for ring in rings:
                 path.addPolygon(QPolygonF(ring))
                 path.closeSubpath()

@@ -1197,6 +1197,26 @@ building on.
   bounds the stale rest (ADR-056 decision 9, §8.27.1). *Bound what is beyond the working set,
   never the working set; and test a cache at the size where it is full — shrink the cap in
   the test, count the recomputations on the second tick.*
+- **(Fix round 5.) A fix made for the call a review named, not for the rule it found, leaves
+  the next call standing.** Round 4 stopped asking the STRICT union for a tree. The PLAIN
+  union, eight lines above it in the same function, went on being asked for one — a tree that
+  was flattened on the next line — and a test pinned that as expected. One ring with 720 holes
+  bridged to its wall held the GUI thread for 5.3 s inside the work budget (pyclipper alone,
+  801 rings: 23 ms as a list, 7,078 ms as a tree). Fix: `_clip_tree` is split by what a
+  caller may get — `_union_rings` cannot return a tree, `_band_tree` is the one call that
+  does, and it is bounded for a stated reason (a band leaves nothing to join; measured the
+  same as a list); the op-count test watches `pyclipper.Pyclipper` below every seam; and
+  `scripts/measure_region_work.py` FAILS above 12 times the price instead of printing its
+  worst row. *After a finding, write down the rule, then grep for every other place the same
+  thing is done. And a table that only prints is not a gate: twice the hole was a family
+  nobody had put in it.*
+- **(Fix round 5.) The order of a clipper's output is not a property of the shape.** A
+  record's regions came in the order pyclipper handed its rings out, and that changed when
+  one call went from `Execute2` to `Execute`: the same regions, another order, another
+  signature. They stand by the smallest vertex of their outer ring now, sorted before they
+  are judged (regions are paid one after the other out of one budget, so the order decides
+  where a budget runs out). *Whatever a library returns as a list has an order you did not
+  choose; if it reaches a signature, choose one.*
 - **(Fix round 4.) The same library call can cost a thousand times more for how it is asked.**
   pyclipper's union with `StrictlySimple`: 19 ms as a flat list (`Execute`), 4,382 ms as a tree
   (`Execute2`), same input — a closed zigzag of 340 vertices on two levels. The price was read
