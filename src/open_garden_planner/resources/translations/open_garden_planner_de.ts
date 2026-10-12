@@ -5758,6 +5758,46 @@ Platzieren Sie Pflanzen auf der Zeichenfläche und verwenden Sie
             <source>Using OGP_GOOGLE_MAPS_KEY from environment</source>
             <translation>OGP_GOOGLE_MAPS_KEY aus der Umgebung wird verwendet</translation>
         </message>
+        <message>
+            <source>3D View</source>
+            <translation>3D-Ansicht</translation>
+        </message>
+        <message>
+            <source>Automatic</source>
+            <translation>Automatisch</translation>
+        </message>
+        <message>
+            <source>Low</source>
+            <translation>Niedrig</translation>
+        </message>
+        <message>
+            <source>Medium</source>
+            <translation>Mittel</translation>
+        </message>
+        <message>
+            <source>High</source>
+            <translation>Hoch</translation>
+        </message>
+        <message>
+            <source>Ultra</source>
+            <translation>Ultra</translation>
+        </message>
+        <message>
+            <source>How detailed the 3D view is drawn. Automatic picks a level from the frame rate it measures on this computer.</source>
+            <translation>Wie detailliert die 3D-Ansicht gezeichnet wird. „Automatisch“ wählt eine Stufe anhand der Bildrate, die auf diesem Computer gemessen wird.</translation>
+        </message>
+        <message>
+            <source>Quality:</source>
+            <translation>Qualität:</translation>
+        </message>
+        <message>
+            <source>Reduce motion in the 3D view</source>
+            <translation>Bewegung in der 3D-Ansicht reduzieren</translation>
+        </message>
+        <message>
+            <source>Keep leaves and grass still instead of swaying in the wind.</source>
+            <translation>Blätter und Gras bleiben ruhig, statt sich im Wind zu wiegen.</translation>
+        </message>
     </context>
     <context>
         <name>PrintOptionsDialog</name>
