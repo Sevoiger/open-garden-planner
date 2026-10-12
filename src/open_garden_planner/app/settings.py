@@ -11,7 +11,7 @@ from PyQt6.QtCore import QSettings
 
 from open_garden_planner.ui.theme import ThemeMode
 
-#: The ONE internal switch of the Phase 17 workspace (L1.3, ADR-057): started with
+#: The ONE internal switch of the Phase 17 workspace (L1.3, ADR-065): started with
 #: this variable set to "1", the main window's canvas area becomes the Plan / 3D /
 #: Split workspace and the Qt Quick 3D engine can be opened in it. Without it the
 #: app is exactly what it was. Not a user setting and without UI on purpose: L1.9

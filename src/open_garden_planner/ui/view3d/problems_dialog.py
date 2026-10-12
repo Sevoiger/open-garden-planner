@@ -1,4 +1,4 @@
-"""What the 3D view could not show, as a list the user can act on (L1.3, ADR-057).
+"""What the 3D view could not show, as a list the user can act on (L1.3, ADR-065).
 
 The record layer refuses some outlines the 2D canvas draws without trouble (a
 closed fence traced with thousands of points, a height nobody can build, …), and

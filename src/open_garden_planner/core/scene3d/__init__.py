@@ -1,4 +1,4 @@
-"""Qt-free 3D scene core (Phase 17 L1.1, #385, ADR-056; concept: §8.27).
+"""Qt-free 3D scene core (Phase 17 L1.1, #385, ADR-064; concept: §8.32).
 
 The pipeline::
 

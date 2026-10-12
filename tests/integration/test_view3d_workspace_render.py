@@ -1,4 +1,4 @@
-"""The 3D workspace in the REAL app on a real graphics device (Phase 17 L1.3, ADR-057).
+"""The 3D workspace in the REAL app on a real graphics device (Phase 17 L1.3, ADR-065).
 
 Render tier (``OGP_RENDER3D=1``). Every test here starts the app's own ``main()`` in
 a child process — ``workspace_gate_child.py``, with ``OGP_QUICK3D=1``, on a bench
@@ -367,7 +367,7 @@ def test_the_positive_control_fails_on_exactly_that_gate(scratch: Path) -> None:
 def test_what_the_soak_reads_without_the_release_is_reported(scratch: Path) -> None:
     """The A of the A/B, never judged: the same soak — presenting, no readback — with
     the workspace's release out of reach. On Direct3D 11 with a hardware adapter it
-    read 19 MB per reload (ADR-057); on another device it may read anything — which
+    read 19 MB per reload (ADR-065); on another device it may read anything — which
     is why it is a number in the report and not a bound. If it ever reads like the
     run WITH the release, Qt has stopped keeping what it kept, and the release can go."""
     soak = _soak(scratch, "rebuild_on", release="off")

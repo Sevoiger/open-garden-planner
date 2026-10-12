@@ -322,7 +322,7 @@ would otherwise receive a stale change. Every listener runs even when one raises
 and `instant_changed` is delivered even when a `date_changed` listener failed; the
 first error is re-raised afterwards.
 
-## 6.9 The 3D workspace: an edit, the first open, a new document (Phase 17 L1.3, ADR-057)
+## 6.9 The 3D workspace: an edit, the first open, a new document (Phase 17 L1.3, ADR-065)
 
 Behind `OGP_QUICK3D=1`. Three flows; in all of them the GUI thread is the only thread of ours (Qt
 renders the 3D window on its own).

@@ -1,4 +1,4 @@
-"""The Qt-free orbit camera of the 3D workspace (Phase 17 L1.3, ADR-056).
+"""The Qt-free orbit camera of the 3D workspace (Phase 17 L1.3, ADR-064).
 
 ``core/scene3d/camera.py`` holds the whole camera: the pose, the clamps, the fit
 of a plan into the view and the critically damped follow. Nothing here needs Qt,

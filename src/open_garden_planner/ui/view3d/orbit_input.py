@@ -1,4 +1,4 @@
-"""Mouse, wheel and keys of the 3D view → the orbit camera (Phase 17 L1.3, ADR-057).
+"""Mouse, wheel and keys of the 3D view → the orbit camera (Phase 17 L1.3, ADR-065).
 
 An event filter the workspace installs on the engine's window
 (``Quick3DHost.install_event_filter``): the 3D view is a native window, so its

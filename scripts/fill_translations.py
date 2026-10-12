@@ -3181,7 +3181,7 @@ for _ctx, _strings in _PLANT_LISTS_TRANSLATIONS.items():
     TRANSLATIONS.setdefault(_ctx, {}).update(_strings)
 
 
-# ── Phase 17 L1.3: the Plan / 3D / Split workspace (#385, ADR-057) ──
+# ── Phase 17 L1.3: the Plan / 3D / Split workspace (#385, ADR-065) ──
 _L13_WORKSPACE_TRANSLATIONS: dict[str, dict[str, str]] = {
     "Workspace": {
         "&Plan": "&Plan",

@@ -1,4 +1,4 @@
-"""The 3D sync controller against a real canvas and a ``RecordingSink`` (L1.3, ADR-057).
+"""The 3D sync controller against a real canvas and a ``RecordingSink`` (L1.3, ADR-065).
 
 ``ui/view3d/sync_controller.Scene3DController`` is the wiring between the plan and
 the 3D engine: change signals in, at most one pipeline pass per event-loop turn
@@ -261,7 +261,7 @@ def test_one_command_is_one_snapshot_although_two_signals_announce_it(rig: Rig) 
     ``changed`` a moment later (it is queued). Both mark the plan dirty; the pass is a
     posted event of NORMAL priority, which Qt delivers after the scene's own queued
     signal — so the two share one pass. (Posted at high priority the pass ran first
-    and ``changed`` cost a second whole-plan snapshot per edit: measured, ADR-057.)"""
+    and ``changed`` cost a second whole-plan snapshot per edit: measured, ADR-065.)"""
     bed = rig.bed()
     rig.controller.set_active(True)
     rig.settle()
@@ -819,7 +819,7 @@ def test_shutdown_stops_everything(rig: Rig) -> None:
 def test_a_pass_says_how_many_items_lost_their_models(rig: Rig) -> None:
     """``TickReport.retired``: the items whose engine Models this pass destroyed — a
     removed item and one whose geometry was replaced. Qt keeps graphics state for
-    every Model it once drew until it is told to let go (ADR-057); the workspace
+    every Model it once drew until it is told to let go (ADR-065); the workspace
     counts these to know when."""
     bed = rig.bed()
     other = rig.bed(1200.0, 900.0)

@@ -1,4 +1,4 @@
-"""The 3D sync pipeline's controller (Phase 17 L1.3, ADR-057). Engine-free.
+"""The 3D sync pipeline's controller (Phase 17 L1.3, ADR-065). Engine-free.
 
     scene.changed / stack_changed / date_changed ─► dirty ─► tick ─►
         snapshot_records(scene, clock.plan_date) ─► SceneSync.apply(records, sun, ground) ─► sink
@@ -20,7 +20,7 @@ The rules it enforces:
   Writes that arrive faster than ticks coalesce in the flags — an animated date
   never queues more than one pending regrow.
 - **A snapshot only on a real change, never on a timer.** A whole-plan snapshot
-  is O(total vertices) even when every record is cached (measured in ADR-057);
+  is O(total vertices) even when every record is cached (measured in ADR-065);
   the tick timer is single-shot and started by a change signal only.
 - **A document change is not a reset.** A new or opened plan is just another
   snapshot; ``apply`` removes what is gone. ``SceneSync.reset()`` is RECOVERY:
@@ -47,7 +47,7 @@ for its next slice that way; nothing here assumes that one pass paints it all.
 
 NO PASS TAKES A FRAME. This module never asks the engine for one (it has only the
 sink), and the workspace keeps the same rule for the host: a readback renders a
-frame that is never presented (ADR-057 decision 17). A view that presents nothing
+frame that is never presented (ADR-065 decision 17). A view that presents nothing
 is not held back either — the pass applies, and Qt draws when it draws.
 
 GUI thread only. No Qt Quick import: this module runs in the GPU-less tier.
@@ -140,7 +140,7 @@ class TickReport:
     #: items, items whose geometry was replaced (new geometry is a new Model), and
     #: everything a reset cleared. Qt keeps graphics state for every Model it once
     #: drew until it is told to let go; the workspace counts these to know when
-    #: (ADR-057, "what a destroyed Model leaves behind").
+    #: (ADR-065, "what a destroyed Model leaves behind").
     retired: int = 0
 
     @property
@@ -342,7 +342,7 @@ class Scene3DController(QObject):
                 # interval zero: posted events are delivered before the timers that are
                 # due, and a zero timer waits behind the 2D side's debounced work
                 # (spacing, companions, the minimap) — measured on the large bench
-                # plan: 5 % of the passes started more than 228 ms late (ADR-057).
+                # plan: 5 % of the passes started more than 228 ms late (ADR-065).
                 # NORMAL priority (postEvent's default), on purpose: the scene's own
                 # queued ``changed`` for the same edit was posted first and is delivered
                 # first, so the undo stack's signal and the scene's share ONE pass. (At

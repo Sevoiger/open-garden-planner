@@ -1,4 +1,4 @@
-"""The Plan / 3D / Split workspace of the main window (Phase 17 L1.3, ADR-057).
+"""The Plan / 3D / Split workspace of the main window (Phase 17 L1.3, ADR-065).
 
 The area that held the canvas view holds a ``Workspace``: the canvas, and — once
 the user first asks for it — a 3D pane beside it. Three modes:
@@ -15,7 +15,7 @@ hidden and shown. This module imports no Qt Quick binding at all: the engine is
 built by ``engine_factory`` — by default ``ui/view3d/quick3d`` — which is also the
 seam the tests put a recording sink into.
 
-Layout rule (ADR-057): the 3D view is a NATIVE window inside a container, and no
+Layout rule (ADR-065): the 3D view is a NATIVE window inside a container, and no
 sibling widget paints over it. So nothing here ever overlays it — every control,
 notice and message of the 3D pane sits in a strip ABOVE the view, or replaces it.
 L1.8's info card goes into the same pane, beside or below the view, not on top.
@@ -38,7 +38,7 @@ that hopes the paint came first; a label that is never painted releases the
 pipeline after ``BUILD_NOTICE_WAIT_MS``. The same for a new document while 3D is
 shown.
 
-NOTHING HERE TAKES A FRAME FROM THE LIVE VIEW (ADR-057 decision 17, measured). A
+NOTHING HERE TAKES A FRAME FROM THE LIVE VIEW (ADR-065 decision 17, measured). A
 readback of the host (``grab()``, and ``wait_ready()`` / ``pick()`` / ``project()``,
 which need a frame) renders a frame of its own that is never presented, and what
 such a frame holds is given back only when a PRESENTED frame ends — in a view that
@@ -50,7 +50,7 @@ its own that gives everything back when it closes), never through the shown host
 A click that picks (L1.8) is a user's own action, once. Pinned by a scan of this
 package's five modules and by a stand-in host that records such calls.
 
-WHAT A DESTROYED MODEL LEAVES BEHIND (ADR-057, measured). Qt Quick 3D keeps
+WHAT A DESTROYED MODEL LEAVES BEHIND (ADR-065, measured). Qt Quick 3D keeps
 graphics state for every Model it once drew — about 0.2 MB each on Direct3D 11
 with the sun's shadow passes — until ``QQuickWindow.releaseResources()`` is
 called; nothing else gives it back (20 rebuilds of the small bench plan in a

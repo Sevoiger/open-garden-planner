@@ -4668,7 +4668,7 @@ class GardenPlannerApp(QMainWindow):
         # Create sidebar panels
         self._setup_sidebar()
 
-        # Create splitter for canvas and sidebar. Phase 17 L1.3 (ADR-057): behind
+        # Create splitter for canvas and sidebar. Phase 17 L1.3 (ADR-065): behind
         # the ONE internal switch, the canvas area is the Plan / 3D / Split
         # workspace — the canvas inside it, and a 3D pane built on first use.
         # Without the switch nothing of ``ui/view3d`` is imported here.
@@ -6360,7 +6360,7 @@ class GardenPlannerApp(QMainWindow):
             self._view3d_window_retiring = None
             # The 3D workspace (L1.3): stop its pipeline and close its engine
             # host while this window still exists — and clear a pending start
-            # marker, because a clean close is not a crash (ADR-057).
+            # marker, because a clean close is not a crash (ADR-065).
             if self._workspace is not None:
                 self._workspace.shutdown()
             # Persist window/splitter/panel state before tearing down.
