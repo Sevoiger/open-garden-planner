@@ -90,7 +90,7 @@ class WalkMode(QObject):
         self.clock = time.perf_counter
         self._timer = QTimer(self)
         self._timer.setInterval(WALK_STEP_MS)
-        self._timer.timeout.connect(self._step)
+        self._timer.timeout.connect(self.step)
 
     # ── reads ────────────────────────────────────────────────────────────────
 
@@ -268,9 +268,11 @@ class WalkMode(QObject):
         """Walk the time since the last step with the command as it is NOW (called
         before the command changes)."""
         if self._timer.isActive():
-            self._step()
+            self.step()
 
-    def _step(self) -> None:
+    def step(self) -> None:
+        """Walk the time that passed since the last step (the timer's slot; a test with
+        its hand on ``clock`` calls it to let exactly that much time pass)."""
         state, world = self._state, self._world
         if state is None or world is None:
             self._timer.stop()

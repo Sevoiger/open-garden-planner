@@ -84,7 +84,7 @@ class Bench:
     def tick(self, seconds: float) -> None:
         """Let ``seconds`` pass and fire the step timer's slot once."""
         self.now += seconds
-        self.walk._step()  # noqa: SLF001 - what the timer calls
+        self.walk.step()   # what the timer calls
 
     @property
     def at(self) -> tuple[float, float]:
