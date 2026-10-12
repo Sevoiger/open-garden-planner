@@ -64,6 +64,11 @@ CONVEX = (POLYGON + "::TestConvexByArithmetic", SNAPSHOT + "::TestEveryShapeIsAs
 LEVEL = (POLYGON + "::TestTheStackWithoutLevelSegments", SNAPSHOT + "::TestAFlatSegmentDoesNotStack")
 COUNT = (SNAPSHOT + "::TestTheCountIsNotACopy", *SIZE)
 ISOLATION = I + "test_script_isolation.py"
+#: … and those of fix round 5.
+HOLES = (SNAPSHOT + "::TestOneRingWithManyHoles", SNAPSHOT + "::TestTheTwoLevelZigzag")
+ORDER = (SNAPSHOT + "::TestTheOrderOfARecordsRegions",)
+FORGET = (SNAPSHOT + "::TestForgettingEverything", POLYGON + "::TestForgettingEveryRing")
+GATE = (I + "test_measure_region_work.py",)
 
 
 @dataclass(frozen=True)
@@ -665,11 +670,11 @@ MUTANTS: tuple[Mutant, ...] = (
            "        pass\n",
            MEMORY),
     # ── fix round 4 (P1-B): the strict union is a flat list ──────────────────
-    Mutant("the strict union is asked for a tree (StrictlySimple with Execute2)",
+    Mutant("a union is asked for a tree (Execute2) — the strict one and the plain one",
            SRC + "ui/view3d/snapshot.py",
            "    return list(clipper.Execute(pyclipper.CT_UNION, fill, fill))\n",
            "    return list(pyclipper.PolyTreeToPaths(clipper.Execute2(pyclipper.CT_UNION, fill, fill)))\n",
-           ZIGZAG),
+           (*ZIGZAG, *HOLES)),
     Mutant("the strict union's rings are read for free",
            SRC + "ui/view3d/snapshot.py",
            "    _pay_for_reading(made, budget)\n    rings = [_quantized((x / CLIPPER_SCALE",
@@ -677,10 +682,8 @@ MUTANTS: tuple[Mutant, ...] = (
            ZIGZAG),
     Mutant("the strict union's rings are sorted out of a budget of their own",
            SRC + "ui/view3d/snapshot.py",
-           "        return group_rings(rings, budget)\n    except RegionTooLargeError:\n        raise\n"
-           "    except ValueError:\n        return ()\n",
-           "        return group_rings(rings)\n    except RegionTooLargeError:\n        raise\n"
-           "    except ValueError:\n        return ()\n",
+           "        return _in_order(group_rings(rings, budget))\n",
+           "        return _in_order(group_rings(rings))\n",
            ZIGZAG),
     # ── fix round 4 (P2-1): convex by construction, judged by arithmetic ─────
     Mutant("a convex shape is cut by the snapshot all the same",
@@ -694,7 +697,7 @@ MUTANTS: tuple[Mutant, ...] = (
            CONVEX),
     Mutant("a corner that does not turn left counts as one that does",
            SRC + "core/scene3d/polygon.py",
-           "        if ax * by - ay * bx <= _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):\n",
+           "        if not ax * by - ay * bx > _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):\n",
            "        if False:\n",
            CONVEX),
     Mutant("a sliver the cut cannot prove is called convex",
@@ -721,6 +724,72 @@ MUTANTS: tuple[Mutant, ...] = (
            "scripts/script_isolation.py",
            "    redirect_qt_locations(isolate_profile())\n", "    isolate_profile()\n",
            (ISOLATION,)),
+    # ── fix round 5 (P1): no union is a tree; the regions of a record in a stated order ──
+    Mutant("the plain union is asked for a tree again (the defect of fix round 4)",
+           SRC + "ui/view3d/snapshot.py",
+           "    return _union_rings(subject, fill, strictly_simple=False)\n",
+           "    clipper = pyclipper.Pyclipper()\n"
+           "    clipper.AddPaths(subject, pyclipper.PT_SUBJECT, True)\n"
+           "    return list(pyclipper.PolyTreeToPaths(clipper.Execute2(pyclipper.CT_UNION, fill, fill)))\n",
+           HOLES),
+    Mutant("the regions of a record stand in the order the clipper handed them out",
+           SRC + "ui/view3d/snapshot.py",
+           "    return tuple(sorted(regions, key=lambda region: (min(region[0]), region[0])))\n",
+           "    return tuple(regions)\n",
+           ORDER),
+    Mutant("regions are ordered by the FIRST vertex of their outer ring, not the smallest",
+           SRC + "ui/view3d/snapshot.py",
+           "    return tuple(sorted(regions, key=lambda region: (min(region[0]), region[0])))\n",
+           "    return tuple(sorted(regions, key=lambda region: (region[0][0], region[0])))\n",
+           ORDER),
+    Mutant("the strict reading's regions are judged in the clipper's order",
+           SRC + "ui/view3d/snapshot.py",
+           "        return _in_order(group_rings(rings, budget))\n",
+           "        return group_rings(rings, budget)\n",
+           ORDER),
+    Mutant("a band reading's regions are judged in the clipper's order",
+           SRC + "ui/view3d/snapshot.py",
+           "        return _in_order(_tree_regions(tree))\n",
+           "        return _tree_regions(tree)\n",
+           ORDER),
+    Mutant("a stroke's regions are judged in the clipper's order",
+           SRC + "ui/view3d/snapshot.py",
+           "        regions = _in_order(group_rings(rings, budget))\n",
+           "        regions = group_rings(rings, budget)\n",
+           ORDER),
+    # ── fix round 5 (P2): one call that forgets; NaN is not convex; a table that fails ──
+    Mutant("clearing the outline cache leaves the ring memories as they are",
+           SRC + "ui/view3d/snapshot.py",
+           "    clear_ring_memories()\n    for cache in (_circle_ring, _circle_regions, _convex_region):\n",
+           "    for cache in (_circle_ring, _circle_regions, _convex_region):\n",
+           FORGET),
+    Mutant("clearing the outline cache leaves the circles as they are",
+           SRC + "ui/view3d/snapshot.py",
+           "    for cache in (_circle_ring, _circle_regions, _convex_region):\n        cache.cache_clear()\n",
+           "    for cache in ():\n        cache.cache_clear()\n",
+           FORGET),
+    Mutant("forgetting every ring drops only what is stale (a plan that is gone stays held)",
+           SRC + "core/scene3d/polygon.py",
+           "    for memory in list(_memories):\n        memory.cache_clear()\n",
+           "    for memory in list(_memories):\n        memory.settle()\n",
+           FORGET),
+    Mutant("a ring with a coordinate that is no number turns left at every corner",
+           SRC + "core/scene3d/polygon.py",
+           "        if not ax * by - ay * bx > _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):\n",
+           "        if ax * by - ay * bx <= _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):\n",
+           (POLYGON + "::TestWhatIsNoNumberIsNotConvex",)),
+    Mutant("the measuring script's table passes whatever it measured",
+           "scripts/measure_region_work.py",
+           "    return 1 if above else 0\n", "    return 0\n",
+           GATE),
+    Mutant("the table's bound lets a union asked for a tree through (14 times its price)",
+           "scripts/measure_region_work.py",
+           "MAX_COST_TO_PRICE = 12.0\n", "MAX_COST_TO_PRICE = 100.0\n",
+           GATE),
+    Mutant("the measuring script prints its verdict and reports success",
+           "scripts/measure_region_work.py",
+           "    return gate(RATIOS)\n", "    gate(RATIOS)\n    return 0\n",
+           GATE),
     # ── fix round 3 (P1): a stroke that touches itself ───────────────────────
     Mutant("a stroke whose rings touch gets no regions (the fallback the review found untested)",
            SRC + "ui/view3d/snapshot.py",
