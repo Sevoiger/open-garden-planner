@@ -651,7 +651,7 @@ Patterns `tests/integration/test_footprints_golden.py`, `test_scene3d_snapshot.p
 `test_scene3d_pipeline.py`, `test_scene3d_edge_plan.py`, `tests/unit/test_scene3d_sync.py` and
 `tests/perf/test_scene3d_snapshot_budget.py` established; reuse them where they fit. The last
 four were paid for by an independent review that found two interface defects behind a green
-suite (ADR-054, "What the first version got wrong").
+suite (ADR-056, "What the first version got wrong").
 
 - **A timing budget is asserted on untraced code.** A budget for pure-Python code cannot be
   asserted under a line tracer: under `pytest --cov=open_garden_planner --cov-branch` — how CI's
@@ -990,7 +990,7 @@ result = subprocess.run(cmd)  # nosec B603 — cmd is constructed internally, ne
 
 **Scope:** `src/` only. Test files are excluded — `assert` statements and test helpers are intentional and not security-relevant.
 
-**Work on what a plan file holds — two patterns (Phase 17 L1.1, #385, §8.26.1).** A plan file
+**Work on what a plan file holds — two patterns (Phase 17 L1.1, #385, §8.27.1).** A plan file
 is input: it can be edited by hand, and it can be hostile. Bandit sees none of this; it is a
 review duty wherever geometry out of a plan is processed on the GUI thread, and the 3D pipeline
 is where it was learned. A work bound had been added, a security review read the function it
@@ -2317,14 +2317,14 @@ the garden floor and the **soil surface** for a plant that is linked to
 assumption: a bed has no fill in the plan), AT the height of a container
 (its height is its fill height). The link alone never lifts: it is
 bookkeeping the app does not keep geometric, so a plant whose centre is not
-inside its parent's shape stands on the ground (§8.26.6 "Base stacking").
+inside its parent's shape stands on the ground (§8.27.6 "Base stacking").
 Worked example: a 60 cm perennial on the soil of a 40 cm raised bed (base
 38), α = 35° → the tip lies `(38 + 60) / tan 35° = 140.0 cm` beyond the
 plant, 54.3 cm further than from the ground (85.7 cm) — and no longer inside
 the bed's own 57.1 cm shadow. **One walk makes the casters**
 (`collect_shadow_casters`): the overlay and the heatmap both call it, and the
 3D records take `transform.base_cm` from the same
-`ui/canvas/footprints.item_base_cm` (§8.26.6) — a drift guard counts the
+`ui/canvas/footprints.item_base_cm` (§8.27.6) — a drift guard counts the
 callers and the consumers of `compute_scene_shadows`. A caster is a
 `ShadowCaster` or an exact `(footprint, height)` pair; any other shape is a
 `TypeError` (`caster_fields`), so nothing but a `ShadowCaster` can carry a
@@ -2338,7 +2338,7 @@ unchanged in 2D: `polyline_footprint` of a CLOSED polyline returns an outer
 ring and a hole, the shadow functions take each ring for a footprint, and so
 the shadow of a fence drawn as a closed loop covers the enclosed area — a
 separate defect with its own follow-up, not touched by base stacking (the 3D
-records were fixed: there the hole is a hole, §8.26.1).
+records were fixed: there the hole is a hole, §8.27.1).
 
 **Recompute discipline** for canvas-scale overlays (shadow overlay,
 heatmap): precompute on change — `scene.changed` debounced (150 ms) +
@@ -2365,7 +2365,7 @@ L1.1); only `ui/view3d/qt3d_adapter.py` may import
 `PyQt6.Qt3D*` (ADR-038's engine-swap insurance). The sun vector's ground
 projection is pinned exactly opposite the 2D shadow direction — if the
 3D light and the 2D overlay ever disagree, a unit test fails first.
-Contract v2 (§8.26.1) keeps the same single mapping as numpy
+Contract v2 (§8.27.1) keeps the same single mapping as numpy
 (`core/scene3d/frame.py`; a drift-guard test holds the two equal) and adds
 the item-local frame beneath it.
 
@@ -2550,7 +2550,7 @@ contact sheet for style-level changes. The recipe is in
 `SPECIES_SPRITES` (`core/plant_art/resolve.py`) — and both edits reach the 3D
 view as well (§8.22.4).
 
-### 8.22.4 One recipe table for 2D and 3D (Phase 17 L1.7, ADR-054 addendum)
+### 8.22.4 One recipe table for 2D and 3D (Phase 17 L1.7, ADR-056 addendum)
 
 `core/plant_art/` is the Qt-free, standard-library-only home of everything that
 says what a plant looks like (an AST scan in `tests/unit/test_plant_art.py`
@@ -2965,13 +2965,13 @@ concern at the layer counts this app supports, and unchanged by #338 (the
 formula was already `layer.z_order * 100` before per-object stacking; #338
 only subdivides the same band, it does not widen it).
 
-## 8.26 3D scene pipeline (Phase 17 L1, #385, ADR-054)
+## 8.27 3D scene pipeline (Phase 17 L1, #385, ADR-056)
 
-How the plan reaches a 3D engine. Each L1 story adds its own `### 8.26.N` subsection at the end;
-this section is the map. The decisions and their rejected alternatives are ADR-054; the engine
+How the plan reaches a 3D engine. Each L1 story adds its own `### 8.27.N` subsection at the end;
+this section is the map. The decisions and their rejected alternatives are ADR-056; the engine
 facts are the `ogp-3d-renderer` skill; the look is `ogp-lush-cinematic`.
 
-### 8.26.1 Scene contract v2 — records, diff, builders, sink (L1.1)
+### 8.27.1 Scene contract v2 — records, diff, builders, sink (L1.1)
 
 **The pipeline.** Five steps, all Qt-free except the first:
 
@@ -3038,7 +3038,7 @@ ends in the HOUSE's local frame, from the live ridge item), `species_key` (ADR-0
 2D sprite is resolved from, and so its 3D recipe: §8.22.4), `plant_category`, `path_style` (a
 polyline's `PathFenceStyle`, when set),
 `container_material`. Selection and hover are not in the record at all. `transform.base_cm` is
-where the item stands: the soil of the bed or container it is linked to and stands inside, 0.0 on the ground (§8.26.6).
+where the item stands: the soil of the bed or container it is linked to and stands inside, 0.0 on the ground (§8.27.6).
 
 **Outer rings and holes — read `regions`, not `footprints` alone.** The ground an item covers is
 its outer rings *minus* their holes: `record.regions` yields `(outer, holes)` pairs and
@@ -3209,7 +3209,7 @@ refusal's message says so.
 **The record grid.** Lengths are snapped to 1e-7 cm, angles to 1e-9° (`quantize_cm`,
 `quantize_deg`), so the same geometry reached along two float paths is one record. This is
 load-bearing, not hygiene: without it a HOUSE with a ridge was rebuilt on 689 of 1,000 moves
-(ADR-054 decision 5).
+(ADR-056 decision 5).
 
 **Signatures and the diff.** `geometry_sig`, `transform_sig` and `material_sig` are hashes of the
 three field groups; `Record.same_geometry` / `same_transform` / `same_material` compare the
@@ -3226,7 +3226,7 @@ across items (the seed is the item id).
 | recolour (fill; a polyline's stroke) | `material` |
 | height, centred resize, vertex edit inside the bounding box, a plant growing with the date, a ridge edit (on its HOUSE) | `geometry` |
 | one-sided resize, vertex edit that grows the bounding box | `geometry` + `transform` |
-| a bed's height (on each plant in it), re-parenting a plant onto or off raised soil, a bed resized so that a linked plant is no longer inside it (§8.26.6) | `transform` — the base |
+| a bed's height (on each plant in it), re-parenting a plant onto or off raised soil, a bed resized so that a linked plant is no longer inside it (§8.27.6) | `transform` — the base |
 | select, deselect, hover, rename, re-parenting between parents without raised soil, a rotation of a circle about its centre | empty |
 | create / delete, hide / show | `added` / `removed` |
 | arrange (bring to front …) | `reordered` only — never geometry, no engine call |
@@ -3344,13 +3344,13 @@ for each rule your builder must keep to `scripts/mutation_check_scene3d.py`.
 `srgb_to_linear` and `item_seed` keep their names. Drift-guard tests keep the ported helpers equal
 to the spike's until L1.10 deletes it.
 
-### 8.26.6 Built-world builders and base stacking (L1.6)
+### 8.27.6 Built-world builders and base stacking (L1.6)
 
-The production builders live in `core/scene3d/builders/` (ADR-054 addendum "builders v0"); where an
+The production builders live in `core/scene3d/builders/` (ADR-056 addendum "builders v0"); where an
 item stands is one rule shared with the 2D shadows (ADR-037 addendum "base stacking").
 `builders.production_registry()` is what the wiring hands to `SceneSync`: the twelve built-world
 kinds of this section (`builders.register`) and the three plant kinds (`plants.register`,
-§8.26.7) — 15 registered kinds, none in both families, every other kind on the default prism
+§8.27.7) — 15 registered kinds, none in both families, every other kind on the default prism
 (`tests/unit/test_scene3d_builders.py::TestRegistration`;
 `tests/integration/test_scene3d_built_world.py::test_a_raised_bed_with_two_real_plants_through_the_production_registry`
 takes a raised bed and two real plants through both).
@@ -3366,7 +3366,7 @@ takes a raised bed and two real plants through both).
 | `RAISED_BED` | `beds` | `bed`: vc | baked: oak planks, soil |
 | `CONTAINER`, `WALL_PLANTER`, `CONTAINER_ROUND`, a `GARDEN_BED` with a height | `beds` | `walls`: vc · `soil`: vc | walls tinted, soil baked |
 | `HEDGE_SECTION`, `HEDGE_POLYGON` | `hedges` | `hedge`: foliage (the dark core and the leaf shell in one mesh) | baked: the hedge texture's greens |
-| `TREE`, `SHRUB`, `PERENNIAL` | `plants` (L1.7, §8.26.7 — registered by `plants.register`, not by this section's `register`) | `wood`: vc · `foliage`: foliage — or `placeholder`: vc for a plant without a height (no shadow) | baked: the recipe's palette, the 2D bark colour |
+| `TREE`, `SHRUB`, `PERENNIAL` | `plants` (L1.7, §8.27.7 — registered by `plants.register`, not by this section's `register`) | `wood`: vc · `foliage`: foliage — or `placeholder`: vc for a plant without a height (no shadow) | baked: the recipe's palette, the 2D bark colour |
 | everything else | `build.default_builder` | one tinted prism, or nothing without a height | tinted |
 
 **What a line becomes is decided in one place**, `builders/lines.py`, from its kind and its style
@@ -3391,7 +3391,7 @@ line says that no more follow (starting the memory over would log every name aga
 rebuild pass). A style change sets the stroke's colour
 and width too (`apply_style_preset`), so it arrives as `replace_geometry` + `update_material`.
 
-**The rules a builder obeys** (on top of §8.26.1's contract):
+**The rules a builder obeys** (on top of §8.27.1's contract):
 
 1. **The top is the height, by construction.** Build FOR the height: the highest vertex is
    `record.height_cm` to the float32. Give primitives a bottom and a top (`boxes(…, z0, z1)`),
@@ -3611,11 +3611,11 @@ onto the ground without a shadow map. A builder's number below the listed one is
 ENGINE render is judged on solid casters (the box gate); thin members — a 0.8 cm wire, a 1.6 cm
 bar, about one shadow-map texel — will read lower there through no fault of the builder and are
 exempt from a per-pixel IoU. The analysis stays the 2D model's; a 3D reviewer measuring shadow
-IoU on these kinds reads this table, not the box gate. The full table is in ADR-054's builders
+IoU on these kinds reads this table, not the box gate. The full table is in ADR-056's builders
 addendum; `tests/unit/test_scene3d_shadow_agreement.py` holds the builders to it within 0.05
 (a reach within 1 cm) and every copy of the table to the script's.
 
-### 8.26.7 Plant v0 — archetype silhouettes from the shared recipes (L1.7)
+### 8.27.7 Plant v0 — archetype silhouettes from the shared recipes (L1.7)
 
 `core/scene3d/builders/plants.py` is the builder of the plant kinds (`TREE`, `SHRUB`,
 `PERENNIAL`). It decides nothing about a plant by itself: the **recipe** comes from the tables the
@@ -3776,7 +3776,7 @@ and "z95 at least 0.62" was 0.603 for a rhubarb half as tall as wide.
 
 **The sizes a plant is built at.** `build_silhouette` builds a height and a canopy radius between
 `MIN_SIZE_CM` (a micrometre) and `MAX_LENGTH_CM` (10 km, the longest length a record can hold —
-§8.26.1) and refuses anything else with a `ValueError`: a NaN, zero, a negative, an infinity,
+§8.27.1) and refuses anything else with a `ValueError`: a NaN, zero, a negative, an infinity,
 1e300. Outside that range the arithmetic leaves float32 — before the check a height of 1e300
 returned a mesh of NaNs with nothing but two RuntimeWarnings, a radius of 1e-310 raised an
 `OverflowError` out of a logarithm, a height of 5e-324 a `MeshError`. Inside it all thirteen
@@ -3919,7 +3919,7 @@ ticks from 1 May (`tests/perf/test_scene3d_plants_budget.py`) and over 180 ticks
 Warm, 0.5 and 0.9 of the changing plants are REBUILT per tick (their proportion crossed a step;
 at most 4 in one tick over the season) and the others scaled — a tick is twenty times cheaper
 than without the cache. `snapshot_records` itself took 6 ms and 16 ms a day on the same machine
-(§8.26.1's budget, not this one). On a quiet machine every number is lower, by about 3.5 — an
+(§8.27.1's budget, not this one). On a quiet machine every number is lower, by about 3.5 — an
 inference, not a reading: the builder before the cache read 329–333 ms for a first build of
 `bench_large` on a quiet machine, and this one costs the same per first build to within 12 %
 (compared in one process). That is why the test states its budgets in units of a reference
@@ -3972,7 +3972,7 @@ the palest real foliage, never taller than 25 cm.
 What the marker SAYS is exactly "no source of the plan gives this plant a height" (`height_cm is
 None`: no typed height, no measurement, no species size) — and nothing else. A typed height that
 is infinite or beyond `MAX_LENGTH_CM` (10 km; a hand-edited plan) gives the plant no record at
-all: it is left out and reported as `out_of_range` (§8.26.1), not shown as a marker — until the
+all: it is left out and reported as `out_of_range` (§8.27.1), not shown as a marker — until the
 scene contract's second fix round an infinite height silently became `height_cm=None`, a marker
 saying "no height" about a plant that had one. A typed height that is no positive number (0, a
 negative, NaN, text) is no typed height, for 3D as for the 2D shadow, and the next source

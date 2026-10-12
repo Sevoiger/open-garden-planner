@@ -24,7 +24,7 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   `tests/unit/test_scene3d_contract.py`). That is a rule about its source — no module there uses
   Qt — not about the interpreter: importing the package runs `core/__init__.py`, which loads
   PyQt6 for other `core` modules. It is the production side of the engine boundary since
-  L1.1 (ADR-054, §8.26.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
+  L1.1 (ADR-056, §8.27.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
   driven by `SceneSync`; builders are tested against `RecordingSink` with no GPU.
 - **`EngineSink` has ten methods, and `clear()` is the one an adapter gets wrong.** After
   `clear()` the engine holds nothing — no items, no sun, no ground, no open transaction — and it
@@ -41,7 +41,7 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   `tests/unit/test_plant_art.py`): the plant recipe tables and the species → sprite rule, read by
   the sprite generator script (which executes `recipes.py` by file path — importing the package
   by name runs `core/__init__.py` and loads PyQt6), by `core/plant_renderer` and by the plant
-  builder `core/scene3d/builders/plants.py` (L1.7, §8.22.4, §8.26.7).
+  builder `core/scene3d/builders/plants.py` (L1.7, §8.22.4, §8.27.7).
 - **A plant's 3D recipe is resolved from the record's `sprite_species`** — the item's own
   species string, raw — its `plant_category` and its kind: the 2D renderer's three inputs.
   `species_name` / `species_key` describe the species DATA and are for labels and lookups; a
@@ -58,7 +58,7 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   about 20 MB) — at the cap a shape that was dropped comes back in two builds, so going back to
   a dropped plan costs two cold ticks and a backward scrub twice the forward one. GUI thread
   only; the cache is untested under threads.
-- **The production builders are `core/scene3d/builders/`** (L1.6, ADR-054 addendum):
+- **The production builders are `core/scene3d/builders/`** (L1.6, ADR-056 addendum):
   `production_registry()` returns the `BuilderRegistry` the wiring hands to `SceneSync` — the
   built world's twelve kinds (`register`) and the plant builder's three (`plants.register`,
   above), no kind in both. The built world's
@@ -67,9 +67,9 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   record that is not ONE plain outline (several rings, a hole, or `params["outline_resolved"]`)
   is the plain block of its regions and gets no roof, frame or leaves — corners
   bevelled beyond a mitre of two offsets, tinted parts, the mirrored palette) and the how-to
-  are §8.26.6; a record's `transform.base_cm` — where a plant stands on its bed — reaches the
+  are §8.27.6; a record's `transform.base_cm` — where a plant stands on its bed — reaches the
   engine through `engine_pose`, never through a mesh. Their shadows are NOT the 2D model's:
-  the measured table (`scripts/measure_built_world_shadows.py`) is in §8.26.6 and next to the
+  the measured table (`scripts/measure_built_world_shadows.py`) is in §8.27.6 and next to the
   Shadows gate of `ogp-lush-cinematic` §1.
 
 ## 2. PyQt6 6.11 binding facts
