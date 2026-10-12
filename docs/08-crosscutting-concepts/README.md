@@ -672,7 +672,7 @@ Patterns `tests/integration/test_footprints_golden.py`, `test_scene3d_snapshot.p
 `test_scene3d_pipeline.py`, `test_scene3d_edge_plan.py`, `tests/unit/test_scene3d_sync.py` and
 `tests/perf/test_scene3d_snapshot_budget.py` established; reuse them where they fit. The last
 four were paid for by an independent review that found two interface defects behind a green
-suite (ADR-054, "What the first version got wrong").
+suite (ADR-056, "What the first version got wrong").
 
 - **A timing budget is asserted on untraced code.** A budget for pure-Python code cannot be
   asserted under a line tracer: under `pytest --cov=open_garden_planner --cov-branch` — how CI's
@@ -756,7 +756,7 @@ result = subprocess.run(cmd)  # nosec B603 — cmd is constructed internally, ne
 
 **Scope:** `src/` only. Test files are excluded — `assert` statements and test helpers are intentional and not security-relevant.
 
-**Work on what a plan file holds — two patterns (Phase 17 L1.1, #385, §8.26.1).** A plan file
+**Work on what a plan file holds — two patterns (Phase 17 L1.1, #385, §8.27.1).** A plan file
 is input: it can be edited by hand, and it can be hostile. Bandit sees none of this; it is a
 review duty wherever geometry out of a plan is processed on the GUI thread, and the 3D pipeline
 is where it was learned. A work bound had been added, a security review read the function it
@@ -2090,7 +2090,7 @@ L1.1); only `ui/view3d/qt3d_adapter.py` may import
 `PyQt6.Qt3D*` (ADR-038's engine-swap insurance). The sun vector's ground
 projection is pinned exactly opposite the 2D shadow direction — if the
 3D light and the 2D overlay ever disagree, a unit test fails first.
-Contract v2 (§8.26.1) keeps the same single mapping as numpy
+Contract v2 (§8.27.1) keeps the same single mapping as numpy
 (`core/scene3d/frame.py`; a drift-guard test holds the two equal) and adds
 the item-local frame beneath it.
 
@@ -2628,13 +2628,13 @@ concern at the layer counts this app supports, and unchanged by #338 (the
 formula was already `layer.z_order * 100` before per-object stacking; #338
 only subdivides the same band, it does not widen it).
 
-## 8.26 3D scene pipeline (Phase 17 L1, #385, ADR-054)
+## 8.27 3D scene pipeline (Phase 17 L1, #385, ADR-056)
 
-How the plan reaches a 3D engine. Each L1 story adds its own `### 8.26.N` subsection at the end;
-this section is the map. The decisions and their rejected alternatives are ADR-054; the engine
+How the plan reaches a 3D engine. Each L1 story adds its own `### 8.27.N` subsection at the end;
+this section is the map. The decisions and their rejected alternatives are ADR-056; the engine
 facts are the `ogp-3d-renderer` skill; the look is `ogp-lush-cinematic`.
 
-### 8.26.1 Scene contract v2 — records, diff, builders, sink (L1.1)
+### 8.27.1 Scene contract v2 — records, diff, builders, sink (L1.1)
 
 **The pipeline.** Five steps, all Qt-free except the first:
 
@@ -2942,7 +2942,7 @@ refusal's message says so.
 **The record grid.** Lengths are snapped to 1e-7 cm, angles to 1e-9° (`quantize_cm`,
 `quantize_deg`), so the same geometry reached along two float paths is one record. This is
 load-bearing, not hygiene: without it a HOUSE with a ridge was rebuilt on 689 of 1,000 moves
-(ADR-054 decision 5).
+(ADR-056 decision 5).
 
 **Signatures and the diff.** `geometry_sig`, `transform_sig` and `material_sig` are hashes of the
 three field groups; `Record.same_geometry` / `same_transform` / `same_material` compare the

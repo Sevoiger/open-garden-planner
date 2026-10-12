@@ -2331,7 +2331,7 @@ It pins:
 
 All three P1 tests (round 1's two, round 2's typing test) fail when their fix is reverted.
 
-## ADR-054: 3D scene pipeline and the truth principle (Phase 17, L1.1)
+## ADR-056: 3D scene pipeline and the truth principle (Phase 17, L1.1)
 
 **Status**: Accepted (2026-10-11, #385 story L1.1, epic #383). This is the scene-pipeline ADR the
 epic reserved as "ADR-049" (that number went to frost dates; ADR-053 announced it for L1.1). It
@@ -2577,7 +2577,7 @@ it stands after that round.
         item has LEFT (`pay_for_region`), every union, band and comparison of a resolution.
         Before all of it, an item's stored vertex count: more than `MAX_ITEM_VERTICES` =
         16,384 is one comparison. What the budget does not cover is `RegionTooLargeError`
-        inside and the skip code `outline_too_large` outside. Section 8.26.1 has the table of
+        inside and the skip code `outline_too_large` outside. Section 8.27.1 has the table of
         what fits and what a refusal costs; section 8.11 the two patterns.
         *Corrected in fix round 4:* the strict union was asked for a tree (`StrictlySimple`
         with `Execute2`), whose cost follows the rings it makes and the splits it tries, not
@@ -2769,7 +2769,7 @@ it stands after that round.
   `item_footprints` hands a closed fence's two rings to `compute_scene_shadows` as two solids, so
   a 10 m × 8 m fence 1.2 m high shades 88.8 m² at a 60° sun where its stroke shades 17.5 m². The
   golden footprint fixture pins `item_footprints` byte for byte, so the fix is a follow-up of its
-  own (§11.4.8 has the reproduction). Until it lands, 2D and 3D disagree ON PURPOSE for a closed
+  own (§11.4.11 has the reproduction). Until it lands, 2D and 3D disagree ON PURPOSE for a closed
   stroke and for a polygon that crosses itself: the 3D record is the stroke, or the resolved
   regions; the 2D footprint is every ring as a solid, or the ring as drawn. That follow-up should
   also move "resolve an outline" and "sort rings into regions" into one `core` function both

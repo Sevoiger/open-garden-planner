@@ -1,6 +1,6 @@
 """Which ground does a canvas item cover? — the ONE footprint extraction.
 
-Public home (Phase 17 L1.1, #385, ADR-054) of the helpers that used to be
+Public home (Phase 17 L1.1, #385, ADR-056) of the helpers that used to be
 private to ``sun_shadow_controller``: the shadow overlay (US-E3), the
 hours-of-sun heatmap (US-E4), the Qt 3D view (US-E6) and the Qt Quick 3D
 pipeline all ask this module, so a 3D solid can never disagree with its 2D

@@ -24,7 +24,7 @@ relative cost. Art direction lives in `ogp-lush-cinematic`; this skill is the en
   `tests/unit/test_scene3d_contract.py`). That is a rule about its source — no module there uses
   Qt — not about the interpreter: importing the package runs `core/__init__.py`, which loads
   PyQt6 for other `core` modules. It is the production side of the engine boundary since
-  L1.1 (ADR-054, §8.26.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
+  L1.1 (ADR-056, §8.27.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
   driven by `SceneSync`; builders are tested against `RecordingSink` with no GPU.
 - **`EngineSink` has ten methods, and `clear()` is the one an adapter gets wrong.** After
   `clear()` the engine holds nothing — no items, no sun, no ground, no open transaction — and it

@@ -59,7 +59,7 @@ src/open_garden_planner/
 │   ├── shadow_geometry.py        # Qt-free shadow sweep/union — L=h/tanα, Minkowski sweep, pyclipper union (US-E3, ADR-037)
 │   ├── shade_aggregation.py      # Qt-free hours-of-sun sampling/bands/grid — rasterizer injected (US-E4, ADR-037)
 │   ├── heatmap_render.py         # Qt-free heatmap rendering — cool→warm ramp LUT + marching-squares hour contours (US-E4)
-│   ├── scene3d/                  # Qt-free 3D scene core (Phase 17 L1.1, ADR-054) — see §5.10
+│   ├── scene3d/                  # Qt-free 3D scene core (Phase 17 L1.1, ADR-056) — see §5.10
 │   │   ├── record.py             #   contract v2: Record (outer rings + holes) / Transform / Material / Params, three signatures, the record grid
 │   │   ├── scene_diff.py         #   diff() → SceneDiff(added, removed, transform, material, geometry, reordered)
 │   │   ├── frame.py              #   scene ↔ engine (det +1), item-local ↔ scene, LocalFrame, engine_pose, the sun vector
@@ -127,7 +127,7 @@ src/open_garden_planner/
 │   │   ├── canvas_view.py        # Pan/zoom, key/mouse handling
 │   │   ├── canvas_scene.py       # Scene (holds objects)
 │   │   ├── dimension_lines.py    # Dimension line rendering & management
-│   │   ├── footprints.py         # THE footprint extraction — item_outline / item_footprints / plant_canopy_radius_cm; shadows, heatmap and 3D all read it (Phase 17 L1.1, ADR-054)
+│   │   ├── footprints.py         # THE footprint extraction — item_outline / item_footprints / plant_canopy_radius_cm; shadows, heatmap and 3D all read it (Phase 17 L1.1, ADR-056)
 │   │   ├── sun_shadow_controller.py # Runtime-only solar shadow overlay + debounced recompute (US-E3, ADR-037)
 │   │   ├── sun_heatmap.py        # QImage rasterizer + HeatmapWorker(QThread) + cool→warm ramp overlay + hourly contour lines/labels (US-E4)
 │   │   ├── geometry_apply.py     # THE canonical resize/rotate/vertex apply path — panel + handles + agent (US-D2.2/D2.6)
@@ -426,10 +426,10 @@ Black-box view of persistent plant collections, favourites, drag-to-canvas orche
 | `ui/canvas/canvas_view.py` (`_create_plant_item_at_scene_pos`) | Canonical unified plant creation helper shared between gallery drops and `plant_list:<entry_id>` drops: sizes footprint (respects `max_spread_cm`), auto-parents to underlying bed, stamps default planting date (US-E8), assigns active layer, runs as a single undo step via `CreateItemCommand`. | `(scene_pos, tool_type, obj_type, radius, ...)` → created `CircleItem` |
 | `agent_api/server.py` (`garden://plant-lists`) | Read-only MCP resource exposing all lists and entries (`id`, `name`, `species_key`, `note`, `added_at`) to AI assistants. | GET `garden://plant-lists` → JSON catalog |
 
-## 5.10 3D Scene Pipeline — Qt-free core (Phase 17 L1.1, #385, ADR-054)
+## 5.10 3D Scene Pipeline — Qt-free core (Phase 17 L1.1, #385, ADR-056)
 
 Black-box view of the path from the plan to a 3D engine. Nothing here renders: the engine adapter
-is `ui/view3d/quick3d/` (L1.2). The concept, the diff table and the builder how-to are §8.26.1.
+is `ui/view3d/quick3d/` (L1.2). The concept, the diff table and the builder how-to are §8.27.1.
 `core/scene3d/` imports the standard library, numpy and Qt-free `core` siblings only (pinned by an
 AST scan that follows those siblings). That is a statement about the source — no module here uses
 Qt — not about the interpreter: importing the package runs `core/__init__.py`, which loads PyQt6
@@ -443,7 +443,7 @@ for other `core` modules.
 | `core/scene3d/scene_diff.py` | `diff(old, new)` → `SceneDiff(added, removed, transform, material, geometry, reordered)`: three independent comparisons per surviving item. (The module is not called `diff`, so that `core.scene3d.diff` is the function.) | two snapshots → what changed |
 | `core/scene3d/frame.py` | Every frame conversion, once: scene ↔ engine (numpy, determinant +1), item-local → scene (`pose_*`), `engine_pose`, `LocalFrame` (an affine scene transform → rigid transform + local coordinates; non-rigid parts are baked), and `sun_direction_scene`. | floats / arrays → floats / arrays |
 | `core/scene3d/polygon.py` | Plane polygons: `signed_area`, `ccw` / `cw`, `is_simple_ring`, `group_rings` (rings → outer rings with their holes), `triangulate_polygon` (the ear clipper both 3D views share), `triangulate_region` (outer minus holes, by bridging; bounded in size), `cut_region` (that triangulation, proven by area and orientation, cached) and `is_buildable_region` — the ONE predicate for "a builder can turn this region into a solid", which the snapshot asks for every region it hands on. | rings → regions / triangles / a verdict |
-| `core/scene3d/polygon.py` — what an outline may cost and what is remembered | `WorkBudget` and `MAX_REGION_WORK` (one budget of counted work units for everything ONE item's outline needs; `RegionTooLargeError` beyond it), `MAX_ITEM_VERTICES`, `region_work` / `pay_for_region` (a region cut out of what its caller has left), `touching_pairs` and `stack_height` (what the clipper's work on an outline depends on, counted before the clipper sees it), `ring_keyed` (answers about rings, bounded by the vertices held). The clipper's prices and the order of payment are the snapshot's (`ui/view3d/snapshot.py`: `_stroke_regions`, `_outline_regions`, `_resolved_regions`). | sizes and counts → a refusal before the work, or the work within the bound (§8.26.1, §8.11) |
+| `core/scene3d/polygon.py` — what an outline may cost and what is remembered | `WorkBudget` and `MAX_REGION_WORK` (one budget of counted work units for everything ONE item's outline needs; `RegionTooLargeError` beyond it), `MAX_ITEM_VERTICES`, `region_work` / `pay_for_region` (a region cut out of what its caller has left), `touching_pairs` and `stack_height` (what the clipper's work on an outline depends on, counted before the clipper sees it), `ring_keyed` (answers about rings, bounded by the vertices held). The clipper's prices and the order of payment are the snapshot's (`ui/view3d/snapshot.py`: `_stroke_regions`, `_outline_regions`, `_resolved_regions`). | sizes and counts → a refusal before the work, or the work within the bound (§8.27.1, §8.11) |
 | `core/scene3d/mesh.py` | `Mesh` (float32 positions, normals, linear RGBA, uvs; uint32 triangles) with `validate()`, `merge`, `translated`; `MeshPart` (material kind, shadow flag, tint flag); `MATERIAL_KINDS`. | arrays → validated mesh parts |
 | `core/scene3d/build.py` | The builder seam: `Builder`, `BuilderRegistry`, `default_builder` (prism of the outer rings minus their holes to the resolved height, tinted; nothing without a height; refuses a ring that crosses itself and a number that is not finite in float32), `prism_mesh`, `item_seed`, and `verify_builder` — the test instrument for every builder: purity, mesh validity, the height (fraction or absolute cm) and the plan view — two upper bounds on excess (no hole built over, nothing far outside the footprint), never a demand for coverage. | `Record` → `tuple[MeshPart, ...]` |
 | `core/scene3d/sink.py` | `EngineSink` (ten methods; `clear()` — hold nothing, legal at any time — is the one recovery needs) and `RecordingSink`, its protocol-enforcing double; `SunState` (angles from `core/solar`), `GroundSpec` (minimal, L1.5 extends it). | calls → engine state / a call log |
