@@ -143,6 +143,14 @@ def test_the_frozen_app_closes_clean_too(scratch: Path, scenario: str) -> None:
     if not exe:
         pytest.skip("set OGP_WORKSPACE_GATE_EXE to the gate build's exe (installer/workspace_gate.spec)")
     run = _clean(run_gate(scratch, scenario, command=[exe]))
+    # it WAS the frozen exe, the hook ran before the app (a runtime hook), and every
+    # store this process built is the throw-away one — by Qt's own account of each
+    assert run.report["frozen"] is True and run.report["late"] is False
+    assert run.report["stores"] == [["cofade_test", run.store]], run.report["stores"]
+    assert run.report["production"] not in run.report["stores"]
+    closed = run.step("closed")
+    assert closed["accepted"] is True and closed["geometry_saved"] is True
+    assert [Path(entry).name for entry in closed["recent_files"]] == ["bench_small.ogp"]
     if scenario != "never":
         shown = run.step("visible")
         assert shown["state"] == "running" and shown["parts"] >= 98 and shown["guard_files"] == []
