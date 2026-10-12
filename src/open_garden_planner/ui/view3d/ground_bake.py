@@ -54,26 +54,37 @@ not to upload it.
 What a bake may cost — the bounds (a plan file is untrusted input, §8.11)
 -------------------------------------------------------------------------
 A record is painted once into every tile its paint reaches, so the cost of a
-tile is the SUM over its records, and three things are bounded per tile, each
-before the work it bounds:
+tile is the SUM over its records. What is bounded is the WORK — what is walked,
+not what comes out — per tile, each bound taken before the work it bounds:
 
 - at most ``TILE_RECORDS`` records are painted into one tile — the TOPMOST ones
   (the lower ones are left out: under 256 layers of paint they would hardly be
   seen), and
-- only while their outline vertices together stay within ``TILE_VERTICES`` (the
-  topmost record is always painted: one outline is at most the snapshot's
-  ``MAX_ITEM_VERTICES``);
+- only while their COST stays within ``TILE_VERTICES``. A record's cost is its
+  outline vertices times the passes painting makes over them: 1 for a fill and a
+  solid stroke, ``_STYLED_PASSES`` for a styled path (its base stroke, its two
+  offset lines and its walks each go over every vertex, before a single element
+  is drawn), ``_DASHED_COST`` for a dashed pen (the dashes of the part inside
+  the tile). The topmost record is always painted: the dearest there can be —
+  ``MAX_ITEM_VERTICES`` vertices, dashed — is exactly the bound;
 - the ELEMENTS a path style draws — stones, planks, posts, dots: as many as the
   line is long, whatever its vertex count — are generated only inside the tile
   (``path_style_paint``: the walk is clipped to the tile, keeping the pattern's
-  phase), and at most ``TILE_ELEMENTS`` per tile, all its paths together.
+  phase), at most ``TILE_ELEMENTS`` per tile, all its paths together;
+- the STEPS of the exact walk that finds them (the canvas's own running sum,
+  over a whole segment, inside the tile or not): at most ``TILE_WALK_STEPS``
+  per tile, all its paths together — beyond, a segment is entered by arithmetic;
+- a DASHED line is cut to the tile before it is stroked (each run with the dash
+  offset of where it starts), so the dasher is never handed the length outside.
 
-A tile that hit one of them is counted (``capped_tiles``) and logged once.
+One ``WalkBudget`` per tile carries the element and step bounds through every
+record of the tile; a spent one means "no more", never "no bound". A tile that
+hit a bound is in ``capped`` (and counted, and logged once) — plain data for
+whoever shows the user what the 3D view left out.
 What is NOT bounded here because it is elsewhere: the vertices of one outline
 (the snapshot refuses an item above ``MAX_ITEM_VERTICES`` before one vertex is
-read), the tiles and pixels of a plan (``GroundGrid``: 256 tiles, 4096 × 4096
-px) and the dashes of a dashed pen (Qt's dasher skips what lies outside the
-image — measured: a dashed line of 19 km costs what one of 100 m costs).
+read) and the tiles and pixels of a plan (``GroundGrid``: 256 tiles, 4096 ×
+4096 px).
 
 Memory: the tiles of the largest ground are 64 MB (``MAX_GROUND_PIXELS`` × 4
 bytes), held ONCE on this side — the baker's tiles are the very objects the
@@ -87,7 +98,7 @@ imports no Qt Quick module and nothing of the engine package.
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Final
@@ -120,10 +131,14 @@ from open_garden_planner.core.scene3d import (
 )
 from open_garden_planner.core.scene3d.frame import cos_sin
 from open_garden_planner.core.scene3d.ground import check_grid_settings
-from open_garden_planner.ui.canvas.items.path_style_paint import PathStylePaint
+from open_garden_planner.ui.canvas.items.path_style_paint import (
+    PathStylePaint,
+    WalkBudget,
+    segment_inside,
+)
 
-__all__ = ["TILE_ELEMENTS", "TILE_RECORDS", "TILE_VERTICES", "GroundBaker", "paint_bounds",
-           "paint_record"]
+__all__ = ["TILE_ELEMENTS", "TILE_RECORDS", "TILE_VERTICES", "TILE_WALK_STEPS", "GroundBaker",
+           "WalkBudget", "paint_bounds", "paint_record"]
 
 _log = logging.getLogger(__name__)
 
@@ -153,13 +168,20 @@ _ELEMENT_REACH: Final = (2.5, 8.0)
 
 #: The bounds of ONE tile (module docstring, "What a bake may cost"). Measured on
 #: the development box: a record costs 0.02–0.15 ms to paint into a tile (1.3 ms
-#: when it fills the tile with a turned texture), an outline 1 µs a vertex, a style
-#: element 2–5 µs — so a tile at all three bounds costs about a third of a second
-#: and a full bake of the largest ground (64 tiles) about twenty; a plan that is
-#: not built to reach them is three orders of magnitude below.
+#: when it fills the tile with a turned texture), an outline 1 µs a vertex and
+#: pass, a style element 2–5 µs, a step of the exact walk 0.15 µs — so a tile at
+#: every bound costs about a third of a second and a full bake of the largest
+#: ground (64 tiles) about twenty; a plan that is not built to reach them is
+#: three orders of magnitude below.
 TILE_RECORDS: Final = 256
 TILE_VERTICES: Final = 262_144
 TILE_ELEMENTS: Final = 16_384
+TILE_WALK_STEPS: Final = 16_384
+#: What a record's vertices are multiplied with for the tile's vertex bound: the
+#: passes a styled path's painter makes over them, and what the dashes of a dashed
+#: stroke cost beside its vertices.
+_STYLED_PASSES: Final = 8
+_DASHED_COST: Final = 16
 
 
 def _object_type(kind: str) -> ObjectType | None:
@@ -205,13 +227,22 @@ def _box(points: Iterable[tuple[float, float]]) -> tuple[float, float, float, fl
     return (min(xs), min(ys), max(xs), max(ys))
 
 
-def _vertices(record: Record) -> int:
-    """How many outline vertices painting the record walks."""
+def _cost(record: Record) -> int:
+    """What painting the record into ONE tile is charged against the tile's vertex
+    bound: its outline vertices times the passes made over them (module
+    docstring)."""
+    paint = record.material.paint or _PLAIN_PAINT
+    dashed = paint.stroke_style not in ("SolidLine", "NoPen")
     if record.shape == SHAPE_POLYLINE:
-        return len(record.path)
+        if record.params.get(PARAM_PATH_STYLE) is not None:
+            return len(record.path) * _STYLED_PASSES
+        return len(record.path) * (_DASHED_COST if dashed else 1)
     if record.outline:
-        return len(record.outline)
-    return sum(len(outer) + sum(len(hole) for hole in holes) for outer, holes in record.regions)
+        vertices = len(record.outline)
+    else:
+        vertices = sum(len(outer) + sum(len(hole) for hole in holes)
+                       for outer, holes in record.regions)
+    return vertices * (_DASHED_COST if dashed else 1)
 
 
 def _local_box(record: Record) -> tuple[float, float, float, float] | None:
@@ -362,15 +393,73 @@ def _element_clip(painter: QPainter, width_cm: float) -> tuple[float, float, flo
     return (box.left() - grow, box.top() - grow, box.right() + grow, box.bottom() + grow)
 
 
+def _runs_inside(points: list[QPointF], clip: tuple[float, float, float, float]
+                 ) -> Iterator[tuple[float, list[QPointF]]]:
+    """The parts of a polyline that lie inside ``clip``, each with the distance
+    along the WHOLE line at which it starts: ``(start, points)``. A line that lies
+    inside altogether is one run from 0 through its own points."""
+    travelled = 0.0
+    run: list[QPointF] = []
+    run_start = 0.0
+    for first, second in pairwise(points):
+        dx, dy = second.x() - first.x(), second.y() - first.y()
+        length = (dx * dx + dy * dy) ** 0.5
+        if not length > 0.0:
+            continue
+        dir_x, dir_y = dx / length, dy / length
+        span = segment_inside(first.x(), first.y(), dir_x, dir_y, length, clip)
+        if run and (span is None or span[0] > 0.0):
+            yield run_start, run
+            run = []
+        if span is not None:
+            if not run:
+                run_start = travelled + span[0]
+                run = [first if span[0] <= 0.0 else
+                       QPointF(first.x() + dir_x * span[0], first.y() + dir_y * span[0])]
+            if span[1] >= length:
+                run.append(second)
+            else:
+                run.append(QPointF(first.x() + dir_x * span[1], first.y() + dir_y * span[1]))
+                yield run_start, run
+                run = []
+        travelled += length
+    if run:
+        yield run_start, run
+
+
+def _stroke_dashed(painter: QPainter, points: list[QPointF], pen: QPen, width_cm: float) -> None:
+    """A dashed line, cut to the painter's device BEFORE it is stroked: each run
+    inside is stroked with the dash offset of the place it starts at, so the
+    dashes lie where the whole line's would and the dasher is never handed the
+    length outside. (Qt's own dasher was measured to skip what lies outside an
+    image — 19 km of dashes cost what 100 m cost — but that is its
+    implementation's kindness, not a bound of ours.)"""
+    clip = _element_clip(painter, width_cm)
+    if clip is None:
+        return
+    scale = abs(painter.transform().determinant()) ** 0.5
+    # a dash pattern is in units of the pen's width; a cosmetic pen's in pixels
+    unit = width_cm if width_cm > 0.0 else 1.0 / max(scale, 1e-9)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    for start, run in _runs_inside(points, clip):
+        run_pen = QPen(pen)
+        run_pen.setDashOffset(start / unit)
+        painter.setPen(run_pen)
+        path = QPainterPath()
+        path.moveTo(run[0])
+        for point in run[1:]:
+            path.lineTo(point)
+        painter.drawPath(path)
+
+
 def _paint_polyline(painter: QPainter, record: Record, paint: Paint, ox: float, oy: float,
-                    max_elements: int | None) -> int:
+                    budget: WalkBudget) -> None:
     """A path or a line: its style's painter (shared with ``PolylineItem``), else
-    the plain stroke of ``QGraphicsPathItem.paint``. Returns the style elements
-    it generated — only those inside the painter's device, at most
-    ``max_elements``."""
+    the plain stroke of ``QGraphicsPathItem.paint``. A style's elements are
+    generated only inside the painter's device and charged to ``budget``."""
     points = _item_points(record.path, ox, oy)
     if len(points) < 2:
-        return 0
+        return
     material = record.material
     width_cm = record.path_width_cm or 0.0
     pen = _pen(material, paint, width_cm)
@@ -388,17 +477,23 @@ def _paint_polyline(painter: QPainter, record: Record, paint: Paint, ox: float, 
     if style is not PathFenceStyle.NONE:
         clip = _element_clip(painter, width_cm)
         if clip is None:
-            return 0
-        styled = PathStylePaint(points, pen, path, clip=clip, max_elements=max_elements)
-        if styled.paint(painter, style):
-            return styled.elements
-    painter.setPen(pen)
-    painter.setBrush(_brush(material))  # none for a line; a filled one is filled, as on the canvas
-    painter.drawPath(path)
-    return 0
+            return
+        if PathStylePaint(points, pen, path, clip=clip, budget=budget).paint(painter, style):
+            return
+    brush = _brush(material)  # none for a line; a filled one is filled, as on the canvas
+    if pen.style() in (Qt.PenStyle.SolidLine, Qt.PenStyle.NoPen):
+        painter.setPen(pen)
+        painter.setBrush(brush)
+        painter.drawPath(path)
+        return
+    if brush.style() != Qt.BrushStyle.NoBrush:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(brush)
+        painter.drawPath(path)
+    _stroke_dashed(painter, points, pen, width_cm)
 
 
-def paint_record(painter: QPainter, record: Record, *, max_elements: int | None = None) -> int:
+def paint_record(painter: QPainter, record: Record, *, budget: WalkBudget | None = None) -> None:
     """Paint one record's surface as the 2D canvas paints the item.
 
     ``painter``'s transform must map SCENE centimetres to the device (east to +x;
@@ -407,10 +502,13 @@ def paint_record(painter: QPainter, record: Record, *, max_elements: int | None 
     Antialiasing and smooth pixmap transforms are the caller's to switch on — the
     canvas and its exports paint with both.
 
-    Returns the number of path-style ELEMENTS generated (0 for anything but a
-    styled path). They are generated only inside the painter's device — what lies
-    beside the image is never drawn — and at most ``max_elements`` of them.
+    ``budget``: what a styled path's walk may cost (``WalkBudget``) — the caller's
+    when several records share one image (a tile), else one of a tile's size for
+    this call. Elements are generated only inside the painter's device: what lies
+    beside the image is never drawn.
     """
+    if budget is None:
+        budget = WalkBudget(TILE_ELEMENTS, TILE_WALK_STEPS)
     paint = record.material.paint or _PLAIN_PAINT
     origin = record.params.get(PARAM_PAINT_ORIGIN)
     ox, oy = 0.0, 0.0
@@ -430,10 +528,9 @@ def paint_record(painter: QPainter, record: Record, *, max_elements: int | None 
         if paint.opacity < 1.0:
             painter.setOpacity(painter.opacity() * paint.opacity)
         if record.shape == SHAPE_POLYLINE:
-            return _paint_polyline(painter, record, paint, ox, oy, max_elements)
-        if record.shape in (SHAPE_CIRCLE, SHAPE_ELLIPSE, SHAPE_RECTANGLE, SHAPE_POLYGON):
+            _paint_polyline(painter, record, paint, ox, oy, budget)
+        elif record.shape in (SHAPE_CIRCLE, SHAPE_ELLIPSE, SHAPE_RECTANGLE, SHAPE_POLYGON):
             _paint_filled(painter, record, paint, ox, oy)
-        return 0
     finally:
         painter.restore()
 
@@ -447,7 +544,7 @@ class _Painted:
 
     record: Record
     tiles: frozenset[TileKey]
-    vertices: int
+    cost: int
 
 
 class GroundBaker:
@@ -469,11 +566,13 @@ class GroundBaker:
     Instruments, for tests and diagnostics: ``last_repainted`` (the tiles the
     last ``bake`` painted anew), ``last_changed`` (those of them whose picture
     came out different — what a sink uploads), ``last_examined`` (the records it
-    looked at), ``tiles_painted``, ``records_painted`` and ``elements_generated``
-    (running totals), ``capped_tiles`` (tiles painted with a bound of the module
-    docstring in force: records left out, or a style's elements cut short) and
-    ``failures`` (items whose paint raised: such an item is left out of the tile,
-    the rest of it is painted, the failure is logged once).
+    looked at), ``tiles_painted``, ``records_painted``, ``elements_generated``
+    and ``steps_walked`` (running totals), ``capped`` (the tiles that ARE painted
+    with a bound of the module docstring in force — records left out, or a
+    style's elements cut short: the user sees less than the plan there) with
+    ``capped_tiles`` (how often that happened) and ``failures`` (items whose
+    paint raised: such an item is left out of the tile, the rest of it is
+    painted, the failure is logged once).
     """
 
     def __init__(self, *, bare_rgb: tuple[int, int, int] = MEADOW_RGB, tile_px: int = TILE_PX,
@@ -498,7 +597,9 @@ class GroundBaker:
         self.tiles_painted = 0
         self.records_painted = 0
         self.elements_generated = 0
+        self.steps_walked = 0
         self.capped_tiles = 0
+        self._capped: set[TileKey] = set()
         self._cap_reported = False
 
     # ── what it holds ────────────────────────────────────────────────────────
@@ -516,6 +617,12 @@ class GroundBaker:
     def painted_ids(self) -> tuple[str, ...]:
         """The items that are on the ground now."""
         return tuple(self._painted)
+
+    @property
+    def capped(self) -> frozenset[TileKey]:
+        """The tiles that are painted with a bound in force right now: something of
+        the plan is missing from the ground there (module docstring)."""
+        return frozenset(self._capped)
 
     def tiles(self) -> tuple[GroundTile, ...]:
         """Every tile of the ground as it was last baked, row by row from the
@@ -553,6 +660,7 @@ class GroundBaker:
         self._members = {}
         self._order = {}
         self._tiles = {}
+        self._capped = set()
         self.failures = {}
         self.last_repainted = ()
         self.last_changed = ()
@@ -609,7 +717,7 @@ class GroundBaker:
             tiles = frozenset(grid.tiles_touching(*bounds))
             if not tiles:
                 continue  # beside the plan: nothing of it is on the ground
-            self._painted[item_id] = _Painted(record, tiles, _vertices(record))
+            self._painted[item_id] = _Painted(record, tiles, _cost(record))
             for key in tiles:
                 self._members.setdefault(key, set()).add(item_id)
             dirty |= tiles
@@ -644,17 +752,16 @@ class GroundBaker:
     def _admitted(self, painted: list[_Painted]) -> tuple[list[Record], bool]:
         """The records of one tile that ARE painted, bottom to top, and whether any
         was left out: the topmost ``TILE_RECORDS``, and of those only as many as
-        keep the vertices within ``TILE_VERTICES`` — decided before one is painted."""
-        if len(painted) <= TILE_RECORDS and sum(entry.vertices for entry in painted) <= TILE_VERTICES:
+        keep the cost within ``TILE_VERTICES`` — decided before one is painted."""
+        if len(painted) <= TILE_RECORDS and sum(entry.cost for entry in painted) <= TILE_VERTICES:
             return [entry.record for entry in painted], False
         records: list[Record] = []
-        vertices = 0
+        cost = 0
         for entry in reversed(painted):
-            if records and (len(records) >= TILE_RECORDS
-                            or vertices + entry.vertices > TILE_VERTICES):
+            if records and (len(records) >= TILE_RECORDS or cost + entry.cost > TILE_VERTICES):
                 break
             records.append(entry.record)
-            vertices += entry.vertices
+            cost += entry.cost
         records.reverse()
         return records, True
 
@@ -665,6 +772,7 @@ class GroundBaker:
         east, north, width_cm, depth_cm = grid.tile_cm_rect(key)
         self.tiles_painted += 1
         records, capped = self._admitted(painted)
+        self._capped.discard(key)
         if not records:
             pixels = self._bare_pixels.get((width, height))
             if pixels is None:
@@ -684,29 +792,29 @@ class GroundBaker:
             # scene (east, north) → this tile's pixels, north up: row 0 is its north edge.
             # Whole-pixel offsets of ONE grid: every tile is a crop of the same image.
             painter.setTransform(QTransform(scale, 0.0, 0.0, -scale, float(-x0), float(y0 + height)))
-            elements_left = TILE_ELEMENTS
+            budget = WalkBudget(TILE_ELEMENTS, TILE_WALK_STEPS)  # ONE for the whole tile
             for record in records:
                 self.records_painted += 1
                 self.failures.pop(record.item_id, None)
                 try:
-                    used = paint_record(painter, record, max_elements=elements_left)
+                    paint_record(painter, record, budget=budget)
                 except Exception as error:  # one item must not blank a tile
                     self._report(record, error)
-                    continue
-                self.elements_generated += used
-                elements_left -= used
-                capped = capped or (used > 0 and elements_left <= 0)
+            self.elements_generated += budget.elements_spent
+            self.steps_walked += budget.steps_spent
+            capped = capped or budget.truncated
         finally:
             painter.end()
         if capped:
+            self._capped.add(key)
             self.capped_tiles += 1
             if not self._cap_reported:
                 self._cap_reported = True
                 _log.warning(
                     "3D ground: tile %s holds more than one tile is painted with (%d records, "
-                    "%d outline vertices, %d path-style elements); the rest is left out. "
-                    "Further tiles are only counted", key, TILE_RECORDS, TILE_VERTICES,
-                    TILE_ELEMENTS)
+                    "%d outline vertices and passes, %d path-style elements); the rest is "
+                    "left out of the ground. Further tiles are only counted (GroundBaker.capped)",
+                    key, TILE_RECORDS, TILE_VERTICES, TILE_ELEMENTS)
         bits = image.constBits()
         if bits is None:
             raise MemoryError(f"ground tile {key} has no pixel data")

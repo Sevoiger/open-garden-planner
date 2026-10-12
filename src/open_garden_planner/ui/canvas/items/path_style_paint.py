@@ -18,19 +18,28 @@ stones, planks, posts, bars, dots — one every ``spacing``: their number is the
 line's LENGTH over the spacing, whatever its vertex count (two points a
 kilometre apart are 25,000 gravel dots). The canvas item paints them all, as it
 always has. A caller that paints a line into a small window — the ground bake,
-one tile at a time — passes that window as ``clip`` and a ``max_elements``:
+one tile at a time — passes that window as ``clip`` and a ``WalkBudget`` that
+ALL the paths of the window share:
 
 - only the elements inside ``clip`` are generated. Segments outside it are
   stepped over by arithmetic, a long segment is entered at its first element
   inside — and every element keeps its GLOBAL index and its place on the line,
   so the pattern's phase is the canvas's and two neighbouring windows meet
   without a seam;
-- a segment is walked with the canvas's own running sum (element for element
-  the same floats) while that is cheap — ``EXACT_WALK`` steps in all — and by
-  multiplication beyond (the same places to a few units in the last place);
-- after ``max_elements`` elements the walk stops and ``truncated`` says so.
+- what is bounded is the WORK, not what comes out of it. A segment may be
+  walked with the canvas's own running sum (element for element the same
+  floats) — and every STEP of that walk, inside the clip or not, is charged to
+  the budget's ``steps`` before it is taken; a segment the budget does not
+  cover is entered by multiplication instead (the same places to a few units in
+  the last place), which costs only what it hands out;
+- every element handed out is charged to the budget's ``elements``; when they
+  are spent the walk stops and ``truncated`` says so. A budget of zero is a
+  budget: nothing is handed out.
 
-A spacing that is not positive draws no elements (it used to never return).
+A spacing outside ``MIN_SPACING_CM`` … ``MAX_SPACING_CM`` — a pen width of
+1e-300, of zero, of infinity, a NaN — draws no elements at all (zero used to
+never return): elements closer than half a millimetre are no pattern, and the
+arithmetic above is only ever done with numbers from that range.
 """
 
 from __future__ import annotations
@@ -44,16 +53,57 @@ from PyQt6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 
 from open_garden_planner.core.object_types import PathFenceStyle
 
-#: How many steps of a clipped walk are taken with the canvas's own running sum
-#: before the walk switches to arithmetic (module docstring).
-EXACT_WALK: Final = 16_384
+#: The spacings a style draws elements at, in cm (module docstring). The smallest a
+#: preset pen gives is 0.35 cm x its width; 0.05 cm is a pen of 1.4 mm.
+MIN_SPACING_CM: Final = 0.05
+MAX_SPACING_CM: Final = 1e7
+
+
+class WalkBudget:
+    """What the clipped walks of ONE window — a ground tile — may still cost, all
+    its paths together (module docstring).
+
+    ``elements``: elements that may still be handed out. ``steps``: steps of the
+    exact, summing walk that may still be taken. Both only ever go down;
+    ``elements_spent`` / ``steps_spent`` count what was used, ``truncated`` says
+    that a walk had to stop for want of elements.
+    """
+
+    __slots__ = ("elements", "elements_spent", "steps", "steps_spent", "truncated")
+
+    def __init__(self, elements: int, steps: int) -> None:
+        if elements < 0 or steps < 0:
+            raise ValueError(f"a budget is not negative, got {elements} elements, {steps} steps")
+        self.elements = elements
+        self.steps = steps
+        self.elements_spent = 0
+        self.steps_spent = 0
+        self.truncated = False
+
+    def take_element(self) -> bool:
+        """Charge one element; False — nothing charged — when none is left."""
+        if self.elements <= 0:
+            self.truncated = True
+            return False
+        self.elements -= 1
+        self.elements_spent += 1
+        return True
+
+    def take_steps(self, count: int) -> bool:
+        """Charge ``count`` steps of an exact walk, all or none: False when the
+        budget does not cover them (the segment is then entered by arithmetic)."""
+        if count > self.steps:
+            return False
+        self.steps -= count
+        self.steps_spent += count
+        return True
 
 Element = tuple[QPointF, float, float, float, float]
 """``(point, dir_x, dir_y, normal_x, normal_y)`` — one place along the line."""
 
 
-def _inside(px: float, py: float, dir_x: float, dir_y: float, length: float,
-            clip: tuple[float, float, float, float]) -> tuple[float, float] | None:
+def segment_inside(px: float, py: float, dir_x: float, dir_y: float, length: float,
+                   clip: tuple[float, float, float, float]) -> tuple[float, float] | None:
     """The part ``[t0, t1]`` of the segment ``p + dir · t``, ``0 <= t <= length``,
     that lies inside the box ``clip`` (x0, y0, x1, y1) — None when none does."""
     t0, t1 = 0.0, length
@@ -79,21 +129,21 @@ class PathStylePaint:
     ``path``: the item's path through those points (built from them when not
     given). ``clip``: the window ``(x0, y0, x1, y1)``, in item coordinates, outside
     of which no element need be generated — the caller grows it by an element's
-    reach; None (the canvas item) generates them all. ``max_elements``: where a
-    clipped walk stops. After ``paint``: ``elements`` generated, ``truncated``.
+    reach; None (the canvas item) generates them all. ``budget``: what the walks
+    of that window may cost, shared by its paths (``WalkBudget``; required with a
+    clip — a clipped walk without a bound is the thing this module prevents).
     """
 
     def __init__(self, points: Sequence[QPointF], pen: QPen,
                  path: QPainterPath | None = None, *,
                  clip: tuple[float, float, float, float] | None = None,
-                 max_elements: int | None = None) -> None:
+                 budget: WalkBudget | None = None) -> None:
+        if (clip is None) != (budget is None):
+            raise ValueError("a clipped walk needs a budget, and a budget a clip")
         self._points = list(points)
         self._pen = pen
         self._clip = clip
-        self._max_elements = max_elements
-        self._exact_left = EXACT_WALK
-        self.elements = 0
-        self.truncated = False
+        self._budget = budget
         if path is None:
             path = QPainterPath()
             if self._points:
@@ -577,14 +627,6 @@ class PathStylePaint:
         for _index, element in self._walk_indexed(spacing):
             yield element
 
-    def _admit(self) -> bool:
-        """Count one more element of a clipped walk; False when it is one too many."""
-        if self._max_elements is not None and self.elements >= self._max_elements:
-            self.truncated = True
-            return False
-        self.elements += 1
-        return True
-
     def _walk_indexed(self, spacing: float) -> Iterator[tuple[int, Element]]:
         """``_walk_path`` with every element's index along the WHOLE line — what a
         style alternates its colours by. Without a clip: every element, by the
@@ -592,9 +634,10 @@ class PathStylePaint:
         inside it (module docstring), their indices unchanged.
         """
         points = self._points
-        if len(points) < 2 or not spacing > 0.0:  # also False for a NaN
+        if len(points) < 2 or not MIN_SPACING_CM <= spacing <= MAX_SPACING_CM:  # a NaN too
             return
         clip = self._clip
+        budget = self._budget
 
         index = 0
         dist_remaining = 0.0
@@ -618,26 +661,27 @@ class PathStylePaint:
                     yield index, (pt, dir_x, dir_y, nx, ny)
                     index += 1
                     t += spacing
-            elif t <= seg_len:
+            elif budget is not None and t <= seg_len:
                 count = int((seg_len - t) // spacing) + 1  # the elements this segment holds
-                span = _inside(p1.x(), p1.y(), dir_x, dir_y, seg_len, clip)
-                if span is not None and count <= self._exact_left:
-                    # the canvas's own walk, sum for sum; only what is inside is handed out
-                    self._exact_left -= count
+                span = segment_inside(p1.x(), p1.y(), dir_x, dir_y, seg_len, clip)
+                if budget.take_steps(count):
+                    # the canvas's own walk, sum for sum — ALL its steps were just paid
+                    # for, also those of a segment outside the clip (its running sum is
+                    # what the next segment starts from); only what is inside is handed out
                     while t <= seg_len:
-                        if span[0] <= t <= span[1]:
-                            if not self._admit():
+                        if span is not None and span[0] <= t <= span[1]:
+                            if not budget.take_element():
                                 return
                             pt = QPointF(p1.x() + dir_x * t, p1.y() + dir_y * t)
                             yield index, (pt, dir_x, dir_y, nx, ny)
                         index += 1
                         t += spacing
                 else:
-                    if span is not None:  # a long segment: enter it at its first element inside
+                    if span is not None:  # entered at its first element inside, by arithmetic
                         step = max(0, math.ceil((span[0] - t) / spacing))
                         last = min(count - 1, math.floor((span[1] - t) / spacing))
                         while step <= last:
-                            if not self._admit():
+                            if not budget.take_element():
                                 return
                             at = t + step * spacing
                             pt = QPointF(p1.x() + dir_x * at, p1.y() + dir_y * at)
