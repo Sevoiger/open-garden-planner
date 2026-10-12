@@ -71,9 +71,19 @@ MAX_ITEM_VERTICES: Final = 16_384
 #: floats, and its place in the ring) that is 27 MB. (Before fix round 3: 2,048
 #: to 8,192 ANSWERS each, whatever their size — a traced outline of 4,000
 #: vertices dragged for a minute was a gigabyte.) What the plan DOES ask for is
-#: not counted against it and never dropped (``snapshot_generation``): those
-#: rings are the records' own, and dropping them made every tick of an
-#: unchanged plan above the cap recompute the plan (review of fix round 3).
+#: not counted against it and never dropped (``snapshot_generation``):
+#: dropping it made every tick of an unchanged plan above the cap recompute
+#: the plan (review of fix round 3).
+#:
+#: So what a LIVE plan holds has no cap: it is linear in the plan. Measured
+#: (review of fix round 4): 130 bytes a vertex for an accepted polygon after
+#: its record is gone — 400 polygons of 3,000 vertices 156 MB — and 112 bytes
+#: a point for a REFUSED line, which has no record at all and whose key is
+#: all that is kept: 20 lines of 16,384 points 37 MB. At most about 1.8 MB
+#: for one item of ``MAX_ITEM_VERTICES``. An accepted outline's rings are its
+#: record's own (the key too, when it was drawn counter-clockwise), so while
+#: the records live this adds less than it counts. ``clear_ring_memories``
+#: gives all of it back.
 HELD_VERTICES: Final = 262_144
 _ENTRY_VERTICES: Final = 8  # what an answer weighs beyond its rings: the entry itself
 
@@ -94,6 +104,15 @@ def snapshot_generation() -> Iterator[int]:
     a script's loop): only those are counted against ``HELD_VERTICES`` and
     dropped, least recently asked first — at the latest when the snapshot ends,
     also from a memory this snapshot did not ask (the plan's last fence is gone).
+
+    The generation is the PROCESS's clock: nothing says whose snapshot it is.
+    **One snapshotting scene per process is the supported case.** More are
+    correct and recompute: two scenes snapshotted in turn still find their
+    answers (the one before counts), three in turn find them stale — measured,
+    every scene's 160 polygons cut again on every tick. A snapshot that raises
+    half-way leaves the next ones correct. And a plan that is gone stays held
+    until two more snapshots have run: ``clear_ring_memories`` (the workspace
+    calls it through ``ui.view3d.snapshot.clear_outline_cache``) drops it at once.
     """
     global _generation, _snapshotting  # noqa: PLW0603 - the one clock of what is remembered
     _generation += 1
@@ -104,6 +123,14 @@ def snapshot_generation() -> Iterator[int]:
         _snapshotting = outer
         for memory in list(_memories):
             memory.settle()
+
+
+def clear_ring_memories() -> None:
+    """Forget every answer of every ``ring_keyed`` function — live and stale.
+    What ``ui.view3d.snapshot.clear_outline_cache`` is made of; call that one."""
+    for memory in list(_memories):
+        memory.cache_clear()
+
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -376,6 +403,7 @@ def is_convex_ring(ring: Sequence[Sequence[float]]) -> bool:
     triangulation: the snapshot asks this first, because a date scrub gives every
     dated plant a new radius on every tick. It says nothing about a ring that is
     not convex by construction (a ring that winds twice turns left as well).
+    False for a ring with a coordinate that is not a number, or not finite.
     """
     if len(ring) < 3:
         return False
@@ -383,8 +411,8 @@ def is_convex_ring(ring: Sequence[Sequence[float]]) -> bool:
     twice = reach = 0.0
     for x2, y2 in ring:
         ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x1, y2 - y1
-        if ax * by - ay * bx <= _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):
-            return False
+        if not ax * by - ay * bx > _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):
+            return False  # also for a coordinate that is no number: nothing is greater than NaN
         twice += x1 * y2 - x2 * y1
         reach = max(reach, x2 * x2 + y2 * y2)
         x0, y0, x1, y1 = x1, y1, x2, y2
@@ -695,16 +723,25 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 #: nearly level with every other); a straight fence of about 6,650 posts east–
 #: west or north–south (4,514 at 30 degrees, where its outline keeps a vertex
 #: per post); a ladder of 168 rungs or a mesh of 15 x 15 openings drawn as one
-#: stroke; a drawn outline of 1,513 vertices that crosses itself. What a large
-#: plan needs is far inside it — a closed fence along 400 traced points 16 % of
-#: the bound, a line of 2 km 0.02 %, a rectangle 10,200 units.
+#: stroke; a drawn outline of 1,513 vertices that crosses itself; ONE ring with
+#: holes bridged to its edge — 146 triangular ones in a slab, 105 square ones
+#: in a row, 112 frames (148, 106 and 118 before the strict union's rings were
+#: sorted out of the item's budget). What a large plan needs is far inside it —
+#: a closed fence along 400 traced points 16 % of the bound, a line of 2 km
+#: 0.02 %, a rectangle 10,200 units.
 #:
 #: In TIME the bound is a measurement, not a promise. A unit of the reference (a
 #: plain traced outline) took 0.35 to 1.15 ns on the development box when it was
 #: quiet and 0.7 to 2.3 ns beside other test runs, and a unit CHARGED for
-#: something else took 0.1 to 1.7 times that (the script prints the ratio for
-#: every row; the dearest is a wide path with close points). So one item costs
-#: at most 0.05 to 0.35 s of the reference — up to 0.6 s where both factors meet.
+#: something else took 0.1 to 2.1 times that in every row of the script's tables
+#: but one family: a ring whose holes TOUCH its outer ring, 3.6 to 8.1 times —
+#: the bridge search (``_bridge_position``) is priced too low for them, and 110
+#: such holes, 444 vertices, are refused after 0.7 to 1.5 s (review of fix
+#: round 4; known, not re-priced). So one item costs at most 0.05 to 0.35 s of
+#: the reference — measured up to 0.39 s beside other test runs for everything
+#: else, up to 0.7 s where both factors meet. The script FAILS above 12 times:
+#: a union asked for a tree stood at 14 to 76 and ran for seconds inside this
+#: bound, twice.
 MAX_REGION_WORK: Final = 150_000_000
 
 # The price list, in work units. Fitted to measurements on the development box
@@ -762,8 +799,8 @@ class WorkBudget:
     it runs wherever its price is known beforehand, and as it goes where it is
     not (the ears, the bridges). What a unit takes is measured, per step, by
     ``scripts/measure_region_work.py`` — a price that is too low is a step that
-    runs longer than its units say (``StrictlySimple`` as a tree did: 3.6 s
-    inside the budget, until the review of fix round 3)."""
+    runs longer than its units say (a union asked for a tree did, twice: 3.6 s
+    and 5.3 s inside the budget, until the reviews of fix rounds 3 and 4)."""
 
     __slots__ = ("budget", "left", "what")
 

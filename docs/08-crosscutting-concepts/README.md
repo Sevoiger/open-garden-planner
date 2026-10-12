@@ -754,11 +754,18 @@ suite (ADR-056, "What the first version got wrong").
   turning" test turned the item *before* taking its baseline, one named for `reset()` never called
   it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
   fails if the named behaviour breaks?"
-- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 167
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 180
   single-rule mutations to the pipeline, each against the tests that must notice; its first run
   found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
   with every rule.
+- **A price list is gated — by hand, on a quiet machine.** `scripts/measure_region_work.py`
+  exits 1 when a row of its table costs more than 12 times its price (§8.27.1). The ratio is
+  two timings, so the script is not in the suite: run it alone after touching a price, a call
+  into the clipper or the cut, and add the FAMILY with every such call — twice the hole in the
+  list was a way of asking the clipper that no row measured. What the suite pins is everything
+  about it that is not a timing (`tests/integration/test_measure_region_work.py`): the
+  verdict, the bound, that `main` returns it, and that each family is what its name says.
 
 ### 8.10.4 Patterns from the plant builders (Phase 17 L1.7)
 
@@ -3407,30 +3414,56 @@ Two rules hold for everything between the item and its record (§8.11 has them a
    | reading what came back | every ring and every vertex, counted first |
    | sorting rings into regions (`group_rings`) | holes × outer rings, each question the outer ring's vertices (2,000 × 2,000 small rings took 3.8 s when nothing asked) |
    | each region's cut (`polygon.pay_for_region`) | the simplicity test (the edges squared, and the pairs it has to look at), a bridge per hole, the ears — cut out of what the ITEM has left, not out of a bound per region: a thousand regions that each fit do not fit together |
-   | resolving an outline that crosses or touches itself | each union and each band from the vertices, their stack and the **crossings** (the last reading of 800 scribbled vertices took ten seconds; a bound on the vertex count did not see it); each reading's rings before they are read; sorting the strict union's rings (`group_rings`, as above); each comparison with the drawn outline on its lattice |
+   | resolving an outline that crosses or touches itself | each union and each band from the vertices, their stack and the **crossings** (the last reading of 800 scribbled vertices took ten seconds; a bound on the vertex count did not see it); each reading's rings before they are read; sorting the strict union's rings (`group_rings`, as above); each comparison with the drawn outline on its lattice. Both unions are asked for flat lists; only a band's difference is read off a tree (below) |
 
    What the budget does not cover is refused — `polygon.RegionTooLargeError` inside, the
    skip code `outline_too_large` outside — and the refusal is remembered like any other answer
    for as long as the item is there. The counted work of one item is at most the bound, to the
    unit; a refusal costs at most the bound and usually far less.
 
-   *Never `StrictlySimple` together with a tree.* The strict union is asked for a flat list
-   (`Execute`) and `group_rings` says which hole is whose. As a tree (`Execute2`) the same union
-   costs by the rings it makes and the splits it tries, which no price can be read off
-   beforehand: one outline of 340 vertices, every vertex on one of two levels, held the GUI
-   thread for 3.6 s INSIDE the budget (pyclipper alone 4,382 ms as a tree, 19 ms as a list); it
-   is refused in 31 ms now.
+   *No union is asked for a tree.* Both unions — the plain one and the one with
+   `StrictlySimple` — are asked for a flat list (`Execute`; `snapshot._union_rings`), and
+   `group_rings` says which hole is whose. As a tree (`Execute2`) a union costs by the rings it
+   makes and JOINS, which no price can be read off beforehand, and twice that was seconds
+   INSIDE the budget. The strict union of one outline of 340 vertices, every vertex on one of
+   two levels: 3.6 s (pyclipper alone 4,382 ms as a tree, 19 ms as a list; refused in 31 ms
+   now). And, one call away — for a tree that was flattened on the next line — the plain union
+   of ONE ring with 720 holes bridged to its wall, 4,324 vertices: 5.3 s (pyclipper alone, 801
+   rings: 7,078 ms as a tree, 23 ms as a list; the whole item is refused in 0.25 to 0.31 s
+   now, the same answer for the same units).
+
+   The one tree left is a band reading's DIFFERENCE (`snapshot._band_tree`), which reads its
+   hierarchy. Its price does not count its rings and need not: a band cuts every ring a hair
+   free of every other, so nothing is left to join, and the same call costs the same as a list
+   and as a tree — pyclipper alone: 801 rings in and out 1.8 / 3.0 ms; 1,600 rings out 123 /
+   144 ms; 800 diamonds touching tip to tip 28 / 28 ms; 800 bridges walked back 1 to 8 grid
+   units beside the way out, 19 to 33 ms either way.
 
 **In time the bound is a measurement.** A unit of the reference — a plain traced outline — took
 0.35 to 1.15 ns on the development box when it was quiet and 0.7 to 2.3 ns beside other test
-runs: 0.05 to 0.35 s for the bound. A unit charged for something else took 0.1 to 1.7 times the
-reference (`scripts/measure_region_work.py` prints that ratio, cost to price, for each of its 46
-rows): every outline built to hurt the clipper stayed at 0.6 or below, the accepted outlines of
-tables 1 and 2 between 0.75 and 1.45, and the dearest row was a path 100 cm wide with a point
-every 25 cm at 1.7. So "one item costs at most the bound" holds in units; in seconds it is
-0.05 to 0.35, and up to 0.6 where a busy machine meets the dearest family.
+runs: 0.05 to 0.35 s for the bound. `scripts/measure_region_work.py` prints, for every row of
+its tables, what a unit CHARGED took in units of the reference — cost to price. Measured on
+2026-10-12 beside other test runs, 61 rows: the strokes and outlines built to hurt the
+clipper's sweep stayed at 0.7 or below; a ring with hundreds of bridged holes, refused, at 1.4
+to 1.5; the outlines that are accepted between 1.0 and 2.0 (the dearest: a ring with bridged
+holes, sheared, and an outline that crosses itself); in the table of single cuts, a region
+that hides its bridges at 2.1. **One family is far above that: a ring whose holes TOUCH its
+outer ring, 3.6 to 8.1.**
+The bridge search of the cut (`polygon._bridge_position`) is priced too low for holes that
+touch: 89 of them are built in 0.65 to 0.8 s, and 110 — 444 vertices — are refused after 0.6
+to 1.5 s. Known, a row of the table, and not re-priced. So "one item costs at most the bound"
+holds in units; in seconds it is 0.05 to 0.35, measured up to 0.39 beside other test runs,
+up to 0.7 where a busy machine meets the dearest ordinary family — and about 1.5 s for holes
+that touch.
 
-Measured (`scripts/measure_region_work.py`, development box, 2026-10-11; the units are exact):
+**The table fails above a ratio of 12** (`MAX_COST_TO_PRICE`; exit code 1, the rows named). A
+price list fitted to families is only as good as the families: both times a step ran for
+seconds inside the budget, it was a way of ASKING the clipper that no row measured — a union
+as a tree, at 14 to 76 times its price — and both times the script could only have printed
+it. A ratio is two timings, so the gate is run alone on a quiet machine (§8.10).
+
+Measured (`scripts/measure_region_work.py`, development box, 2026-10-11 and, for the rings with
+holes, 2026-10-12; the units are exact):
 
 | What fits, at most | | What it costs |
 | ---- | ---- | ---- |
@@ -3449,7 +3482,11 @@ Measured (`scripts/measure_region_work.py`, development box, 2026-10-11; the uni
 | … a regular polygon (what a DXF import makes of a circle) | 3,456 vertices | 150.0 M |
 | … a traced pond | 3,538 vertices (the review's freehand pond: 3,497) | 148.4 M |
 | … a drawn outline that crosses itself | 1,513 vertices | 149.5 M |
-| … a two-level zigzag (every tooth crosses the others) | 80 vertices | 146.2 M |
+| … a two-level zigzag (every tooth crosses the others) | 80 vertices | 146.0 M |
+| … ONE ring with holes bridged to its wall (a polygon with holes, exported as one ring): a slab with triangular holes, level or sheared | 146 holes, 880 vertices (148 before fix round 4) | 149.1 M / 149.3 M |
+| … a row of square holes, each bridged to the edge | 105 holes, 844 vertices (106 before fix round 4) | 149.3 M |
+| … a row of frames — diamonds touching corner to corner, a bridged hole in each | 112 frames, 1,120 vertices (118 before fix round 4) | 148.7 M |
+| … a slab whose holes TOUCH its wall (read off a band: the holes open into notches) | 89 holes, 360 vertices (90 before fix round 4) | 148.2 M — in 0.65 to 0.8 s: 3.6 to 4.4 times its price |
 | **what a large plan needs:** a closed fence along 400 traced points | | 24.3 M — 16 % of the bound |
 | … a line of 2 km (2 points) | | 31,200 units — 0.02 % |
 | … a straight line of 2 km with a post every 5 m | 401 points | 1.5 M — 1 % |
@@ -3467,6 +3504,12 @@ a loop): the clipper's sweep is not symmetric, and its price follows it. So the 
 message for `outline_too_large` is an **acceptance criterion of the workspace story (L1.3)**,
 not a hope: an item that silently is not there reads as a bug of the 3D view.
 
+Outlines that built are refused since fix round 4 — few, and stated: it pays for sorting the
+strict union's rings out of the item's budget (holes × outer rings), where a tree's hierarchy
+had come unpriced. ONE ring with many bridged holes lost one to five per cent of what fits:
+a row of square holes 106 → 105, a row of frames 118 → 112, a slab with triangular holes
+148 → 146, holes that touch their wall 90 → 89. No other family of the table moved.
+
 | What is refused | What saying no took | What the clipper alone would have taken |
 | ---- | ---- | ---- |
 | a stroke scribbled over 800 / 1,600 points | 15 ms / 12 ms | 0.34 s / 1.7 s |
@@ -3474,10 +3517,13 @@ not a hope: an item that silently is not there reads as a bug of the 3D view.
 | a stroke scribbled over 400 points | 65 ms — its inflation is inside the budget (the clipper is asked, once), what comes back is not | 0.07 s |
 | an outline scribbled over 400 / 800 / 1,600 vertices | 30 ms / 32 ms / 12 ms | 0.74 s for the last reading of 400 |
 | a two-level zigzag of 200 / 340 / 800 vertices | 43 ms / 27 ms / 34 ms | (as a tree: 1.1 s / 3.6 s) |
+| ONE ring with 580 / 720 bridged holes (3,484 / 4,324 vertices) | 0.19 s / 0.25 s — the bridges of a region with 720 holes are beyond the budget | its plain union as a tree: 3.2 s / 7.1 s |
+| … the 720, sheared | 0.27 s | 6.7 s |
+| a slab with 110 / 200 holes that touch its wall (444 / 804 vertices) | 0.6 to 1.5 s / 0.5 to 1.2 s — the dearest refusal there is, 3 to 8 times its price | — |
 | a plain outline of 10,000 vertices | 2 ms (two linear passes; its size is known from its length) | — |
 | an item of more than 16,384 vertices | one comparison; not one vertex is read | — |
 
-Not bounded, and stated — three things:
+Not bounded, and stated — four things:
 
 - A **plan** is the sum of its items: there is no budget across a plan (it would make a record
   depend on what else is on the plan). The FIRST snapshot of a plan costs what its items cost,
@@ -3488,6 +3534,9 @@ Not bounded, and stated — three things:
   ring is read off its item, moved into its frame and looked up (0.25 s at 120,000 polygon
   vertices, the same before this pipeline's bounds existed). Asking only the items that changed
   is a later optimisation; nothing here prevents it.
+- **What a LIVE plan holds in memory has no cap** — it is linear in the plan (next paragraph):
+  at most about 1.8 MB for one item, 156 MB measured for 400 accepted polygons of 3,000
+  vertices. `clear_outline_cache()` gives all of it back.
 - The shipped Qt 3D collector (`collect_scene3d_records`, removed with L1.10) and the 2D
   shadow overlay inflate a polyline with no bound at all, as they always have.
 
@@ -3509,12 +3558,31 @@ asked (fix round 3), bounded the memory and **recomputed the plan on every tick*
 was larger than the cap: a snapshot asks in the same order every time, so each answer was the
 oldest when its turn came — 160 polygons of 1,000 vertices re-cut all 160 regions per idle tick
 (4.6 to 5.3 s where 0.2 s had been), 110 closed fences took 14 s. *A cache must hold its
-working set; bound what is beyond it.* The live answers cost memory in proportion to the plan:
-an answer's rings are the records' own, and its key is the outline as drawn — the same ring
-when that turns counter-clockwise, one more copy of it (104 bytes a vertex) when it does not.
-The generation is the PROCESS's clock, not a scene's: the app snapshots one scene. Were
-several scenes snapshotted in turn, the answers of one would be stale by the time its turn
-came again, and bounded by the cap as before. One consequence
+working set; bound what is beyond it.*
+
+*What a live plan holds.* No cap: linear in the plan. An accepted outline's rings are its
+record's own, and its key is the outline as drawn — the same ring when that turns
+counter-clockwise, one more copy when it does not; a REFUSED item has no record, and its key
+is all that is kept. Measured (review of fix round 4): 130 bytes a vertex for an accepted
+polygon once its record is gone — 400 polygons of 3,000 vertices hold 155.9 MB, and
+`_polygon_regions` then counts 2,403,200 vertices, 9.2 times `HELD_VERTICES`; 112 bytes a
+point for a refused line — 20 lines of 16,384 points hold 36.8 MB. Per item at most about
+1.8 MB (the largest key there can be); an accepted outline of 3,500 vertices about 0.45 MB.
+The form before this one capped each memory at 27 MB, and recomputed the plan for it.
+
+*One snapshotting scene per process, and one call that forgets.* The generation is the
+PROCESS's clock; nothing says whose snapshot it is. **One snapshotting scene per process is
+the supported case.** More are correct and recompute: two scenes snapshotted in turn still
+find their answers (the one before counts); three in turn find them stale — measured by the
+review of fix round 4, every scene's 160 polygons cut again on every tick. A snapshot that
+raises half-way leaves the next ones correct. And because what a snapshot asked for is dropped only by LATER snapshots, a plan
+that is gone stays held until two more have run — after `scene.clear()` with the 3D view
+closed, forever (measured: 321,280 vertices, about 30 MB). So there is one public call in
+`snapshot_records`' module: **`ui.view3d.snapshot.clear_outline_cache()`** drops everything the
+outline memories hold, live and stale — every `ring_keyed` memory and the circles' — and the
+next snapshot is a first one. The workspace calls it when the document changes (a plan is
+opened, a new one made) and when the 3D view closes; it is also how a second scene is
+snapshotted in one process without the first one's answers in the way. One consequence
 worth knowing: the CUT of a region is asked for when it is made and when the solid is built,
 not on idle ticks, so in a plan above the cap it goes stale and may be dropped — a full rebuild
 (a new sync, `reset()`) then cuts those regions again, once. `cut_region`,
@@ -3528,6 +3596,13 @@ regions. Such a record carries `params["outline_resolved"] = True` (`PARAM_OUTLI
 key is absent otherwise), and **if it is a HOUSE it carries no `ridge`**: the ridge item was
 drawn for the outline as drawn. Do not guess from the ring count — one resolved outline is a
 single ring of ten vertices, another three rings, another an outer ring with a hole. The
+**The regions of a record stand in a stated order**: by the smallest vertex of their outer ring
+(x, then y; `snapshot._in_order`) — not in the order the clipper happened to hand its rings
+out, which changed with a clipper mode (seven outlines of 13,740 when the plain union went from
+a tree to a list). Every answer of the clipper is put in that order BEFORE it is judged,
+because regions are paid for and cut one after the other out of one budget. A region's HOLES
+stay as the reading gave them: the cut joins holes from the right, and holes that reach equally
+far right in the order they come, so that order is part of the cut that was proven. The
 recipe for a builder that needs ONE plain outline (a gable roof, a bed's frame): build your shape
 only when the record has one footprint, no holes, and no `outline_resolved`; otherwise build
 `record.regions` as a block — `prism_mesh(record.footprints, height, record.holes)` — never
