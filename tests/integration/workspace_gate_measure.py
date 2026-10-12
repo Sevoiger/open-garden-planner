@@ -497,7 +497,9 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
     engine's cached graphics state, waited for after each reload, as a user who
     opens a plan and looks at it gives it time) or ``off`` (the workspace's two
     thresholds out of reach: what the same soak reads WITHOUT the release — the
-    A of this A/B, and the number ADR-048 could not explain)."""
+    A of this A/B, and the number ADR-048 could not explain) or ``flood`` (the
+    "at once" threshold at 1: every pass that destroyed a Model releases INSIDE the
+    pass, the path an animated date takes — never waited for, never polled)."""
     from open_garden_planner.ui.view3d import workspace as workspace_module
 
     variant = str(args.get("variant", "rebuild_on"))
@@ -506,6 +508,9 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
     if release == "off":
         workspace_module.RELEASE_AFTER_RETIRED = 10**9  # type: ignore[misc]
         workspace_module.RELEASE_NOW_RETIRED = 10**9  # type: ignore[misc]
+    elif release == "flood":
+        workspace_module.RELEASE_AFTER_RETIRED = 10**9  # type: ignore[misc]
+        workspace_module.RELEASE_NOW_RETIRED = 1  # type: ignore[misc]
     plan = str(window._project_manager.current_file)  # the plan main() was started on
     yield from _enter_and_wait(window, "split")
     workspace = window._workspace
@@ -596,6 +601,89 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
          retired_before_release_per_reload=owed,
          cache_releases=host.cache_releases - releases_before,
          same_image_after_release=same, facts=facts(window))
+    yield 100
+
+
+# ── G7, second half: the same rebuilds in a view that presents nothing ───────
+
+
+def scenario_dark(window: Any, args: dict[str, Any]) -> Iterator[Any]:
+    """Every reload wants the whole engine scene rebuilt — while the view PRESENTS NO
+    FRAME. The device is the engine story's (``pane_without_paint``): an event filter
+    that eats the view's expose, update-request and paint events; the view is shown,
+    exposed, on the screen, and nothing draws it. A window in that state keeps every
+    byte uploaded to it, so what matters is how much it is GIVEN.
+
+    ``pacing``: ``product`` (the controller applies no second pass before the first was
+    presented) or ``off`` (its frame counter taken away: what the same run reads
+    without the rule)."""
+    from PyQt6.QtCore import QEvent, QObject
+
+    class NoPaint(QObject):
+        eaten = 0
+
+        def eventFilter(self, _watched: Any, event: Any) -> bool:  # noqa: N802 - Qt's name
+            if event.type() in (QEvent.Type.Expose, QEvent.Type.UpdateRequest, QEvent.Type.Paint):
+                NoPaint.eaten += 1
+                return True
+            return False
+
+    reloads = int(args.get("reloads", 20))
+    pacing = str(args.get("pacing", "product"))
+    plan = str(window._project_manager.current_file)
+    yield from _enter_and_wait(window, "split")
+    workspace = window._workspace
+    controller = workspace.controller
+    host = _live(window)
+    # the view shows what it was given: nothing is owed when the dark spell begins
+    wanted = host.health().frames_presented + 2
+    _pump_until(lambda: host.health().frames_presented >= wanted, 5.0)
+    _pump_until(lambda: not controller.dirty, 10.0)
+    before = _grab(host)[1]
+    parts_before = host.part_count()
+    blocker = NoPaint()
+    host._view.installEventFilter(blocker)
+    if pacing == "off":
+        controller._presented = None
+    frames_at_start = host.health().frames_presented
+    applies_at_start = controller.apply_count
+    sink = controller.sync.sink
+    uploads_at_start = getattr(sink, "geometry_uploads", 0)
+    curve: list[float] = []
+    held: list[bool] = []
+    for _index in range(reloads):
+        window._load_project_file(plan)
+        _pump(150)
+        controller.reset()         # the whole engine scene again — if the pipeline lets it
+        _pump(250)
+        _grab(host)                # a readback is no presented frame; it uploads what is pending
+        _pump(30)
+        gc.collect()
+        curve.append(round(private_mb(), 2))
+        held.append(bool(controller.held))
+    in_the_dark = {
+        "frames_presented": host.health().frames_presented - frames_at_start,
+        "passes_applied": controller.apply_count - applies_at_start,
+        "geometry_uploads": getattr(sink, "geometry_uploads", 0) - uploads_at_start,
+        "parts_at_the_end": host.part_count(), "paint_events_eaten": NoPaint.eaten,
+    }
+    # the display is back: the view presents again, and the pipeline catches up by itself
+    host._view.removeEventFilter(blocker)
+    host._view.update()
+    recovered = _pump_until(
+        lambda: not controller.dirty and host.part_count() == parts_before, 20.0)
+    wanted = host.health().frames_presented + 2
+    _pump_until(lambda: host.health().frames_presented >= wanted, 5.0)
+    after = _grab(host)[1]
+    second_half = curve[len(curve) // 2:]
+    step("dark", pacing=pacing, reloads=reloads, curve_mb=curve,
+         slope_second_half_mb_per_reload=round(theil_sen(second_half), 3),
+         slope_all_mb_per_reload=round(theil_sen(curve), 3),
+         growth_mb=round(curve[-1] - curve[0], 2), held_after_each_reload=held,
+         parts=parts_before, in_the_dark=in_the_dark, recovered=bool(recovered),
+         parts_after=host.part_count(), same_image_as_before=bool(before == after),
+         frames_presented_after=host.health().frames_presented - frames_at_start,
+         facts=facts(window))
     yield 100
 
 
@@ -773,6 +861,7 @@ SCENARIOS: dict[str, Callable[[Any, dict[str, Any]], Iterator[Any]]] = {
     "edit_latency": scenario_edit_latency,
     "camera_rule": scenario_camera_rule,
     "soak": scenario_soak,
+    "dark": scenario_dark,
     "coexist": scenario_coexist,
     "pan": scenario_pan,
     "shortcut_focus": scenario_shortcut_focus,

@@ -2294,8 +2294,10 @@ readback.
 **Fix**: `Quick3DHost.release_cached_resources()`; the pipeline's passes count the items whose
 Models they destroyed, and the workspace releases when 64 piled up and the pipeline is quiet,
 or at once at 512. The soak's child runs with `QT_D3D_NO_VBLANK_THREAD=1` and asserts that
-frames were presented. After: 3.9 and 4.9 MB per reload (the large plan 5.1, WARP 7.4), the
-control 28, the same soak with the release out of reach 29.
+frames were presented. After: 3.9 and 4.9 MB per reload (the large plan 5.1, WARP 7.4; 1.8
+over reloads 31–60 of a 60-reload run), the control 28, the same soak with the release out of
+reach 29. What is left — about 20 kB per destroyed Model — has a floor in bare Qt: 3.4 kB per
+`Model` with a material created and destroyed without ever being drawn.
 
 **Lesson**: **shrink it until one run takes seconds, then change one thing per run** — the
 whole table above cost less than the first three theories. **Scale the suspect**: three vertex

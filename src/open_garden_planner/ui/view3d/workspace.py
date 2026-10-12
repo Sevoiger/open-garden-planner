@@ -38,6 +38,12 @@ that hopes the paint came first; a label that is never painted releases the
 pipeline after ``BUILD_NOTICE_WAIT_MS``. The same for a new document while 3D is
 shown.
 
+UPLOADS ARE PACED BY PRESENTED FRAMES. The controller is handed this host's
+presented-frame counter (``health().frames_presented``) and applies no second pass
+before the view has presented the first (its docstring; ADR-057 decision 17). The
+health poll calls ``controller.resume()``, which is how a pass that waited through
+a dark spell is let go when the view presents again.
+
 WHAT A DESTROYED MODEL LEAVES BEHIND (ADR-057, measured). Qt Quick 3D keeps
 graphics state for every Model it once drew — 0.1 to 0.35 MB each on Direct3D 11
 with the sun's shadow passes — until ``QQuickWindow.releaseResources()`` is
@@ -576,7 +582,11 @@ class Workspace(QWidget):
             container = host.container(pane)
             orbit = OrbitInput(self._camera, self._view_height, parent=self)
             host.install_event_filter(orbit)
-            controller = Scene3DController(scene, clock, self._location, sink, parent=self)
+            frames = host.health  # bound once: the counter of THIS host
+            controller = Scene3DController(
+                scene, clock, self._location, sink, parent=self,
+                # uploads are paced by presented frames (the controller's docstring)
+                presented_frames=lambda: int(frames().frames_presented))
         except Exception as error:  # noqa: BLE001 - an import, the scene file, anything
             guard.init_failed()
             _log_failure("The 3D view could not be started", error)
@@ -873,6 +883,9 @@ class Workspace(QWidget):
             self._qml_warnings_seen = warnings
             self._status_label.setText(self.tr(
                 "The 3D view reported a problem. Details are in the log file."))
+        controller = self._controller
+        if controller is not None:
+            controller.resume()  # a pass that waited for a presented frame: has one come?
         if (self._retired >= RELEASE_AFTER_RETIRED and self._pane_is_showing()
                 and _now() - self._applied_at >= RELEASE_IDLE_S):
             self._release_engine_caches()

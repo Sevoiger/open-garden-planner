@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 from PyQt6 import sip
-from PyQt6.QtCore import QPointF
+from PyQt6.QtCore import QCoreApplication, QPointF
 from PyQt6.QtGui import QColor
 
 from open_garden_planner.core.commands import (
@@ -51,6 +51,7 @@ from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
 from open_garden_planner.ui.view3d import snapshot as snapshot_module
+from open_garden_planner.ui.view3d import sync_controller as controller_module
 from open_garden_planner.ui.view3d.snapshot import SkipReason, snapshot_records
 from open_garden_planner.ui.view3d.sync_controller import (
     NO_LOCATION_SUN,
@@ -72,7 +73,7 @@ class Rig:
     the way the workspace wires them."""
 
     def __init__(self, view: CanvasView, qtbot: Any, *, location: dict[str, float] | None = None,
-                 sink: Any = None, registry: Any = None) -> None:
+                 sink: Any = None, registry: Any = None, frames: Any = None) -> None:
         self.view, self.qtbot = view, qtbot
         self.scene = view.scene()
         self.commands = view.command_manager
@@ -80,7 +81,8 @@ class Rig:
         self.location = location
         self.sink = sink if sink is not None else RecordingSink()
         self.controller = Scene3DController(
-            self.scene, self.clock, lambda: self.location, self.sink, registry)
+            self.scene, self.clock, lambda: self.location, self.sink, registry,
+            presented_frames=frames)
         self.commands.stack_changed.connect(self.controller.mark_dirty)
         self.reports: list[TickReport] = []
         self.controller.applied.connect(self.reports.append)
@@ -903,3 +905,210 @@ def test_the_old_plans_outlines_are_gone_with_the_plan_and_with_the_view(rig: Ri
 
     rig.controller.shutdown()              # the 3D view closes
     assert _outlines_held() == 0
+
+
+# ── uploads are paced by presented frames ────────────────────────────────────
+
+
+class Frames:
+    """A view's presented-frame counter, in the test's hands."""
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.asked = 0
+
+    def __call__(self) -> int:
+        self.asked += 1
+        return self.count
+
+    def present(self, frames: int = 1) -> None:
+        self.count += frames
+
+
+class Paced:
+    """A rig whose controller is paced by ``frames``, the first build applied and shown."""
+
+    def __init__(self, canvas: CanvasView, qtbot: Any, **options: Any) -> None:
+        self.frames = Frames()
+        self.rig = Rig(canvas, qtbot, frames=self.frames, **options)
+        self.bed = self.rig.bed()
+        self.bed_id = str(self.bed.item_id)
+        self.rig.controller.set_active(True)
+        self.rig.settle()
+        self.frames.present()
+
+    def move(self) -> None:
+        self.rig.commands.execute(MoveItemsCommand([self.bed], QPointF(1.0, 0.0)))
+
+    def counts(self) -> tuple[int, int, int]:
+        controller = self.rig.controller
+        return controller.snapshot_count, controller.apply_count, controller.light_count
+
+
+def _turn() -> None:
+    """One turn of the event loop: what was posted and queued is delivered."""
+    QCoreApplication.sendPostedEvents()
+    QCoreApplication.processEvents()
+
+
+def test_a_thousand_edits_in_a_view_that_presents_nothing_are_one_generation(
+        canvas: CanvasView, qtbot) -> None:
+    """A window that presents no frame (the display asleep, a session that does not
+    present) keeps every byte uploaded to it until it presents again — measured for
+    textures and for mesh buffers. So the engine is given at most ONE generation the
+    view has not shown: after a pass reached it, the next one waits for a presented
+    frame, and until then a change is a flag, exactly as while 3D is hidden."""
+    paced = Paced(canvas, qtbot)
+    rig, controller = paced.rig, paced.rig.controller
+    snapshots, applies, _lights = paced.counts()
+    for _index in range(1000):
+        paced.move()
+        _turn()
+    assert paced.counts()[:2] == (snapshots + 1, applies + 1), "ONE pass; 999 edits are a flag"
+    assert rig.recorder.ops() == [BEGIN, ("update_transform", paced.bed_id), COMMIT]
+    assert controller.dirty is True and controller.held is True
+    assert rig.settle() == [BEGIN, ("update_transform", paced.bed_id), COMMIT]
+    assert paced.counts()[:2] == (snapshots + 1, applies + 1), "waiting changes nothing"
+
+    paced.frames.present()             # the view shows what it was given …
+    controller.resume()                # … and the health poll says so
+    assert rig.settle() == [BEGIN, ("update_transform", paced.bed_id), COMMIT]
+    assert paced.counts()[:2] == (snapshots + 2, applies + 2), "ONE catch-up pass"
+    assert controller.dirty is False and controller.held is False
+    rig.assert_equals_a_from_scratch_apply()
+
+
+def test_a_pass_that_sent_nothing_waits_for_no_frame(canvas: CanvasView, qtbot) -> None:
+    """A still scene presents no frame. A pass that had nothing to send must therefore
+    not make the next one wait for one — it would wait for ever."""
+    paced = Paced(canvas, qtbot)
+    rig = paced.rig
+    paced.move()
+    assert rig.settle() == [BEGIN, ("update_transform", paced.bed_id), COMMIT]
+    paced.frames.present()
+    snapshots = rig.controller.snapshot_count
+    paced.bed.setSelected(True)        # a pass, and nothing to send
+    paced.bed.setSelected(False)
+    assert rig.settle() == [] and rig.controller.snapshot_count > snapshots
+    paced.move()                       # no frame was presented since: it must not be held
+    assert rig.settle() == [BEGIN, ("update_transform", paced.bed_id), COMMIT]
+    assert rig.controller.held is False
+
+
+def test_a_held_pass_runs_by_itself_soon_after_the_frame(canvas: CanvasView, qtbot) -> None:
+    """The last edit of a burst is not left behind until somebody edits again: a held
+    pass looks for the frame a few times, at growing intervals."""
+    paced = Paced(canvas, qtbot)
+    rig = paced.rig
+    paced.move()
+    _turn()
+    paced.move()
+    _turn()
+    assert rig.controller.held is True
+    paced.frames.present()             # nobody calls resume()
+    qtbot.waitUntil(lambda: not rig.controller.dirty, timeout=2000)
+    assert rig.controller.held is False and rig.controller.apply_count >= 3
+    rig.assert_equals_a_from_scratch_apply()
+
+
+def test_a_view_that_stays_dark_stops_asking(canvas: CanvasView, qtbot,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    """No timer spins for a view that presents nothing: a held pass asks a few times and
+    then waits to be told (``resume()`` — the workspace's health poll)."""
+    monkeypatch.setattr(controller_module, "PACE_DELAYS_MS", (5, 5, 5))
+    paced = Paced(canvas, qtbot)
+    controller = paced.rig.controller
+    paced.move()
+    _turn()
+    paced.move()
+    _turn()
+    assert controller.held is True
+    qtbot.wait(120)                    # longer than every delay together
+    asked, applies = paced.frames.asked, controller.apply_count
+    qtbot.wait(150)
+    assert paced.frames.asked == asked, "it went on asking although nothing presents"
+    assert controller._pace_timer.isActive() is False
+    controller.resume()                # told, and nothing was presented: still nothing
+    qtbot.wait(40)
+    assert controller.apply_count == applies and controller.held is True
+    paced.frames.present()
+    controller.resume()
+    qtbot.waitUntil(lambda: not controller.dirty, timeout=2000)
+    assert controller.apply_count == applies + 1
+
+
+def test_a_change_of_light_is_paced_like_any_other(canvas: CanvasView, qtbot) -> None:
+    paced = Paced(canvas, qtbot, location=dict(BERLIN))
+    rig, controller = paced.rig, paced.rig.controller
+    rig.clock.set_time_of_day(time(9, 0))
+    assert rig.settle() == [BEGIN, SUN, COMMIT]
+    lights = controller.light_count
+    rig.clock.set_time_of_day(time(10, 0))
+    rig.clock.set_time_of_day(time(11, 0))
+    assert rig.settle() == [] and controller.light_count == lights and controller.held is True
+    paced.frames.present()
+    controller.resume()
+    assert rig.settle() == [BEGIN, SUN, COMMIT] and controller.light_count == lights + 1
+
+
+def test_hiding_ends_the_wait_and_showing_asks_again(canvas: CanvasView, qtbot) -> None:
+    paced = Paced(canvas, qtbot)
+    rig, controller = paced.rig, paced.rig.controller
+    paced.move()
+    _turn()
+    paced.move()
+    _turn()
+    assert controller.held is True
+    controller.set_active(False)
+    assert controller.held is False and controller._pace_timer.isActive() is False
+    applies = controller.apply_count
+    controller.set_active(True)        # shown again, and still nothing was presented
+    rig.settle()
+    assert controller.apply_count == applies and controller.held is True
+    paced.frames.present()
+    qtbot.waitUntil(lambda: not controller.dirty, timeout=2000)
+    assert controller.apply_count == applies + 1
+
+
+def test_a_reset_does_not_get_round_the_pacing(canvas: CanvasView, qtbot) -> None:
+    """``reset()`` clears the engine at once — that frees — but what it sends again is a
+    generation like any other."""
+    paced = Paced(canvas, qtbot)
+    rig, controller = paced.rig, paced.rig.controller
+    paced.move()
+    assert rig.settle() == [BEGIN, ("update_transform", paced.bed_id), COMMIT]
+    controller.reset()                 # no frame since the last pass
+    assert rig.settle() == [("clear", None)]
+    assert rig.recorder.item_ids() == () and controller.held is True
+    paced.frames.present()
+    controller.resume()
+    assert rig.settle() == [BEGIN, ("add", paced.bed_id), GROUND, SUN, COMMIT]
+
+
+def test_a_frame_counter_that_fails_never_stops_the_pipeline(
+        canvas: CanvasView, qtbot, caplog: pytest.LogCaptureFixture) -> None:
+    def broken() -> int:
+        raise RuntimeError("the host is gone\n2026-10-12 ERROR forged")
+
+    rig = Rig(canvas, qtbot, frames=broken)
+    bed = rig.bed()
+    rig.controller.set_active(True)
+    rig.settle()
+    with caplog.at_level(logging.DEBUG, logger=controller_module.__name__):
+        for _index in range(3):
+            rig.commands.execute(MoveItemsCommand([bed], QPointF(2.0, 0.0)))
+            assert rig.settle() == [BEGIN, ("update_transform", str(bed.item_id)), COMMIT]
+    assert rig.controller.held is False
+    assert all(record.levelno < logging.WARNING and "\n" not in record.getMessage()
+               for record in caplog.records if record.name == controller_module.__name__)
+
+
+def test_without_a_frame_counter_nothing_is_paced(rig: Rig) -> None:
+    """A sink that draws nothing (the recording one) has no frames to wait for."""
+    bed = rig.bed()
+    rig.controller.set_active(True)
+    rig.settle()
+    for _index in range(5):
+        rig.commands.execute(MoveItemsCommand([bed], QPointF(2.0, 0.0)))
+        assert rig.settle() == [BEGIN, ("update_transform", str(bed.item_id)), COMMIT]
+    assert rig.controller.held is False and rig.controller.held_count == 0

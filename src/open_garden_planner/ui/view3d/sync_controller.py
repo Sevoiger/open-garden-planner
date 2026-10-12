@@ -31,6 +31,20 @@ The rules it enforces:
 - **What 3D could not build is reported, not hidden.** ``skipped`` (the record
   layer refused an item: ``SkipReason``) and ``failures`` (a builder raised) are
   kept from the last tick; ``problems_changed`` fires when they change.
+- **Uploads are paced by presented frames.** A window that presents no frame —
+  the display asleep, a session that does not present — keeps every byte that
+  is uploaded to it until it presents again (measured: mesh buffers here, 16 MB
+  per re-baked ground texture in the ground story). So after a pass REACHED THE
+  ENGINE the next one is not applied until ``presented_frames()`` has advanced
+  past the value it had then; until it has, a change is a flag and nothing else,
+  exactly as while hidden. A view that presents nothing therefore holds at most
+  ONE generation it has not shown, whatever happens to the plan. A held pass
+  looks for the frame a few times at growing intervals (``PACE_DELAYS_MS`` — the
+  last edit of a burst must not wait for the next one) and then waits to be told
+  (``resume()``: the workspace's health poll): no timer spins for a dark view. A
+  pass that sent nothing starts no wait — a still scene presents no frame.
+  Without a counter (``presented_frames=None``: a sink that draws nothing, a
+  process that renders by readback and owns itself) nothing is paced.
 
 THE GROUND SEAM (L1.5). ``set_ground_stage(stage)`` installs the function that
 makes the tick's ``GroundSpec``: ``stage(previous, records, width_cm, depth_cm)``
@@ -85,11 +99,17 @@ _PASS_EVENT: Final = QEvent.Type(QEvent.registerEventType())
 #: The catch-up pass after 3D became visible waits this long, so that the pane (and
 #: its "building" note) is painted before a first build that can take a second.
 CATCH_UP_MS: Final = 25
+#: A pass that waits for a presented frame looks for it after these delays, once
+#: each, and then stops looking (module docstring). A presenting view shows a frame
+#: within one or two refreshes; the sum bounds what a dark one costs: six wake-ups.
+PACE_DELAYS_MS: Final = (8, 16, 32, 64, 128, 256)
 #: The sun without a garden location — the documented fallback of FR-SUN-06 (the
 #: shipped 3D view's): a southern midday sun.
 NO_LOCATION_SUN: Final = SunState(elevation_deg=50.0, azimuth_deg=180.0)
 
 LocationProvider = Callable[[], Mapping[str, Any] | None]
+#: How many frames the view has PRESENTED so far (``Quick3DHost.health().frames_presented``).
+FrameCounter = Callable[[], int]
 #: ``stage(previous_records, records, width_cm, depth_cm) -> GroundSpec`` (module docstring).
 GroundStage = Callable[[Mapping[str, Record], Mapping[str, Record], float, float], GroundSpec]
 
@@ -154,7 +174,8 @@ class Scene3DController(QObject):
 
     def __init__(self, scene: QGraphicsScene, clock: SimClock, location: LocationProvider,
                  sink: EngineSink, registry: BuilderRegistry | None = None, *,
-                 parent: QObject | None = None, tick_ms: int = TICK_MS) -> None:
+                 parent: QObject | None = None, tick_ms: int = TICK_MS,
+                 presented_frames: FrameCounter | None = None) -> None:
         super().__init__(parent)
         if registry is None:
             from open_garden_planner.core.scene3d.builders import production_registry
@@ -173,18 +194,26 @@ class Scene3DController(QObject):
         self._failures: dict[str, BuildFailure] = {}
         self._last_error: str | None = None
         self._retired_by_reset = 0  # items a reset destroyed, not yet reported
+        self._presented = presented_frames
+        self._applied_at_frame: int | None = None  # the counter when a pass last reached the engine
+        self._held = False          # a pass is owed and waits for a presented frame
+        self._pace_try = 0          # which of PACE_DELAYS_MS comes next; past the end: stopped looking
         #: Instruments (the gates read them): whole-plan snapshots taken, passes that
         #: called ``SceneSync.apply``, light-only passes, recoveries, the last pass.
         self.snapshot_count = 0
         self.apply_count = 0
         self.light_count = 0
         self.recovery_count = 0
+        self.held_count = 0         # how often a pass had to wait for a presented frame
         self.last_tick: TickReport | None = None
         self._tick_ms = tick_ms
         self._posted = False  # a pass event is in the queue
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._tick)
+        self._pace_timer = QTimer(self)
+        self._pace_timer.setSingleShot(True)
+        self._pace_timer.timeout.connect(self._tick)
         scene.changed.connect(self._on_scene_changed)
         scene.sceneRectChanged.connect(self._on_scene_changed)
         connect_qobject(clock.date_changed, self._on_date_changed)
@@ -204,6 +233,11 @@ class Scene3DController(QObject):
     def dirty(self) -> bool:
         """Something changed that the sink has not been told."""
         return self._records_dirty or self._sun_dirty
+
+    @property
+    def held(self) -> bool:
+        """A pass is owed and waits for the view to present what it was given last."""
+        return self._held
 
     @property
     def skipped(self) -> tuple[SkippedItem, ...]:
@@ -243,6 +277,7 @@ class Scene3DController(QObject):
         if not active:
             with contextlib.suppress(RuntimeError):  # the #230 teardown guard
                 self._timer.stop()
+            self._end_wait()
             return
         if self.dirty:
             self._schedule(max(self._tick_ms, CATCH_UP_MS))
@@ -286,6 +321,13 @@ class Scene3DController(QObject):
         self._records_dirty = self._sun_dirty = True
         self._schedule(self._tick_ms)
 
+    def resume(self) -> None:
+        """The view may have presented a frame since a pass was held (the workspace's
+        health poll says so; it costs one look at the counter): if it has, the pass
+        runs with the next turn of the event loop."""
+        if self._held and self._active and not self._waits_for_a_frame():
+            self._schedule(self._tick_ms)
+
     def flush(self) -> None:
         """Run a pending pass now (tests, and a caller that needs the scene current)."""
         with contextlib.suppress(RuntimeError):
@@ -300,6 +342,7 @@ class Scene3DController(QObject):
         self._active = False
         with contextlib.suppress(RuntimeError):
             self._timer.stop()
+        self._end_wait()
         for signal in (self._scene.changed, self._scene.sceneRectChanged):
             with contextlib.suppress(RuntimeError, TypeError):
                 signal.disconnect(self._on_scene_changed)
@@ -362,21 +405,69 @@ class Scene3DController(QObject):
     def _tick(self) -> None:
         if not self._active:
             return
+        if not self.dirty:
+            self._end_wait()
+            return
+        if self._waits_for_a_frame():
+            self._hold()
+            return
+        self._end_wait()
         if self._records_dirty:
             self._pass_records()
         elif self._sun_dirty:
             self._pass_light()
 
+    # ── pacing by presented frames (module docstring) ────────────────────────
+
+    def _frames(self) -> int | None:
+        if self._presented is None:
+            return None
+        try:
+            return int(self._presented())
+        except Exception as error:  # noqa: BLE001 - a host that is gone has no frames: do not wait for it
+            _LOG.debug("3D sync: the presented-frame counter failed (%s: %s); not pacing",
+                       log_text(type(error).__name__), log_text(error))
+            return None
+
+    def _waits_for_a_frame(self) -> bool:
+        mark = self._applied_at_frame
+        if mark is None:
+            return False
+        frames = self._frames()
+        return frames is not None and frames <= mark
+
+    def _reached_the_engine(self) -> None:
+        """A pass sent something: the next one waits until the view has presented a
+        frame after this moment."""
+        self._applied_at_frame = self._frames()
+
+    def _hold(self) -> None:
+        if not self._held:
+            self._held = True
+            self._pace_try = 0
+            self.held_count += 1
+        with contextlib.suppress(RuntimeError):  # the #230 teardown guard
+            if self._pace_try < len(PACE_DELAYS_MS) and not self._pace_timer.isActive():
+                self._pace_timer.start(PACE_DELAYS_MS[self._pace_try])
+                self._pace_try += 1
+
+    def _end_wait(self) -> None:
+        self._held = False
+        with contextlib.suppress(RuntimeError):
+            self._pace_timer.stop()
+
     def _pass_light(self) -> None:
         self._sun_dirty = False
         started = time.perf_counter()
         try:
-            self._sync.set_sun(self._sun())
+            sent = self._sync.set_sun(self._sun())
         except Exception as error:  # noqa: BLE001 - recover through the full pass
             _log_failure("sending the sun failed; rebuilding the 3D scene", error)
             self._records_dirty = True
             self._pass_records()
             return
+        if sent:
+            self._reached_the_engine()
         self.light_count += 1
         self._done(TickReport(SceneDiff(), False, len(self._sync.records), 0.0,
                               (time.perf_counter() - started) * 1000.0))
@@ -401,6 +492,7 @@ class Scene3DController(QObject):
         width, depth = self._plan_size()
         started = time.perf_counter()
         recovered = False
+        sent_before = (self._sync.sun, self._sync.ground)
         try:
             changes = self._sync.apply(
                 records, sun=sun, ground=self._ground(self._sync.records, records, width, depth))
@@ -418,6 +510,9 @@ class Scene3DController(QObject):
                 return
         self.apply_count += 1
         self._last_error = None
+        if (changes.touches_sink or recovered
+                or (self._sync.sun, self._sync.ground) != sent_before):
+            self._reached_the_engine()
         self._set_problems(tuple(skipped), dict(self._sync.failures))
         retired = self._retired_by_reset + len(changes.removed) + len(changes.geometry)
         self._retired_by_reset = 0

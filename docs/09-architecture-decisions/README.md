@@ -2567,11 +2567,37 @@ So the retention is Qt's own and not the hardware driver's: WARP keeps the same 
 reload. What remains on WARP WITH the release lies in the range this log measured for the spike
 (1.5 to 9.0) and passes the gate with less room than the GPU does.
 
+**Longer, and the release inside the pass** (after the engine story's last round was merged):
+
+- **60 reloads** through the same path: **1.78 MB per reload over reloads 31–60** (1.85 over all
+  60; +205 MB, of which the one step — reload 5 here, 1385 → 1477 MB with dedicated GPU memory
+  305.5 → 371.5 — is about 90). 60 releases, the frame unchanged in 60 of 60, dedicated GPU
+  memory flat over the second half (377 to 378 MB).
+- **The "at once" rule** — the release from INSIDE the pass, which an animated date runs into —
+  with its threshold set to 1, so that every rebuild takes it: 2.12 MB per reload, a smooth
+  line (1472 → 1514 MB over 20 reloads).
+
+**What remains, and where its floor is.** After the release about **2 MB per rebuild of 98
+Models** stays — some 20 kB per destroyed Model, linear over 60 reloads, not converging. It is
+not the cached draw-call state (that is what the release removes: 29 → 2) and not the mesh. A
+floor of it is Qt's own, measured in bare Qt with no product code and nothing ever drawn: 100
+objects created with `Component.createObject()` and destroyed with `destroy()` per round, 120
+rounds, the QML engine's garbage collector called every round — **0.78 kB per `QtObject`, 1.4
+per `Node`, 2.2 per `Model`, 3.4 per `Model` with a `PrincipledMaterial`**, each a straight
+line. The engine package's own parts cost 6.6 to 7.8 kB each that way (never drawn), and about
+20 kB in the production host. Not located further. What it means: a plan change costs about 2
+MB, an edit that replaces one Model about 20 kB — and anything that replaces MANY Models per
+tick (a date played back day by day regrows every dated plant) pays that per Model per tick,
+with or without the release. Two ways out, neither tried: keep the Model and give it a new
+geometry (the spike measured that a GEOMETRY does not survive its Model; the reverse was not
+measured), or scale a grown plant instead of rebuilding it.
+
 **What this closes and what it does not.** Criterion 10's leak half holds under its
-pre-registered gate, in the production view, on a hardware adapter and on WARP, with its
-control firing and with dedicated GPU memory read for the first time. Not measured: more than
-20 reloads with the release in place; a frozen exe; a CI runner (the workspace's render tier is
-not part of CI's render job).
+pre-registered gate, in the production view, on a hardware adapter and on WARP, over 20 and
+over 60 reloads, with its control firing and with dedicated GPU memory read for the first
+time. Open: the residual above; the one-time step of both memories at an early release. Not
+measured: a frozen exe; a CI runner (the workspace's render tier is not part of CI's render
+job).
 
 ## ADR-049: Frost-Date Semantics - One Parser, 29 February Substituted as 1 March
 
@@ -4501,6 +4527,12 @@ Five facts shaped the design:
   release (299 → 378 MB) and is flat after; committed memory steps with it once, by about 110
   MB (ADR-048 addendum "L1.3"). The workspace's render tier is not part of CI's render job: it
   was measured on the dev box only (GPU, and the soak on WARP).
+- **A residual remains: about 20 kB per destroyed Model** (2 MB per rebuild of the small bench
+  plan, linear over 60 reloads). Its floor is Qt's own cost of creating and destroying a QML
+  object (3.4 kB for a bare `Model` with a material, measured without product code); the rest is
+  not located. It is inside the gate and small for editing; it is NOT small for a story that
+  replaces many Models per tick (date playback) — ADR-048 addendum "L1.3" has the numbers and
+  two ways out.
 - The builder-failure record of `core/scene3d/sync.py` and the record layer's `record_failed`
   record still attach the exception at ERROR (they are the scene contract's, and pinned by its
   tests): decision 13's "one line" holds for this story's five modules.
@@ -4546,6 +4578,7 @@ own `main()` in a child, on Direct3D 11 (RTX 4070), 2026-10-12:
 | G7 rebuild off / positive control (+25 MB per reload) / release out of reach | 0.07 / 28.0 (fails, as it must) / 29.0 | < 10 / ≥ 10 / reported |
 | G7 dedicated GPU memory (DXGI, this process) | 298.5 MB before; ONE step, 299 → 378 MB, at the tenth reload; 372–378 after (slope −0.11 MB / reload) | < 10 |
 | G7 elsewhere, with the release (one run each) | the large plan (421 parts): 5.07 MB / reload; WARP: 7.42 (27.1 without the release) | < 10 |
+| G7 over 60 reloads; and with the release inside every pass (20 reloads) | 1.78 MB / reload over reloads 31–60 (60 releases, the frame unchanged in 60 of 60); 2.12 | < 10 |
 | G8 a Qt WebEngine page before and after the 3D host exists | painted both times (`#1e90ff` at its centre); 131 distinct colours in the 3D frame beside it | — |
 | G11 pan step, Split against Plan at the same canvas size (874 × 967) | 1.04 (the fastest tenth: 1.05) | ≤ 1.3 |
 

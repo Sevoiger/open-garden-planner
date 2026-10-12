@@ -2236,7 +2236,12 @@ about measuring it.
    bare host, 100 Models per round, ONE thing changed per run — buffers only, geometries only,
    Models never drawn, drawn by readback, drawn in presented frames, sun on, shadows off,
    embedded, another material, 300 or 12,000 vertices (ADR-048 addendum "L1.3" has the table).
-   The vertex-count runs said "not the mesh"; the sun run said "per pass".
+   The vertex-count runs said "not the mesh"; the sun run said "per pass". What the release
+   does NOT give back: about 20 kB per destroyed Model (2 MB per rebuild of the small plan,
+   linear over 60 reloads) — and bare Qt alone keeps 3.4 kB per `Model` with a material that is
+   created with `createObject()` and destroyed, never drawn, the engine's collector called.
+   Churn of QML objects is not free; a feature that replaces many Models per tick has to
+   avoid the replacing.
 3. **A soak that only reads frames back measures something the product does not have.**
    `grabWindow()` renders and reads back but never ends a frame the way a presented one ends:
    `afterFrameEnd` fired 0 times in 40 grabs. With the display asleep Windows presents no frame

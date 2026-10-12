@@ -733,7 +733,14 @@ test patterns: docs §8.10.7. What the ENGINE taught once it ran inside the real
   engine objects per edit or per tick — a ground texture per bake, a selection outline, plants
   regrown by an animated date — must be counted the same way, or measured to leave nothing.**
   20 rebuilds of `bench_small` in the production host: 29 to 38 MB per rebuild without the
-  release, 3.9 to 4.9 with it; on WARP 27.1 and 7.4.
+  release, 3.9 to 4.9 with it; on WARP 27.1 and 7.4; over 60 rebuilds 1.8 (reloads 31–60).
+- **Creating and destroying a Model is never free.** After the release about 20 kB per
+  destroyed Model remain (2 MB per rebuild of 98 Models, linear over 60). Bare Qt, no product
+  code, nothing drawn, `createObject()` then `destroy()`, the QML engine's collector called
+  every round: 0.78 kB per `QtObject`, 2.2 per `Model`, 3.4 per `Model` with a
+  `PrincipledMaterial` — straight lines over 120 rounds. So: do not design a feature around
+  replacing many Models per tick (a date played back regrows every dated plant). Untried
+  ways out: keep the Model and hand it a new geometry; scale instead of rebuilding.
 - **A destroyed Model's mesh buffers are freed at the end of a PRESENTED frame.** A readback is
   not one: `grabWindow()` emitted `afterFrameEnd` 0 times in 40 grabs. With the display asleep
   Windows presents one frame and no more (§6), so a process whose frames are all readbacks
@@ -792,7 +799,8 @@ Recent Files and a clean close the window geometry, into the user's own settings
 (`tests/integration/workspace_gate_hook.py`) moves the store first and ends the process (exit
 code 97) before a store under any other organisation exists.
 
-**Not measured (L1.3):** more than 20 rebuilds with the release in place; the soak in a frozen
+**Not measured (L1.3):** where the 20 kB per destroyed Model go beyond Qt's own floor; why
+dedicated GPU memory and committed memory step up ONCE at an early release; the soak in a frozen
 exe or on a CI runner (the workspace's render tier is not in CI's render job); time to photons
 (edit latency ends at a finished readback); a change of the device pixel ratio in mid-session
 and OS display scaling (manual checklist); the real map picker beside the 3D view (the

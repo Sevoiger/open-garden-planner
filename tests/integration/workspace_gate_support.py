@@ -88,19 +88,22 @@ def app_log_of(scratch: Path, store: str) -> str:
 
 def run_gate(scratch: Path, scenario: str, *, plan: Path | None = PLANS / "bench_small.ogp",
              store: str | None = None, command: list[str] | None = None,
-             software: bool = False, timer_paced: bool = False,
+             software: bool = False, timer_paced: bool = True,
              **arguments: Any) -> GateRun:
     """Run one scenario in a fresh process and return what happened.
 
     ``command``: what to start instead of the source child — the frozen gate exe.
     ``software``: start the process with Qt's own software switch (the render tier's
     WARP run); the workspace's compatibility mode is a different, per-window route.
-    ``timer_paced``: Qt's own ``QT_D3D_NO_VBLANK_THREAD=1``. On Windows Qt asks a
-    display-vblank thread for its update requests, and with the display asleep that
-    thread is silent: a visible window presents its first frame and no more. With the
-    switch Qt paces them by timer, so frames are PRESENTED whatever the display does
-    — the ordinary render path, which a scenario that measures what the end of a
-    presented frame releases needs (the memory soak).
+    ``timer_paced`` (the default): Qt's own ``QT_D3D_NO_VBLANK_THREAD=1``. On Windows
+    Qt asks a display-vblank thread for its update requests, and with the display
+    asleep that thread is silent: a visible window presents its first frame and no
+    more. With the switch Qt paces them by timer, so frames are PRESENTED whatever
+    the display does — the ordinary render path. Every scenario needs that: the
+    pipeline applies no second pass before the view has presented the first (a
+    machine whose display went to sleep would hold every scenario after its first
+    edit), and the memory soak measures what the end of a presented frame releases.
+    ``False`` runs the child as the product starts: paced by the display.
     """
     spec, out, name = write_spec(scratch, scenario, store=store, **arguments)
     argv = [*(command or [sys.executable, str(CHILD)]), *([str(plan)] if plan else [])]
