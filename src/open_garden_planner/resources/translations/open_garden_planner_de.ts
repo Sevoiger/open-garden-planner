@@ -12492,6 +12492,42 @@ Details: {error}</translation>
             <source>Compatibility mode will be used the next time the application starts.</source>
             <translation>Beim nächsten Start der Anwendung wird der Kompatibilitätsmodus verwendet.</translation>
         </message>
+        <message>
+            <source>&amp;Walk</source>
+            <translation>&amp;Rundgang</translation>
+        </message>
+        <message>
+            <source>Walk through the garden at eye height</source>
+            <translation>Auf Augenhöhe durch den Garten gehen</translation>
+        </message>
+        <message>
+            <source>Walk through the garden at eye height (W A S D or the arrow keys walk, drag to look around, Shift runs, Esc leaves)</source>
+            <translation>Auf Augenhöhe durch den Garten gehen (W A S D oder die Pfeiltasten gehen, Ziehen schaut sich um, Umschalt läuft, Esc beendet)</translation>
+        </message>
+        <message>
+            <source>Eye height while walking</source>
+            <translation>Augenhöhe beim Rundgang</translation>
+        </message>
+        <message>
+            <source>Adult</source>
+            <translation>Erwachsene Person</translation>
+        </message>
+        <message>
+            <source>Smaller adult</source>
+            <translation>Kleinere erwachsene Person</translation>
+        </message>
+        <message>
+            <source>Child</source>
+            <translation>Kind</translation>
+        </message>
+        <message>
+            <source>{who} – {height}</source>
+            <translation>{who} – {height}</translation>
+        </message>
+        <message>
+            <source>There is no free ground to walk on.</source>
+            <translation>Es gibt keinen freien Boden zum Begehen.</translation>
+        </message>
     </context>
     <context>
         <name>View3DProblemsDialog</name>
@@ -12538,6 +12574,89 @@ Details: {error}</translation>
         <message>
             <source>{kind}: {reason}</source>
             <translation>{kind}: {reason}</translation>
+        </message>
+    </context>
+    <context>
+        <name>View3DInfoCard</name>
+        <message>
+            <source>Show in Plan</source>
+            <translation>Im Plan zeigen</translation>
+        </message>
+        <message>
+            <source>Centre the plan on this object</source>
+            <translation>Den Plan auf dieses Objekt zentrieren</translation>
+        </message>
+        <message>
+            <source>Type:</source>
+            <translation>Typ:</translation>
+        </message>
+        <message>
+            <source>Species:</source>
+            <translation>Art:</translation>
+        </message>
+        <message>
+            <source>Scientific name:</source>
+            <translation>Wissenschaftlicher Name:</translation>
+        </message>
+        <message>
+            <source>Height:</source>
+            <translation>Höhe:</translation>
+        </message>
+        <message>
+            <source>not known</source>
+            <translation>nicht bekannt</translation>
+        </message>
+        <message>
+            <source>Canopy diameter:</source>
+            <translation>Kronendurchmesser:</translation>
+        </message>
+        <message>
+            <source>Diameter:</source>
+            <translation>Durchmesser:</translation>
+        </message>
+        <message>
+            <source>Length:</source>
+            <translation>Länge:</translation>
+        </message>
+        <message>
+            <source>Size:</source>
+            <translation>Größe:</translation>
+        </message>
+        <message>
+            <source>{width} × {depth}</source>
+            <translation>{width} × {depth}</translation>
+        </message>
+        <message>
+            <source>Area:</source>
+            <translation>Fläche:</translation>
+        </message>
+        <message>
+            <source>Bed:</source>
+            <translation>Beet:</translation>
+        </message>
+        <message>
+            <source>Sizes on:</source>
+            <translation>Größen am:</translation>
+        </message>
+        <message>
+            <source>Group</source>
+            <translation>Gruppe</translation>
+        </message>
+        <message>
+            <source>Object</source>
+            <translation>Objekt</translation>
+        </message>
+        <message>
+            <source>Not shown in 3D: {reason}.</source>
+            <translation>In 3D nicht angezeigt: {reason}.</translation>
+        </message>
+        <message>
+            <source>Not shown in 3D: this kind of object has no 3D form.</source>
+            <translation>In 3D nicht angezeigt: Diese Art von Objekt hat keine 3D-Form.</translation>
+        </message>
+        <message>
+            <source>Drawn on the ground in 3D: the plan gives it no height.</source>
+            <translation>In 3D auf dem Boden gezeichnet: Der Plan gibt keine Höhe an.</translation>
         </message>
     </context>
 </TS>

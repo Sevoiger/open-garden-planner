@@ -115,14 +115,27 @@ Item {
     }
 
     function pickAt(x, y) {
-        var r = view.pick(x, y)
-        if (!r.objectHit)
-            return {"hit": false}
-        return {
-            "hit": true, "id": r.objectHit.itemId || "",
-            "part": r.objectHit.partIndex === undefined ? -1 : r.objectHit.partIndex,
-            "x": r.scenePosition.x, "y": r.scenePosition.y, "z": r.scenePosition.z
+        // every hit along the ray, nearest first (L1.8): the first is THE hit, the rest
+        // go along as "behind" - a click on an item of a locked layer falls through to
+        // what is behind it, as it does on the 2D canvas
+        var all = view.pickAll(x, y)
+        var hits = []
+        for (var i = 0; i < all.length; ++i) {
+            var r = all[i]
+            if (!r.objectHit)
+                continue
+            hits.push({
+                "id": r.objectHit.itemId || "",
+                "part": r.objectHit.partIndex === undefined ? -1 : r.objectHit.partIndex,
+                "x": r.scenePosition.x, "y": r.scenePosition.y, "z": r.scenePosition.z
+            })
         }
+        if (hits.length === 0)
+            return {"hit": false}
+        var first = hits[0]
+        first["hit"] = true
+        first["behind"] = hits.slice(1)
+        return first
     }
 
     // ---- selection ring (Quick3DSink.set_selection; L1.8, ADR-065) ----

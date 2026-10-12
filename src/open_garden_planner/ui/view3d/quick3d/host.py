@@ -143,6 +143,7 @@ from .lifecycle import (
     STALL_S,
     WAIT_READY_DEFAULT_S,
     HostState,
+    HostStateError,
     WindowFacts,
     state_of,
     why_no_frame,
@@ -204,18 +205,21 @@ class EngineError(RuntimeError):
     failed, this backend cannot render 3D)."""
 
 
-class HostStateError(RuntimeError):
-    """A call the host cannot answer truthfully in its current state."""
-
-
 @dataclass(frozen=True, slots=True)
 class PickHit:
     """What is under a view position: the item, its mesh part and the hit point in
-    the SCENE frame (east, north, up — centimetres)."""
+    the SCENE frame (east, north, up — centimetres).
+
+    ``behind`` (L1.8): what the same ray meets AFTER this hit, nearest first — every
+    further Model, also further parts of the same item. A click on an item of a
+    locked layer falls through to the first selectable item behind it, as it does
+    on the 2D canvas (``ui/view3d/selection_bridge.py``); the hits in ``behind``
+    carry no ``behind`` of their own."""
 
     item_id: str
     part_index: int
     point: tuple[float, float, float]
+    behind: tuple[PickHit, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -969,15 +973,16 @@ class Quick3DHost:
         ``LIVE`` hosts only; anything else raises ``HostStateError`` (a backend
         that renders no 3D, or a scene whose pick function failed,
         ``EngineError``): "no hit" must never mean "could not look".
+
+        The hit carries what lies ``behind`` it along the same ray (``PickHit``).
         """
         self._require_frame("pick")
         result = self._call("pickAt", float(x), float(y))
         if not result.get("hit"):
             return None
-        point = engine_to_scene_points(
-            np.array([result["x"], result["y"], result["z"]], dtype=np.float64))
-        return PickHit(item_id=str(result.get("id", "")), part_index=int(result.get("part", -1)),
-                       point=(float(point[0]), float(point[1]), float(point[2])))
+        first = _pick_hit(result)
+        behind = tuple(_pick_hit(row) for row in result.get("behind") or ())
+        return PickHit(first.item_id, first.part_index, first.point, behind)
 
     def project(self, east_cm: float, north_cm: float, up_cm: float) -> tuple[float, float]:
         """Scene point → view position in LOGICAL pixels (the space ``pick`` takes),
@@ -1186,6 +1191,13 @@ def shown_quick_windows() -> int:
     message recorder may be installed (``qt_messages.py``)."""
     return sum(1 for window in QGuiApplication.allWindows()
                if isinstance(window, QQuickWindow) and window.isVisible())
+
+
+def _pick_hit(row: Any) -> PickHit:
+    """One row of the scene's ``pickAt`` answer (engine frame) as a hit in the SCENE frame."""
+    point = engine_to_scene_points(np.array([row["x"], row["y"], row["z"]], dtype=np.float64))
+    return PickHit(item_id=str(row.get("id", "")), part_index=int(row.get("part", -1)),
+                   point=(float(point[0]), float(point[1]), float(point[2])))
 
 
 def _engine_vector(point_scene: tuple[float, float, float]) -> QVector3D:

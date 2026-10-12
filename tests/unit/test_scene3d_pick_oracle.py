@@ -30,6 +30,7 @@ from open_garden_planner.core.scene3d.pick_oracle import (
     Ray,
     camera_axes,
     cast,
+    cast_all,
     perspective_ray,
     pick_scene,
     project,
@@ -187,6 +188,22 @@ def test_the_nearest_item_along_the_ray_wins() -> None:
     assert north is not None and north.item_id == "low" and north.point[1] == pytest.approx(-150.0)
     over = cast(scene, Ray((0.0, -500.0, 50.0), (0.0, 1.0, 0.0)))  # above the low slab
     assert over is not None and over.item_id == "tall" and over.point[1] == pytest.approx(-20.0)
+
+
+def test_cast_all_names_every_item_along_the_ray_once_nearest_first() -> None:
+    """What a click that falls through a locked item meets next: each item once, where
+    the ray first enters it."""
+    low, tall = box("low", 0.0, 0.0, 300.0, 300.0, 20.0), box("tall", 0.0, 0.0, 40.0, 40.0, 300.0)
+    behind = box("behind", 0.0, 400.0, 100.0, 100.0, 100.0)
+    scene = scene_of(behind, tall, low)                     # the order of the scene is not the answer
+    through = cast_all(scene, Ray((0.0, -500.0, 10.0), (0.0, 1.0, 0.0)))
+    assert [hit.item_id for hit in through] == ["low", "tall", "behind"]
+    assert [hit.point[1] for hit in through] == pytest.approx([-150.0, -20.0, 350.0])
+    assert [hit.distance_cm for hit in through] == sorted(hit.distance_cm for hit in through)
+    assert through[0] == cast(scene, Ray((0.0, -500.0, 10.0), (0.0, 1.0, 0.0)))
+    assert [hit.item_id for hit in cast_all(scene, down_at(0.0, 0.0))] == ["tall", "low"]
+    assert cast_all(scene, down_at(1000.0, 1000.0)) == ()
+    assert cast_all(pick_scene({}, default_builder), down_at(0.0, 0.0)) == ()
 
 
 def test_a_hole_lets_the_ray_through_to_what_is_below() -> None:

@@ -299,6 +299,9 @@ def test_the_workflow_plan_split_edit_pause_clock_new_open_close(
     apple.metadata["plant_instance"] = {
         "planting_date": "2024-04-01", "current_height_cm": 180.0, "current_spread_cm": 120.0}
     bed_id, apple_id = str(bed.item_id), str(apple.item_id)
+    # nothing is selected in this workflow: a selected item gets a ring in 3D, one more
+    # call in its transaction (L1.8 — test_view3d_selection_walk.py is that workflow)
+    scene.clearSelection()
     qtbot.wait(60)
     assert engines.calls == [] and workspace.controller is None
 

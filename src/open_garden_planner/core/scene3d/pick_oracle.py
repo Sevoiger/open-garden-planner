@@ -209,8 +209,19 @@ def project(eye: Sequence[float], target: Sequence[float], fov_deg: float,
 def cast(scene: PickScene, ray: Ray) -> RayHit | None:
     """The first triangle of ``scene`` along ``ray`` (Möller–Trumbore over every
     triangle at once) — met from either side — or None when the ray meets none."""
+    hits = _cast(scene, ray, every_item=False)
+    return hits[0] if hits else None
+
+
+def cast_all(scene: PickScene, ray: Ray) -> tuple[RayHit, ...]:
+    """EVERY item ``ray`` meets, nearest first — one hit per item: where the ray first
+    enters it. What a click that falls through a locked item meets next."""
+    return _cast(scene, ray, every_item=True)
+
+
+def _cast(scene: PickScene, ray: Ray, *, every_item: bool) -> tuple[RayHit, ...]:
     if not scene.triangle_count:
-        return None
+        return ()
     origin = np.array(ray.origin, np.float64)
     direction = np.array(ray.direction, np.float64)
     p = np.cross(direction, scene.edge2)
@@ -225,9 +236,20 @@ def cast(scene: PickScene, ray: Ray) -> RayHit | None:
     met = (usable & (u >= -_EDGE_SLACK) & (v >= -_EDGE_SLACK) & (u + v <= 1.0 + _EDGE_SLACK)
            & (distance > _MIN_DISTANCE_CM))
     if not met.any():
-        return None
-    row = int(np.where(met, distance, np.inf).argmin())
-    reach = float(distance[row])
-    point = origin + reach * direction
-    return RayHit(scene.item_ids[int(scene.item[row])], int(scene.part[row]),
-                  (float(point[0]), float(point[1]), float(point[2])), reach)
+        return ()
+    rows = np.flatnonzero(met)
+    rows = rows[np.argsort(distance[rows], kind="stable")]
+    hits: list[RayHit] = []
+    seen: set[int] = set()
+    for row in rows.tolist():
+        item = int(scene.item[row])
+        if item in seen:
+            continue
+        seen.add(item)
+        reach = float(distance[row])
+        point = origin + reach * direction
+        hits.append(RayHit(scene.item_ids[item], int(scene.part[row]),
+                           (float(point[0]), float(point[1]), float(point[2])), reach))
+        if not every_item:
+            break
+    return tuple(hits)
