@@ -45,7 +45,7 @@ from __future__ import annotations
 import contextlib
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -156,6 +156,7 @@ def render_records(
     qml_dir: Path | None = None,
     log: Callable[..., None] | None = None,
     graphics_info: bool = False,
+    selected: Iterable[str] = (),
 ) -> OffscreenFrame:
     """Render ``records`` from ``shot`` under ``sun`` into an image of ``size``
     (logical pixels), through the real ``SceneSync`` → ``Quick3DSink`` path.
@@ -166,6 +167,8 @@ def render_records(
     ``sun=None``: no sunlight (fill only). ``ground=None``: the endless meadow
     without a plan rectangle. ``log``: a ``log(phase, **fields)`` callable
     (``runlog.RenderLog``); without one nothing is written anywhere.
+    ``selected``: ids drawn with the selection ring (L1.8) — the ring's shader is
+    compiled only when something is selected.
     ``graphics_info=True`` also reports the graphics adapter (it switches Qt's
     ``qt.rhi.general`` debug output on for the duration of the call).
 
@@ -202,6 +205,7 @@ def render_records(
             mark = time.perf_counter()
             sink = Quick3DSink(host)
             sync = SceneSync(sink, registry)
+            sync.select(selected)  # the ring rides the same transaction (L1.8)
             sync.apply(records, sun=sun, ground=ground)  # one transaction
             host.set_shot(shot)
             breakdown["scene_apply"] = (time.perf_counter() - mark) * 1000.0

@@ -7,12 +7,14 @@ the artifact it runs in: can THIS build render the garden? It
    breaks — the #277 class of failure);
 2. loads ``Garden.qml`` and its shaders from the bundle and renders ONE small
    frame without showing a window: a red box on the ground, lit by a known sun,
-   and one swatch per material kind — so every shader the package ships is
-   compiled by the real backend;
+   and one swatch per material kind, one of them SELECTED — so every shader the
+   package ships, the selection ring's included (L1.8), is compiled by the real
+   backend;
 3. judges the frame: the box is red where our own projection puts it, the
    ground is meadow, the ground north-east of the box is in the box's shadow
    (where ``core/shadow_geometry`` — the 2D overlay's code — says it falls),
-   every swatch drew. "Not empty" is not enough.
+   every swatch drew, the ring runs round the selected one. "Not empty" is not
+   enough.
 
 A QML error, a shader that does not compile, a frame that fails the judge or an
 exception fails the self-test. So does a hang: a watchdog dumps every thread's
@@ -50,6 +52,7 @@ from open_garden_planner.core.scene3d import (
     Transform,
     prism_mesh,
 )
+from open_garden_planner.core.scene3d.selection import RING_WIDTH_PX
 
 from .runlog import RenderLog, watchdog
 from .shots import TopDownShot, top_down_pixel
@@ -72,6 +75,12 @@ SWATCH_TINT: Final = (200, 60, 40, 255)
 #: Every material kind but the box's own ``vc``, west to east.
 SWATCH_KINDS: Final = ("roof", "foliage", "grass", "glass", "water")
 _KIND_PARAM: Final = "material_kind"
+#: The swatch the self-test selects: its ring is the one frame the ring's shader
+#: (``ring.vert`` / ``ring.frag``) draws before a release.
+SELECTED: Final = ("roof",)
+#: At least this share of the ring's band must be ring-coloured (measured: 0.9 and
+#: more on the GPU and on WARP; the rest is the band's anti-aliased rim).
+RING_SHARE: Final = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +106,9 @@ _BOX: Final = _at(0.0, 20.0, 100.0, 100.0)           # footprint of the 100 cm c
 _SWATCH_SIDE: Final = 40.0
 _SWATCHES: Final = {kind: _at(-150.0 + 75.0 * index, -105.0, _SWATCH_SIDE, _SWATCH_SIDE)
                     for index, kind in enumerate(SWATCH_KINDS)}
+
+#: The footprint the selection ring runs round.
+RING_REGION: Final = _SWATCHES[SELECTED[0]]
 
 #: Where the judge looks. Each patch lies well inside what it samples; the shadow
 #: patch is inside the analytic 2D shadow of the box for ``SUN`` and outside the
@@ -157,6 +169,33 @@ def _mean(rgba: NDArray[np.uint8], region: Region, ratio: float) -> NDArray[np.f
     return mean
 
 
+def ring_band(shape: tuple[int, ...], ratio: float) -> NDArray[np.bool_]:
+    """The pixels the selection ring covers: ``RING_WIDTH_PX`` outside the footprint of
+    ``RING_REGION``, by OUR projection (an ``(height, width)`` mask)."""
+    height, width = shape[:2]
+    region = RING_REGION
+    left, top = top_down_pixel(region.east_cm - region.width_cm / 2,
+                               region.north_cm + region.depth_cm / 2, SHOT, (width, height), ratio)
+    right, bottom = top_down_pixel(region.east_cm + region.width_cm / 2,
+                                   region.north_cm - region.depth_cm / 2, SHOT, (width, height), ratio)
+    band = RING_WIDTH_PX * ratio
+    rows, columns = np.mgrid[0:height, 0:width]
+    x, y = columns + 0.5, rows + 0.5
+    outer = (x >= left - band) & (x <= right + band) & (y >= top - band) & (y <= bottom + band)
+    inner = (x > left) & (x < right) & (y > top) & (y < bottom)
+    mask: NDArray[np.bool_] = outer & ~inner
+    return mask
+
+
+def _ring_share(rgba: NDArray[np.uint8], ratio: float) -> float:
+    """The share of the ring's band that is in the ring's colour: blue well above red
+    and green (nothing else in the self-test scene is)."""
+    band = ring_band(rgba.shape, ratio)
+    rgb = rgba[..., :3].astype(np.int32)
+    blue = (rgb[..., 2] > rgb[..., 0] + 40) & (rgb[..., 2] > rgb[..., 1] + 20)
+    return float(blue[band].mean()) if band.any() else 0.0
+
+
 def _luma(rgb: NDArray[np.float64]) -> float:
     return float(0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2])
 
@@ -193,6 +232,10 @@ def judge_frame(rgba: NDArray[np.uint8], device_pixel_ratio: float = 1.0) -> lis
                 problems.append(f"the glass swatch did not draw: {_shown(swatch)}")
         elif not (swatch[0] > 40 and swatch[0] > 2 * swatch[1] and swatch[0] > 2 * swatch[2]):
             problems.append(f"the {kind} swatch did not draw in its tint: {_shown(swatch)}")
+    share = _ring_share(rgba, device_pixel_ratio)
+    if share < RING_SHARE:
+        problems.append(f"the selection ring did not draw round the {SELECTED[0]} swatch: "
+                        f"{share:.0%} of its band is in the ring's colour")
     return problems
 
 
@@ -248,7 +291,8 @@ def _render(log: RenderLog, qml_dir: Path | None) -> Rendered:
     from .offscreen import render_records  # the engine loads here
 
     frame = render_records(records(), shot=SHOT, sun=SUN, ground=GROUND, size=SIZE,
-                           registry=registry(), qml_dir=qml_dir, log=log, graphics_info=True)
+                           registry=registry(), qml_dir=qml_dir, log=log, graphics_info=True,
+                           selected=SELECTED)
     return Rendered(frame.rgba(), frame.device_pixel_ratio, frame.graphics_api, frame.adapter,
                     frame.open_ms, dict(frame.qt.get("counts", {})),
                     tuple(f"{item_id}: {error}" for item_id, error in frame.build_failures.items()),
@@ -308,7 +352,8 @@ def run_selftest(log_path: Path | None = None, *, watchdog_s: float | None = WAT
             else:
                 height, width = rendered.rgba.shape[:2]
                 say(True, f"Qt Quick 3D frame {width}x{height} on {where} in "
-                          f"{rendered.open_ms:.0f} ms (Garden.qml, {len(SWATCH_KINDS) + 1} materials)")
+                          f"{rendered.open_ms:.0f} ms (Garden.qml, {len(SWATCH_KINDS) + 1} materials, "
+                          "the selection ring)")
         except Exception as exc:  # noqa: BLE001 - a QML or shader error arrives here
             say(False, f"Qt Quick 3D render -> {type(exc).__name__}: {exc}")
     ok = all(line.startswith("  OK  ") for line in lines)
