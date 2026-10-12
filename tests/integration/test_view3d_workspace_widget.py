@@ -658,7 +658,7 @@ def test_a_hostile_name_is_shown_as_its_characters_everywhere(bench: Bench) -> N
     from PyQt6.QtCore import Qt as QtNamespace
     from PyQt6.QtWidgets import QLabel, QStyledItemDelegate
 
-    from open_garden_planner.ui.plain_text import TOOLTIP_MAX_CHARS
+    from open_garden_planner.core.plain_text import TOOLTIP_MAX_CHARS
 
     workspace = bench.workspace
     bed = bench.bed()
@@ -698,7 +698,7 @@ def test_a_hostile_name_is_shown_as_its_characters_everywhere(bench: Bench) -> N
 
 
 def test_a_huge_hostile_name_costs_a_capped_row_and_a_capped_tooltip(bench: Bench) -> None:
-    from open_garden_planner.ui.plain_text import ELLIPSIS, NAME_MAX_CHARS, TOOLTIP_MAX_CHARS
+    from open_garden_planner.core.plain_text import ELLIPSIS, NAME_MAX_CHARS, TOOLTIP_MAX_CHARS
 
     workspace = bench.workspace
     bed = bench.bed()
@@ -725,7 +725,7 @@ def test_a_hostile_error_message_stays_text_in_the_message_that_replaces_the_vie
         canvas: CanvasView, qtbot, tmp_path: Path) -> None:
     from PyQt6.QtCore import Qt as QtNamespace
 
-    from open_garden_planner.ui.plain_text import ELLIPSIS, NOTICE_MAX_CHARS
+    from open_garden_planner.core.plain_text import ELLIPSIS, NOTICE_MAX_CHARS
 
     hostile = "<h1>Your licence expired</h1><a href='http://evil.example'>renew</a>" * 5_000
     bench = Bench(canvas, qtbot, tmp_path, fail_first=ImportError(hostile))
@@ -742,6 +742,60 @@ def test_a_hostile_error_message_stays_text_in_the_message_that_replaces_the_vie
     bench.poll()
     details = bench.workspace.message_text().split("Details: ", 1)[1]
     assert details.startswith("<img src='file:///c:/x'>") and len(details) == NOTICE_MAX_CHARS + 1
+
+
+FORGED = "\n2026-10-12 00:00:00 ERROR root: FORGED LINE"
+
+
+def _one_line_records(caplog: pytest.LogCaptureFixture, logger: str) -> list[str]:
+    """The story's own records at WARNING and above — each must be ONE line: no line
+    break in the message and no traceback attached (its last line is the raw message)."""
+    records = [record for record in caplog.records
+               if record.name == logger and record.levelno >= 30]
+    for record in records:
+        assert record.exc_info is None and record.exc_text is None, record.getMessage()
+        assert len(record.getMessage().splitlines()) == 1, record.getMessage()
+    return [record.getMessage() for record in records]
+
+
+def test_a_failed_start_is_one_log_line_whatever_the_error_says(
+        canvas: CanvasView, qtbot, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Security add-on: ``app.log`` is line-oriented and goes to support. The traceback
+    is there for a developer who asks for DEBUG — not at the level the file records."""
+    from open_garden_planner.ui.view3d import workspace as workspace_module
+
+    bench = Bench(canvas, qtbot, tmp_path, fail_first=ImportError("no engine" + FORGED))
+    with caplog.at_level("DEBUG", logger=workspace_module.__name__):
+        bench.workspace.set_mode(VIEW3D)
+        bench.workspace.pane.message_button.click()      # the engine builds now
+        bench.host.health_now.scene_graph_error = "no device" + FORGED + "\u2028again"
+        bench.poll()
+    lines = _one_line_records(caplog, workspace_module.__name__)
+    assert lines == [
+        "The 3D view could not be started (ImportError: no engine 2026-10-12 00:00:00 ERROR "
+        "root: FORGED LINE)",
+        "3D is unavailable on this graphics device: no device 2026-10-12 00:00:00 ERROR "
+        "root: FORGED LINE again",
+    ]
+    debug = [record for record in caplog.records
+             if record.name == workspace_module.__name__ and record.levelno == 10]
+    assert any(record.exc_info for record in debug), "the traceback: at DEBUG, and only there"
+
+
+def test_the_start_guard_logs_one_line_for_a_folder_it_cannot_use(
+        tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    from open_garden_planner.ui.view3d import init_guard
+
+    not_a_folder = tmp_path / "evil\u2028name"
+    not_a_folder.write_text("x", encoding="utf-8")
+    guard = Init3DGuard(not_a_folder)
+    with caplog.at_level("DEBUG", logger=init_guard.__name__):
+        guard.begin()
+        guard.use_software_next_time()
+        guard.try_hardware_next_time()
+    lines = _one_line_records(caplog, init_guard.__name__)
+    assert len(lines) >= 2 and all("cannot" in line for line in lines)
+    assert all("\u2028" not in line for line in lines), "a path is quoted, not printed"
 
 
 # ── teardown ─────────────────────────────────────────────────────────────────

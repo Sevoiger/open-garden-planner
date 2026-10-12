@@ -27,8 +27,8 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.core.object_types import ObjectType, get_translated_display_name
+from open_garden_planner.core.plain_text import clip_line, plain_tooltip
 from open_garden_planner.core.scene3d import BuildFailure
-from open_garden_planner.ui.plain_text import clip_line, plain_tooltip
 
 from .snapshot import SkippedItem, SkipReason
 
@@ -117,7 +117,7 @@ class View3DProblemsDialog(QDialog):
         self._list.clear()
         for problem in problems:
             # A name comes from the plan file and a detail from an exception that may
-            # quote it: both are untrusted (ui/plain_text.py, §8.11). The row is plain
+            # quote it: both are untrusted (core/plain_text.py, §8.11). The row is plain
             # text by the default delegate — a name is shown as its characters — and
             # only clipped; the tooltip, which Qt would sniff for markup, is escaped.
             kind = clip_line(self.kind_text(problem.kind))

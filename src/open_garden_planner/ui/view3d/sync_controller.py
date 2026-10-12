@@ -57,6 +57,7 @@ from typing import Any, Final
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsScene
 
+from open_garden_planner.core.plain_text import log_text
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
     BuildFailure,
@@ -89,6 +90,20 @@ NO_LOCATION_SUN: Final = SunState(elevation_deg=50.0, azimuth_deg=180.0)
 LocationProvider = Callable[[], Mapping[str, Any] | None]
 #: ``stage(previous_records, records, width_cm, depth_cm) -> GroundSpec`` (module docstring).
 GroundStage = Callable[[Mapping[str, Record], Mapping[str, Record], float, float], GroundSpec]
+
+
+def _log_failure(what: str, error: BaseException) -> None:
+    """ONE line at ERROR — what failed, the exception's type and its message, the
+    message normalised and capped — and the traceback at DEBUG only.
+
+    An exception here can quote the plan (an item's id, a name, a value), and a
+    traceback's last line is that message as it came: a line break in it would
+    write a log line of its own into ``app.log``, the file a user sends to
+    support (``core/plain_text.py``, §8.11). The log file records INFO and up, so
+    the traceback is there for a developer who asks for DEBUG, and nowhere else.
+    """
+    _LOG.error("3D sync: %s (%s: %s)", what, log_text(type(error).__name__), log_text(error))
+    _LOG.debug("3D sync: %s - traceback", what, exc_info=error)
 
 
 def plain_ground(_previous: Mapping[str, Record], _records: Mapping[str, Record],
@@ -257,8 +272,8 @@ class Scene3DController(QObject):
         next pass sends everything again. Contained like any sink failure."""
         try:
             self._sync.reset()
-        except Exception:  # noqa: BLE001 - a dead engine must not take the app down
-            _LOG.exception("3D sync: reset failed; the next pass tries again")
+        except Exception as error:  # noqa: BLE001 - a dead engine must not take the app down
+            _log_failure("reset failed; the next pass tries again", error)
         self._records_dirty = self._sun_dirty = True
         self._schedule(self._tick_ms)
 
@@ -309,8 +324,8 @@ class Scene3DController(QObject):
         started = time.perf_counter()
         try:
             self._sync.set_sun(self._sun())
-        except Exception:  # noqa: BLE001 - recover through the full pass
-            _LOG.exception("3D sync: sending the sun failed; rebuilding the 3D scene")
+        except Exception as error:  # noqa: BLE001 - recover through the full pass
+            _log_failure("sending the sun failed; rebuilding the 3D scene", error)
             self._records_dirty = True
             self._pass_records()
             return
@@ -325,7 +340,7 @@ class Scene3DController(QObject):
         try:
             records = snapshot_records(self._scene, self._clock.plan_date, skipped=skipped)
         except Exception as error:  # noqa: BLE001 - one item never raises; this is the scene itself
-            self._give_up(f"the plan could not be read for the 3D view: {error}")
+            self._give_up("the plan could not be read for the 3D view", error)
             return
         self.snapshot_count += 1
         snapshot_ms = (time.perf_counter() - started) * 1000.0
@@ -336,16 +351,16 @@ class Scene3DController(QObject):
         try:
             changes = self._sync.apply(
                 records, sun=sun, ground=self._ground(self._sync.records, records, width, depth))
-        except Exception:  # noqa: BLE001 - SyncStateError, or whatever a sink raised
-            _LOG.exception("3D sync: a pass failed; resetting the 3D scene and applying again")
+        except Exception as error:  # noqa: BLE001 - SyncStateError, or whatever a sink raised
+            _log_failure("a pass failed; resetting the 3D scene and applying again", error)
             self.recovery_count += 1
             recovered = True
             try:
                 self._sync.reset()
                 changes = self._sync.apply(
                     records, sun=sun, ground=self._ground({}, records, width, depth))
-            except Exception as error:  # noqa: BLE001 - give up for this tick, never crash
-                self._give_up(f"the 3D scene could not be rebuilt: {error}")
+            except Exception as again:  # noqa: BLE001 - give up for this tick, never crash
+                self._give_up("the 3D scene could not be rebuilt", again)
                 return
         self.apply_count += 1
         self._last_error = None
@@ -360,13 +375,13 @@ class Scene3DController(QObject):
         self.last_tick = report
         self.applied.emit(report)
 
-    def _give_up(self, message: str) -> None:
-        # %r: the text quotes an exception, which may quote the plan — a name with a
-        # line break in it must not be able to write a log line of its own
-        _LOG.error("3D sync: %r", message, exc_info=True)
+    def _give_up(self, what: str, error: BaseException) -> None:
+        _log_failure(what, error)
         self._records_dirty = self._sun_dirty = True  # the next change tries again
-        self._last_error = message
-        self.failed.emit(message)
+        # one normalised, capped line: this text travels (a signal, a property) and an
+        # exception's message may quote the plan
+        self._last_error = f"{what}: {log_text(error)}"
+        self.failed.emit(self._last_error)
 
     def _set_problems(self, skipped: tuple[SkippedItem, ...],
                       failures: dict[str, BuildFailure]) -> None:
@@ -381,8 +396,8 @@ class Scene3DController(QObject):
             return None  # a scene without a plan rectangle: no ground to place
         try:
             return self._ground_stage(previous, records, width_cm, depth_cm)
-        except Exception:  # noqa: BLE001 - a broken baker must not blank the garden
-            _LOG.exception("3D sync: the ground stage failed; the bare plan rectangle is shown")
+        except Exception as error:  # noqa: BLE001 - a broken baker must not blank the garden
+            _log_failure("the ground stage failed; the bare plan rectangle is shown", error)
             return GroundSpec(width_cm, depth_cm)
 
     def _plan_size(self) -> tuple[float, float]:
@@ -403,5 +418,6 @@ class Scene3DController(QObject):
             return SunState.from_solar_position(
                 solar_position(float(latitude), float(longitude), self._clock.utc))
         except (TypeError, ValueError):
-            _LOG.warning("3D sync: no sun for location %r; using the default light", location)
+            _LOG.warning("3D sync: no sun for location %s; using the default light",
+                         log_text(repr(location)))
             return NO_LOCATION_SUN

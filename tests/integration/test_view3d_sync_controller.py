@@ -624,25 +624,128 @@ def test_after_a_reset_the_ground_stage_is_told_that_nothing_is_in_the_engine(
     assert previous_seen[-2:] == [[str(bed.item_id)], []]
 
 
-def test_a_failure_that_quotes_the_plan_cannot_write_a_log_line_of_its_own(
+# ── security add-on: a failure never writes a log line of its own (§8.11) ────
+
+FORGED = "\n2026-10-12 00:00:00 ERROR root: FORGED LINE"
+LOGGER = "open_garden_planner.ui.view3d.sync_controller"
+
+
+def _own_records(caplog: pytest.LogCaptureFixture) -> tuple[list[str], list[logging.LogRecord]]:
+    """The controller's records: the ones the log file keeps (WARNING and above) as
+    their messages, each checked to be ONE line without a traceback; and the DEBUG ones."""
+    ours = [record for record in caplog.records if record.name == LOGGER]
+    kept = [record for record in ours if record.levelno >= logging.WARNING]
+    for record in kept:
+        assert record.exc_info is None and record.exc_text is None, record.getMessage()
+        assert len(record.getMessage().splitlines()) == 1, record.getMessage()
+    return ([record.getMessage() for record in kept],
+            [record for record in ours if record.levelno == logging.DEBUG])
+
+
+def test_a_plan_that_cannot_be_read_is_one_log_line(
         rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    """Security add-on (§8.11): an exception message can carry text from the plan
-    file. Logged with %r, a line break in it stays inside one log record."""
     from open_garden_planner.ui.view3d import sync_controller
 
     def unreadable(*_arguments: Any, **_options: Any) -> dict:
-        raise RuntimeError("item 'x'\n2026-10-12 00:00:00 ERROR root: FORGED LINE")
+        raise RuntimeError("item 'x'" + FORGED)
 
     monkeypatch.setattr(sync_controller, "snapshot_records", unreadable)
     errors: list[str] = []
     rig.controller.failed.connect(errors.append)
-    with caplog.at_level(logging.ERROR, logger=sync_controller.__name__):
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
         rig.controller.set_active(True)
         rig.settle()
-    assert len(errors) == 1 and rig.controller.last_error == errors[0]
-    ours = [record for record in caplog.records if record.name == sync_controller.__name__]
-    assert len(ours) == 1
-    assert "FORGED LINE" in ours[0].getMessage() and "\n" not in ours[0].getMessage()
+    lines, debug = _own_records(caplog)
+    assert lines == ["3D sync: the plan could not be read for the 3D view (RuntimeError: "
+                     "item 'x' 2026-10-12 00:00:00 ERROR root: FORGED LINE)"]
+    assert len(debug) == 1 and debug[0].exc_info is not None, "the traceback: at DEBUG only"
+    # what travels on (a signal, a property) is one harmless line as well
+    assert errors == [rig.controller.last_error] and len(errors[0].splitlines()) == 1
+
+
+@pytest.mark.parametrize(("fail_on", "failures", "expected"), [
+    ("update_transform", 1, ["a pass failed; resetting the 3D scene and applying again"]),
+    ("begin", 2, ["a pass failed; resetting the 3D scene and applying again",
+                  "the 3D scene could not be rebuilt"]),
+])
+def test_an_engine_error_that_quotes_the_plan_is_one_log_line_per_event(
+        canvas: CanvasView, qtbot, caplog: pytest.LogCaptureFixture, fail_on: str,
+        failures: int, expected: list[str]) -> None:
+    """A sink error names the item it failed on — an id read from the plan file."""
+
+    class Quoting(FailingSink):
+        def __getattr__(self, name: str) -> Any:
+            call = super().__getattr__(name)
+            if name != self.fail_on or not callable(call):
+                return call
+
+            def raising(*arguments: Any, **options: Any) -> Any:
+                try:
+                    return call(*arguments, **options)
+                except RuntimeError as error:
+                    raise RuntimeError(f"{error} for item 'x'{FORGED}\N{LINE SEPARATOR}and more") from None
+
+            return raising
+
+    sink = Quoting()
+    rig = Rig(canvas, qtbot, sink=sink)
+    bed = rig.bed()
+    rig.controller.set_active(True)
+    rig.settle()
+    sink.fail_on, sink.failures_left = fail_on, failures
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        rig.commands.execute(MoveItemsCommand([bed], QPointF(50.0, 0.0)))
+        rig.settle()
+    lines, debug = _own_records(caplog)
+    assert [line.split(" (RuntimeError: ")[0] for line in lines] == [
+        f"3D sync: {what}" for what in expected]
+    assert all(line.endswith("FORGED LINE and more)") for line in lines)
+    assert len(debug) == len(expected) and all(record.exc_info for record in debug)
+
+
+def test_a_ground_stage_or_a_location_that_quotes_the_plan_is_one_log_line(
+        canvas: CanvasView, qtbot, caplog: pytest.LogCaptureFixture) -> None:
+    def broken(*_arguments: Any) -> GroundSpec:
+        raise RuntimeError("tile of 'x'" + FORGED)
+
+    rig = Rig(canvas, qtbot,
+              location={"latitude": "52" + FORGED + "x" * 100_000, "longitude": 13.4})
+    rig.controller.set_ground_stage(broken)
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        rig.controller.set_active(True)
+        rig.settle()
+    lines, _debug = _own_records(caplog)
+    assert len(lines) == 2
+    assert any(line.startswith("3D sync: no sun for location {'latitude': '52")
+               for line in lines)
+    assert max(map(len, lines)) < 500, "a value of any size is one capped line"
+    assert any(line.startswith("3D sync: the ground stage failed") for line in lines)
+    assert rig.recorder.sun == NO_LOCATION_SUN
+
+
+def test_a_failing_build_adds_no_record_of_this_storys_own(
+        canvas: CanvasView, qtbot, caplog: pytest.LogCaptureFixture) -> None:
+    """A builder that fails is contained and logged by the scene contract
+    (``core/scene3d/sync.py``), not here: this story's modules add nothing to the log
+    for it — the user is told through the problems list, whose texts are made
+    harmless on the way (``test_view3d_workspace_widget.py``)."""
+    registry = production_registry()
+
+    def broken(record: Record) -> tuple:
+        raise ValueError(f"cannot build {record.name}{FORGED}")
+
+    registry.register("RAISED_BED", broken, replace=True)
+    rig = Rig(canvas, qtbot, registry=registry)
+    bed = rig.bed()
+    bed.name = "North bed" + FORGED
+    with caplog.at_level(logging.DEBUG):
+        rig.controller.set_active(True)
+        rig.settle()
+    assert rig.controller.problem_count == 1
+    ours = [record for record in caplog.records
+            if record.name.startswith("open_garden_planner.ui.view3d.")
+            and not record.name.endswith(".snapshot")]
+    assert ours == []
 
 
 def test_shutdown_stops_everything(rig: Rig) -> None:

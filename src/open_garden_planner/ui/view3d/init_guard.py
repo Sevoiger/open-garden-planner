@@ -137,9 +137,16 @@ def default_directory() -> Path | None:
         from open_garden_planner.core.logging_config import resolve_log_dir
 
         return resolve_log_dir()
-    except Exception:  # noqa: BLE001 - no folder means no books, never no 3D
-        _LOG.warning("3D start guard: the log directory is not available", exc_info=True)
+    except Exception as error:  # noqa: BLE001 - no folder means no books, never no 3D
+        _LOG.warning("3D start guard: the log directory is not available (%s)", _said(error))
         return None
+
+
+def _said(error: BaseException) -> str:
+    """An error for ONE log line: its type and its message, quoted (``repr`` keeps a
+    line break in a path or a message inside the record — §8.11). No traceback:
+    every caller here is a file operation whose failure the message describes."""
+    return f"{type(error).__name__}: {str(error)!r}"
 
 
 class Init3DGuard:
@@ -234,8 +241,8 @@ class Init3DGuard:
             return
         try:
             (directory / COMPAT_NAME).unlink(missing_ok=True)
-        except OSError:
-            _LOG.warning("3D start guard: cannot remove %s", COMPAT_NAME, exc_info=True)
+        except OSError as error:
+            _LOG.warning("3D start guard: cannot remove %s (%s)", COMPAT_NAME, _said(error))
 
     def use_software_next_time(self) -> None:
         self._write_compat()
@@ -251,8 +258,8 @@ class Init3DGuard:
             return
         try:
             (directory / marker_name(self._pid)).unlink(missing_ok=True)
-        except OSError:
-            _LOG.warning("3D start guard: cannot remove the start marker", exc_info=True)
+        except OSError as error:
+            _LOG.warning("3D start guard: cannot remove the start marker (%s)", _said(error))
 
     def _collect_dead_starts(self) -> bool:
         """Remove the markers of starts that died; True if there was one."""
@@ -262,9 +269,9 @@ class Init3DGuard:
         try:
             directory.mkdir(parents=True, exist_ok=True)
             names = [entry.name for entry in directory.iterdir()]
-        except OSError:
-            _LOG.warning("3D start guard: %s cannot be used; 3D starts without a crash "
-                         "marker", directory, exc_info=True)
+        except OSError as error:
+            _LOG.warning("3D start guard: %r cannot be used (%s); 3D starts without a crash "
+                         "marker", str(directory), _said(error))
             return False
         died = False
         for name in names:
@@ -300,9 +307,9 @@ class Init3DGuard:
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())  # the reader is a process started after a crash
-        except OSError:
-            _LOG.warning("3D start guard: cannot write the start marker; a crash during this "
-                         "start would go unnoticed", exc_info=True)
+        except OSError as error:
+            _LOG.warning("3D start guard: cannot write the start marker (%s); a crash during "
+                         "this start would go unnoticed", _said(error))
             return False
         return True
 
@@ -313,5 +320,5 @@ class Init3DGuard:
         try:
             directory.mkdir(parents=True, exist_ok=True)
             (directory / COMPAT_NAME).write_text("", encoding="utf-8")
-        except OSError:
-            _LOG.warning("3D start guard: cannot write %s", COMPAT_NAME, exc_info=True)
+        except OSError as error:
+            _LOG.warning("3D start guard: cannot write %s (%s)", COMPAT_NAME, _said(error))

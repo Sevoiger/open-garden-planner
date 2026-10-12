@@ -248,6 +248,26 @@ class TestAFolderThatCannotBeUsed:
         guard.use_software_next_time()
         assert not_a_folder.read_text(encoding="utf-8") == "x"
 
+    def test_an_error_is_one_quoted_log_line(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                             caplog: pytest.LogCaptureFixture) -> None:
+        """§8.11: no traceback, and the message quoted — whatever a file system says
+        stays inside one log record."""
+
+        def refuse(*_arguments: object, **_options: object) -> None:
+            raise OSError("no space left\n2026-10-12 ERROR root: FORGED LINE")
+
+        monkeypatch.setattr(Path, "mkdir", refuse)
+        guard = _guard(tmp_path / "log")
+        with caplog.at_level("DEBUG", logger=guard_module.__name__):
+            assert guard.begin() is RenderMode.HARDWARE
+            guard.use_software_next_time()
+        records = [record for record in caplog.records if record.name == guard_module.__name__]
+        for record in records:
+            assert record.exc_info is None
+            assert len(record.getMessage().splitlines()) == 1, record.getMessage()
+        quoted = "OSError: 'no space left\\n2026-10-12 ERROR root: FORGED LINE'"
+        assert sum(quoted in record.getMessage() for record in records) == 2
+
     def test_a_folder_that_does_not_exist_yet_is_made(self, tmp_path: Path) -> None:
         target = tmp_path / "cofade" / "Open Garden Planner"
         guard = _guard(target)

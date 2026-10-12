@@ -55,8 +55,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.plain_text import clip_text, log_text
 from open_garden_planner.core.scene3d.camera import FOV_DEG, OrbitCamera
-from open_garden_planner.ui.plain_text import clip_text
 
 from .init_guard import Init3DGuard, ModeReason, RenderMode, default_directory
 
@@ -115,6 +115,15 @@ class EngineHost(Protocol):
 #: ``factory(prefer_software) -> (host, sink)`` — builds the engine. THE TEST SEAM.
 EngineFactory = Callable[[bool], "tuple[EngineHost, EngineSink]"]
 LocationProvider = Callable[[], "Mapping[str, Any] | None"]
+
+
+def _log_failure(what: str, error: BaseException) -> None:
+    """ONE line at ERROR — what failed, the exception's type and its message, the
+    message normalised and capped — and the traceback at DEBUG only: a traceback's
+    last line is the raw message, and ``app.log`` is a file a user sends to
+    support (``core/plain_text.py``, §8.11)."""
+    _LOG.error("%s (%s: %s)", what, log_text(type(error).__name__), log_text(error))
+    _LOG.debug("%s - traceback", what, exc_info=error)
 
 
 def quick3d_engine(prefer_software: bool) -> tuple[EngineHost, EngineSink]:
@@ -524,7 +533,7 @@ class Workspace(QWidget):
             controller = Scene3DController(scene, clock, self._location, sink, parent=self)
         except Exception as error:  # noqa: BLE001 - an import, the scene file, anything
             guard.init_failed()
-            _LOG.exception("The 3D view could not be started")
+            _log_failure("The 3D view could not be started", error)
             if orbit is not None:
                 orbit.deleteLater()
             if host is not None:
@@ -758,7 +767,7 @@ class Workspace(QWidget):
         Not a crash — the marker goes; the view is closed for the session, no retry."""
         guard, pane = self.guard, self._pane
         guard.graphics_failed()
-        _LOG.error("3D is unavailable on this graphics device: %r", error)
+        _LOG.error("3D is unavailable on this graphics device: %s", log_text(error))
         self._stop_engine()
         self._set_state(View3DState.UNAVAILABLE)
         if pane is None:
@@ -813,8 +822,8 @@ class Workspace(QWidget):
     def _close_host(self, host: EngineHost) -> None:
         try:
             host.close()
-        except Exception:  # noqa: BLE001 - closing must never stop a shutdown
-            _LOG.exception("3D workspace: the engine host did not close cleanly")
+        except Exception as error:  # noqa: BLE001 - closing must never stop a shutdown
+            _log_failure("3D workspace: the engine host did not close cleanly", error)
 
     def _stop_engine(self) -> None:
         self._camera_timer.stop()
