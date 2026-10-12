@@ -89,6 +89,7 @@ from open_garden_planner.core.scene3d.polygon import (
     MAX_ITEM_VERTICES,
     RegionTooLargeError,
     WorkBudget,
+    clear_ring_memories,
     is_buildable_region,
     is_convex_ring,
     pay_for_region,
@@ -412,6 +413,20 @@ def _tree_regions(tree: Any) -> tuple[Region, ...]:
     return tuple(regions)
 
 
+def _in_order(regions: tuple[Region, ...]) -> tuple[Region, ...]:
+    """``regions`` in THE order a record carries them: by the smallest vertex of
+    each outer ring (x, then y); outer rings that share it, by their vertices as
+    they come. A stated property, so that a record does not depend on the order
+    in which the clipper happened to hand its rings out — which changed when the
+    plain union went from a tree to a list (review of fix round 4: seven
+    outlines, the same regions in another order). Every answer of the clipper is
+    put in this order BEFORE it is judged: regions are paid for and cut one
+    after the other out of one budget, so their order decides where a budget
+    runs out. A region's holes stay as the reading gave them — the cut joins
+    them from the right, and holes that reach equally far right in that order."""
+    return tuple(sorted(regions, key=lambda region: (min(region[0]), region[0])))
+
+
 def _tree_rings(tree: Any) -> list[Any]:
     """Every contour of a PolyTree, as the clipper holds it (nothing is read)."""
     rings: list[Any] = []
@@ -486,24 +501,39 @@ def _matches_outline(outline: Ring, regions: tuple[Region, ...]) -> bool:
     return bool(np.all((winding != 0)[judged] == covered[judged]))
 
 
-def _strict_rings(subject: list[list[tuple[int, int]]], fill: int) -> list[Any]:
-    """The union of ``subject`` under ``fill`` with ``StrictlySimple`` — rings that
-    do not touch themselves — as a FLAT list (``Execute``): outer rings
-    counter-clockwise, holes clockwise. [] when no ring of ``subject`` has an area.
+def _union_rings(subject: list[list[tuple[int, int]]], fill: int, *, strictly_simple: bool) -> list[Any]:
+    """The union of ``subject`` under ``fill`` as a FLAT list of rings
+    (``Execute``): outer rings counter-clockwise, holes clockwise. [] when no
+    ring of ``subject`` has an area.
 
-    Never as a tree. ``StrictlySimple`` together with ``Execute2`` costs by the
-    rings it makes and the splits it tries, not by anything a price can be read
-    off beforehand: one two-level zigzag of 340 vertices held it for 3.6 s inside
-    the budget (pyclipper alone: 4,382 ms as a tree, 19 ms as a list; review of
-    fix round 3). Which hole belongs to which ring is ``group_rings``' to say —
-    counted, and paid for before it runs."""
+    A union is NEVER asked for a tree. As a PolyTree (``Execute2``) the clipper
+    looks through every ring it has made each time two of them are joined: its
+    cost follows the rings and the joins, and the price of a union is read off
+    vertices, stack and crossings. Twice that was seconds inside the budget —
+    with ``StrictlySimple``, a two-level zigzag of 340 vertices, 3.6 s (review
+    of fix round 3); without it, a slab with 720 bridged holes, 5.3 s, for a
+    tree that was flattened on the next line (review of fix round 4; pyclipper
+    alone, 801 rings: 23 ms as a list, 7,078 ms as a tree). Which hole belongs
+    to which ring is ``group_rings``' to say — counted, and paid before it runs."""
     clipper = pyclipper.Pyclipper()
-    clipper.StrictlySimple = True
+    clipper.StrictlySimple = strictly_simple
     try:
         clipper.AddPaths(subject, pyclipper.PT_SUBJECT, True)
     except pyclipper.ClipperException:
         return []
     return list(clipper.Execute(pyclipper.CT_UNION, fill, fill))
+
+
+def _plain_rings(subject: list[list[tuple[int, int]]], fill: int) -> list[Any]:
+    """The plain union's rings (``_union_rings``): what the outline covers, its
+    rings as they lie — they may touch themselves and each other."""
+    return _union_rings(subject, fill, strictly_simple=False)
+
+
+def _strict_rings(subject: list[list[tuple[int, int]]], fill: int) -> list[Any]:
+    """The union's rings with ``StrictlySimple`` (``_union_rings``): rings that
+    do not touch themselves."""
+    return _union_rings(subject, fill, strictly_simple=True)
 
 
 def _grouped(made: list[Any], budget: WorkBudget) -> tuple[Region, ...]:
@@ -513,26 +543,34 @@ def _grouped(made: list[Any], budget: WorkBudget) -> tuple[Region, ...]:
     _pay_for_reading(made, budget)
     rings = [_quantized((x / CLIPPER_SCALE, y / CLIPPER_SCALE) for x, y in ring) for ring in made]
     try:
-        return group_rings(rings, budget)
+        return _in_order(group_rings(rings, budget))
     except RegionTooLargeError:
         raise
     except ValueError:
         return ()
 
 
-def _clip_tree(subject: list[list[tuple[int, int]]], fill: int, *,
-               band: list[list[tuple[int, int]]] | None = None) -> Any:
-    """The union of ``subject`` under ``fill`` as a pyclipper PolyTree — minus a
-    band ``_SEPARATION`` wide along every ring of ``band``, when one is given.
-    None when no ring of ``subject`` has an area. (Without ``StrictlySimple``:
-    see ``_strict_rings``.)"""
+def _band_tree(subject: list[list[tuple[int, int]]], fill: int,
+               band: list[list[tuple[int, int]]]) -> Any:
+    """``subject``'s union under ``fill`` MINUS a band ``_SEPARATION`` wide along
+    every ring of ``band``, as a pyclipper PolyTree (``Execute2``). None when no
+    ring of ``subject`` has an area.
+
+    The ONE call that asks the clipper for a hierarchy, made only by the two
+    band readings of ``_resolved_regions``, which read it (``_tree_regions``:
+    whose hole is whose comes from the clipper, where a point test would have
+    to guess between parts a hair apart). Its price does not count its rings,
+    and need not: a tree is dear where rings are JOINED (``_union_rings``), and
+    the band cuts every ring a hair free of every other — nothing is left to
+    join. Measured, pyclipper alone, the same call as a list and as a tree: 801
+    rings in and out 1.8 / 3.0 ms; 1,600 rings out 123 / 144 ms; 800 diamonds
+    touching tip to tip 28 / 28 ms; bridges walked back 1 to 8 grid units beside
+    the way out, 800 of them, 19 to 33 ms either way."""
     clipper = pyclipper.Pyclipper()
     try:
         clipper.AddPaths(subject, pyclipper.PT_SUBJECT, True)
     except pyclipper.ClipperException:
         return None
-    if band is None:
-        return clipper.Execute2(pyclipper.CT_UNION, fill, fill)
     stroke = pyclipper.PyclipperOffset()
     stroke.AddPaths(band, pyclipper.JT_SQUARE, pyclipper.ET_CLOSEDLINE)
     clipper.AddPaths(stroke.Execute(_SEPARATION), pyclipper.PT_CLIP, True)
@@ -549,8 +587,10 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ri
     1. the union with ``StrictlySimple`` — rings that do not touch themselves,
        the outline's own vertices — as a flat list (``_strict_rings``), sorted
        into outer rings and their holes by ``group_rings``;
-    2. the plain union with a band of ``_SEPARATION`` cut away along its rings —
-       for parts that meet in a point: drawn apart by a hair, each can be built;
+    2. the plain union (``_plain_rings``, a flat list as well) with a band of
+       ``_SEPARATION`` cut away along its rings — for parts that meet in a
+       point: drawn apart by a hair, each can be built. Read off a tree
+       (``_band_tree``), the only one this function asks for;
     3. the rings themselves with that band cut away along every one of THEM —
        no reading of the clipper's is trusted, at the price of a cut along every
        drawn edge, also those inside the solid.
@@ -564,7 +604,7 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ri
     the rings' own, less at most the band.
 
     ``()`` when nothing with an area is there; ``_NO_READING`` when no reading
-    holds.
+    holds. The regions of a reading stand in a stated order (``_in_order``).
 
     Every call of the clipper, every ring read and every check is PAID out of
     ``budget`` (the item's; one of its own when none is given) before it runs —
@@ -585,8 +625,7 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ri
     budget.spend(2 * _CLIP_UNITS + (_UNION_VERTEX_UNITS + _STRICT_VERTEX_UNITS) * vertices
                  + 2 * _UNION_STACK_UNITS * sweep
                  + (_UNION_CROSSING_UNITS + _STRICT_CROSSING_UNITS) * crossings)
-    plain = _clip_tree(rings, fill)
-    paths = pyclipper.PolyTreeToPaths(plain) if plain is not None else []
+    paths = _plain_rings(rings, fill)
     if not paths:
         return ()
     _pay_for_reading(paths, budget)
@@ -598,7 +637,7 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ri
 
     def read(tree: Any) -> tuple[Region, ...]:
         _pay_for_reading(_tree_rings(tree), budget)
-        return _tree_regions(tree)
+        return _in_order(_tree_regions(tree))
 
     def holds(regions: tuple[Region, ...], *, drawn_in: bool) -> bool:
         if not regions or not _buildable(regions, budget):
@@ -618,7 +657,7 @@ def _resolved_regions(rings: list[list[tuple[int, int]]], fill: int, outline: Ri
                                       (rings, vertices, _OWN_BAND_CROSSING_UNITS)):
         budget.spend(_CLIP_UNITS + per_crossing * crossings + along * (
             _OFFSET_POINT_UNITS + _BAND_STACK_UNITS * stack_height(band, closed=True)))
-        regions = read(_clip_tree(band, fill, band=band))
+        regions = read(_band_tree(band, fill, band))
         if holds(regions, drawn_in=True):
             return regions
     return _NO_READING
@@ -650,7 +689,7 @@ def _stroke_regions(path: Ring, width_cm: float,
     _pay_for_reading(made, budget)
     rings = [_quantized(ring) for ring in made]
     try:
-        regions = group_rings(rings, budget)
+        regions = _in_order(group_rings(rings, budget))
     except RegionTooLargeError:
         raise
     except ValueError:
@@ -1076,3 +1115,25 @@ def snapshot_records(
             continue
         records[item_id] = record
     return records
+
+
+def clear_outline_cache() -> None:
+    """Drop everything ``snapshot_records`` remembers about outlines — LIVE and
+    stale: the regions of every polygon and stroke, their cuts, areas and ring
+    facts (every ``core.scene3d.polygon.ring_keyed`` memory), and the rings and
+    verdicts of circles. The next snapshot is a first one: every outline is
+    judged and cut again.
+
+    What a snapshot asks for is never dropped while snapshots go on, so a plan
+    that is gone stays remembered until two more snapshots have run — and with
+    no 3D view open, none does (measured: 160 polygons of 1,000 vertices,
+    321,280 vertices held, about 30 MB). Call this when the document changes
+    (a plan is opened, a new one made) and when the 3D view closes. It is also
+    the way to snapshot a SECOND scene in one process without the first one's
+    answers in the way: the memories serve one snapshotting scene
+    (``core.scene3d.polygon.snapshot_generation``). Safe at any time, also
+    while nothing is held; the plant builder's ``clear_shape_cache`` is the
+    same call for plant shapes."""
+    clear_ring_memories()
+    for cache in (_circle_ring, _circle_regions, _convex_region):
+        cache.cache_clear()

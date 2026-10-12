@@ -71,9 +71,19 @@ MAX_ITEM_VERTICES: Final = 16_384
 #: floats, and its place in the ring) that is 27 MB. (Before fix round 3: 2,048
 #: to 8,192 ANSWERS each, whatever their size — a traced outline of 4,000
 #: vertices dragged for a minute was a gigabyte.) What the plan DOES ask for is
-#: not counted against it and never dropped (``snapshot_generation``): those
-#: rings are the records' own, and dropping them made every tick of an
-#: unchanged plan above the cap recompute the plan (review of fix round 3).
+#: not counted against it and never dropped (``snapshot_generation``):
+#: dropping it made every tick of an unchanged plan above the cap recompute
+#: the plan (review of fix round 3).
+#:
+#: So what a LIVE plan holds has no cap: it is linear in the plan. Measured
+#: (review of fix round 4): 130 bytes a vertex for an accepted polygon after
+#: its record is gone — 400 polygons of 3,000 vertices 156 MB — and 112 bytes
+#: a point for a REFUSED line, which has no record at all and whose key is
+#: all that is kept: 20 lines of 16,384 points 37 MB. At most about 1.8 MB
+#: for one item of ``MAX_ITEM_VERTICES``. An accepted outline's rings are its
+#: record's own (the key too, when it was drawn counter-clockwise), so while
+#: the records live this adds less than it counts. ``clear_ring_memories``
+#: gives all of it back.
 HELD_VERTICES: Final = 262_144
 _ENTRY_VERTICES: Final = 8  # what an answer weighs beyond its rings: the entry itself
 
@@ -94,6 +104,15 @@ def snapshot_generation() -> Iterator[int]:
     a script's loop): only those are counted against ``HELD_VERTICES`` and
     dropped, least recently asked first — at the latest when the snapshot ends,
     also from a memory this snapshot did not ask (the plan's last fence is gone).
+
+    The generation is the PROCESS's clock: nothing says whose snapshot it is.
+    **One snapshotting scene per process is the supported case.** More are
+    correct and recompute: two scenes snapshotted in turn still find their
+    answers (the one before counts), three in turn find them stale — measured,
+    every scene's 160 polygons cut again on every tick. A snapshot that raises
+    half-way leaves the next ones correct. And a plan that is gone stays held
+    until two more snapshots have run: ``clear_ring_memories`` (the workspace
+    calls it through ``ui.view3d.snapshot.clear_outline_cache``) drops it at once.
     """
     global _generation, _snapshotting  # noqa: PLW0603 - the one clock of what is remembered
     _generation += 1
@@ -104,6 +123,14 @@ def snapshot_generation() -> Iterator[int]:
         _snapshotting = outer
         for memory in list(_memories):
             memory.settle()
+
+
+def clear_ring_memories() -> None:
+    """Forget every answer of every ``ring_keyed`` function — live and stale.
+    What ``ui.view3d.snapshot.clear_outline_cache`` is made of; call that one."""
+    for memory in list(_memories):
+        memory.cache_clear()
+
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -376,6 +403,7 @@ def is_convex_ring(ring: Sequence[Sequence[float]]) -> bool:
     triangulation: the snapshot asks this first, because a date scrub gives every
     dated plant a new radius on every tick. It says nothing about a ring that is
     not convex by construction (a ring that winds twice turns left as well).
+    False for a ring with a coordinate that is not a number, or not finite.
     """
     if len(ring) < 3:
         return False
@@ -383,8 +411,8 @@ def is_convex_ring(ring: Sequence[Sequence[float]]) -> bool:
     twice = reach = 0.0
     for x2, y2 in ring:
         ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x1, y2 - y1
-        if ax * by - ay * bx <= _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):
-            return False
+        if not ax * by - ay * bx > _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):
+            return False  # also for a coordinate that is no number: nothing is greater than NaN
         twice += x1 * y2 - x2 * y1
         reach = max(reach, x2 * x2 + y2 * y2)
         x0, y0, x1, y1 = x1, y1, x2, y2

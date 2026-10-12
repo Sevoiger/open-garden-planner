@@ -1519,3 +1519,61 @@ class TestTheStackWithoutLevelSegments:
         assert stack_height([teeth], closed=False, flat=False) == stack_height([teeth], closed=False) == 399
         assert stack_height([SQUARE], closed=True, flat=False) == 2  # its two upright sides
         assert stack_height([[(0.0, 0.0), (5.0, 0.0)]], closed=False, flat=False) == 0
+
+
+class TestWhatIsNoNumberIsNotConvex:
+    """Review of fix round 4, P2-1: every ``<=`` is False for NaN, so a ring with
+    a coordinate that is no number turned "left" at every corner and was called
+    convex — by a function whose promise is "implies buildable". (The snapshot
+    asks for finiteness first; the promise is the function's own.)"""
+
+    SQUARE = ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0))
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"])
+    @pytest.mark.parametrize("vertex", range(4))
+    @pytest.mark.parametrize("axis", [0, 1], ids=["x", "y"])
+    def test_a_coordinate_that_is_no_number(self, bad: float, vertex: int, axis: int) -> None:
+        from open_garden_planner.core.scene3d.polygon import is_convex_ring
+
+        assert is_convex_ring(self.SQUARE)
+        ring = [list(point) for point in self.SQUARE]
+        ring[vertex][axis] = bad
+        assert is_convex_ring([tuple(point) for point in ring]) is False
+
+    def test_all_of_them(self) -> None:
+        from open_garden_planner.core.scene3d.polygon import is_convex_ring
+
+        nan = float("nan")
+        assert is_convex_ring(((nan, nan),) * 4) is False
+        assert is_convex_ring(((nan, 0.0), (nan, 1.0), (nan, 2.0))) is False
+
+
+class TestForgettingEveryRing:
+    """``clear_ring_memories``: every answer of every ``ring_keyed`` function,
+    live and stale — what ``ui.view3d.snapshot.clear_outline_cache`` is made of."""
+
+    def test_live_and_stale_answers_are_gone(self) -> None:
+        from open_garden_planner.core.scene3d import polygon
+
+        calls: list[int] = []
+
+        @polygon.ring_keyed(max_vertices=100)
+        def length(ring: tuple[tuple[float, float], ...]) -> int:
+            calls.append(len(ring))
+            return len(ring)
+
+        live = tuple((float(k), 0.0) for k in range(300))  # three times the cap: only a snapshot keeps it
+        stale = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0))
+        length(stale)
+        with polygon.snapshot_generation():
+            length(live)
+        assert length.cache_info().entries == 2 and length.cache_info().vertices > 300
+        polygon.clear_ring_memories()
+        assert length.cache_info().entries == 0 == length.cache_info().vertices
+        assert polygon.ring_area.cache_info().entries == 0 == polygon._examined.cache_info().entries
+        calls.clear()
+        with polygon.snapshot_generation():
+            assert length(live) == 300
+        assert calls == [300]  # asked again: it was forgotten, although it was live
+        polygon.clear_ring_memories()
+        polygon.clear_ring_memories()  # nothing held: nothing happens
