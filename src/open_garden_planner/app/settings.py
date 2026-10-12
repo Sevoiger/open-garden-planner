@@ -120,6 +120,11 @@ class AppSettings:
     KEY_DOWNLOAD_PLANT_IMAGES = "plants/download_images"
     KEY_FETCH_COMPANION_DATA = "plants/fetch_companion_data"
 
+    # 3D view (Phase 17 L1.4): rendering quality and the animation policy
+    KEY_VIEW3D_QUALITY = "view3d/quality"
+    KEY_VIEW3D_REDUCED_MOTION = "view3d/reduced_motion"
+    KEY_VIEW3D_AUTO_LEVEL = "view3d/auto_quality_level"
+
     # Default values
     DEFAULT_AUTOSAVE_ENABLED = True
     DEFAULT_SHOW_WELCOME = True
@@ -173,6 +178,20 @@ class AppSettings:
     # Plant data (US-G2, issue #317)
     DEFAULT_DOWNLOAD_PLANT_IMAGES = True
     DEFAULT_FETCH_COMPANION_DATA = True
+
+    # 3D view (Phase 17 L1.4, ADR-064 addendum). The two tuples ARE
+    # ``core.scene3d.look.QUALITY_CHOICES`` / ``AUTO_LEVELS`` — written out here so
+    # that reading a setting does not import the 3D core at app start; a unit test
+    # pins them against it.
+    VIEW3D_QUALITY_CHOICES = ("auto", "low", "medium", "high", "ultra")
+    VIEW3D_AUTO_LEVELS = ("low", "medium", "high")
+    # "auto": the app picks low / medium / high from the frame rate it measures.
+    DEFAULT_VIEW3D_QUALITY = "auto"
+    # Wind sways leaves and grass unless the user asks for a still view.
+    DEFAULT_VIEW3D_REDUCED_MOTION = False
+    # Where "auto" starts before it has measured anything on this machine: the
+    # preset budgeted for an integrated GPU. Afterwards it starts where it ended.
+    DEFAULT_VIEW3D_AUTO_LEVEL = "medium"
 
     def __init__(self) -> None:
         """Initialize the settings manager."""
@@ -726,6 +745,56 @@ class AppSettings:
         token = secrets.token_urlsafe(32)
         self._settings.setValue(self.KEY_AGENT_API_TOKEN, token)
         return token
+
+    @property
+    def view3d_quality(self) -> str:
+        """Rendering quality of the 3D view: ``auto`` or a preset name (L1.4).
+
+        Anything else in the store (a hand-edited value, a preset a later version
+        dropped) reads as the default — a quality nobody can name must not reach
+        the renderer.
+        """
+        value = self._settings.value(self.KEY_VIEW3D_QUALITY, self.DEFAULT_VIEW3D_QUALITY, type=str)
+        text = str(value).strip().lower()
+        return text if text in self.VIEW3D_QUALITY_CHOICES else self.DEFAULT_VIEW3D_QUALITY
+
+    @view3d_quality.setter
+    def view3d_quality(self, value: str) -> None:
+        text = str(value).strip().lower()
+        if text not in self.VIEW3D_QUALITY_CHOICES:
+            text = self.DEFAULT_VIEW3D_QUALITY
+        self._settings.setValue(self.KEY_VIEW3D_QUALITY, text)
+
+    @property
+    def view3d_reduced_motion(self) -> bool:
+        """Whether the 3D view stands still: no wind in leaves and grass (default off)."""
+        return self._settings.value(
+            self.KEY_VIEW3D_REDUCED_MOTION,
+            self.DEFAULT_VIEW3D_REDUCED_MOTION,
+            type=bool,
+        )
+
+    @view3d_reduced_motion.setter
+    def view3d_reduced_motion(self, value: bool) -> None:
+        self._settings.setValue(self.KEY_VIEW3D_REDUCED_MOTION, bool(value))
+
+    @property
+    def view3d_auto_level(self) -> str:
+        """The preset the automatic quality last settled on — where it starts next time.
+
+        Not a preference with a control: the app writes it when ``auto`` steps.
+        """
+        value = self._settings.value(
+            self.KEY_VIEW3D_AUTO_LEVEL, self.DEFAULT_VIEW3D_AUTO_LEVEL, type=str)
+        text = str(value).strip().lower()
+        return text if text in self.VIEW3D_AUTO_LEVELS else self.DEFAULT_VIEW3D_AUTO_LEVEL
+
+    @view3d_auto_level.setter
+    def view3d_auto_level(self, value: str) -> None:
+        text = str(value).strip().lower()
+        if text not in self.VIEW3D_AUTO_LEVELS:
+            text = self.DEFAULT_VIEW3D_AUTO_LEVEL
+        self._settings.setValue(self.KEY_VIEW3D_AUTO_LEVEL, text)
 
     def sync(self) -> None:
         """Force settings to be written to storage."""

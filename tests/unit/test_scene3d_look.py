@@ -354,7 +354,7 @@ class TestPresets:
 
     def test_the_neutral_day_is_the_noon_rig_at_high(self) -> None:
         """What a host shows before anyone hands it a look — the one look L1.2 had."""
-        assert NEUTRAL_DAY == look_for(sun(60.0, 180.0), "high")
+        assert look_for(sun(60.0, 180.0), "high") == NEUTRAL_DAY
         assert (NEUTRAL_DAY.mood.sun_color, NEUTRAL_DAY.mood.sun_brightness,
                 NEUTRAL_DAY.mood.exposure) == ("#fff1dc", 1.9, 0.85)
         assert not NEUTRAL_DAY.night and NEUTRAL_DAY.meadow_albedo == "#487f34"
