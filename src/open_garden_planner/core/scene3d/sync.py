@@ -40,6 +40,17 @@ closed and rebuilt, the graphics device was lost). It is NOT needed for a new or
 newly opened plan: a plain ``apply`` of the new snapshot removes what is gone and
 adds what is new.
 
+THE GROUND (L1.5). With a ``ground_baker`` the sync also keeps the plan's baked
+ground in step: every ``apply`` hands the baker the snapshot, the SAME diff the
+builders are run from and the ids the scene holds a solid for, and the tiles it
+returns travel as the ground of the same transaction — one edit, one snapshot,
+one diff, builders and bake. A record is painted on the ground when the snapshot
+gave it a paint description (it has no height and is not a plant) AND no builder
+made a solid for it. A baker that raises is contained like a builder: the
+failure is logged and kept in ``ground_failure``, the ground the sink shows stays
+(bare, if the plan's rectangle changed), the baker starts over at the next
+``apply``, and the rest of the scene is applied. ``reset()`` clears the baker too.
+
 Qt-free and thread-agnostic: call it from the thread that owns the sink.
 """
 
@@ -52,10 +63,13 @@ from functools import lru_cache
 from types import MappingProxyType
 
 from .build import Builder, BuilderRegistry, checked_parts
+from .ground import GroundBaking
 from .mesh import MeshPart
 from .record import Record
 from .scene_diff import SceneDiff, diff
 from .sink import EngineSink, GroundSpec, RecordingSink, SinkState, SunState
+
+_NO_CHANGE = SceneDiff()
 
 _log = logging.getLogger(__name__)
 
@@ -104,10 +118,13 @@ class SceneSync:
     """
 
     def __init__(self, sink: EngineSink, registry: BuilderRegistry | None = None, *,
-                 validate: bool = False) -> None:
+                 validate: bool = False, ground_baker: GroundBaking | None = None) -> None:
         self._sink = sink
         self._registry = registry if registry is not None else BuilderRegistry()
         self._validate = validate
+        self._baker = ground_baker
+        self._solid: frozenset[str] = frozenset()
+        self._ground_failure: tuple[str, str] | None = None
         self._records: dict[str, Record] = {}
         self._built_with: dict[str, Builder] = {}
         self._failures: dict[str, BuildFailure] = {}
@@ -155,8 +172,25 @@ class SceneSync:
 
     @property
     def ground(self) -> GroundSpec | None:
-        """The ground last sent to the sink."""
+        """The ground last sent to the sink — with its baked tiles, when the sync
+        has a ground baker."""
         return self._ground
+
+    @property
+    def ground_baker(self) -> GroundBaking | None:
+        return self._baker
+
+    @property
+    def solid_ids(self) -> frozenset[str]:
+        """The items the scene holds a solid for (a builder made at least one
+        triangle). Every other item is on the ground, or nowhere."""
+        return self._solid
+
+    @property
+    def ground_failure(self) -> tuple[str, str] | None:
+        """``(error type, message)`` when the ground baker raised at the last bake
+        (the ground shown is then stale or bare), else None."""
+        return self._ground_failure
 
     def expected_state(self) -> SinkState:
         """What a sink that honours the protocol holds right now: the state ONE
@@ -173,9 +207,14 @@ class SceneSync:
         builders made, and the two differ until that ``apply`` has run.
         """
         empty_sink = RecordingSink()
-        reference = SceneSync(empty_sink, self._registry, validate=self._validate)
+        baker = self._baker.fresh() if self._baker is not None else None
+        reference = SceneSync(empty_sink, self._registry, validate=self._validate,
+                              ground_baker=baker)
         reference._quiet = True  # the failures were logged when they first happened
-        reference.apply(self._records, sun=self._sun, ground=self._ground)
+        ground = self._ground
+        if ground is not None and baker is not None:
+            ground = ground.plan  # the tiles are the reference baker's to make, from scratch
+        reference.apply(self._records, sun=self._sun, ground=ground)
         return empty_sink.state()
 
     # ── driving the sink ────────────────────────────────────────────────────
@@ -192,7 +231,10 @@ class SceneSync:
         ``sun`` / ``ground``, when given and different from what the sink already
         has, are sent in the SAME transaction — a clock tick that moves the sun
         and grows the plants is one ``begin``/``commit``. ``None`` leaves them as
-        they are. Returns the diff of the records against the previously applied
+        they are. With a ground baker, ``ground`` is the plan's rectangle and the
+        baker lays the tiles on it; the baked ground travels in the same
+        transaction whenever a tile changed — also when ``ground`` is not given
+        again. Returns the diff of the records against the previously applied
         snapshot; an item rebuilt only because its builder changed is not in it
         (its record did not change). See the module docstring for what happens
         when a builder or the sink raises.
@@ -228,6 +270,15 @@ class SceneSync:
                 if not self._quiet:
                     _log.error("3D builder for %s item %r failed; it is shown without a solid",
                                record.kind, item_id, exc_info=error)
+        solid = self._solid
+        if fresh or restyled or changes.removed:
+            solid = frozenset(
+                (solid - set(changes.removed) - set(built))
+                | {item_id for item_id, parts in built.items()
+                   if any(part.mesh.vertex_count for part in parts)})
+        # a restyled item's record did not change, but whether it has a solid may have:
+        # the diff no longer names everything the ground depends on
+        ground = self._bake(new, None if restyled else changes, solid, ground)
         send_sun = sun is not None and sun != self._sun
         send_ground = ground is not None and ground != self._ground
         if changes.touches_sink or restyled or send_sun or send_ground:
@@ -246,6 +297,7 @@ class SceneSync:
         self._built_with.update(builders)
         self._registry_version = version
         self._records = new
+        self._solid = solid
         if send_sun:
             self._sun = sun
         if send_ground:
@@ -264,12 +316,14 @@ class SceneSync:
         return True
 
     def set_ground(self, ground: GroundSpec) -> bool:
-        """Tell the sink the plan's ground; a repeat of the last value sends nothing."""
+        """Tell the sink the plan's ground; a repeat of the last value sends nothing.
+        With a ground baker the tiles for the current records are laid on it."""
         self._require_usable()
-        if ground == self._ground:
+        baked = self._bake(self._records, _NO_CHANGE, self._solid, ground)
+        if baked is None or baked == self._ground:
             return False
-        self._transact(lambda: self._sink.set_ground(ground))
-        self._ground = ground
+        self._transact(lambda: self._sink.set_ground(baked))
+        self._ground = baked
         return True
 
     def reset(self) -> None:
@@ -288,6 +342,10 @@ class SceneSync:
         self._failures = {}
         self._sun = None
         self._ground = None
+        self._solid = frozenset()
+        self._ground_failure = None
+        if self._baker is not None:
+            self._baker.clear()
         try:
             self._sink.clear()
         except BaseException:
@@ -303,6 +361,31 @@ class SceneSync:
                 "a sink call failed earlier, so the engine's scene is unknown: "
                 "call reset() (it clears the sink) before applying again"
             )
+
+    def _bake(self, records: Mapping[str, Record], changes: SceneDiff | None,
+              solid: frozenset[str], ground: GroundSpec | None) -> GroundSpec | None:
+        """The ground to send: ``ground`` (else the one the sink has) with the baker's
+        tiles for ``records`` laid on it; ``ground`` itself without a baker or
+        without a plan rectangle. Runs BEFORE the sink is touched, like a builder,
+        and is contained like one (module docstring)."""
+        plan = ground if ground is not None else self._ground
+        baker = self._baker
+        if baker is None or plan is None:
+            return ground
+        try:
+            tiles = baker.bake(records, changes, solid, plan.width_cm, plan.depth_cm)
+        except Exception as error:  # a ground that cannot be baked must not stop the scene
+            self._ground_failure = (type(error).__name__, str(error))
+            if not self._quiet:
+                _log.error("the 3D ground could not be baked; it stays as it was",
+                           exc_info=error)
+            baker.clear()  # whatever it holds is not the ground of these records
+            shown = self._ground
+            same_plan = shown is not None and shown.plan == plan.plan
+            return GroundSpec(plan.width_cm, plan.depth_cm,
+                              shown.tiles if shown is not None and same_plan else ())
+        self._ground_failure = None
+        return GroundSpec(plan.width_cm, plan.depth_cm, tiles)
 
     def _build(self, builder: Builder, record: Record) -> tuple[MeshPart, ...]:
         self._build_count += 1

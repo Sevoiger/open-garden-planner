@@ -205,6 +205,76 @@ def _check_rgba(name: str, value: object) -> None:
         raise ValueError(f"Material.{name} must be four ints in 0..255 or None, got {value!r}")
 
 
+#: The pen styles, caps and joins a ``Paint`` can name — Qt's enum member names,
+#: as strings: this package imports no Qt, and the ground bake looks them up by name.
+PEN_STYLES: Final[frozenset[str]] = frozenset({
+    "NoPen", "SolidLine", "DashLine", "DotLine", "DashDotLine", "DashDotDotLine",
+})
+PEN_CAPS: Final[frozenset[str]] = frozenset({"FlatCap", "SquareCap", "RoundCap"})
+PEN_JOINS: Final[frozenset[str]] = frozenset({"MiterJoin", "BevelJoin", "RoundJoin", "SvgMiterJoin"})
+
+
+@dataclass(frozen=True, slots=True)
+class Paint:
+    """How the 2D canvas paints an item's SURFACE, beyond its two colours and its
+    pattern — what the ground bake needs to paint a flat item exactly as the
+    canvas does (Phase 17 L1.5). Plain data; part of the ``Material``, so a
+    change of it re-bakes ground tiles and never rebuilds a mesh.
+
+    The snapshot gives one to every record the ground can show: an item without
+    a height that is not a plant. A record with a height has none (it is a
+    solid, and nothing of it is painted).
+
+    - ``stroke_width_cm``, ``stroke_style``, ``stroke_cap``, ``stroke_join``:
+      the item's pen as the canvas strokes its outline with it (its colour is
+      ``Material.stroke_rgba``). The names are Qt's (``PEN_STYLES`` …).
+    - ``opacity``: the item's effective opacity, its layer's included.
+    - ``origin`` and ``matrix``: the ITEM's own coordinate frame, in which the
+      canvas paints — a fill texture is anchored at the item's origin, not at
+      its centre, and a furniture sprite is aligned to whole centimetres there.
+      A point ``p`` of the record's local frame is the item's point
+      ``origin + matrix⁻¹ · p``; ``matrix`` is ``(m11, m12, m21, m22)`` with
+      ``x' = m11·x + m21·y``, ``y' = m12·x + m22·y`` (Qt's convention). The
+      identity for every item that is posed rigidly — then ``origin`` is the
+      item-coordinate point the record is centred on; the item's own linear
+      part for a circle (its record does not turn, its texture does) and for an
+      item under a transform that is not rigid.
+
+    A move or a turn of the item changes none of this: it is the record's
+    ``transform`` and nothing else.
+    """
+
+    stroke_width_cm: float = 0.0
+    stroke_style: str = "SolidLine"
+    stroke_cap: str = "SquareCap"
+    stroke_join: str = "BevelJoin"
+    opacity: float = 1.0
+    origin: Point = (0.0, 0.0)
+    matrix: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 1.0)
+
+    def __post_init__(self) -> None:
+        if self.stroke_style not in PEN_STYLES:
+            raise ValueError(f"Paint.stroke_style {self.stroke_style!r} is not one of {sorted(PEN_STYLES)}")
+        if self.stroke_cap not in PEN_CAPS:
+            raise ValueError(f"Paint.stroke_cap {self.stroke_cap!r} is not one of {sorted(PEN_CAPS)}")
+        if self.stroke_join not in PEN_JOINS:
+            raise ValueError(f"Paint.stroke_join {self.stroke_join!r} is not one of {sorted(PEN_JOINS)}")
+        if not (math.isfinite(self.stroke_width_cm) and self.stroke_width_cm >= 0.0):
+            raise ValueError(f"Paint.stroke_width_cm is a finite length >= 0, got {self.stroke_width_cm!r}")
+        _check_length("a stroke width", self.stroke_width_cm)
+        if not 0.0 <= self.opacity <= 1.0:  # also False for a NaN
+            raise ValueError(f"Paint.opacity lies in 0..1, got {self.opacity!r}")
+        if len(self.origin) != 2 or len(self.matrix) != 4:
+            raise ValueError(f"Paint needs an (x, y) origin and a 2 x 2 matrix, got {self!r}")
+        if not all(math.isfinite(value) for value in (*self.origin, *self.matrix)):
+            raise ValueError(f"Paint has a non-finite frame: {self!r}")
+        for value in self.origin:
+            _check_length("a paint origin", value)
+        m11, m12, m21, m22 = self.matrix
+        if abs(m11 * m22 - m12 * m21) < 1e-12:
+            raise ValueError(f"Paint.matrix cannot be inverted: {self.matrix!r}")
+
+
 @dataclass(frozen=True, slots=True)
 class Material:
     """How an item is coloured in the plan — plain sRGB data, no engine material.
@@ -213,6 +283,8 @@ class Material:
     item's ObjectType name. ``fill_rgba`` / ``stroke_rgba`` are the item's own
     8-bit sRGB colours (None when it has none — a polyline has no fill),
     ``pattern`` its fill-pattern name (``FillPattern`` member) when it has one.
+    ``paint`` (L1.5) is the rest of how the canvas paints the item's surface —
+    present on a record the ground bake can show, None on every other.
     A change of any of them is a material change and never rebuilds a mesh —
     which is why a builder must not read this class (``build.verify_builder``).
     """
@@ -221,10 +293,13 @@ class Material:
     fill_rgba: Rgba | None = None
     stroke_rgba: Rgba | None = None
     pattern: str | None = None
+    paint: Paint | None = None
 
     def __post_init__(self) -> None:
         _check_rgba("fill_rgba", self.fill_rgba)
         _check_rgba("stroke_rgba", self.stroke_rgba)
+        if self.paint is not None and not isinstance(self.paint, Paint):
+            raise TypeError(f"Material.paint is a Paint or None, got {type(self.paint).__name__}")
 
     @property
     def tint_rgba(self) -> Rgba:
@@ -340,6 +415,7 @@ EMPTY_PARAMS: Final = Params()
 #: exactly one. A new field must be put into a signature or declared unsigned.
 GEOMETRY_FIELDS: Final[tuple[str, ...]] = (
     "kind", "shape", "footprints", "path", "path_width_cm", "height_cm", "params", "holes",
+    "outline",
 )
 TRANSFORM_FIELDS: Final[tuple[str, ...]] = ("transform",)
 MATERIAL_FIELDS: Final[tuple[str, ...]] = ("material",)
@@ -381,6 +457,14 @@ class Record:
       positive finite number — or None when the resolver gives none: then the
       item is decoration and casts no shadow, exactly as in 2D (``casts_shadow``).
     - ``params``: the rest (``PARAM_*`` keys).
+    - ``outline`` (L1.5): a POLYGON's vertices as they were DRAWN — in the drawn
+      order, not turned, not resolved — when ``footprints`` is not that polygon:
+      the outline crosses or touches itself (``outline_resolved``), or no
+      regions could be made of it at all (then ``footprints`` is empty: nothing
+      can be BUILT of this record, and a consumer that needs area finds none in
+      ``regions``). ``()`` otherwise — ``footprints[0]`` then IS the drawn
+      polygon. Only a record without a height carries one: it is what the
+      ground bake fills (with the canvas's odd-even rule), never a builder's.
 
     ``transform`` and ``material`` have a signature each. ``item_id``, ``name``
     (the display name) and ``parent_id`` (the id of the bed a plant is LINKED to —
@@ -410,6 +494,7 @@ class Record:
     parent_id: str | None = None
     name: str = ""
     holes: tuple[tuple[Ring, ...], ...] = ()
+    outline: Ring = ()
     geometry_sig: int = field(init=False, compare=False, repr=False)
     transform_sig: int = field(init=False, compare=False, repr=False)
     material_sig: int = field(init=False, compare=False, repr=False)
@@ -444,6 +529,8 @@ class Record:
                 )
         if self.path and not _ring_facts(self.path)[1] <= MAX_LENGTH_CM:
             raise RecordRangeError(_beyond(_ring_facts(self.path)[1]))
+        if self.outline and not _ring_facts(self.outline)[1] <= MAX_LENGTH_CM:
+            raise RecordRangeError(_beyond(_ring_facts(self.outline)[1]))
         if self.holes:
             if len(self.holes) != len(self.footprints):
                 raise ValueError(
@@ -464,7 +551,7 @@ class Record:
                         )
         object.__setattr__(self, "geometry_sig", hash((
             self.kind, self.shape, self.footprints, self.path, self.path_width_cm,
-            self.height_cm, self.params, self.holes,
+            self.height_cm, self.params, self.holes, self.outline,
         )))
         object.__setattr__(self, "transform_sig", hash(self.transform))
         object.__setattr__(self, "material_sig", hash(self.material))
@@ -505,6 +592,7 @@ class Record:
             and self.holes == other.holes
             and self.path == other.path
             and self.params == other.params
+            and self.outline == other.outline
         )
 
     def same_transform(self, other: Record) -> bool:

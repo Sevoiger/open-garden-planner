@@ -300,3 +300,31 @@ __all__ += [
     "is_region_too_large",
     "region_work",
 ]
+# The ground bake (L1.5): the tiles of ``ground`` and a record's ``Paint`` — imported and
+# listed down here, in a block of their own, for the same reason.
+from .ground import (  # noqa: E402
+    MAX_GROUND_PIXELS,
+    MEADOW_RGB,
+    TILE_PX,
+    GroundBaking,
+    GroundGrid,
+    GroundTile,
+    TileKey,
+    changed_tiles,
+)
+from .record import PEN_CAPS, PEN_JOINS, PEN_STYLES, Paint  # noqa: E402
+
+__all__ += [
+    "MAX_GROUND_PIXELS",
+    "MEADOW_RGB",
+    "PEN_CAPS",
+    "PEN_JOINS",
+    "PEN_STYLES",
+    "TILE_PX",
+    "GroundBaking",
+    "GroundGrid",
+    "GroundTile",
+    "Paint",
+    "TileKey",
+    "changed_tiles",
+]

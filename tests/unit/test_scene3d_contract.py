@@ -442,6 +442,7 @@ def _other(field: str) -> object:
         "height_cm": 41.0,
         "params": Params({"seed": "a", "radius_cm": 3.0}),
         "holes": ((HOLE,),),
+        "outline": SQUARE[::-1],  # L1.5: the polygon as drawn (here: clockwise)
     }[field]
 
 
