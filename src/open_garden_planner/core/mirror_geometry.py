@@ -25,13 +25,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QBrush, QPen
 
 from open_garden_planner.core.cad_geometry import (
     arc_from_three_points,
     reflect_angle_deg,
     reflect_point,
 )
+from open_garden_planner.core.item_style import copy_visual_style
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QGraphicsItem
@@ -215,18 +215,7 @@ def _mirror_bezier(
 # ---------------------------------------------------------------------------
 
 
-def _copy_visual_style(source: QGraphicsItem, dest: QGraphicsItem) -> None:
-    """Copy pen/brush + custom-colour/label flags from ``source`` to ``dest``.
-
-    object_type / name / metadata / fill_pattern / stroke_style / layer_id are
-    already carried via the constructor; this fills in the remaining live
-    appearance state (exact pen & brush objects, the stored ``fill_color``
-    override, and area-label visibility) so a mirrored shape is visually
-    identical to its source.
-    """
-    if hasattr(source, "fill_color") and source.fill_color is not None:
-        dest.fill_color = source.fill_color
-    dest.setBrush(QBrush(source.brush()))
-    dest.setPen(QPen(source.pen()))
-    if getattr(source, "area_label_visible", False):
-        dest.area_label_visible = True
+# The appearance copy lives in ``core.item_style.copy_visual_style`` — the ONE helper
+# every item-from-item operation calls (mirror, offset, chamfer / fillet, a re-pointed
+# line): brush, pen, area-label flag AND the style attributes that state them.
+_copy_visual_style = copy_visual_style

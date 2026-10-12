@@ -9,6 +9,7 @@ from PyQt6.QtCore import QT_TR_NOOP, QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QKeyEvent, QMouseEvent, QPen
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPathItem
 
+from open_garden_planner.core.item_style import copy_visual_style
 from open_garden_planner.core.tools.base_tool import BaseTool, ToolType
 
 if TYPE_CHECKING:
@@ -202,8 +203,7 @@ def _offset_polygon(item: PolygonItem, d: float) -> QGraphicsItem | None:
         object_type=item.object_type,
         layer_id=item.layer_id,
     )
-    new_item.setPen(QPen(item.pen()))
-    new_item.setBrush(QBrush(item.brush()))
+    copy_visual_style(item, new_item)  # brush and pen — and the attributes that state them
     return new_item
 
 
@@ -237,8 +237,7 @@ def _offset_polyline(item: PolylineItem, d: float) -> QGraphicsItem | None:
         object_type=item.object_type,
         layer_id=item.layer_id,
     )
-    new_item.setPen(QPen(item.pen()))
-    new_item.setBrush(QBrush(item.brush()))
+    copy_visual_style(item, new_item)  # a line has no fill: the copy states "none"
     return new_item
 
 

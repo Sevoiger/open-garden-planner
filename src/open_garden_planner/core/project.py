@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene
 
 from open_garden_planner.app.settings import get_settings
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
+from open_garden_planner.core.item_style import adopt_pen, stroke_style_of
 from open_garden_planner.core.object_types import PathFenceStyle, StrokeStyle
 from open_garden_planner.models.layer import Layer, create_default_layers
 
@@ -1607,6 +1608,12 @@ class ProjectManager(QObject):
             stroke_color = item.pen().color()
             data["stroke_color"] = stroke_color.name(QColor.NameFormat.HexArgb)
             data["stroke_width"] = item.pen().widthF()
+            # … and its dash style when it has one (a dashed line came back solid).
+            # Read off the pen, like the colour and the width; a solid line writes
+            # nothing, as before.
+            dash = stroke_style_of(item.pen())
+            if dash is not None and dash is not StrokeStyle.SOLID:
+                data["stroke_style"] = dash.name
             # Save path/fence style preset
             if hasattr(item, "path_fence_style") and item.path_fence_style and item.path_fence_style.name != "NONE":
                 data["path_fence_style"] = item.path_fence_style.name
@@ -2178,7 +2185,7 @@ class ProjectManager(QObject):
                     pen.setWidthF(obj["stroke_width"])
                 if stroke_style:
                     pen.setStyle(stroke_style.to_qt_pen_style())
-                item.setPen(pen)
+                adopt_pen(item, pen)  # the pen AND the stroke attributes (core.item_style)
             # Restore label visibility
             if not label_visible:
                 item.label_visible = False
@@ -2222,7 +2229,7 @@ class ProjectManager(QObject):
                     pen.setWidthF(obj["stroke_width"])
                 if stroke_style:
                     pen.setStyle(stroke_style.to_qt_pen_style())
-                item.setPen(pen)
+                adopt_pen(item, pen)  # the pen AND the stroke attributes (core.item_style)
             # Restore label visibility
             if not label_visible:
                 item.label_visible = False
@@ -2281,7 +2288,7 @@ class ProjectManager(QObject):
                     pen.setWidthF(obj["stroke_width"])
                 if stroke_style:
                     pen.setStyle(stroke_style.to_qt_pen_style())
-                item.setPen(pen)
+                adopt_pen(item, pen)  # the pen AND the stroke attributes (core.item_style)
             if not label_visible:
                 item.label_visible = False
             if "rotation_angle" in obj:
@@ -2310,13 +2317,18 @@ class ProjectManager(QObject):
                     item._item_id = UUID(obj["item_id"])
                 if metadata:
                     item._metadata = metadata
-                # Restore custom stroke color if saved (only if no preset overrides it)
-                if "stroke_color" in obj and path_fence_style == PathFenceStyle.NONE:
+                # Restore the stroke that was saved — for a style preset too. The file
+                # holds the pen the line was painted with; until the 3D ground bake's
+                # review this was restored for style NONE only, so a gravel path
+                # widened in the properties panel came back at the preset's width.
+                if "stroke_color" in obj:
                     pen = item.pen()
                     pen.setColor(QColor(obj["stroke_color"]))
                     if "stroke_width" in obj:
                         pen.setWidthF(obj["stroke_width"])
-                    item.setPen(pen)
+                    if stroke_style:
+                        pen.setStyle(stroke_style.to_qt_pen_style())
+                    adopt_pen(item, pen)  # the pen AND the stroke attributes
                 # Restore label visibility
                 if not label_visible:
                     item.label_visible = False
@@ -2358,7 +2370,7 @@ class ProjectManager(QObject):
                         pen.setWidthF(obj["stroke_width"])
                     if stroke_style:
                         pen.setStyle(stroke_style.to_qt_pen_style())
-                    item.setPen(pen)
+                    adopt_pen(item, pen)  # the pen AND the stroke attributes (core.item_style)
                 # Restore label visibility
                 if not label_visible:
                     item.label_visible = False

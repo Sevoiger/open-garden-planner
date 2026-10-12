@@ -992,8 +992,10 @@ class TestWhatTheCanvasReallyPaintsWith:
         assert "#ffc81e78" in (tmp_path / "again.ogp").read_text(encoding="utf-8").lower()
 
     def test_the_stroke_is_the_live_pens_after_a_load(self, qtbot: Any, tmp_path: Path) -> None:
-        """No loader branch sets ``stroke_color``; the pen is right. The record — and
-        the ground — follow the pen."""
+        """The record — and the ground — follow the PEN, whatever the attribute says.
+        (No loader branch set ``stroke_color`` when the bake was built; since its
+        review the loader keeps pen and attribute in step — ``core.item_style`` —
+        and the snapshot still reads the pen: an attribute set apart is not painted.)"""
         scene = new_scene()
         item = _polygon("border")
         pen = item.pen()
@@ -1006,7 +1008,8 @@ class TestWhatTheCanvasReallyPaintsWith:
         loaded = CanvasScene()
         ProjectManager().load(loaded, tmp_path / "plan.ogp")
         again = next(i for i in loaded.items() if isinstance(i, PolygonItem))
-        assert QColor(again.stroke_color).getRgb() != (1, 2, 3, 255)  # stale, as found
+        assert QColor(again.stroke_color).getRgb() == (1, 2, 3, 255)  # in step since the review
+        again.stroke_color = QColor(200, 200, 0)  # … and an attribute that parts is not painted
         mean, worst, bake = compare(loaded)
         assert bake.records[str(again.item_id)].material.stroke_rgba == (1, 2, 3, 255)
         assert (mean, worst) == (0.0, 0)

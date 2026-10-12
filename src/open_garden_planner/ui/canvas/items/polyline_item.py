@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.item_style import copy_visual_style
 from open_garden_planner.core.object_types import (
     ObjectType,
     PathFenceStyle,
@@ -100,8 +101,7 @@ class PolylineItem(PolylineVertexEditMixin, RotationHandleMixin, GardenItemMixin
             layer_id=self.layer_id,
             path_fence_style=self._path_fence_style,
         )
-        clone.setPen(QPen(self.pen()))
-        clone.setBrush(QBrush(self.brush()))
+        copy_visual_style(self, clone)  # brush, pen and the stroke attributes
         return clone
 
     @property
