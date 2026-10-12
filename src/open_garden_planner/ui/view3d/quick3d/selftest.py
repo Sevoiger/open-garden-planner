@@ -217,7 +217,7 @@ class Rendered:
     other_threads: int = 0
     #: Sky textures built for the frame: any is a FAIL (L1.4). The self-test must pass
     #: on a machine without a GPU, where the light probe of ONE sky costs seconds to a
-    #: minute and more (measured: 8.8-9.5 s on WARP on the dev box, 40-85 s on a CI
+    #: minute and more (measured: 9-13 s on WARP on the dev box, 40-85 s on a CI
     #: runner) — it renders the plain background and the flat fill, and stays that way.
     sky_builds: int = 0
 

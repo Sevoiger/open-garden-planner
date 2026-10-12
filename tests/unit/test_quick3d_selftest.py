@@ -265,7 +265,7 @@ class TestRun:
             self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         """L1.4, gate G8. The self-test runs where there is no GPU (``release.yml``, on
         WARP), and there ONE sky's light probe costs longer than the whole test may
-        take (8.8-9.5 s on the dev box's WARP, 40-85 s on a CI runner). It renders the
+        take (9-13 s on the dev box's WARP, 40-85 s on a CI runner). It renders the
         plain background and the flat fill; a sky that crept in is a FAIL, not a slow
         release."""
         monkeypatch.setattr(selftest, "_render", lambda *_a, **_k: selftest.Rendered(

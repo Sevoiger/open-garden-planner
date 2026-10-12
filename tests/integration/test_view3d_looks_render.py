@@ -305,7 +305,7 @@ def test_the_software_fallback_builds_no_light_probe_and_still_tells_the_truth(b
 
 
 def test_a_frame_on_the_software_adapter_costs_no_probe(board_software) -> None:
-    """Gate G8, in time: a light probe on WARP costs seconds (8.8-9.5 s on this machine,
+    """Gate G8, in time: a light probe on WARP costs seconds (9-13 s on this machine,
     40-85 s on a CI runner). A frame of the fallback must cost nothing like one."""
     metrics, _out = board_software
     slowest = max(row["open_ms"] for row in metrics["shots"])

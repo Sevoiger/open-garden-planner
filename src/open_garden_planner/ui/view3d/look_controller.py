@@ -91,7 +91,10 @@ class LookController(QObject):
     #: The preset in use changed (a setting, or a step of the automatic one).
     preset_changed = pyqtSignal(str)
     #: A sky texture was built — and, from the second one on, an old one retired
-    #: with it (the workspace counts retired engine objects, ADR-065).
+    #: with it. Nobody has to count them: a retired sky leaves nothing behind
+    #: without a cache release (measured, the sky soak: 0.0 MB per sun change in
+    #: committed and in dedicated GPU memory over 20 changes; a sky that is NOT
+    #: destroyed reads 8.1) — unlike a retired Model (ADR-065 decision 15).
     sky_rebuilt = pyqtSignal()
 
     def __init__(self, host: LookHost, *, sky_light: bool, quality: str = AUTO,
