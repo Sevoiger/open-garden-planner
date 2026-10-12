@@ -113,6 +113,13 @@ Item {
     // and the quality is raised last: one full generation (spike: QML load 1709 ->
     // 70 ms, a sun change 2192 -> 344 ms on llvmpipe).
     //
+    // MEDIUM quality (1024 x 512 float texels, 8 MB), not the spike's High (2048 x
+    // 1024, 32 MB): the sky is a smooth gradient and a soft glow, and the build is
+    // GUI-thread time while the user drags the time slider. Measured (L1.4 round 3,
+    // RTX 4070, bench_small at 960 x 540, all seven shots): the build 215 -> 95 ms,
+    // every shot's mean luma within 0.02, the sun's azimuth read back within 0.07
+    // degrees (0.03 at High), the horizon step 3.4 -> 2.9.
+    //
     // The pair lives and dies TOGETHER: the data object is the Texture's child, and
     // only the Texture is ever destroyed. A Texture loses its textureData when a data
     // object it held EARLIER is destroyed (measured by the ground bake, GPU and WARP:
@@ -123,7 +130,7 @@ Item {
         var data = skyDataComponent.createObject(texture)
         for (var key in inputs)
             data[key] = inputs[key]
-        data.textureQuality = ProceduralSkyTextureData.SkyTextureQualityHigh
+        data.textureQuality = ProceduralSkyTextureData.SkyTextureQualityMedium
         texture.textureData = data
         var old = view.skyTexture
         view.skyTexture = texture      // the scene shows the new sky ...

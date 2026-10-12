@@ -77,8 +77,13 @@ SEQUENCE_AZIMUTHS = (160.0, 200.0, 215.0)
 DAY = ((35.0, 120.0), (35.2, 120.3), (35.4, 120.6), (48.0, 150.0), (48.3, 150.2), (60.0, 180.0),
        (30.0, 250.0), (6.0, 290.0), (0.6, 300.0), (0.4, 300.2), (-12.0, 330.0), (-20.0, 10.0),
        (0.7, 55.0), (20.0, 80.0))
-SOAK_BOUND_MB = 2.0     # pre-registered: second-half slope of committed memory per sun change
-SOAK_CONTROL_MB = 8.0   # … and what the leak control must exceed
+#: The soak's gate: the second-half slope of committed memory per sun change. Registered
+#: at 2.0 before the first run, when a sky was 32 MB (the first run read -0.4 presenting,
+#: 0.0 with frames withheld, and 32.2 for the leak control); since round 3 a sky is 8 MB
+#: (1024 x 512 float texels), so the bound is 1.0 — an eighth of one leaked sky — and
+#: the control must exceed 4.0.
+SOAK_BOUND_MB = 1.0
+SOAK_CONTROL_MB = 4.0
 
 
 def sky_camera() -> tuple[tuple[float, float, float], tuple[float, float, float]]:

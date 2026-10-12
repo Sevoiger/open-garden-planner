@@ -82,8 +82,8 @@ MAX_SKY_ERROR_DEG = 6.0
 #: step of 3.6 at most, by day. Before L1.4's round 1 the night step was 10.5 (high)
 #: and 21.2 (low).
 MAX_HORIZON_STEP, MAX_HORIZON_DIP, MAX_HORIZON_RIDGE = 6.0, 4.5, 2.5
-#: G4. Pre-registered before the first run: committed memory per sun change, second half
-#: of twenty (Theil-Sen). A leaked sky is 32 MB (2048 x 1024 float texels).
+#: G4. Committed memory per sun change, second half of twenty (Theil-Sen) — the bound was
+#: registered before the first run (the driver says how it moved with the sky's size).
 SOAK_BOUND_MB, SOAK_CONTROL_MB = driver.SOAK_BOUND_MB, driver.SOAK_CONTROL_MB
 
 
@@ -431,9 +431,9 @@ def test_the_winds_clock_on_the_real_render_loop(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("frames", ["presented", "withheld"])
 def test_twenty_sun_changes_leave_no_sky_behind(tmp_path: Path, frames: str) -> None:
-    """Gate G4. A sky per sun change — a 32 MB texture and a light probe — and the old
+    """Gate G4. A sky per sun change — an 8 MB texture and a light probe — and the old
     one released: committed memory per change, second half of twenty, under the
-    pre-registered bound. No readback inside the loop; no release of the engine's
+    registered bound. No readback inside the loop; no release of the engine's
     caches either (``cache_releases`` 0): a retired sky needs none, presenting or not."""
     out = tmp_path / "soak"
     data = _ok_scenario(run_scenario(out, "sky_soak", frames=frames), out)

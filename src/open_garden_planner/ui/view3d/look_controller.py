@@ -19,7 +19,7 @@ What it owns:
   measure). A view that presents nothing — the display asleep — is no data, and
   the preset holds. A preset step is one ``set_look``: no camera, no geometry.
 - **The sky.** The procedural sky is a whole texture generated on the GUI thread
-  (about 0.2 s) and a light probe Qt filters once per texture, so it follows the
+  (about 0.1 s) and a light probe Qt filters once per texture, so it follows the
   sun only when the sun moved noticeably (``look.sky_is_stale``), and — while the
   sun is being dragged — only once it rests (``SKY_SETTLE_MS``). The light, the
   exposure and the fog follow every instant. The fog is derived from the sky
@@ -67,7 +67,7 @@ from open_garden_planner.core.scene3d.look import (
 _LOG: Final = logging.getLogger(__name__)
 
 #: A sky that went stale is rebuilt once the sun has rested this long: a time slider
-#: being dragged moves the sun many times a second, and one build costs about 0.2 s
+#: being dragged moves the sun many times a second, and one build costs about 0.1 s
 #: of the GUI thread. The light, the exposure and the fog never wait.
 SKY_SETTLE_MS: Final = 150
 #: How often the automatic preset reads the host's frame count while the wind runs.

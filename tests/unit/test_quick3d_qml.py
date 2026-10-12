@@ -290,7 +290,7 @@ def test_the_sky_is_built_on_request_and_never_bound_live() -> None:
     build = code[code.index("function buildSky"):code.index("function dropSky")]
     order = [build.index(step) for step in (
         "skyTextureComponent.createObject(view.scene)", "skyDataComponent.createObject(texture)",
-        "data[key] = inputs[key]", "data.textureQuality = ProceduralSkyTextureData.SkyTextureQualityHigh",
+        "data[key] = inputs[key]", "data.textureQuality = ProceduralSkyTextureData.SkyTextureQualityMedium",
         "texture.textureData = data", "view.skyTexture = texture", "old.destroy()")]
     assert order == sorted(order), "inputs first, quality last, the new sky shown before the old goes"
     assert "data.destroy()" not in code and ".textureData = null" not in code
