@@ -17,11 +17,12 @@ The bounds were written down BEFORE the first run of each gate:
   holds — and the control (replaced textures never let go) by more than 8;
 - G7: the gate's own number — a luma dip below 2 (of 255) across a tile border.
 
-Measured on the L1.5 dev box (RTX 4070, Direct3D 11; the display asleep), 2026-10-12:
-next to each bound. G6 is met in objects everywhere and in memory on WARP and
-OpenGL; it is NOT met in memory in a Direct3D 11 window on the hardware adapter
-that presents no frame — ``test_the_process_does_not_grow_on_the_default_adapter_either``
-says what was measured, and docs §11.4.14 what follows from it.
+Measured on the L1.5 dev box (RTX 4070, Direct3D 11), 2026-10-12: next to each
+bound. G6 is met in objects everywhere and in memory wherever frames are presented
+(WARP, OpenGL, and the hardware adapter: +0.04 MB a cycle); it is NOT met in memory
+in a Direct3D 11 window on the hardware adapter that presents no frame (the display
+asleep: +16.0 MB a cycle) — ``_judge_memory`` says what was measured, and docs
+§11.4.14 what follows from it.
 """
 
 from __future__ import annotations
@@ -447,8 +448,10 @@ def _judge_memory(kept: dict[str, Any], adapter: str) -> None:
     asleep): +16.0 MB per re-bake of a 16 MB ground — one upload's worth — while
     every replaced texture object IS destroyed (counted above), and all of it is
     given back when the view closes; flat on WARP (41 frames presented) and on
-    OpenGL (45) in the same session. Reported THERE as an expected failure with its
-    numbers; in a window that presents, this is the gate."""
+    OpenGL (45) in the same session, and on the same adapter later that day, when
+    its window presented (38 frames: +0.04 MB). Reported as an expected failure
+    with its numbers where no frame is presented; in a window that presents, this
+    is the gate (docs §11.4.14)."""
     slope = driver.tail_slope(kept["curve_mb"])
     said = (f"{kept['graphics_api']} on {adapter}: {kept['frames_presented']} frames presented in "
             f"20 cycles; {kept['metric']} {kept['curve_mb'][0]} -> {kept['curve_mb'][-1]} MB, slope "

@@ -30,6 +30,13 @@ is laid ``SEAM_OVERLAP_CM`` wider than its tile on every side, so that two
 quads whose shared edge is computed twice in float32 can never leave a hairline
 of the meadow below between them.
 
+Known limit. Direct3D 11 destroys what was released when a frame is PRESENTED; in a
+window that presents none (the display asleep) every upload stays committed until
+the view closes — measured +16 MB per re-bake of a 16 MB ground with every
+replaced texture object destroyed, flat once frames are presented (docs
+§11.4.14). Nothing in here can release what the graphics system holds: whoever
+drives the scene should not apply edits faster than frames are presented.
+
 Failures. A function of the scene file that is missing raises in PyQt; one that
 THROWS returns nothing, silently (the QML engine only warns). Both are a
 ``GroundTileError`` here — the host reports it as its ``EngineError`` — and the

@@ -2092,6 +2092,102 @@ prediction at 17°, 0.288 against the opposite sense) — the proof L1.1 left op
 shadow of a 100 × 100 × 200 cm box overlaps the analytic 2D shadow with IoU 0.976–0.978 at 35°
 elevation and 480 × 360 (three azimuths, GPU and WARP within 0.0002), its direction within 0.02°.
 
+### 11.4.14 What the ground bake taught (Phase 17 L1.5, #385)
+
+Each of these was measured while the bake (§8.27.5) was built; the first three are defects of the
+2D canvas that painting the same items a second way brought to light.
+
+**A loaded rectangle forgot its fill colour; no loaded item knows its stroke colour.**
+*Symptom:* the baked ground of a loaded plan showed rectangles in their object type's default
+colour while the canvas showed the saved one. *Root cause:* `core/project.py`'s rectangle branch
+set the brush but never `item.fill_color` (every other shape did), and NO branch sets
+`stroke_color` — the canvas paints with the brush and pen, so nothing showed. *Fix:* the loader
+sets `fill_color` for rectangles; the snapshot reads the LIVE pen (`item.pen()`), never the
+attribute. *Lesson:* an attribute that mirrors a Qt object's state is a second source of truth;
+a second consumer finds where they parted.
+
+**Qt fills an open path with the brush that happens to be set.** *Symptom:* a bent boardwalk and
+a bent stone wall had a filled patch between their rails, on the canvas and — after the painters
+were shared — in the bake. *Root cause:* the rails and borders were stroked with `drawPath`
+while the brush of the last plank or stone was still set; `drawPath` fills. *Fix:*
+`setBrush(NoBrush)` before the rails (`path_style_paint.py`). A deliberate change of the 2D
+picture: of 22 style × width renders 18 are bit-identical to before, the four that differ are the
+bent boardwalk and stone wall.
+
+**Adding 2,000 items to the scene one by one takes 45 s.** `CanvasScene.addItem` refreshes the
+stacking order per item — quadratic. A plan file is loaded inside
+`scene.suspend_z_refresh(renumber=True)`; a test that builds a large scene must do the same
+(3.9 s). Not the bake's cost, but it looked like it.
+
+**A line up to a pixel wide is rasterised per device.** Qt draws such a pen with its cosmetic
+stroker, which clips the line to the image and then steps along it from the clipped start. A
+tile is another image than the whole plan, so single pixels of a hairline differ (mean ≤ 0.016,
+one pixel up to 142 of 255) — and nothing wider does. For the same pens a dash pattern AND its
+offset are in **pixels**, not pen widths (measured for 0.25 to 1 px pens; offsetting a run in pen
+widths puts its dashes elsewhere).
+
+**Qt's dasher, handed a line that leaves the image, puts the dashes somewhere else.** It skips
+what lies outside the device — cheaply: 19 km cost what 100 m cost — but the dashes it then draws
+inside were measured off: over 9.5 km it agreed with the arithmetic at 261 of 393 places; for a
+10 × 6 m dashed rectangle baked as six tiles 640 pixels differed from one whole render, for an
+ellipse 7,564. *Fix:* the bake cuts a dashed line to the tile itself (`_runs_inside`) and strokes
+each run with `setDashOffset(start / unit)`: 393 of 393, and 0 differing pixels for the
+rectangle. An outline that lies wholly in one tile is drawn with the canvas's own call.
+
+**An attached `QQuick3DTextureData` cannot be updated in place.** `setTextureData(new)` +
+`update()` on a texture a `Texture` shows changed nothing on screen — also with
+`textureDataNodeDirty` emitted by hand, and with the `Texture`'s property set to null and back in
+the same turn (three variants, each rendered; the first picture stayed). A fresh object shows.
+So a re-baked tile gets a new `TileTexture`, and the old one is let go one generation later
+(`quick3d/ground_tiles.py`).
+
+**Direct3D 11 in a window that presents no frame keeps every upload until the view closes.**
+*Symptom:* twenty full re-bakes of a 16 MB ground grew the process's private bytes by 16.0 MB
+each — exactly one upload's worth — although every replaced texture object was destroyed
+(192 made, 160 destroyed, 32 alive: two generations) and Python held two generations of bytes.
+Clearing all tiles gave 32 MB back; closing the view gave all of it back. *Measured, twenty re-bakes each; the first five rows in one session in which the hardware
+window presented nothing (the display asleep), the last later the same day, when it did:*
+
+| renderer | frames presented in the soak | private bytes per re-bake |
+|----------|------------------------------|---------------------------|
+| Direct3D 11, RTX 4070, threaded loop | 0 | +16.0 MB |
+| Direct3D 11, RTX 4070, basic loop | 1 | +16.0 MB |
+| Direct3D 11, WARP | 41 | +0.03 MB |
+| OpenGL, RTX 4070 | 45 | flat |
+| any, nothing uploaded (grabs only) | — | flat |
+| Direct3D 11, RTX 4070, threaded loop | 38 | +0.04 MB |
+
+*Reading:* the growth follows "no frame is presented", not our object lifetimes and not the
+backend as such — Direct3D destroys released resources when a frame is presented or the context
+is flushed, and with the display asleep a window on the hardware adapter presents one frame and
+no more (`grab()` renders without presenting). The last row is the same adapter and the same ground code once its window
+presented frames. (Between the two the host's fourth review round was merged; its `grab()` still
+is `grabWindow()`, so the difference is read as the session's, not the host's — an inference.)
+*What follows:* (1) the leak gate reads object counts
+on every backend and memory on a software rasteriser, and reports the non-presenting hardware
+window as an expected failure with its numbers; (2) the same must hold for every other upload —
+geometry buffers, sky textures — so the place for a remedy is the host or the workspace: apply
+edits no faster than frames are presented (`host.health().frames_presented`), and re-sync when
+the view presents again. Until then a long agent-driven session with the 3D view open and the
+display asleep commits up to 4 MB per small edit.
+
+**`frameSwapped` may never come.** The replaced textures are released when a frame was presented
+— and, because that signal may never arrive, at the latest on the next ground update. A release
+that only waits for the signal is the L0 spike's growing list again.
+
+**Four ways a bound can fail to bound** (the security passes; the patterns are §8.11):
+a cap on VERTICES does not bound work that follows a LENGTH — two points 19 km apart are 475,001
+gravel dots; a budget that charges what is handed out but not what is walked to find it lets 256
+paths walk 20 million steps for a few hundred dots (charge the walk); `if budget:` treats a
+budget of zero as "no budget" (a spent budget must mean "no more"); and a per-tile cap applied at
+paint time sat behind bookkeeping that had already registered every record in every tile it
+touched — 2,050,003 entries for 50,000 whole-plan rectangles, 55,121 once the tiles of a record
+are four integers.
+
+**PyQt notes.** `QQuick3DObject.update()` exists at runtime but not in PyQt6 6.11's stubs;
+`markAllDirty()` is not exposed at all. A `QObject` subclass instance released by Python IS
+destroyed on the C++ side (its `destroyed` signal fires) — count that, not Python's references.
+
 ### CI/release hardening: locked metadata also contains the application version
 
 A version-only edit to `pyproject.toml` makes `uv.lock` stale. The measured probe failed

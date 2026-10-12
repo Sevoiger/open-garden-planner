@@ -4044,3 +4044,118 @@ a pot — through the production builders;
 `tests/integration/test_scene3d_built_world.py` (§8.10: a garden drawn with the real tools, an
 edit session with exact sink calls, the ridge in the mesh against the live ridge item for turned
 and non-rectangular houses, ≤ 0.1 cm); `tests/perf/test_scene3d_built_world_budget.py`.
+
+### ADR-056 addendum: ground bake — flat surfaces painted from records into ground tiles (Phase 17, L1.5)
+
+**Status**: Accepted (2026-10-12, #385 story L1.5). One gate is unmet under one stated condition
+(G6, memory, in a Direct3D 11 window on a hardware adapter that presents no frame) — see
+Consequences.
+
+**Context.** Decision 9 gave every item with a height a solid; everything without one — lawns,
+terraces, driveways, paths, in-ground beds, flat furniture — had no place in the 3D scene. The L0
+spike put them on the ground by hiding the other items and rendering the live `QGraphicsScene`
+into one texture: that toggled item visibility, cleared the user's selection, fired
+`scene.changed`, painted the canvas's beige where nothing was drawn, re-rendered the whole plan
+for every edit, and kept every texture it ever made alive.
+
+**Decision.**
+
+1. **Paint from records, never from the scene.** `ui/view3d/ground_bake.GroundBaker` paints what
+   `snapshot_records` handed over. No `QGraphicsItem` is read, hidden or created by a bake (an
+   AST scan pins it), so the selection, item visibility and `scene.changed` cannot be touched —
+   gate G4 is a property of the design, and a test with spies and a control holds it.
+2. **The rule for what is on the ground:** a record that carries a paint description
+   (`Material.paint`; every item but a plant) and for which the scene holds no solid
+   (`SceneSync.solid_ids`). "No solid" is asked of the sync, not of the kind: an item a builder
+   makes a solid for leaves the ground, one whose builder made nothing stays on it. Under a solid
+   lies whatever flat item was drawn there, else meadow — the spike left that ground bare, and a
+   house on a lawn stood in a hole.
+3. **The paint description is additive record data.** `Paint` (pen width, style, cap, join; the
+   item's opacity) lives in `Material` — a restyle is a material change; the anchor of the local
+   frame in item coordinates is `params["paint_origin"]` — geometry; `Record.outline` holds a
+   polygon as drawn where `footprints` cannot. The diff semantics of L1.1 hold unchanged: a move
+   is a transform change, a recolour a material change. (A first design put the whole paint frame
+   into the material: 29 of L1.1's diff cases failed — a move became a material change.)
+4. **A flat item the solid path refuses still gets its record.** `outline_too_large` is a bound
+   on the WORK of cutting regions; painting needs none. A polygon or polyline without a height
+   whose outline is refused for work keeps a record with `footprints == ()`. The SIZE bound
+   (`MAX_ITEM_VERTICES`) stays in front of everything.
+5. **One implementation with the canvas.** The brush is `create_pattern_brush`, a sprite
+   `render_furniture_pixmap`, and the path-style painters were moved out of `PolylineItem.paint`
+   into `ui/canvas/items/path_style_paint.py`, which both call. Only single `QPainter` calls are
+   mirrored. A second implementation of eleven path styles would have been a second place to be
+   wrong; the extraction found two defects of the first (§11.4.14).
+6. **Tiles are crops of one pixel grid.** 512 px tiles; the finest of 1, ½, ¼ … px/cm within
+   4096 × 4096 px and 256 tiles; whole-pixel offsets — seamless by construction, not by
+   blending. A tile is a pure function of its records in order, so an untouched tile can be handed
+   out as the same object and the sink uploads by identity.
+7. **The baker is driven by `SceneSync`, with the geometry path's diff, in the same
+   transaction.** `SceneSync(…, ground_baker=)`; the bake runs before the sink is touched; a baker
+   that raises is contained (`ground_failure`, the ground stays as it was or bare) and never
+   poisons the sync; `reset()` clears it. The protocol (`core.scene3d.GroundBaking`) is Qt-free:
+   the sync logic is tested with a double.
+8. **What a bake may cost is bounded per tile, each bound taken before its work** (§8.27.5 has
+   the table): records and outline-vertex passes by admission, style elements and walk steps and
+   dashes by one budget per tile, a sprite's image before the renderer is asked. The criterion
+   is "the cost of what the file holds times a stated constant, no amplification, no bound behind
+   its work" — not "nothing is ever slow".
+9. **In the engine: one quad and one texture per tile; a changed tile gets a NEW texture
+   object**, and the replaced one is held until the next presented frame — at the latest until
+   the next update. `flipV`, `ClampToEdge`, quads 0.02 cm oversized, the bare rectangle hidden
+   under tiles.
+
+**Alternatives considered (rejected).**
+
+- *Render the scene region* (`render_scene_region` with items hidden) — the spike's way; see
+  Context. It remains the tests' REFERENCE, on a scene the test owns.
+- *One texture for the whole plan* — every edit re-bakes and re-uploads up to 64 MB.
+- *Meshes for flat items (decals above the ground)* — z-fighting or visible steps, and every
+  texture, sprite and path style rebuilt as geometry: a third implementation.
+- *A paint-only side channel beside the records* — a second snapshot with its own diff; one edit
+  would be two diffs that can disagree.
+- *Updating a tile's texture in place* — measured not to show (§11.4.14).
+- *Hairline-exact tiles by rendering the plan in one image and cropping* — exact, but every edit
+  costs the whole plan.
+
+**Consequences.**
+
+- `Record`, `Material` and `GroundSpec` grew (`outline`, `paint`, `tiles`); `EngineSink.set_ground`
+  keeps its signature. `render_records` takes `ground_baker=`. Nothing is wired into the app by
+  this story: the workspace (L1.3) constructs the baker.
+- The engine package has a THIRD engine module: `quick3d/ground_tiles.py` imports
+  `QQuick3DTextureData` (ADR-048's L1.2 addendum says "two engine modules"; the boundary test's
+  `ENGINE_IMPORTERS` names all three). The baker itself is no engine module — QtGui only.
+- Three changes to the 2D canvas, all defects found by painting the same items twice: a loaded
+  rectangle keeps its saved `fill_color`; the rails of a bent boardwalk and the borders of a bent
+  stone wall no longer fill the bend; the path-style walk refuses a spacing below 0.05 cm or
+  above 100 km (a pen width that is no width).
+- Known limits: the texture and sprite of a ROTATED circle are painted unturned (a circle's
+  record does not turn); hairlines are rasterised per tile; the meeting corner of a cut dashed
+  outline is blended twice; coarse pixels on plans above 41 × 41 m; ground tiles are not
+  pickable (a click on the ground hits no item, as before).
+- **G6 is unmet in memory where a Direct3D 11 window on a hardware adapter presents no frame**
+  (the display asleep): +16.0 MB per full re-bake of a 16 MB ground until the view closes, with
+  every replaced texture object verifiably destroyed. It is met wherever frames are presented:
+  WARP (+0.03 MB), OpenGL (flat) and the same hardware adapter once its window presented
+  (+0.04 MB with 38 frames in twenty cycles). The remedy for the first case belongs to whoever
+  paces uploads (§11.4.14).
+
+**Validation.** Default tier — `tests/integration/test_scene3d_ground_bake.py`: G1 parity for the
+25 fill patterns × tinted/untinted × 0° / 33° × two tile-straddling positions (200 cases: not
+turned mean 0 and max 0, turned mean ≤ 0.0002 and max 1, of 255; bound 6), every shape, eleven
+path styles (one tile: bit-identical; six tiles: mean ≤ 0.016), sprites, pens, opacity; G2 on
+`bench_small.ogp` (mean 0.00006, max 3; NCC 0.99999999 against −0.28 / −0.09 / 0.005); G3 on both
+bench plans (≤ 2 tiles, 3.4 ms and 3.3 ms median, `last_examined == 1`, untouched tiles the same
+objects); G4 with spies and a control; G5 a scripted session through the app's commands against
+a from-scratch bake, bit for bit; G8 stacking and arrange; the refused-outline pins (3,000-point
+path, 5,000-vertex lawn, clipper never called); the hostile corpus by counts.
+`tests/unit/test_scene3d_ground.py` (grid, tiles, the sync with a double),
+`tests/unit/test_path_style_paint.py` (the shared painters: the canvas's walk unchanged, the
+clipped walk and its budget), `tests/ui/test_quick3d_ground_tiles.py` and
+`tests/unit/test_quick3d_ground_tiles.py` (the engine's books, the QML component). Render tier —
+`tests/integration/test_scene3d_ground_render.py`: the pipeline on a real renderer, shown and
+through `render_records`; G2 in the engine (NCC 0.98 against 0.08 / −0.11 / −0.07); G7 (luma
+spread 0.0 to 0.7 across every border; controls 48 and 7.9); G6 in objects (≤ 32 of 16 tiles
+alive; control 320) and in memory on WARP (≤ 0.2 MB a cycle; control +32) and on the hardware
+adapter (+0.04 MB with frames presented; reported as an expected failure, with its numbers, when
+its window presents none).

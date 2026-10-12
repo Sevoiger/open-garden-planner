@@ -33,6 +33,12 @@ and holes, triangulation; it also holds ``triangulate_polygon``, which outlives
 ``legacy``), and ``frame`` holds ``sun_direction_scene``. The module of ``diff``
 is ``scene_diff``, so that ``core.scene3d.diff`` is one thing: the function.
 
+Since L1.5: ``ground`` — the plan's flat surfaces as tiles of plain data
+(``GroundGrid``, ``GroundTile``, ``GroundBaking``); ``record`` carries what the 2D
+paint of an item needs (``Paint``, ``Record.outline``), and ``SceneSync`` drives a
+ground baker with the diff the builders get (the baker itself paints with
+``QPainter`` and lives in ``ui/view3d/ground_bake.py``; concept: §8.27.5).
+
 "Imports no Qt" is a statement about this package's SOURCE. Importing it still
 runs ``core/__init__.py``, which loads the command system and with it PyQt6.
 """

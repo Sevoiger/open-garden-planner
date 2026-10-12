@@ -20,7 +20,8 @@ are §12, and rows it added to the tables below say "(L1.2)".
   `QtQml` or `QtQuickWidgets` (AST scan in the same test). The production package inherits the
   rule as `ui/view3d/quick3d/`.
 - **One engine package (L1.2).** In the product, only `ui/view3d/quick3d/` imports those
-  bindings — and inside it only `geometry.py` and `host.py` do; `selftest.py` names them as
+  bindings — and inside it only `geometry.py`, `host.py` and (L1.5, the ground's tile
+  textures) `ground_tiles.py` do; `selftest.py` names them as
   strings to import them one by one. Pinned over the WHOLE tree, imports by name included
   (`__import__("PyQt6.QtQuick3D")` is an import), by `tests/unit/test_quick3d_boundary.py`,
   which also pins that app start loads neither the bindings nor the package and that the
@@ -240,6 +241,47 @@ are §12, and rows it added to the tables below say "(L1.2)".
   bytes; a discrete GPU keeps it in VRAM, unseen). Cause unidentified; locate it with an A/B
   soak, not a longer one. Record the whole curve (`leak_curve_mb`) with the verdict, and write
   numbers, not shapes: "ceiling", "slowing" and "threefold" each overreached on these curves.
+- **Production ground (L1.5): tiles, not one texture.** `ui/view3d/ground_bake.py` paints the
+  flat records into 512 px tiles (`core/scene3d/ground.py`: the finest of 1, ½, ¼ … px/cm within
+  4096 × 4096 px and 256 tiles; every tile a crop of ONE pixel grid);
+  `ui/view3d/quick3d/ground_tiles.py` shows one `#Rectangle` quad and one `QQuick3DTextureData`
+  per tile, and uploads only a tile whose `bytes` changed. Concept and bounds: docs §8.27.5.
+  Measured on bench_small (20 tiles, RTX 4070): first show 20 uploads; a 3 m item moved: ≤ 2
+  uploads, bake 3–6 ms, a finished `grab()` 4–10 ms later.
+- **`ClampToEdge` on both axes of a tile texture.** With the default Repeat, linear filtering at
+  a tile's edge blends in its OPPOSITE edge. Invisible on a uniform lawn; on a lawn with another
+  colour at the tiles' far edges the luma spread at a four-tile corner was 7.9 (and 24.9 along a
+  border, minified) against 0.0 clamped. A seam test needs that second lawn.
+- **Lay each quad a hair wider than its tile** (`SEAM_OVERLAP_CM` = 0.02): two quads whose
+  shared edge is computed twice in float32 must not leave a line of the meadow below. The
+  control — quads 1 cm SHORT on every side — reads a luma spread of 48 magnified and a line dip
+  of 29 in a low oblique view (0.46 without the gap). The bare plan rectangle is hidden while
+  tiles lie on it (two coplanar surfaces fight for the depth buffer).
+- **An attached `QQuick3DTextureData` cannot be updated in place.** `setTextureData(new)` +
+  `update()` on a texture a `Texture` shows changed nothing on screen; nor did emitting
+  `textureDataNodeDirty` by hand, nor setting the `Texture`'s property to null and back in the
+  same turn (each variant rendered and read back: twelve cycles, the first picture every time).
+  A fresh object per change shows. (`markAllDirty()` is not exposed by PyQt6 6.11.)
+- **Count texture objects on the C++ side, not Python references.** `TileTexture.alive` goes up
+  in `__init__` and down on Qt's `destroyed` signal: over twenty full re-bakes of 16 tiles it
+  never exceeds 32 (the shown generation and the one it replaced), and reads 320 with the
+  spike's keep-alive list. A Python-owned `QObject` subclass instance IS destroyed when Python
+  lets go of it.
+- **Direct3D 11 keeps every upload until a frame is PRESENTED.** Twenty re-bakes of a 16 MB
+  ground, private bytes per re-bake: D3D11 on the RTX 4070 with 0–1 frames presented (display
+  asleep; threaded and basic render loop) **+16.0 MB** — one upload's worth, given back only
+  when the view closes — while 192 textures were made, 160 destroyed and 32 alive; D3D11 on WARP
+  (41 frames presented) +0.03 MB; OpenGL on the RTX 4070 (45 frames) flat; the same D3D11
+  hardware window once it presented (38 frames) +0.04 MB; grabs without uploads flat. `grab()`
+  renders without presenting. So: a memory slope taken on a hardware D3D11 window says nothing
+  unless `host.health().frames_presented` advanced during the soak — record it with the curve —
+  and this is the A/B the paragraph above asks for: the retained D3D11 resource follows "no
+  frame presented", not the reload. Anything that uploads (tiles, geometry, sky textures) should
+  be applied no faster than frames are presented.
+- **Compare a top-down frame with a baked image like with like.** The truth view is linear
+  light and each frame pixel covers several texels: the bake against the frame scored NCC 0.93
+  compared naively and 0.98 after linearising the bake and averaging the texels a pixel covers
+  (flips: 0.08 / −0.11 / −0.07 either way).
 
 ## 6. Hosts
 
@@ -533,6 +575,9 @@ triangles (`scripts/bench_view3d.py`).
 | A custom material renders the wrong colour, run "ok" | shader compile error is a `QtWarningMsg` | record Qt messages; fail on shader/QML errors |
 | "Cold" open time on the second run of the day | Qt/Mesa disk caches from the first | `--cold`, and read `shader_caches.found_before_run` |
 | RSS climbs ~30 MB per project reload | append-only keep-alive list of ground textures | hold only the shown texture; judge by the tail slope |
+| Private bytes climb by one ground upload per re-bake, and fall back when the view closes | a Direct3D 11 window that presents no frame (display asleep): released resources are destroyed on Present | not our lifetime bug if `TileTexture.alive` stays ≤ 2 generations; check `frames_presented`; flat once frames are presented (§5) |
+| A tile border shows as a line only on patterned ground | the tile texture repeats: its opposite edge is blended in | `tilingModeHorizontal` / `Vertical: Texture.ClampToEdge` (§5) |
+| A re-baked tile keeps its old picture | its `QQuick3DTextureData` was updated in place | a NEW texture object per change (§5) |
 | Plan ground white after a probe; the second window "differs" by ~10 luma | the same `QQuick3DTextureData` re-attached after being detached | re-upload it on re-attach; assert `probe_restore_frame_diff` < 1 |
 | The second offscreen frame is an empty sky (L1.2) | a never-shown window renders one frame, then its scene is gone | one host per offscreen frame |
 | A wait for frames times out although the window is visible (L1.2) | display asleep: no vertical blank, no update requests | never wait for presented frames; `grab()` |
