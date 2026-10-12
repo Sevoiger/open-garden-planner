@@ -350,6 +350,50 @@ def scenario_ground_plan(ctx: base.Context) -> dict[str, Any]:
         base._pump()
 
 
+def _offscreen(ctx: base.Context, name: str, records: dict[str, Record], **kwargs: Any
+               ) -> dict[str, Any]:
+    """One frame through ``render_records`` — a never-shown view — and what it reports."""
+    from open_garden_planner.ui.view3d.quick3d.offscreen import render_records
+
+    frame = render_records(records, qml_dir=ctx.qml_dir, log=ctx.log, graphics_info=True,
+                           size=PLAN_VIEW, **kwargs)
+    info = ctx.save(name, frame.image)
+    info.update({"open_ms": round(frame.open_ms, 1), "graphics_api": frame.graphics_api,
+                 "adapter": frame.adapter, "items": frame.items, "parts": frame.parts,
+                 "build_failures": dict(frame.build_failures), "qt": dict(frame.qt),
+                 "ground_tiles": frame.ground_tiles, "ground_failure": frame.ground_failure})
+    return info
+
+
+def scenario_ground_offscreen(ctx: base.Context) -> dict[str, Any]:
+    """The §8.10 twin through the OFFSCREEN path: bench_small.ogp → snapshot →
+    ``render_records`` with a ground baker — one hidden view, one image. The whole
+    plan; the ground alone from straight above, next to its bake; and the same
+    without a baker (the control: bare plan ground)."""
+    from open_garden_planner.core.scene3d.builders import production_registry
+    from open_garden_planner.ui.view3d.ground_bake import GroundBaker
+    from open_garden_planner.ui.view3d.snapshot import snapshot_records
+
+    scene, _view, _manager = base._load_bench()
+    records = snapshot_records(scene, date(2026, 6, 21))
+    ground = GroundSpec(float(scene.width_cm), float(scene.height_cm))
+    top = plan_top(ground)
+    overview = PerspectiveShot(eye=(ground.width_cm / 2.0, -1400.0, 1500.0),
+                               target=(ground.width_cm / 2.0, ground.depth_cm / 2.0, 0.0))
+    common: dict[str, Any] = {"sun": HIGH_SUN, "ground": ground, "registry": production_registry()}
+    baker = GroundBaker()
+    whole = _offscreen(ctx, "ground_offscreen_overview", records, shot=overview,
+                       ground_baker=baker, **common)
+    painted = {key: record for key, record in records.items() if key in set(baker.painted_ids())}
+    alone = GroundBaker()
+    only = _offscreen(ctx, "ground_offscreen_top", painted, shot=top, ground_baker=alone, **common)
+    return {"ground": [ground.width_cm, ground.depth_cm],
+            "top": {"center": list(top.center), "px_per_cm": top.px_per_cm},
+            "records": len(records), "painted": len(painted), "whole": whole, "only": only,
+            "bake": ctx.save("ground_offscreen_bake", alone.image()),
+            "bare": _offscreen(ctx, "ground_offscreen_bare", painted, shot=top, **common)}
+
+
 def _seam_frames(ctx: base.Context, host: Any, name: str) -> dict[str, Any]:
     frames: dict[str, Any] = {}
     for key, shot in SEAM_SHOTS.items():
@@ -462,6 +506,7 @@ def scenario_ground_keepalive_leak(ctx: base.Context) -> dict[str, Any]:
 
 
 base.SCENARIOS.update({
+    "ground_offscreen": scenario_ground_offscreen,
     "ground_plan": scenario_ground_plan,
     "ground_seams": scenario_ground_seams,
     "ground_seams_gap": scenario_ground_seams_gap,

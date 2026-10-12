@@ -56,8 +56,11 @@ pytestmark = render_tier
 
 DRIVER = Path(driver.__file__).resolve()
 Run = tuple[dict[str, Any], Path]
-SCENARIOS = ("ground_plan", "ground_seams", "ground_seams_gap", "ground_keepalive",
-             "ground_keepalive_leak")
+#: Scenarios with a SHOWN window (Qt's messages are read from the driver's stderr) …
+SHOWN = ("ground_plan", "ground_seams", "ground_seams_gap", "ground_keepalive",
+         "ground_keepalive_leak")
+#: … and the one through ``render_records`` (a hidden view records its own messages).
+SCENARIOS = ("ground_offscreen", *SHOWN)
 
 
 def run_ground_driver(out: Path, scenarios: str, *, qml_dir: Path | None = None, **env: str
@@ -113,9 +116,13 @@ def test_qt_said_nothing_wrong_while_the_ground_was_shown(run: Run) -> None:
     not take, a QML function that threw, a shader that did not compile would be here."""
     heard = run[0]["qt_messages"]
     assert heard["counts"]["error"] == 0 and heard["counts"]["warning"] == 0, heard
-    for name in SCENARIOS:
+    for name in SHOWN:
         counts = heard["by_scenario"].get(name)
         assert counts is not None and counts["info"] > 0, f"no Qt message read for {name!r}"
+    offscreen = run[0]["scenarios"]["ground_offscreen"]
+    for key in ("whole", "only", "bare"):
+        counts = offscreen[key]["qt"]["counts"]
+        assert counts["info"] > 0 and counts["error"] == 0 and counts["warning"] == 0, (key, counts)
     plan = run[0]["scenarios"]["ground_plan"]
     assert plan["health"] == {"ok": True, "qml_warnings": [], "scene_graph_error": None}
 
@@ -183,6 +190,26 @@ def test_clearing_the_scene_takes_the_tiles_with_it(run: Run) -> None:
                        "ground_visible": False}
 
 
+def test_the_offscreen_path_shows_the_baked_ground(run: Run) -> None:
+    """The twin of the default tier's integration test through ``render_records`` (one
+    hidden view → one image): the plan with a ground baker has every tile and every
+    solid, and says so with the frame; without a baker the plan ground is bare."""
+    offscreen = run[0]["scenarios"]["ground_offscreen"]
+    whole, only, bare = offscreen["whole"], offscreen["only"], offscreen["bare"]
+    assert (offscreen["records"], offscreen["painted"]) == (98, 11)
+    assert whole["ground_tiles"] == only["ground_tiles"] == 20 and bare["ground_tiles"] == 0
+    for frame in (whole, only, bare):
+        assert frame["ground_failure"] is None and frame["build_failures"] == {}
+    assert whole["items"] == 98 and whole["parts"] > 50 and only["parts"] == 0
+    # the frame with the ground is the bake, north up; the one without is not
+    scores = _north_up_scores(run, offscreen, only)
+    control = _north_up_scores(run, offscreen, bare)
+    print(f"\noffscreen: NCC {scores}; without a baker {control['identity']:.3f}")
+    assert scores["identity"] >= 0.9 and max(
+        scores[name] for name in ("north-south", "east-west", "both")) <= scores["identity"] - 0.3
+    assert abs(control["identity"]) < 0.5
+
+
 # ── G2: north is up ──────────────────────────────────────────────────────────
 
 
@@ -226,6 +253,26 @@ def _ncc(first: np.ndarray, second: np.ndarray) -> float:
     return float((a * b).sum() / np.sqrt((a * a).sum() * (b * b).sum()))
 
 
+def _north_up_scores(run: Run, scenario: dict[str, Any], view: dict[str, Any]) -> dict[str, float]:
+    """NCC of a top-down frame of the plan against the scenario's bake — as it is, and
+    mirrored north-south, east-west and both."""
+    frame, dpr = _frame(run, view if "file" in view else view["frame"])
+    bake = load_rgb(run[1] / scenario["bake"]["file"])
+    ground = tuple(scenario["ground"])
+    grid = GroundGrid.for_plan(*ground)
+    assert bake.shape[:2] == (grid.height_px, grid.width_px)
+    shot = TopDownShot(center=tuple(scenario["top"]["center"]), px_per_cm=scenario["top"]["px_per_cm"])
+    box = _plan_box(shot, ground, frame.shape, dpr)
+    seen = luma(frame[box[1]:box[3], box[0]:box[2]])
+    assert seen.size > 100_000
+    if _spread(seen) < 1e-9:
+        return dict.fromkeys(("identity", "north-south", "east-west", "both"), 0.0)  # one colour
+    return {name: _ncc(seen, luma(_bake_as_the_frame_sees_it(
+        bake, grid.px_per_cm, shot, box, frame.shape, dpr, flip_north=north, flip_east=east)))
+        for name, north, east in (("identity", False, False), ("north-south", True, False),
+                                  ("east-west", False, True), ("both", True, True))}
+
+
 def test_the_engine_shows_the_bake_north_up(run: Run) -> None:
     """Gate G2. The ground alone, seen from straight above, against the bake itself:
     it agrees with the bake as it is, and with none of its mirror images. (A tile's
@@ -235,19 +282,7 @@ def test_the_engine_shows_the_bake_north_up(run: Run) -> None:
     only = plan["ground_only"]
     assert only["parts"] == 0 and only["uploads"] == 0  # the solids went; not one tile changed
     assert only["digest_equals_first"] is True and only["tiles_in_scene"] == 20
-    frame, dpr = _frame(run, only["frame"])
-    bake = load_rgb(run[1] / only["bake"]["file"])
-    ground = tuple(plan["ground"])
-    grid = GroundGrid.for_plan(*ground)
-    assert bake.shape[:2] == (grid.height_px, grid.width_px)
-    shot = TopDownShot(center=tuple(plan["top"]["center"]), px_per_cm=plan["top"]["px_per_cm"])
-    box = _plan_box(shot, ground, frame.shape, dpr)
-    seen = luma(frame[box[1]:box[3], box[0]:box[2]])
-    assert seen.size > 100_000 and _spread(seen) > 40  # a picture, not one colour
-    scores = {name: _ncc(seen, luma(_bake_as_the_frame_sees_it(
-        bake, grid.px_per_cm, shot, box, frame.shape, dpr, flip_north=north, flip_east=east)))
-        for name, north, east in (("identity", False, False), ("north-south", True, False),
-                                  ("east-west", False, True), ("both", True, True))}
+    scores = _north_up_scores(run, {**plan, "bake": only["bake"]}, only)
     print(f"\nG2 (engine): NCC {scores}")
     assert scores["identity"] >= 0.9, scores
     for name in ("north-south", "east-west", "both"):

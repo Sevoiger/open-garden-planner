@@ -57,6 +57,7 @@ from PyQt6.QtGui import QImage
 
 from open_garden_planner.core.scene3d import (
     BuilderRegistry,
+    GroundBaking,
     GroundSpec,
     Record,
     SceneSync,
@@ -135,6 +136,11 @@ class OffscreenFrame:
     build_failures: Mapping[str, str] = field(default_factory=dict)
     #: ``QtMessages.report()``: counts per class, the errors, warnings, environment.
     qt: Mapping[str, Any] = field(default_factory=dict)
+    #: Ground tiles the frame shows (0: bare plan ground, or no ground at all).
+    ground_tiles: int = 0
+    #: ``(ErrorType, message)`` when a ground baker was given and its bake failed — the
+    #: frame then shows the plan ground BARE; None: baked, or nothing to bake with.
+    ground_failure: tuple[str, str] | None = None
 
     def rgba(self) -> NDArray[np.uint8]:
         return image_rgba(self.image)
@@ -156,6 +162,7 @@ def render_records(
     qml_dir: Path | None = None,
     log: Callable[..., None] | None = None,
     graphics_info: bool = False,
+    ground_baker: GroundBaking | None = None,
 ) -> OffscreenFrame:
     """Render ``records`` from ``shot`` under ``sun`` into an image of ``size``
     (logical pixels), through the real ``SceneSync`` → ``Quick3DSink`` path.
@@ -164,7 +171,9 @@ def render_records(
     this inside the running app.
 
     ``sun=None``: no sunlight (fill only). ``ground=None``: the endless meadow
-    without a plan rectangle. ``log``: a ``log(phase, **fields)`` callable
+    without a plan rectangle. ``ground_baker``: paints the plan's flat surfaces
+    onto that rectangle (``ui.view3d.ground_bake.GroundBaker()``, L1.5); without
+    one the plan ground is bare. ``log``: a ``log(phase, **fields)`` callable
     (``runlog.RenderLog``); without one nothing is written anywhere.
     ``graphics_info=True`` also reports the graphics adapter (it switches Qt's
     ``qt.rhi.general`` debug output on for the duration of the call).
@@ -201,7 +210,7 @@ def render_records(
                     "can be rendered")
             mark = time.perf_counter()
             sink = Quick3DSink(host)
-            sync = SceneSync(sink, registry)
+            sync = SceneSync(sink, registry, ground_baker=ground_baker)
             sync.apply(records, sun=sun, ground=ground)  # one transaction
             host.set_shot(shot)
             breakdown["scene_apply"] = (time.perf_counter() - mark) * 1000.0
@@ -219,7 +228,8 @@ def render_records(
                 adapter=qt_messages.graphics_adapter(messages.info_lines()),
                 device_pixel_ratio=host.device_pixel_ratio(), view_size=host.view_size(),
                 items=len(sink.item_ids()), parts=parts, build_failures=failures,
-                qt=messages.report(),
+                qt=messages.report(), ground_tiles=len(host.ground.keys()),
+                ground_failure=sync.ground_failure,
             )
             emit("rendered", open_ms=round(open_ms, 1), api=api, adapter=frame.adapter,
                  px=f"{image.width()}x{image.height()}", qt=messages.report()["counts"],
