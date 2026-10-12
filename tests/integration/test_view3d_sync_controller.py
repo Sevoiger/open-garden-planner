@@ -624,6 +624,27 @@ def test_after_a_reset_the_ground_stage_is_told_that_nothing_is_in_the_engine(
     assert previous_seen[-2:] == [[str(bed.item_id)], []]
 
 
+def test_a_failure_that_quotes_the_plan_cannot_write_a_log_line_of_its_own(
+        rig: Rig, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Security add-on (§8.11): an exception message can carry text from the plan
+    file. Logged with %r, a line break in it stays inside one log record."""
+    from open_garden_planner.ui.view3d import sync_controller
+
+    def unreadable(*_arguments: Any, **_options: Any) -> dict:
+        raise RuntimeError("item 'x'\n2026-10-12 00:00:00 ERROR root: FORGED LINE")
+
+    monkeypatch.setattr(sync_controller, "snapshot_records", unreadable)
+    errors: list[str] = []
+    rig.controller.failed.connect(errors.append)
+    with caplog.at_level(logging.ERROR, logger=sync_controller.__name__):
+        rig.controller.set_active(True)
+        rig.settle()
+    assert len(errors) == 1 and rig.controller.last_error == errors[0]
+    ours = [record for record in caplog.records if record.name == sync_controller.__name__]
+    assert len(ours) == 1
+    assert "FORGED LINE" in ours[0].getMessage() and "\n" not in ours[0].getMessage()
+
+
 def test_shutdown_stops_everything(rig: Rig) -> None:
     bed = rig.bed()
     rig.controller.set_active(True)

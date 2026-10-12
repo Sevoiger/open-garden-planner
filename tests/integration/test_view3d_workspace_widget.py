@@ -637,6 +637,113 @@ def test_every_reason_code_has_words_of_its_own(bench: Bench) -> None:
     assert dialog.kind_text("NOT_A_KIND") == "NOT_A_KIND"
 
 
+# ── security add-on: a plan file is untrusted input (§8.11) ──────────────────
+
+HOSTILE = '<b>x</b><img src="file:///C:/Windows/win.ini">'
+
+
+def _rendered(rich: str) -> str:
+    """What Qt's rich-text engine shows for a string (a tooltip's text)."""
+    from PyQt6.QtGui import QTextDocument
+
+    document = QTextDocument()
+    document.setHtml(rich)
+    return document.toPlainText()
+
+
+def test_a_hostile_name_is_shown_as_its_characters_everywhere(bench: Bench) -> None:
+    """An item named with markup, whose build fails with a message that quotes the
+    name: the row, the tooltip and every label of the 3D pane show the literal
+    text, and nothing renders it."""
+    from PyQt6.QtCore import Qt as QtNamespace
+    from PyQt6.QtWidgets import QLabel, QStyledItemDelegate
+
+    from open_garden_planner.ui.plain_text import TOOLTIP_MAX_CHARS
+
+    workspace = bench.workspace
+    bed = bench.bed()
+    bed.name = HOSTILE
+    workspace.set_mode(SPLIT)
+    bench.settle()
+
+    def broken(record: Any) -> tuple:
+        raise ValueError(f"cannot build {record.name}")
+
+    workspace.controller.sync.registry.register("RAISED_BED", broken, replace=True)
+    workspace.controller.mark_dirty()
+    bench.settle()
+    assert workspace.problems_text() == "1 object is not shown in 3D"
+    workspace.show_problems()
+    dialog = workspace.problems_dialog
+    row = dialog._list.item(0)
+
+    # the row: plain text by the DEFAULT delegate, the name as its characters
+    assert type(dialog._list.itemDelegate()) is QStyledItemDelegate
+    assert dialog.row_text(0) == f"{HOSTILE} (Raised Bed): its 3D model could not be built"
+
+    # the tooltip: Qt would sniff the raw detail for markup — it gets the escaped form
+    raw_detail = f"ValueError: cannot build {HOSTILE}"
+    tooltip = row.toolTip()
+    assert "<img" not in tooltip and "<b>" not in tooltip
+    assert _rendered(tooltip) == raw_detail
+    assert len(_rendered(tooltip)) <= TOOLTIP_MAX_CHARS + 1
+    # positive control: the same detail, unescaped, IS markup to Qt and loses its tags
+    assert QtNamespace.mightBeRichText(raw_detail) is True
+    assert _rendered(raw_detail) != raw_detail
+
+    # every label of the pane and of the dialog is told its format: plain
+    labels = [*workspace.findChildren(QLabel), *dialog.findChildren(QLabel)]
+    assert len(labels) >= 4
+    assert all(label.textFormat() == QtNamespace.TextFormat.PlainText for label in labels)
+
+
+def test_a_huge_hostile_name_costs_a_capped_row_and_a_capped_tooltip(bench: Bench) -> None:
+    from open_garden_planner.ui.plain_text import ELLIPSIS, NAME_MAX_CHARS, TOOLTIP_MAX_CHARS
+
+    workspace = bench.workspace
+    bed = bench.bed()
+    bed.name = "<table><tr><td>" * 100_000 + "\nsecond line"
+    workspace.set_mode(SPLIT)
+    bench.settle()
+
+    def broken(record: Any) -> tuple:
+        raise ValueError(record.name)
+
+    workspace.controller.sync.registry.register("RAISED_BED", broken, replace=True)
+    workspace.controller.mark_dirty()
+    bench.settle()
+    workspace.show_problems()
+    dialog = workspace.problems_dialog
+    row_text = dialog.row_text(0)
+    assert row_text.startswith("<table><tr><td>") and "\n" not in row_text
+    assert len(row_text) <= NAME_MAX_CHARS + 1 + len(" (Raised Bed): its 3D model could not be built")
+    shown = _rendered(dialog._list.item(0).toolTip())
+    assert len(shown) == TOOLTIP_MAX_CHARS + 1 and shown.endswith(ELLIPSIS)
+
+
+def test_a_hostile_error_message_stays_text_in_the_message_that_replaces_the_view(
+        canvas: CanvasView, qtbot, tmp_path: Path) -> None:
+    from PyQt6.QtCore import Qt as QtNamespace
+
+    from open_garden_planner.ui.plain_text import ELLIPSIS, NOTICE_MAX_CHARS
+
+    hostile = "<h1>Your licence expired</h1><a href='http://evil.example'>renew</a>" * 5_000
+    bench = Bench(canvas, qtbot, tmp_path, fail_first=ImportError(hostile))
+    bench.workspace.set_mode(VIEW3D)
+    label = bench.workspace.pane.message_label
+    assert label.textFormat() == QtNamespace.TextFormat.PlainText
+    text = bench.workspace.message_text()
+    assert "<h1>Your licence expired</h1>" in text, "the characters, not a headline"
+    details = text.split("Details: ", 1)[1]
+    assert len(details) == NOTICE_MAX_CHARS + 1 and details.endswith(ELLIPSIS)
+    # the same for Qt's own report of a graphics failure
+    bench.workspace.pane.message_button.click()          # "Try Again": the engine builds now
+    bench.host.health_now.scene_graph_error = "<img src='file:///c:/x'>" + "x" * 5_000
+    bench.poll()
+    details = bench.workspace.message_text().split("Details: ", 1)[1]
+    assert details.startswith("<img src='file:///c:/x'>") and len(details) == NOTICE_MAX_CHARS + 1
+
+
 # ── teardown ─────────────────────────────────────────────────────────────────
 
 

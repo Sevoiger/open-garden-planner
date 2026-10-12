@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from open_garden_planner.core.object_types import ObjectType, get_translated_display_name
 from open_garden_planner.core.scene3d import BuildFailure
+from open_garden_planner.ui.plain_text import clip_line, plain_tooltip
 
 from .snapshot import SkippedItem, SkipReason
 
@@ -76,8 +77,11 @@ class View3DProblemsDialog(QDialog):
         self._intro = QLabel(self.tr(
             "These objects are on the plan but cannot be shown in the 3D view. "
             "Double-click an entry to select the object on the plan."))
+        self._intro.setTextFormat(Qt.TextFormat.PlainText)
         self._intro.setWordWrap(True)
         layout.addWidget(self._intro)
+        # the DEFAULT delegate, on purpose: it draws a row's text as plain text. A
+        # rich-text delegate here would turn an item's name into markup (pinned).
         self._list = QListWidget(self)
         self._list.itemActivated.connect(self._on_activated)
         layout.addWidget(self._list)
@@ -112,7 +116,12 @@ class View3DProblemsDialog(QDialog):
         """Show ``problems``; ``name_of(item_id)`` is the item's own name ("" if none)."""
         self._list.clear()
         for problem in problems:
-            kind, name = self.kind_text(problem.kind), name_of(problem.item_id)
+            # A name comes from the plan file and a detail from an exception that may
+            # quote it: both are untrusted (ui/plain_text.py, §8.11). The row is plain
+            # text by the default delegate — a name is shown as its characters — and
+            # only clipped; the tooltip, which Qt would sniff for markup, is escaped.
+            kind = clip_line(self.kind_text(problem.kind))
+            name = clip_line(name_of(problem.item_id))
             reason = self.reason_text(problem.code)
             if name and name != kind:
                 text = self.tr("{name} ({kind}): {reason}").format(
@@ -121,8 +130,7 @@ class View3DProblemsDialog(QDialog):
                 text = self.tr("{kind}: {reason}").format(kind=kind, reason=reason)
             row = QListWidgetItem(text)
             row.setData(_ITEM_ID_ROLE, problem.item_id)
-            if problem.detail:
-                row.setToolTip(problem.detail)
+            row.setToolTip(plain_tooltip(problem.detail))
             self._list.addItem(row)
 
     def row_count(self) -> int:

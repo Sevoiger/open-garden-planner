@@ -361,7 +361,9 @@ class Scene3DController(QObject):
         self.applied.emit(report)
 
     def _give_up(self, message: str) -> None:
-        _LOG.error("3D sync: %s", message, exc_info=True)
+        # %r: the text quotes an exception, which may quote the plan — a name with a
+        # line break in it must not be able to write a log line of its own
+        _LOG.error("3D sync: %r", message, exc_info=True)
         self._records_dirty = self._sun_dirty = True  # the next change tries again
         self._last_error = message
         self.failed.emit(message)

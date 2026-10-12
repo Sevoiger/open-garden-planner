@@ -56,6 +56,7 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.core.scene3d.camera import FOV_DEG, OrbitCamera
+from open_garden_planner.ui.plain_text import clip_text
 
 from .init_guard import Init3DGuard, ModeReason, RenderMode, default_directory
 
@@ -173,6 +174,9 @@ class _Pane3D(QWidget):
         message_layout = QVBoxLayout(self.message_page)
         message_layout.addStretch(1)
         self.message_label = QLabel("", self.message_page)
+        # PLAIN text, said out loud: this label shows an exception's message, and a
+        # QLabel left on AutoText would render markup found in it (§8.11)
+        self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setWordWrap(True)
         self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -467,6 +471,7 @@ class Workspace(QWidget):
         self._reset_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         strip.addWidget(self._reset_button)
         self._status_label = QLabel("", pane.strip)
+        self._status_label.setTextFormat(Qt.TextFormat.PlainText)
         strip.addWidget(self._status_label)
         strip.addStretch(1)
         self._problems_button = QToolButton(pane.strip)
@@ -477,6 +482,7 @@ class Workspace(QWidget):
         self._problems_button.hide()
         strip.addWidget(self._problems_button)
         self._compat_label = QLabel("", pane.strip)
+        self._compat_label.setTextFormat(Qt.TextFormat.PlainText)
         self._compat_label.hide()
         strip.addWidget(self._compat_label)
         self._compat_button = QToolButton(pane.strip)
@@ -526,7 +532,7 @@ class Workspace(QWidget):
             self._set_state(View3DState.FAILED)
             pane.show_message(
                 self.tr("The 3D view could not be started. The rest of the application "
-                        "is not affected.\n\nDetails: {error}").format(error=error),
+                        "is not affected.\n\nDetails: {error}").format(error=clip_text(error)),
                 self.tr("Try Again"))
             return
         self._host, self._controller, self._input = host, controller, orbit
@@ -752,7 +758,7 @@ class Workspace(QWidget):
         Not a crash — the marker goes; the view is closed for the session, no retry."""
         guard, pane = self.guard, self._pane
         guard.graphics_failed()
-        _LOG.error("3D is unavailable on this graphics device: %s", error)
+        _LOG.error("3D is unavailable on this graphics device: %r", error)
         self._stop_engine()
         self._set_state(View3DState.UNAVAILABLE)
         if pane is None:
@@ -760,7 +766,7 @@ class Workspace(QWidget):
         offer = guard.mode is RenderMode.HARDWARE and not guard.software_requested()
         pane.show_message(
             self.tr("3D is unavailable on this graphics device. The rest of the application "
-                    "is not affected.\n\nDetails: {error}").format(error=error),
+                    "is not affected.\n\nDetails: {error}").format(error=clip_text(error)),
             self.tr("Use Compatibility Mode Next Time") if offer else "")
         self._hide_compat_notice()
 
