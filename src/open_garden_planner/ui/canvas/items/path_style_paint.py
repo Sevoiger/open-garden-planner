@@ -157,7 +157,9 @@ class PathStylePaint:
                  budget: WalkBudget | None = None) -> None:
         if (clip is None) != (budget is None):
             raise ValueError("a clipped walk needs a budget, and a budget a clip")
-        self._points = list(points)
+        # read only, never changed: the canvas item's own list is used as it is (this
+        # object lives for one paint)
+        self._points = points if isinstance(points, list) else list(points)
         self._pen = pen
         self._clip = clip
         self._budget = budget
@@ -178,23 +180,12 @@ class PathStylePaint:
     def paint(self, painter: QPainter, style: PathFenceStyle) -> bool:
         """Paint the polyline in ``style``. False — and nothing painted — for
         ``PathFenceStyle.NONE`` and for a style without a painter of its own: the
-        caller then strokes the plain path."""
-        painters: dict[PathFenceStyle, Callable[[QPainter], None]] = {
-            PathFenceStyle.GRAVEL_PATH: self._paint_gravel_path,
-            PathFenceStyle.STEPPING_STONES: self._paint_stepping_stones,
-            PathFenceStyle.PAVED_PATH: self._paint_paved_path,
-            PathFenceStyle.WOODEN_BOARDWALK: self._paint_wooden_boardwalk,
-            PathFenceStyle.DIRT_PATH: self._paint_dirt_path,
-            PathFenceStyle.WOODEN_FENCE: self._paint_wooden_fence,
-            PathFenceStyle.METAL_FENCE: self._paint_metal_fence,
-            PathFenceStyle.CHAIN_LINK: self._paint_chain_link,
-            PathFenceStyle.HEDGE_FENCE: self._paint_hedge_fence,
-            PathFenceStyle.STONE_WALL: self._paint_stone_wall,
-        }
-        style_painter = painters.get(style)
+        caller then strokes the plain path. (A caller that paints often asks
+        ``STYLES_PAINTED`` first and builds no object for a plain line.)"""
+        style_painter = _STYLE_PAINTERS.get(style)
         if style_painter is None:
             return False
-        style_painter(painter)
+        style_painter(self, painter)
         return True
 
     def _get_segment_normal(self, p1: QPointF, p2: QPointF) -> tuple[float, float]:
@@ -737,3 +728,22 @@ class PathStylePaint:
                 path.lineTo(op1)
             path.lineTo(op2)
         return path
+
+
+#: The painter of each style — built once, not per paint.
+_STYLE_PAINTERS: Final[dict[PathFenceStyle, Callable[[PathStylePaint, QPainter], None]]] = {
+    PathFenceStyle.GRAVEL_PATH: PathStylePaint._paint_gravel_path,
+    PathFenceStyle.STEPPING_STONES: PathStylePaint._paint_stepping_stones,
+    PathFenceStyle.PAVED_PATH: PathStylePaint._paint_paved_path,
+    PathFenceStyle.WOODEN_BOARDWALK: PathStylePaint._paint_wooden_boardwalk,
+    PathFenceStyle.DIRT_PATH: PathStylePaint._paint_dirt_path,
+    PathFenceStyle.WOODEN_FENCE: PathStylePaint._paint_wooden_fence,
+    PathFenceStyle.METAL_FENCE: PathStylePaint._paint_metal_fence,
+    PathFenceStyle.CHAIN_LINK: PathStylePaint._paint_chain_link,
+    PathFenceStyle.HEDGE_FENCE: PathStylePaint._paint_hedge_fence,
+    PathFenceStyle.STONE_WALL: PathStylePaint._paint_stone_wall,
+}
+
+#: The styles ``PathStylePaint.paint`` paints. Every other one — ``NONE`` first of all,
+#: the plain line — is the caller's own stroke, and needs no ``PathStylePaint`` at all.
+STYLES_PAINTED: Final[frozenset[PathFenceStyle]] = frozenset(_STYLE_PAINTERS)

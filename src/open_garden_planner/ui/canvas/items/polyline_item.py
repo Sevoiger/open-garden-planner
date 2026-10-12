@@ -24,7 +24,7 @@ from open_garden_planner.core.object_types import (
 )
 
 from .garden_item import GardenItemMixin
-from .path_style_paint import PathStylePaint
+from .path_style_paint import STYLES_PAINTED, PathStylePaint
 from .resize_handle import PolylineVertexEditMixin, RotationHandleMixin
 
 
@@ -215,9 +215,12 @@ class PolylineItem(PolylineVertexEditMixin, RotationHandleMixin, GardenItemMixin
             return
 
         # Draw style-specific rendering — the painters are shared with the 3D ground
-        # bake (path_style_paint.py): one implementation, two callers
-        if PathStylePaint(self._points, self.pen(), self.path()).paint(
-                painter, self._path_fence_style):
+        # bake (path_style_paint.py): one implementation, two callers. A plain line
+        # (and a style without a painter) is the base class's stroke, as it always
+        # was: nothing is built for it.
+        style = self._path_fence_style
+        if style in STYLES_PAINTED:
+            PathStylePaint(self._points, self.pen(), self.path()).paint(painter, style)
             self._paint_selection(painter, option)
         else:
             super().paint(painter, option, widget)

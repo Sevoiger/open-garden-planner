@@ -1036,6 +1036,82 @@ class TestWhatTheCanvasReallyPaintsWith:
         assert all(a != b for a, b in zip(reds, reds[1:], strict=False)), reds
 
 
+# ── an item made from an item (review P1-1) ───────────────────────────────────
+
+
+def _derived_cases() -> list[tuple[str, str]]:
+    """The 2D suite's operations and sources — but for its plain line, which is a
+    FENCE: a fence stands in 3D and is not on the ground."""
+    from tests.integration.test_item_style_in_step import CASES
+
+    return [(operation, shape) for operation, shape in CASES if shape != "polyline"]
+
+
+class TestAnItemMadeFromAnItem:
+    """The record's fill is read from the item's ATTRIBUTES (a textured brush
+    cannot be asked for its pattern or its tint); the canvas paints the live
+    BRUSH. An operation that copied the second and not the first parted the two:
+    measured before the fix, the offset copy of a blue brick terrace was baked
+    as default wood (mean 11.0 of 255 over the plan), the chamfered copy of a red
+    lawn as default green (4.09). Every operation of the 2D suite's table
+    (``test_item_style_in_step.OPERATIONS``) is held to the canvas here."""
+
+    @pytest.mark.parametrize(("operation", "shape"), _derived_cases(),
+                             ids=[f"{o} of a {s}" for o, s in _derived_cases()])
+    def test_it_is_baked_as_the_canvas_paints_it(self, qtbot: Any, operation: str, shape: str) -> None:
+        from tests.integration.test_item_style_in_step import OPERATIONS, SOURCES
+
+        how, _shapes, is_copy = OPERATIONS[operation]
+        original = SOURCES[shape]()
+        filled = not isinstance(original, PolylineItem)
+        if filled:
+            style(original, FillPattern.BRICK, QColor(30, 60, 200))
+        pen = original.pen()
+        pen.setColor(QColor(200, 30, 30))
+        pen.setWidthF(5.0)
+        original.setPen(pen)
+        original.stroke_color, original.stroke_width = QColor(200, 30, 30), 5.0
+        derived = how(original)
+        scene = new_scene()
+        scene.addItem(derived)
+        mean, worst, bake = compare(scene)
+        record = bake.records[str(derived.item_id)]
+        assert bake.baker.painted_ids() == (str(derived.item_id),)
+        if isinstance(derived, PolylineItem):
+            # a styled line: single pixels of its elements' edges (§8.27.5, limits 2 and 8
+            # — a chamfer's new points are not round numbers; measured: mean 0.0003)
+            assert mean <= 0.05, (mean, worst)
+        else:
+            assert (mean, worst) == (0.0, 0)
+        if is_copy and filled:
+            assert (record.material.fill_rgba, record.material.pattern) == ((30, 60, 200, 255), "BRICK")
+        if is_copy:
+            assert record.material.stroke_rgba == (200, 30, 30, 255)
+
+    def test_the_two_cases_of_the_review(self, qtbot: Any) -> None:
+        """An offset copy of a blue brick terrace polygon, and a chamfered copy of
+        a red lawn rectangle — beside their sources, in one plan."""
+        from tests.integration.test_item_style_in_step import _corner, _offset
+
+        terrace = PolygonItem([QPointF(60.0, 60.0), QPointF(360.0, 60.0), QPointF(360.0, 260.0),
+                               QPointF(60.0, 260.0)], object_type=ObjectType.TERRACE_PATIO)
+        style(terrace, FillPattern.BRICK, QColor(30, 60, 200))
+        lawn = RectangleItem(600.0, 380.0, 300.0, 200.0, object_type=ObjectType.LAWN)
+        style(lawn, lawn.fill_pattern, QColor(200, 30, 30))
+        outer, chamfered = _offset(terrace), _corner(lawn)
+        outer.moveBy(330.0, 300.0)   # across the corner where four tiles meet
+        scene = new_scene()
+        for item in (terrace, outer, chamfered):
+            scene.addItem(item)
+        mean, worst, bake = compare(scene)
+        assert (mean, worst) == (0.0, 0)
+        materials = {key: bake.records[str(item.item_id)].material
+                     for key, item in (("outer", outer), ("chamfered", chamfered))}
+        assert (materials["outer"].fill_rgba, materials["outer"].pattern) == ((30, 60, 200, 255), "BRICK")
+        assert materials["chamfered"].fill_rgba == (200, 30, 30, 255)
+        assert materials["chamfered"].pattern == lawn.fill_pattern.name
+
+
 # ── the boundary ──────────────────────────────────────────────────────────────
 
 
