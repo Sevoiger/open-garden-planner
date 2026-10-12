@@ -160,13 +160,25 @@ def test_the_bounds_of_wait_ready_are_stated_once() -> None:
     module whose docstring is the contract, and the docstring quotes them."""
     assert WAIT_READY_DEFAULT_S == 1.0, "small enough for ONE call on the GUI thread; 10 s was not"
     assert STALL_S == 0.5 and STALL_S < WAIT_READY_DEFAULT_S
+    assert lifecycle.REPROBE_S == 0.25 and lifecycle.REPROBE_S < STALL_S
     text = lifecycle.__doc__ or ""
     assert "``STALL_S`` (0.5 s)" in text and "``WAIT_READY_DEFAULT_S`` (1 s)" in text
     for sentence in ("returns the scene at the window's current size, or it raises",
-                     "returns within ``timeout_s`` — the delivery of",
+                     "starts no pass of the event loop once ``timeout_s``",
                      "returns False promptly"):
         assert sentence in text, sentence
-    assert "never call it" in text and "timer slot" in text
+    flat = " ".join(text.split())
+    # review round 5: sentence 2 said "within timeout_s" — a pass of the event loop drains
+    # the whole queue (0.2 s asked, 1.80 s taken behind six handlers)
+    for words in ("PLUS whatever was queued on the event loop when its last pass began",
+                  "only ``wait_ready(0)``, which runs no event loop, is bounded by itself",
+                  "is a nested event loop, and it takes user input",
+                  "needs it nowhere on the GUI thread",
+                  "Never call it from a timer slot",
+                  "A tick that draws stops at its first ``HostStateError``",
+                  "at most HALF a device pixel off ``logical × ratio``",
+                  "is not silence"):
+        assert words in flat, words
 
 
 def test_what_raises_what_is_complete() -> None:

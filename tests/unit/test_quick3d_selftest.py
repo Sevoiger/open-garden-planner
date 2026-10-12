@@ -586,6 +586,33 @@ _SUPERVISED = textwrap.dedent("""
                                    "fedcba9876543210fedcba9876543210", "1", "-", "what:no such block"])
         print("HELPER", helper.wait(timeout=30), flush=True)
         time.sleep(3.0)   # past the deadline it was given
+    elif mode == "wait-fails":
+        # Round 5, P2-4: our own child, the right pid, creation time and event — and its
+        # WaitForMultipleObjects FAILS (not a timeout). It watched nothing.
+        k32 = runlog._kernel32()
+        created = runlog._created(k32, k32.GetCurrentProcess())
+        nonce = "0123456789abcdef0123456789abcdef"
+        event = k32.CreateEventW(None, True, False, runlog._event_name(os.getpid(), created, nonce))
+        base, *_flags, script = runlog.self_command()
+        code = "\\n".join([
+            "import importlib.util, sys",
+            "spec = importlib.util.spec_from_file_location('runlog_under_test', sys.argv[1])",
+            "runlog = importlib.util.module_from_spec(spec)",
+            "sys.modules['runlog_under_test'] = runlog",
+            "spec.loader.exec_module(runlog)",
+            "real = runlog._kernel32",
+            "def broken():",
+            "    k32 = real()",
+            "    k32.WaitForMultipleObjects = lambda *a: 0xFFFFFFFF",
+            "    return k32",
+            "runlog._kernel32 = broken",
+            "sys.exit(runlog.supervisor_main(sys.argv[2:]))",
+        ])
+        helper = subprocess.Popen([base, "-I", "-c", code, script, str(os.getpid()), str(created), nonce,
+                                   "1", "-", "what:its wait fails"], stderr=subprocess.PIPE, text=True)
+        _out, said = helper.communicate(timeout=30)
+        print("HELPER", helper.returncode, said.strip(), flush=True)
+        time.sleep(3.0)   # past the deadline it was given: nobody ended us
     print("returned", flush=True)
 """)
 
@@ -717,6 +744,23 @@ def test_a_supervisor_that_finds_no_release_event_leaves_and_says_it_never_super
     assert "[supervisor]" not in text, "nobody was terminated"
 
 
+@windows_only
+def test_a_supervisor_whose_wait_fails_says_so_and_terminates_nothing(tmp_path: Path) -> None:
+    """Review round 5, P2-4. The supervisor's ``WaitForMultipleObjects`` FAILED — and it
+    exited 0, "it did its job": everything that was not a timeout counted as a release
+    (measured). It had watched nothing. Now only the two answers that mean "the process
+    ended" and "released" are 0; a failed wait is exit code 3 like every other failure of
+    its own, one line on stderr, and no process is terminated."""
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    proc, text = _supervised("wait-fails", tmp_path)
+    assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
+    (helper,) = [line for line in proc.stdout.splitlines() if line.startswith("HELPER ")]
+    assert helper.startswith(f"HELPER {runlog.SUPERVISOR_FAILED} "), helper
+    assert "failed: the wait for the supervised process failed (0xFFFFFFFF)" in helper
+    assert "[supervisor]" not in text, "nobody was terminated"
+
+
 def test_a_watchdog_whose_arming_fails_is_not_left_armed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """P2-2 on every platform, without a supervisor: arming fails (``faulthandler`` cannot
     start its thread) — the error reaches the caller, the block does not run, and the
@@ -752,9 +796,9 @@ def test_what_a_block_says_about_its_supervisor() -> None:
     class Gone:
         pass
 
-    def armed(exit_code: int | None, supervisor: object = Gone()) -> runlog.Armed:  # noqa: B008
-        made = runlog.Armed(5.0, "x", supervisor=supervisor)  # type: ignore[arg-type]
-        made.supervisor_exit = exit_code
+    def armed(exit_code: int | None, *, released: bool = True) -> runlog.Armed:
+        made = runlog.Armed(5.0, "x", supervisor=Gone())  # type: ignore[arg-type]
+        made.supervisor_exit, made.released = exit_code, released
         return made
 
     assert armed(0).gap == "" and armed(0).supervised is True
@@ -762,7 +806,16 @@ def test_what_a_block_says_about_its_supervisor() -> None:
                         (None, "had not left 15 s after its release"), (9, "ended with exit code 9")):
         gap = armed(code).gap
         assert gap.startswith("its supervising process ") and words in gap, gap
-        assert armed(code).supervised is (code is None)
+        # review round 5, P2-5: a supervisor that had NOT LEFT 15 s after its release read
+        # as "supervised" beside a gap that said it had not left (measured)
+        assert armed(code).supervised is False, code
+    # while the block runs nothing is known to be missing: a supervising process was started
+    running = armed(None, released=False)
+    assert running.supervised is True and running.gap == ""
+    for code in (0, 2, 3, 4, 9, None):
+        for released in (False, True):
+            block = armed(code, released=released)
+            assert block.supervised is (block.gap == ""), (code, released)
     none = runlog.Armed(5.0, "x", unsupervised_because="none (it could not be started)")
     assert none.gap == "none (it could not be started)" and none.supervised is False
     assert (runlog.SUPERVISOR_DONE, runlog.SUPERVISOR_REFUSED, runlog.SUPERVISOR_FAILED,

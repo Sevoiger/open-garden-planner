@@ -2022,7 +2022,11 @@ never shown can render at all, and what the self-test costs on WARP.
    grows where no screen is: the host read "starting" for ever. The fact is gone. **The
    frame is the witness.** The state holds only what Qt reports when it is asked; `LIVE`
    means a frame may be ASKED for; whether it has the window's size is said by the frame,
-   which the host checks — to the device pixel — every time it takes one.
+   which the host checks — to the device pixel — every time it takes one. *Corrected in
+   review round 5:* "to the device pixel" was "less than one pixel off", and that is not
+   exact: Qt rounds a render target to `qRound(logical × ratio)`, and at 125 % the frame of
+   a 442 px pane (553 px) is 0.75 px off the size of a 443 px one — it was handed out. The
+   check is Qt's own rounding: at most HALF a device pixel off.
 6. **`grab()` on a LIVE host is the synchronisation point.** Nothing in the package or its
    tests waits for a frame to be presented. *Corrected in review round 1:* a host that was just
    shown is not live until its first expose was delivered, and a grab before that is fatal;
@@ -2047,6 +2051,18 @@ never shown can render at all, and what the self-test costs on WARP.
    False 0.5 s after the last sign of progress, whatever the timeout — "starting" no longer
    means "wait for it". `pick()` and `project()` take a frame of their own after a resize:
    without one the engine picks with the old viewport and misses.
+   *Corrected in review round 5:* "back within its timeout" was false, and so was the
+   exception stated for it ("the one handler that is running"): one pass of Qt's event
+   loop delivers EVERYTHING that is queued — 0.2 s asked, 1.80 s taken behind six handlers
+   of 0.3 s. The contract now says what holds: no pass starts once the time is up; the
+   call returns within its timeout plus whatever was queued when its last pass began; only
+   `wait_ready(0)` is bounded by itself. And it says what the call IS: a nested event loop
+   that takes user input — the workspace needs it nowhere on the GUI thread. Silence is
+   counted pass by pass, not as wall time (a GUI thread that was busy for 0.7 s inside the
+   wait had made it answer False, and True when asked again). `pick()` and `project()`
+   took their frame on EVERY call while the render target was behind (200 calls, 200
+   frames, all refused): one per refusal now — renewed by a sign of progress, by other
+   facts, or after 0.25 s — and a tick that draws stops at its first `HostStateError`.
 7. **Offscreen = one never-shown host per frame**, through the real `SceneSync` → sink → host
    path, with every Qt message recorded and an error-class message raising `RenderError`. It is
    for processes that own themselves — it blocks for 0.4–1.3 s and builds a graphics device per
@@ -2077,7 +2093,9 @@ never shown can render at all, and what the self-test costs on WARP.
    wait for exits 4, not 0 — it never supervised, and the self-test fails on it; a block
    keeps its signalled release event until its supervisor has left, so that one which
    comes up late is "released" and not "lost"; a watchdog that fails while arming disarms
-   what it had armed.
+   what it had armed. *Round 5:* a supervisor whose own wait FAILS exits 3 (it said 0:
+   everything that was not a timeout counted as a release); and `Armed.supervised` and
+   `Armed.gap` are one statement (a supervisor that had not left read as "supervised").
 10. **A render tier in two processes**: a driver with a real Qt platform renders; the tests, in
     the ordinary offscreen process, judge with a CPU projection of their own. The host's
     lifecycle is a matrix of call orders, one process each. CI runs the tier in a `render3d`
@@ -2393,18 +2411,53 @@ looks. One blocking finding and five P2; none refuted.
 | A raw pick right after a resize, no frame in between | MISS — at once after `showFullScreen()`, and for the pane that grew beyond the edge; after one frame, even one of the old size, it hits. The projection is right in both |
 | What does a probe frame cost? | 0.7 to 4 ms; 18 to 27 ms right after `showFullScreen()`; about 0.25 s for a 5120 × 1440 frame, or behind a frame Qt is presenting. A whole `wait_ready()` on a host that is live, its probe included: 2 to 6 ms on the GPU, 26 to 31 ms on WARP (447 × 500 px) |
 | How long until the expose arrives? | after a resize: 1.0 to 1.5 ms, in the first pass of the event loop; after `show()`: 12 to 91 ms. The pass that handles the first expose takes 0.83 to 1.0 s (it creates the graphics device); one that handles an expose after a grab, about 1 s on this machine |
-| `wait_ready()` in the walks | the longest wait beyond its timeout — each time ONE Qt handler that was running when the time was up: 0.75 s on the GPU with the display awake, 1.22 s with it asleep, 0.20 s on WARP, 0.007 s on xcb. `wait_ready(0)`: at most 11 ms (31 calls). A False that was not behind such a handler: 0.500 to 0.504 s. Longest quiet spell before a host came up: 0.0 s on Direct3D 11, 0.0 s on xcb + llvmpipe — the bound is 0.5 s |
+| `wait_ready()` in the walks | the longest wait beyond its timeout — what Qt had queued for the window when the wait's last pass began (*round 5:* not "ONE handler", as this row said: a pass delivers the whole queue): 0.75 s on the GPU with the display awake, 1.22 s with it asleep, 0.20 s on WARP, 0.007 s on xcb. `wait_ready(0)`: at most 11 ms (31 calls). A False that was not behind such a handler: 0.500 to 0.504 s. Longest quiet spell before a host came up: 0.0 s on Direct3D 11, 0.0 s on xcb + llvmpipe — the bound is 0.5 s |
 | The default `wait_ready()` on the FIRST show of a process (18 processes) | top-level: True after 0.86–0.92 s (GPU), 0.70–0.75 s (WARP). Embedded in a splitter: True after 1.67–1.73 s (GPU), 1.52–1.63 s (WARP) — beyond its second by the expose handler of its own window, which was running when the second was up |
-| The size check | it allowed two pixels: a 447 × 500 frame was handed out for a 448 × 500 window. Exact to the device pixel now |
+| The size check | it allowed two pixels: a 447 × 500 frame was handed out for a 448 × 500 window. "Less than one device pixel" from then on (*round 5:* exact at 100 %, 150 % and 200 % — and not in between; the table below) |
 | The walk, fitted to the screen (seed 20261011, 250 steps) | GPU: 252 looks — 67 frames, 185 refusals; `wait_ready()` answered True 47 times, each followed by a frame, and False 108 times; the host took 110 frames for itself and refused none for its size. WARP: the same 67 / 185 and 47 / 108. xcb + llvmpipe: 61 frames, 191 refusals; True 42 times, False 113 times. No wrong frame, every host came up, every wait within its bound |
 | The same walk where a 1024 × 768 screen leaves the window | GPU: 61 frames, 191 refusals; True 43, False 112; 11 looks with the pane shown beyond the edge; 9 frames refused for their size (the display was asleep). WARP: 63 / 189 and 44 / 111; 11 looks beyond the edge; no frame refused for its size. xcb + llvmpipe: 61 / 191 and 42 / 113; 26 looks beyond the edge; 1 frame refused for its size. No wrong frame; no wait beyond its bound; no False later than 0.5 s after the last sign of progress plus one Qt handler |
 | A supervisor that cannot find its block (a creation time that is not the process's) | it is gone 1.5 s into a 20 s block — with exit code 4 now (it was 0), and the block says "left without having supervised". One that comes up after its block is over: exit code 0, released |
 | The whole render tier (round 4: 104 tests) | 103 passed and one control reported, not asserted, in 458 s on the GPU; 101 passed, the two hardware-only budgets skipped and the control reported, in 355 s on WARP — both with the display asleep, the condition in which round 3's head showed the runner's failure on this machine; 96 passed and 8 skipped in 241 s on xcb in the container |
 
+**Review round 5 (2026-10-12).** CI on round 4's head was green on all jobs — `Render 3D
+(windows-latest)` 101 passed, 2 skipped, 1 xfailed; `ubuntu-latest` 96 passed, 8 skipped, as
+predicted — and the independent re-check confirmed the blocking finding fixed with the display
+off. It found two small P1 and five P2; none refuted. What they have in common: each was a
+statement that was one measurement short.
+
+1. *"Exact to the device pixel"* was "less than one pixel off". Between 100 % and 150 % that
+   lets a neighbour's frame through. And the tests' judge used the same inequality, so it
+   was blind exactly where the host was wrong. → decision 5; the judge computes Qt's rounding
+   itself.
+2. *"`pick()` and `project()` take a frame once per resize"* — once per CALL while the render
+   target was behind. → decision 6.
+3. *"`wait_ready(t)` returns within `t`, plus the one handler that is running"* — plus the
+   whole queue. And *"`STALL_S` after the last sign of progress"* counted wall time, in which
+   a busy GUI thread looks like silence. → decision 6.
+4. *`wait_ready(inf)` overflowed; a supervisor's failed wait said 0; `supervised` and `gap`
+   disagreed.* → decisions 6 and 9.
+
+| Question (review round 5) | Measured (Qt 6.11, Direct3D 11 on an RTX 4070 and on WARP; ratios set with `QT_SCALE_FACTOR` on a 100 % screen) |
+|---|---|
+| How does Qt size a render target at a fractional ratio? | `QSize(logical) * ratio` — `qRound` per side, half a pixel up: a 442 px pane at 1.25 has a 553 px frame (552.5), a 443 px pane a 554 px one (553.75), a 447 px pane at 1.5 a 671 px one. The reviewer: 161 of 161 sizes at 1.25, 1.5 and 1.75 within 0.5 px |
+| "Less than one pixel off" at 125 % | the pane made one logical pixel wider, 442 → 443, with the render target behind (the no-paint filter): `grab()` handed out the 553 px frame and `pick()` answered with the old viewport — on the GPU and on WARP (the reviewer). In the arithmetic 750 of 11,993 neighbour frames passed at 1.25, and every ratio strictly between 1 and 1.5 had some; 1.0, 1.5 and above had none |
+| The half-pixel rule | every logical width from 2 to 3000 at 1.0, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2.0, 2.25, 2.5 and 3.0, against `QSize * ratio` asked of Qt: 0 of 2,999 right frames refused and 0 of 11,993 neighbour frames accepted, at each of the twelve. On a real window at 1.25: 442 → 443 and 446 → 447 px with the target behind — a raw grab is 553 and 558 px wide, the pane's own frame 554 and 559 — refused by `grab()`, `pick()` and `project()`, on Direct3D 11 (GPU, WARP) and on xcb + OpenGL alike; the reviewer's probe: 0 of 12 handed out (it was 1 of 13) |
+| `pick()` / `project()` while the render target is behind | before: 200 `project()` took 200 frames, all refused — 2.0 ms each on the GPU, 4.1 ms on WARP; 13 and 33 ms a frame at 2560 × 1369 (the reviewer). Now: 200 `project()` take ONE frame — 0.06 ms a call, 12 ms for the tick where it was 399 ms — and the 200 `pick()` after them none (0.013 ms a call), on the GPU |
+| The steady state, and a resize | 500 `project()` + 500 `pick()`: 0 frames; 60 resize steps: exactly 60 frames (the reviewer; unchanged). What that one frame costs per step: with the display ASLEEP, on the GPU, 33 ms a step for a 60-step splitter drag without a call and 1,031 ms a step with one `project()` (the reviewer: +1.0 s on the GPU, +25 ms on WARP) — a present that waits for a display that is off. With the display awake it is NOT measured: it slept through this round, and "drag the splitter with 3D visible" is on the manual-test checklist |
+| `wait_ready(0.2)` behind six queued handlers of 0.3 s | 1.80 s (the reviewer): one dispatcher pass delivers them all. Unchanged — it cannot be changed from the thread those handlers run on — and it is what the contract says now |
+| The GUI thread busy for 0.7 s inside the wait, the repaint posted 10 ms after | before: `wait_ready(5)` False after 0.75 s, and True when asked again. Now: True after 1.80 s (the display asleep: the expose that mends it takes a second) |
+| `wait_ready(inf)`, `wait_ready(3e6)`, `wait_ready(nan)` | before: `OverflowError` for the first two. Now: a timeout is clamped to a day, one that is not a number is 0; on a host that makes no progress each is False after 0.5 s |
+| A supervisor whose `WaitForMultipleObjects` fails | before: exit code 0, "supervised". Now: 3, one line on stderr, nothing terminated |
+| The whole render tier (round 5: 105 tests, the 125 % row among them) | 104 passed and one control reported, not asserted, in 411 s on the GPU; 102 passed, the two hardware-only budgets skipped and the control reported, in 287 s on WARP — both with the display asleep. The lifecycle file on xcb + llvmpipe in the container, where the 125 % row had never run: 41 passed, 4 skipped in 159 s; that row gives the same 553 / 554 and 558 / 559 px there |
+
 **Not measured** — stated so nobody assumes it: platforms that un-expose an occluded window
 (macOS, Wayland) — a visible, covered window may read "starting" there for as long as it is
 covered; `wait_ready()` then answers False after 0.5 s, like for every other cause; a change
 of the device pixel ratio in mid-session (a window dragged to a display with another scale);
+real display scaling of the operating system (the ratios between 1 and 3 were set with
+`QT_SCALE_FACTOR` on a 100 % screen); what the one frame after each resize costs with the
+display AWAKE (asleep it was about 1 s a step on the GPU and 25 ms on WARP — a present that
+waits for a display that is off; the reviewer expects one vblank when it is on);
 what GitHub's Windows runner does with a pane beyond its screen (the walk failed there; this
 tree has not run there — the stuck condition is made on purpose in the tier instead). The
 round-2 tree on GitHub's own runners (the

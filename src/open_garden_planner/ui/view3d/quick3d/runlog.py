@@ -36,7 +36,8 @@ ONE process, and it is built so that it cannot act for anything else:
 - one watchdog is armed per process at a time; a second one is refused
   (``WatchdogError``) — ``faulthandler`` has a single timer anyway;
 - it says what it did in its exit code: 0 only when it held the block's event —
-  it was released, the process ended while it watched, or it ended it. A
+  it was released, the process ended while it watched, or it ended it (a wait
+  that FAILS is 3, like every other failure of its own, and terminates nothing). A
   supervisor that found NOTHING to wait for (the process gone or not the one
   named, the block's event not there) leaves with ``SUPERVISOR_IDLE`` (4): it
   never supervised. It used to exit 0 like one that did its job — also when it
@@ -188,24 +189,28 @@ class Armed:
     unsupervised_because: str = "not asked for"
     #: The supervising process's exit code after the block (``SUPERVISOR_DONE`` when it
     #: did its job); None while the block runs, when there was none, or when it had not
-    #: left within ``SUPERVISOR_EXIT_WAIT_S``.
+    #: left within ``SUPERVISOR_EXIT_WAIT_S`` — ``released`` tells the first from the last.
     supervisor_exit: int | None = None
+    #: True once the block is over and its supervising process was told to go.
+    released: bool = False
 
     @property
     def supervised(self) -> bool:
-        """A supervising process was started, and — if the block is over — it had held
-        the block's event (it did not refuse, fail, or leave without having supervised)."""
-        return self.supervisor is not None and self.supervisor_exit in (None, SUPERVISOR_DONE)
+        """While the block runs: a supervising process was started. Once it is over: that
+        process had held the block's event AND left — exactly when ``gap`` is "". (The
+        two disagreed until review round 5: a supervisor that had not left after 15 s
+        still read as "supervised".)"""
+        return self.supervisor is not None and self.gap == ""
 
     @property
     def gap(self) -> str:
-        """After the block: "" when it was supervised from outside to its end — else, in
-        words, why not. For a caller that must not pass without a supervisor (the
-        self-test): no process started, or it refused, failed, never supervised, or did
-        not leave."""
+        """"" when nothing is known to be missing: the block still runs under a supervising
+        process, or it was supervised from outside to its end. Else, in words, why not —
+        for a caller that must not pass without a supervisor (the self-test): no process
+        started, or it refused, failed, never supervised, or did not leave."""
         if self.supervisor is None:
             return self.unsupervised_because
-        if self.supervisor_exit == SUPERVISOR_DONE:
+        if not self.released or self.supervisor_exit == SUPERVISOR_DONE:
             return ""
         return f"its supervising process {_exit_means(self.supervisor_exit)}"
 
@@ -301,6 +306,7 @@ def watchdog(seconds: float, log: RenderLog, what: str = "the run", *,
             _ARMED.remove(armed)
         if armed.supervisor is not None:
             armed.supervisor.release()
+            armed.released = True
             armed.supervisor_exit = armed.supervisor.wait(SUPERVISOR_EXIT_WAIT_S)
             with contextlib.suppress(Exception):
                 if armed.supervisor_exit == SUPERVISOR_DONE:
@@ -447,6 +453,7 @@ if sys.platform == "win32":
     _PROCESS_TERMINATE: Final = 0x0001
     _PROCESS_QUERY_LIMITED_INFORMATION: Final = 0x1000
     _EVENT_MODIFY_STATE: Final = 0x0002
+    _WAIT_OBJECT_0: Final = 0x0   # the first handle of a wait is signalled; +1: the second
     _WAIT_TIMEOUT: Final = 0x102
 
     def _kernel32() -> Any:
@@ -557,8 +564,14 @@ if sys.platform == "win32":
                 outcome = k32.WaitForMultipleObjects(2, handles, False, int(order.seconds * 1000))
             finally:
                 k32.CloseHandle(event)
-            if outcome != _WAIT_TIMEOUT:
+            if outcome in (_WAIT_OBJECT_0, _WAIT_OBJECT_0 + 1):
                 return SUPERVISOR_DONE  # it ended by itself, or released us
+            if outcome != _WAIT_TIMEOUT:
+                # WAIT_FAILED, or anything else Windows may answer: this supervisor waited
+                # for nothing. It must not read as "supervised" (it said 0 until review
+                # round 5), and it must not terminate a process it never watched.
+                _say(f"failed: the wait for the supervised process failed (0x{outcome:X}).")
+                return SUPERVISOR_FAILED
             if order.log_path is not None:
                 with contextlib.suppress(OSError):  # append to the block's log; never create one
                     descriptor = os.open(order.log_path, os.O_WRONLY | os.O_APPEND)
