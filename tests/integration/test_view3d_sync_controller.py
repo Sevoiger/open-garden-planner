@@ -37,6 +37,7 @@ from open_garden_planner.core.scene3d import (
     SinkProtocolError,
     SunState,
 )
+from open_garden_planner.core.scene3d import polygon as polygon_module
 from open_garden_planner.core.scene3d.builders import plants, production_registry
 from open_garden_planner.core.scene3d.camera import Bounds
 from open_garden_planner.core.sim_clock import SimClock
@@ -47,7 +48,9 @@ from open_garden_planner.ui.canvas.geometry_apply import (
     build_rect_resize,
 )
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
+from open_garden_planner.ui.view3d import snapshot as snapshot_module
 from open_garden_planner.ui.view3d.snapshot import SkipReason, snapshot_records
 from open_garden_planner.ui.view3d.sync_controller import (
     NO_LOCATION_SUN,
@@ -838,17 +841,65 @@ def test_a_reset_and_a_recovery_count_everything_they_destroyed(canvas: CanvasVi
 
 def test_what_3d_remembers_of_a_plan_goes_with_the_plan_and_with_the_view(
         rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The plant builder's shape cache (and, from the contract story's next round,
-    the outline memories) are per plan: dropped on a document change AND when the 3D
-    view closes — a closed view must not keep a plan's worth of memory alive."""
+    """The plant builder's shape cache and the record layer's outline memories are per
+    plan: dropped on a document change AND when the 3D view closes — a closed view
+    must not keep a plan's worth of memory alive."""
     cleared: list[str] = []
     monkeypatch.setattr(plants, "clear_shape_cache", lambda: cleared.append("shapes"))
-    rig.bed()
+    monkeypatch.setattr(snapshot_module, "clear_outline_cache", lambda: cleared.append("outlines"))
+    bed = rig.bed()
     rig.controller.set_active(True)
     rig.settle()
-    assert cleared == [], "an edit session drops nothing"
+    rig.commands.execute(MoveItemsCommand([bed], QPointF(5.0, 0.0)))
+    rig.clock.set_date(date(2026, 9, 9))
+    rig.settle()
+    assert cleared == [], "an edit session and a date change drop nothing"
     rig.controller.document_changed()
-    assert cleared == ["shapes"]
+    assert cleared == ["shapes", "outlines"]
     rig.settle()
     rig.controller.shutdown()
-    assert cleared == ["shapes", "shapes"]
+    assert cleared == ["shapes", "outlines"] * 2
+
+
+def _outlines_held() -> int:
+    """How many outlines the record layer remembers right now — every ring-keyed memory
+    there is (the contract story's own instrument, ``cache_info().entries``)."""
+    return sum(memory.cache_info().entries for memory in polygon_module._memories)
+
+
+def _hedge(rig: Rig, east: float, width: float = 300.0) -> PolygonItem:
+    """A drawn hedge. Outlines are remembered by SHAPE: another width, another entry."""
+    item = PolygonItem(
+        [QPointF(east, 200.0), QPointF(east + width, 220.0), QPointF(east + width + 20.0, 520.0),
+         QPointF(east + 40.0, 560.0)],
+        object_type=ObjectType.HEDGE_POLYGON, layer_id=rig.scene.active_layer.id)
+    rig.commands.execute(CreateItemCommand(rig.scene, item, "hedge"))
+    return item
+
+
+def test_the_old_plans_outlines_are_gone_with_the_plan_and_with_the_view(rig: Rig) -> None:
+    """The real memories, not a stand-in. What a snapshot asks for stays remembered
+    while snapshots go on — a plan that is gone would stay until two more snapshots
+    had run, and with the view closed none does (about 30 MB for a large plan,
+    measured by the contract story). After a document change the old plan's entries
+    are gone AT ONCE, and the new plan's first snapshot is a first tick."""
+    snapshot_module.clear_outline_cache()
+    for index in range(3):
+        _hedge(rig, 300.0 + 600.0 * index, 300.0 + 45.0 * index)
+    rig.controller.set_active(True)
+    rig.settle()
+    three = _outlines_held()
+    assert three >= 3, "three drawn outlines of three shapes are remembered"
+    snapshots = rig.controller.snapshot_count
+
+    rig.scene.clear()                      # a new plan …
+    rig.controller.document_changed()
+    assert _outlines_held() == 0, "… and not one outline of the old one is kept"
+    _hedge(rig, 900.0, 512.0)
+    rig.settle()
+    assert rig.controller.snapshot_count == snapshots + 1
+    one = _outlines_held()
+    assert one * 3 == three, "the first snapshot of the new plan judged and cut ITS outline afresh"
+
+    rig.controller.shutdown()              # the 3D view closes
+    assert _outlines_held() == 0

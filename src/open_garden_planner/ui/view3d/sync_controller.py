@@ -308,13 +308,17 @@ class Scene3DController(QObject):
 
     def _drop_plan_memories(self) -> None:
         """Everything the pipeline keeps PER PLAN goes — on a document change and when
-        the 3D view closes. ONE place, so that a new memory is one line here."""
+        the 3D view closes. ONE place, so that a new memory is one line here.
+
+        Both memories would otherwise outlive their plan: what a snapshot asks for
+        is never dropped while snapshots go on, and with the view closed none runs
+        (the contract story measured about 30 MB for a large plan's outlines)."""
         from open_garden_planner.core.scene3d.builders.plants import clear_shape_cache
 
-        clear_shape_cache()  # the plant builder's shapes
-        # SEAM (L1.1, fix round 5): the record layer's outline memories are per plan
-        # too, and that round adds ONE public call that drops them. It goes HERE,
-        # next to clear_shape_cache() — one line, nothing else changes.
+        from .snapshot import clear_outline_cache
+
+        clear_shape_cache()    # the plant builder's shapes
+        clear_outline_cache()  # the record layer's outlines: regions, cuts, ring facts
 
     def _schedule(self, delay_ms: int) -> None:
         if not self._active:
