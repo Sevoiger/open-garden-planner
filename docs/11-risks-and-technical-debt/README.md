@@ -2230,32 +2230,42 @@ about measuring it.
    34.6 MB per reload against a bound of 10, with nothing growing in Python (`tracemalloc`: 0.045
    MB per reload) and nothing in VRAM (DXGI: flat). *Root cause:* two retentions inside Qt Quick
    3D — per-draw-call state kept for every destroyed Model until
-   `QQuickWindow.releaseResources()` (0.1 to 0.35 MB each with shadow passes, independent of the
-   mesh), and mesh buffers that are freed only at the end of a PRESENTED frame. *Fix:* the
-   workspace counts retired Models and releases (ADR-057 decision 15). *How it was found:* a
-   bare host, 100 Models per round, ONE thing changed per run — buffers only, geometries only,
-   Models never drawn, drawn by readback, drawn in presented frames, sun on, shadows off,
-   embedded, another material, 300 or 12,000 vertices (ADR-048 addendum "L1.3" has the table).
-   The vertex-count runs said "not the mesh"; the sun run said "per pass". What the release
-   does NOT give back: about 20 kB per destroyed Model (2 MB per rebuild of the small plan,
-   linear over 60 reloads) — and bare Qt alone keeps 3.4 kB per `Model` with a material that is
-   created with `createObject()` and destroyed, never drawn, the engine's collector called.
-   Churn of QML objects is not free; a feature that replaces many Models per tick has to
-   avoid the replacing.
-3. **A view that presents nothing keeps what it is given — first filed as "the soak measures
-   something the product does not have".** `grabWindow()` renders and reads back but never
-   ends a frame the way a presented one ends: `afterFrameEnd` fired 0 times in 40 grabs. With
-   the display asleep Windows presents no frame at all (update requests come from a vblank
-   thread), so on this machine at night every frame of every soak was a readback and every
-   buffer stayed. That looked like a property of the INSTRUMENT, and the first fix was only
-   there (the soak's child presents by timer, `QT_D3D_NO_VBLANK_THREAD=1`). The ground story
-   then measured the same retention for textures in a view that simply did not present, and
-   named the case nobody had thought of: the 3D pane left visible overnight while an agent
-   edits the plan over the API. *Fix:* the pipeline is paced by presented frames — a dark
-   view is given ONE generation (ADR-057 decision 17; 98 uploads instead of 1,960 over twenty
-   rebuilds, −43 MB instead of +279). **"Only my instrument does that" deserves the question
-   "who else does what my instrument does?" before it is filed. And before reading a memory
-   curve, check what kind of frames produced it.**
+   `QQuickWindow.releaseResources()` (about 0.2 MB each with shadow passes, independent of the
+   mesh: 19 MB per rebuild of the small bench plan, 65 of the large), and what a frame holds
+   for destroyed Models, which comes back only at the end of a PRESENTED frame (item 3). *Fix:*
+   the workspace counts retired Models and releases (ADR-057 decision 15): 2 MB per rebuild
+   instead of 19. *How it was found:* a bare host, 100 Models per round, ONE thing changed per
+   run — buffers only, geometries only, Models never drawn, drawn by readback, drawn in
+   presented frames, sun on, shadows off, embedded, another material, 300 or 12,000 vertices
+   (ADR-048 addendum "L1.3" has the table). The vertex-count runs said "not the mesh"; the sun
+   run said "per pass". What the release does NOT give back: 15 to 20 kB per destroyed Model
+   (2 MB per rebuild of the small plan, linear over 60 rebuilds) — which is not graphics
+   state at all (a view that draws nothing leaves 1.5 MB per rebuild), and bare Qt alone
+   keeps 3.4 kB per `Model` with a material that is created with `createObject()` and
+   destroyed, never drawn, the engine's collector called. Churn of QML objects is not free;
+   a feature that replaces many Models per tick has to avoid the replacing.
+3. **A soak that reads back every cycle measures the readback — a lesson that was filed
+   wrongly twice before it was filed right.** `grabWindow()` renders a frame of its own and
+   reads it back; that frame is never presented (`afterFrameEnd` fired 0 times in 40 grabs),
+   and what it holds comes back only when a PRESENTED frame ends. With the display asleep
+   Windows presents no frame at all (update requests come from a vblank thread), so on this
+   machine at night every frame of every soak was a readback and everything stayed.
+   *First filing:* "a property of my instrument" — the soak's child was made to present by
+   timer (`QT_D3D_NO_VBLANK_THREAD=1`) and went on reading back once per rebuild. *Second
+   filing,* after the ground story read +16 MB per re-bake in a view that did not present:
+   "a view that presents nothing keeps every byte uploaded to it" — and a rule was built on
+   that sentence (the pipeline paced by presented frames, one generation for a dark view).
+   The independent review of the ground story then took the readback out of its loop and
+   read +0.0 MB per cycle. The same here, with the pacing gone: twenty rebuilds with the
+   view's frames withheld cost 1.5 MB each without a readback and 8.5 with one readback per
+   rebuild (26 without the cache release) — and dedicated GPU memory does not move at all
+   without the readback, because nothing is drawn. The growth was per frame RENDERED BY A
+   READBACK AND NEVER PRESENTED; never per upload, never per edit. The pacing was taken out
+   again: it fixed nothing and added a way to get stuck. *Fix:* nothing in the product takes
+   a frame from the live view (ADR-057 decision 17), and the soak takes none inside its
+   measured loop — one before, one after. **Before a memory curve is read, and before a
+   rule is built on it: list every frame the measuring loop itself renders, and run the
+   loop once without them.**
 4. **`processEvents()` after an edit measures the 2D side.** The first edit-to-frame number
    (p95 56.6 ms) was taken as "edit, `processEvents()`, readback": it contained the rest of the
    event-loop turn — the canvas repainting itself, the minimap, the panels. *Fix:* the readback

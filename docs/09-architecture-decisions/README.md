@@ -2492,9 +2492,10 @@ size; bound 1.3).
 (private bytes, Theil–Sen over reloads 11–20 of 20, below 10 MB per reload, with its positive
 control on the same machine) read **34.6 MB per reload** in the production host on the small
 bench plan (98 parts) when every reload rebuilt the engine scene, 0.2 when it rebuilt nothing,
-58.8 for the control. So the growth this log could not explain (entry 10: 1.5 to 9.0 MB per
-reload on WARP, +62 to +222 MB by reload 50) is real, grows with what is REBUILT, and is larger
-on a hardware adapter with the production scene's shadow passes. Where it is:
+58.8 for the control (the display was asleep: every frame of those runs was a readback). So
+the growth this log could not explain (entry 10: 1.5 to 9.0 MB per reload on WARP, +62 to +222
+MB by reload 50) is real, grows with what is REBUILT, and is larger on a hardware adapter with
+the production scene's shadow passes. Where it is:
 
 - **Not in Python.** `tracemalloc` between reloads 5 and 15 of the same soak: 0.045 MB per reload.
   No geometry wrapper survives its Model (a weak set of every `BufferGeometry`: 0 alive).
@@ -2510,115 +2511,125 @@ on a hardware adapter with the production scene's shadow passes. Where it is:
   | builds the geometries and drops them (no Model) | 0.00 |
   | Models created and destroyed, never drawn (hidden host, or shown and not read back) | 0.8 – 1.0 |
   | drawn through readbacks only (`grabWindow()`), no sun | 22.0 – 22.5 |
-  | drawn in PRESENTED frames, no sun | 6.3 – 7.7 |
+  | drawn in PRESENTED frames (no readback), no sun | 6.3 – 7.7 |
   | presented, sun up — 300 / 3,000 / 12,000 vertices per Model | 18.2 / 18 – 20 / 22 – 25 |
   | presented, sun up, the Models cast no shadow | 6.2 |
-  | presented, sun up, `QQuickWindow.releaseResources()` once per round | 3.4 – 3.9 (20 rounds), 0.85 – 1.14 (60 rounds) |
+  | presented, sun up, `QQuickWindow.releaseResources()` once per round | 2.4 – 3.9 (20 rounds), 0.85 – 1.14 (60 rounds) |
 
-  1. **The mesh buffers of a destroyed Model are freed at the end of a PRESENTED frame.** A
-     readback is not one: `grabWindow()` emitted `afterFrameEnd` 0 times in 40 grabs, 40 presented
-     frames emitted it 40 times. On Windows update requests come from a display-vblank thread,
-     and with the display asleep a visible window presents its first frame and no more (the
-     addendum "L1.2" above) — so every soak run with the display asleep kept every buffer it
-     uploaded. Qt's own `QT_D3D_NO_VBLANK_THREAD=1` paces update requests by timer; the soak runs
-     with it. *This entry first said "a measuring fact, not a product leak: without a frame
-     nothing is uploaded either". Half right:* with no frame at all nothing is uploaded — but
-     anything that renders without presenting (a readback, a sync for another reason) uploads,
-     and none of it comes back until a frame is PRESENTED. The ground story measured the same
-     for textures in a view that merely did not present: +16 MB per re-bake of a 16 MB ground.
-     A window left visible on a machine whose display sleeps, with something editing the plan,
-     grows without bound — a product defect, closed below.
+  1. **What a frame holds for destroyed Models comes back at the end of a PRESENTED frame —
+     and a readback is a frame that is never presented.** `grabWindow()` renders a frame of
+     its own and reads it back: it emitted `afterFrameEnd` 0 times in 40 grabs, 40 presented
+     frames emitted it 40 times. On Windows update requests come from a display-vblank
+     thread, and with the display asleep a visible window presents its first frame and no
+     more (the addendum "L1.2" above) — so every soak run with the display asleep, whose
+     every frame was a readback, kept everything it drew. Qt's own
+     `QT_D3D_NO_VBLANK_THREAD=1` paces update requests by timer; the soak runs with it.
+     *This entry was written twice before it was right.* First: "a measuring fact, not a
+     product leak". Then — after the ground story read +16 MB per re-bake in a view that did
+     not present — "a view that presents nothing keeps every byte uploaded to it", and a
+     pacing rule was built on that sentence. Both soaks READ BACK once per cycle. With the
+     readback out of the loop a view that presents nothing is drawn by nobody: nothing is
+     uploaded (dedicated GPU memory does not move) and what grows is the 1.5 MB per rebuild
+     that replacing 98 QML Models costs anyway (the tables below). The growth was per frame
+     rendered by a readback and never presented — not per upload, not per edit. The rule
+     that follows is about the readback, not about the pipeline (ADR-057 decision 17), and
+     the pacing was taken out again.
   2. **Per Model that was ever drawn, Qt keeps cached draw-call state after the Model is
      destroyed** — about 62 kB without shadow passes, about 190 kB with the sun's two cascades,
-     independent of the vertex count (the 300-vertex row), 0.12 to 0.35 MB per Model in the
+     independent of the vertex count (the 300-vertex row), 0.16 to 0.2 MB per Model in the
      production host. `QQuickWindow.releaseResources()` gives it back — on a visible window Qt
      keeps the scene graph and drops what it caches. Nothing else does: more frames, the QML
      engine's garbage collection, `clear()` instead of single destroys, an embedded instead of
-     a top-level window and the material kind made no difference.
+     a top-level window and the material kind made no difference. No readback is involved
+     in this one: the bare host's "presented" rows took none (and read the same with two
+     readbacks per round: 6.4 and 18.7 against 6.4 and 18.0).
 
-**The fix** (ADR-057 decision 15): `Quick3DHost.release_cached_resources()`; the pipeline counts
-the items whose Models each pass destroyed, and the workspace releases when 64 piled up and the
-pipeline has been quiet for half a second, or at once at 512. One release costs 2 to 10 ms on
-the GUI thread; the frame after it is the same frame (identical readbacks in 20 of 20 after it).
+**The fix** (ADR-057 decisions 15 and 17): `Quick3DHost.release_cached_resources()` — the
+pipeline counts the items whose Models each pass destroyed, and the workspace releases when 64
+piled up and the pipeline has been quiet for half a second, or at once at 512; one release
+costs 2 to 10 ms on the GUI thread — and nothing in the product takes a frame from the live
+view.
 
-**The gate, through the product's own path** (frames presented, each reload followed by the
-workspace's own release as a user who opened a plan gives it the time; 2026-10-12, twice):
+**The gate, through the product's own path.** No readback inside the measured loop: ONE frame
+before it and ONE after it, equal in every run below. Each rebuild is followed by the
+workspace's own release, as a user who opened a plan gives it the time. Private bytes,
+Theil–Sen over rebuilds 11–20 of 20; the small bench plan (98 parts); RTX 4070; 2026-10-12.
+"Frames withheld" is the engine story's no-paint device for the length of the loop — an event
+filter that eats the view's expose, update-request and paint events: shown, exposed, on the
+screen, 0 frames presented.
 
-| Variant | MB per reload, reloads 11–20 | growth over 20 | releases |
-|---|---|---|---|
-| rebuild on | **4.90** and 3.88 | +154 and +131 MB | 20 |
-| rebuild off | 0.07 and 0.16 | +3.4 and +5.4 MB | 0 |
-| positive control (rebuild on, 25 MB kept per reload) | 28.0 and 28.4 — fails, as it must | +609 and +623 MB | 20 |
-| rebuild on, the workspace's release out of reach | 29.0 (27.9 and 38.5 in two earlier runs) | +571 MB | 0 |
+| The view | Variant | MB per rebuild | growth over 20 | releases |
+|---|---|---|---|---|
+| presenting | rebuild on | **2.00** | +125 MB | 20 |
+| frames withheld | rebuild on | **1.48** | +34 MB | 20 |
+| presenting | rebuild off | 0.01 | +1.4 MB | 0 |
+| presenting | positive control (rebuild on, 25 MB kept per rebuild) | 27.3 — fails, as it must | +603 MB | 20 |
+| presenting | rebuild on, the workspace's release out of reach | 19.3 | +391 MB | 0 |
+| frames withheld | rebuild on, the release out of reach | 1.54 | +27 MB | 0 |
+| presenting | rebuild on, the release INSIDE every pass (the "at once" rule, threshold 1) | 1.82 | +42 MB | 20 |
 
-The curve with the release, in MB: 1354, 1378, 1371, 1373, 1382, 1374, 1378, 1381, 1374, 1488,
-1464, 1466, 1479, 1480, 1499, 1501, 1472, 1511, 1489, 1508. It is not a straight line: flat for
-nine reloads, ONE step of about 110 MB, then about 4 MB per reload with a scatter of ±15.
-Dedicated GPU memory makes the same single step at the same reload (299 → 378 MB; it had been
-FALLING before it, 305.5 → 299.0) and stays there (372 to 378 MB; slope −0.11 MB per reload).
-In the control run the step came at the second reload, in both memories again; without the
-release dedicated memory never leaves 305. So at one of the first releases the driver starts
-to keep a larger pool, once: about +79 MB dedicated and +110 MB committed. Not explained
-further, and not growing.
+The curve with the release, presenting, in MB: 1374, 1436, 1472, 1472, 1468, 1449, 1452, 1462,
+1464, 1466, 1468, 1469, 1470, 1472, 1489, 1476, 1511, 1497, 1478, 1499 — a rise of about 100
+MB over the first three rebuilds, then about 2 MB per rebuild with a scatter of ±15. Dedicated
+GPU memory rises with it over the first releases (289 → 346 → 362 → 378 MB) and stays there
+(slope 0.0); without the release it never leaves 289. So with the release the driver keeps a
+larger pool, once: about +90 MB dedicated and +100 MB committed. Not explained further, and
+not growing. With frames withheld dedicated GPU memory does not move during the loop at all
+(282.5 MB, twenty readings: nothing is drawn), and the same single step comes with the first
+frame after the dark spell (committed 1382 → 1498 MB).
 
-**The same soak elsewhere** (one run each, the same day, the same path):
+**What a readback per rebuild adds** — the way this soak measured until the independent review
+of the ground story took the readback out of its own loop; reported, never judged:
+
+| The view | with the release | without it |
+|---|---|---|
+| presenting | 3.85 (the first runs of this addendum, with up to two readbacks per rebuild: 4.90 and 3.88) | 16.4 (those runs: 29.0, 27.9, 38.5) |
+| frames withheld | **8.48** (+266 MB; about 94 MB of it came back with the first presented frame) | **26.0** (+526 MB) |
+
+In a presenting view the readback's frame is given back with the next presented frame, and
+the numbers stay in the spread of the ones without it. In a view that presents nothing they
+do not come back: that is the whole of what the withdrawn pacing rule was aimed at.
+
+**The same soak elsewhere** (no readback in the loop; one run each, the same day):
 
 | Where | with the release | without it |
 |---|---|---|
-| the large bench plan (421 parts, 424 items retired per reload), RTX 4070 | **5.07** MB per reload over reloads 11–20 (6.3 over all 20; +278 MB, a saw-tooth of ±60 MB in the first half), 20 releases, the frame unchanged in 20 of 20; dedicated GPU memory 283 → 379 MB in three early steps, slope 0.0 after | 50.9 MB per reload (12 reloads, +651 MB) |
-| the small bench plan on WARP ("Microsoft Basic Render Driver", the whole process) | **7.42** MB per reload (5.5 over all 20; +107 MB) | 27.1 MB per reload (+560 MB) |
+| the large bench plan (421 parts), RTX 4070, presenting | **6.38** MB per rebuild (+164 MB), 20 releases; dedicated GPU memory 346 → 378 MB in the first five rebuilds, slope 0.0 after | 65.5 MB per rebuild (+1,111 MB over 20) |
+| the small bench plan on WARP ("Microsoft Basic Render Driver", the whole process), presenting | **3.32** MB per rebuild (+139 MB) | 20.1 MB per rebuild (+396 MB) |
+| the same on WARP, frames withheld | 1.23 MB per rebuild (−1 MB over 20) | — |
+| the same on WARP, frames withheld AND a readback per rebuild | 6.20 MB per rebuild (+250 MB) | — |
 
-So the retention is Qt's own and not the hardware driver's: WARP keeps the same 27 MB per
-reload. What remains on WARP WITH the release lies in the range this log measured for the spike
-(1.5 to 9.0) and passes the gate with less room than the GPU does.
+So the retention is Qt's own and not the hardware driver's: WARP keeps the same 20 MB per
+rebuild, and a readback into a view that presents nothing costs there too.
 
-**Longer, and the release inside the pass** (after the engine story's last round was merged):
-
-- **60 reloads** through the same path: **1.78 MB per reload over reloads 31–60** (1.85 over all
-  60; +205 MB, of which the one step — reload 5 here, 1385 → 1477 MB with dedicated GPU memory
-  305.5 → 371.5 — is about 90). 60 releases, the frame unchanged in 60 of 60, dedicated GPU
-  memory flat over the second half (377 to 378 MB).
-- **The "at once" rule** — the release from INSIDE the pass, which an animated date runs into —
-  with its threshold set to 1, so that every rebuild takes it: 2.12 MB per reload, a smooth
-  line (1472 → 1514 MB over 20 reloads).
-
-**A view that presents nothing is given ONE generation** (ADR-057 decision 17). After a pass
-reached the engine the pipeline applies no further pass until the view has presented a frame.
-The same twenty rebuilds as above with the view's paint events eaten (the engine story's
-no-paint device: shown, exposed, on the screen, and nothing draws it — 0 frames presented):
-
-| | geometry uploads | rebuilds that waited | growth over 20 | slope, reloads 11–20 |
-|---|---|---|---|---|
-| with the pacing | 98 (one generation) | 19 of 20 | −43 MB | 0.51 MB per reload |
-| without it (the frame counter taken away) | 1,960 | 0 of 20 | +279 MB | 8.54 MB per reload |
-
-When the filter is removed the view presents again and the pipeline catches up by itself (the
-health poll lets the held pass go): 98 parts, and the frame is the frame from before the dark
-spell. With frames presented the pacing costs nothing that could be measured: edit → finished
-readback on the small bench plan p50 12.8 / p95 17.5 ms with it (13.0 / 17.6 and 15.2 / 20.6
-in two runs before it).
+**Longer.** 60 rebuilds through the same path, presenting: **1.78 MB per rebuild over rebuilds
+31–60** (2.07 over all 60; +203 MB, of which the first rebuild's step, 1372 → 1445 MB, is 73).
+60 releases, the frame after the loop equal to the frame before it, dedicated GPU memory
+between 362 and 378 MB throughout (slope 0.0 over the second half).
 
 **What remains, and where its floor is.** After the release about **2 MB per rebuild of 98
-Models** stays — some 20 kB per destroyed Model, linear over 60 reloads, not converging. It is
-not the cached draw-call state (that is what the release removes: 29 → 2) and not the mesh. A
-floor of it is Qt's own, measured in bare Qt with no product code and nothing ever drawn: 100
-objects created with `Component.createObject()` and destroyed with `destroy()` per round, 120
-rounds, the QML engine's garbage collector called every round — **0.78 kB per `QtObject`, 1.4
-per `Node`, 2.2 per `Model`, 3.4 per `Model` with a `PrincipledMaterial`**, each a straight
-line. The engine package's own parts cost 6.6 to 7.8 kB each that way (never drawn), and about
-20 kB in the production host. Not located further. What it means: a plan change costs about 2
-MB, an edit that replaces one Model about 20 kB — and anything that replaces MANY Models per
-tick (a date played back day by day regrows every dated plant) pays that per Model per tick,
-with or without the release. Two ways out, neither tried: keep the Model and give it a new
-geometry (the spike measured that a GEOMETRY does not survive its Model; the reverse was not
-measured), or scale a grown plant instead of rebuilding it.
+Models** stays (6.4 per rebuild of 421) — 15 to 20 kB per destroyed Model, linear over 60
+rebuilds, not converging. It is not the cached draw-call state (that is what the release
+removes: 19 → 2) and not the mesh, **and it is not graphics state at all: the same rebuilds
+in a view that draws nothing leave 1.5 MB each** (1.2 on WARP). A floor of it is Qt's own,
+measured in bare Qt with no product code and nothing ever drawn: 100 objects created with
+`Component.createObject()` and destroyed with `destroy()` per round, 120 rounds, the QML
+engine's garbage collector called every round — **0.78 kB per `QtObject`, 1.4 per `Node`, 2.2
+per `Model`, 3.4 per `Model` with a `PrincipledMaterial`**, each a straight line. The engine
+package's own parts cost 6.6 to 7.8 kB each that way (never drawn), and 15 to 20 kB in the
+production host. Not located further. What it means: a plan change costs about 2 MB, an edit
+that replaces one Model about 20 kB — and anything that replaces MANY Models per tick (a date
+played back day by day regrows every dated plant) pays that per Model per tick, with or
+without the release. Two ways out, neither tried: keep the Model and give it a new geometry
+(the spike measured that a GEOMETRY does not survive its Model; the reverse was not measured),
+or scale a grown plant instead of rebuilding it.
 
 **What this closes and what it does not.** Criterion 10's leak half holds under its
-pre-registered gate, in the production view, on a hardware adapter and on WARP, over 20 and
-over 60 reloads, with its control firing and with dedicated GPU memory read for the first
-time. Open: the residual above; the one-time step of both memories at an early release. Not
-measured: a frozen exe; a CI runner (the workspace's render tier is not part of CI's render
-job).
+pre-registered gate, in the production view, presenting and with its frames withheld, on a
+hardware adapter and on WARP, over 20 and over 60 rebuilds, with its control firing and with
+dedicated GPU memory read for the first time. Open: the residual above; the one-time step of
+both memories with the first releases. Not measured: a frozen exe; a CI runner (the
+workspace's render tier is not part of CI's render job).
 
 ## ADR-049: Frost-Date Semantics - One Parser, 29 February Substituted as 1 March
 
@@ -4471,7 +4482,7 @@ Five facts shaped the design:
     ADR-053 addendum): the channel calls a guard that asks `sip.isdeleted` at every delivery. A
     scan of the product refuses a direct connect.
 15. **What a destroyed Model leaves behind is released.** Qt Quick 3D keeps per-draw-call
-    graphics state for every Model it ever drew, after the Model is destroyed — 0.1 to 0.35 MB
+    graphics state for every Model it ever drew, after the Model is destroyed — about 0.2 MB
     each on Direct3D 11 with the sun's shadow passes on, independent of the mesh — and only
     `QQuickWindow.releaseResources()` gives it back (`Quick3DHost.release_cached_resources()`,
     2 to 10 ms, the next frame unchanged). Every pass says how many items lost their Models
@@ -4483,23 +4494,25 @@ Five facts shaped the design:
     hours-of-sun map — which cancels a compute still running and drops its late result — and
     unchecks the toolbar's button, before the scene is cleared, on all three document paths
     (new, open, recovery load).
-17. **Uploads are paced by presented frames.** A window that presents no frame — the display
-    asleep, a session that does not present — keeps every byte uploaded to it until it
-    presents again (mesh buffers: ADR-048 addendum "L1.3"; ground textures: +16 MB per
-    re-bake, measured by the ground story). So `Scene3DController` is handed the host's
-    presented-frame counter, and after a pass REACHED THE ENGINE the next one is not applied
-    until the counter has moved past the value it had then. Until it has, a change sets the
-    dirty flags and nothing else — exactly as while 3D is hidden — so a view that presents
-    nothing holds at most ONE generation it has not shown, whatever happens to the plan. A
-    held pass looks for the frame after 8, 16, 32, 64, 128 and 256 ms (the last edit of a
-    burst must not wait for the next one) and then waits to be told: the workspace's health
-    poll calls `resume()`. No timer spins for a dark view. A pass that sent nothing starts no
-    wait — a still scene presents no frame, and it would wait for ever. `reset()` clears the
-    engine at once (that frees) and is paced for what it sends again. Without a counter
-    (`presented_frames=None`) nothing is paced: that is the recording sink of the GPU-less
-    tests, and every process that renders by readback and owns itself — the self-test, the
-    Beauty Board, the engine story's driver — which do not go through this controller at all
-    (`offscreen.render_records` applies once and reads back once).
+17. **Nothing takes a frame from the live view.** A readback of the shown host — `grab()`, and
+    `wait_ready()` / `pick()` / `project()`, which need a frame — renders a frame of its own
+    that is never presented, and what such a frame holds is given back only when a PRESENTED
+    frame ends. In a view that presents nothing (the display asleep, a session that does not
+    present) that is never: twenty rebuilds of the small bench plan with the view's frames
+    withheld grew by 1.5 MB per rebuild without a readback and by 8.5 MB with one readback
+    per rebuild — 26 without the release of decision 15 (ADR-048 addendum "L1.3"). So the
+    workspace's steady paths — the pass, the health poll, the timers, a resize, the splitter
+    — ask the host for none of them: the workspace tells the engine what the plan is, and
+    Qt draws it when it draws. A picture of the 3D view for a file or a thumbnail goes
+    through `quick3d/offscreen.py` (a host of its own, which gives everything back when it
+    closes), never through repeated readbacks of the shown host. A click that picks (L1.8)
+    is the user's own action, once. **The pipeline is NOT held back in a view that presents
+    nothing**: it applies as always, nothing is drawn, nothing is uploaded (dedicated GPU
+    memory did not move in those twenty rebuilds), and the first frame after the dark spell
+    shows the plan as it is. Pinned twice — a stand-in host that records every frame-taking
+    call through all the steady paths, and a scan of the five modules' source — and the
+    memory soak keeps the same rule: no readback inside its measured loop, one frame before
+    and one after.
 
 ### Alternatives considered (rejected)
 
@@ -4517,14 +4530,15 @@ Five facts shaped the design:
 - **Polling the scene on a timer.** A snapshot per tick is O(total vertices): 13 ms of the GUI
   thread per tick on the large plan, for nothing, also while idle.
 - **A timer of interval zero, or a high-priority event** — decision 6's table.
-- **Letting the held pass go from a frame signal of the host, or polling the counter at 60 Hz.**
-  The signal would be a fourth addition to a host whose contract is closed, for a delay that a
-  handful of timer shots bounds as well; a steady poll is a timer that spins for exactly the
-  view that shows nothing. Six shots at growing intervals, then the existing two-second health
-  poll.
-- **Pacing only the passes that upload.** Whether a pass uploads is known after the snapshot,
-  and the snapshot is what a dark view must not pay for per edit (13 ms on the large plan).
-  Every pass waits; a pass that turned out to send nothing leaves no mark.
+- **Pacing the pipeline by presented frames** ("no second pass before the view has presented
+  the first", so that a view that presents nothing is given one generation). Built (commit
+  `f02c5f6`), measured, and taken out again. It was aimed at "a view that presents nothing
+  keeps every byte uploaded to it", read from a soak that READ BACK once per rebuild — and
+  the growth belonged to the readbacks. Without them the same dark view, with no pacing at
+  all, grows by 1.5 MB per rebuild (the cost of replacing 98 QML Models, which a held pass
+  only postpones), and nothing is uploaded. What the rule added was a way to get stuck: a
+  pass that waits for a frame which nothing asks for. Decision 17 is what the measurement
+  supports.
 - **Keeping the start marker in the settings store.** The marker must be on disk before the
   engine is imported and must survive a process that dies without flushing anything; it is a
   fact about a process (it carries a pid), and it belongs where support looks — beside
@@ -4539,15 +4553,15 @@ Five facts shaped the design:
   to `destroyed` while Qt still owns the object, and Qt then calls what is left (§11.4.13).
 - **Releasing the engine's caches on every pass, on a timer, or never.** Every pass: 2 to 10 ms
   per edit plus a frame that rebuilds what was dropped. A timer: wake-ups while idle, and no
-  relation to what was destroyed. Never: 29 to 38 MB per rebuild of the small bench plan
-  (measured), and a date animation that keeps hundreds of megabytes per minute.
+  relation to what was destroyed. Never: 19 MB per rebuild of the small bench plan and 65 of
+  the large (measured), and a date animation that keeps hundreds of megabytes per minute.
 
 ### Consequences
 
 - **For L1.4 (looks, sky):** subscribe with `connect_qobject`; a look is applied through the host
   (`set_look`), never through the pipeline. Whatever animates `windTime` makes frames differ from
-  one another — the soak's "a release changes no pixel" check and the camera rule's readbacks
-  assume a still scene and must pin the wind clock to 0.
+  one another — the soak's "the frame after the loop is the frame before it" check and the
+  camera rule's readbacks assume a still scene and must pin the wind clock to 0.
 - **For L1.5 (ground bake):** `Scene3DController.set_ground_stage(stage)` is the seam; the stage
   runs on the GUI thread inside the pass and is contained when it raises (the bare rectangle is
   sent). A bake that replaces a texture per pass destroys no Model and so does not count as
@@ -4559,17 +4573,16 @@ Five facts shaped the design:
 - **The workspace needs three things of the host beyond the engine story's contract:**
   `Quick3DHost(prefer_software=…)`, `install_event_filter(watcher)` and
   `release_cached_resources()` (with the `cache_releases` counter).
-- **Every scripted run of the workspace presents frames, and says so.** Qt Quick 3D frees the
-  mesh buffers of a destroyed Model at the end of a PRESENTED frame, `grabWindow()` never emits
-  that signal (0 of 40), and with the display asleep Windows presents one frame and no more.
-  Since decision 17 the pipeline itself waits for presented frames, so a scenario on a machine
-  whose display sleeps would stop after its first edit: the gate's children run with Qt's
-  `QT_D3D_NO_VBLANK_THREAD=1` by default (update requests by timer;
-  `run_gate(timer_paced=True)`), and the soak asserts that frames were presented. The same
-  soak with frames WITHHELD on purpose is its own scenario (`dark`).
-- **In a drag the 3D view follows at the rate the view presents**, not at the mouse's: one
-  generation per presented frame. A pass that had to wait is applied 8 to 16 ms after its
-  frame; not measured as a number of its own.
+- **How the workspace is measured follows from decision 17.** A readback is the measuring
+  device of the latency and picture scenarios (edit → finished readback; the camera rule;
+  WebEngine beside 3D) and costs memory of its own, so the memory soak takes none inside its
+  measured loop — one frame before and one after, which must be equal — and is judged
+  twice: with the view presenting and with its frames withheld (`frames="withheld"`: the
+  engine story's no-paint filter on the view). The gate's children run with Qt's
+  `QT_D3D_NO_VBLANK_THREAD=1` by default (`run_gate(timer_paced=True)`): on Windows update
+  requests come from a display-vblank thread, with the display asleep a visible window
+  presents its first frame and no more, and no scenario may depend on whether the dev box's
+  display is awake.
 - **The ground bake (L1.5) plugs in at two places and is not wired here.** Where the pass hands
   a ground to the engine: `Scene3DController.__init__` builds `SceneSync(sink, registry)` — the
   bake's `ground_baker=` goes there — and `_pass_records` passes `ground=` from `_ground()`
@@ -4577,22 +4590,28 @@ Five facts shaped the design:
   `problems_dialog.problems_of(skipped, failures)` and `Scene3DController._set_problems` /
   `problem_count` are the one path from "something is missing in 3D" to the count in the
   strip — `GroundBaker.capped`, `.failures` and `sync.ground_failure` become a third source
-  there, with their own reason codes in `View3DProblemsDialog.reason_text`.
+  there, with their own reason codes in `View3DProblemsDialog.reason_text`. **The pass is
+  re-runnable while a bake has work left**: `mark_dirty()` — also from inside the stage, or
+  from a slot on `applied` — asks for another pass in the next turn of the event loop
+  (pinned with a ground made in four slices), at the price of one snapshot per pass (3.6 ms
+  on the small bench plan, 15 on the large). Nothing here builds on one pass painting the
+  whole ground; the "Building the 3D view…" notice, though, goes with the FIRST pass.
 - **Known limits, stated.** The Keyboard Shortcuts dialog does not list Alt+1 / 2 / 3 while the
   workspace is behind its switch (L1.9). Edit latency is measured to a finished READBACK; the
   time to photons is not measured. The real map picker (it needs the network and a key) is on
   the manual checklist; the automated check uses its engine on a local page. A change of the
   device pixel ratio in mid-session, and OS display scaling, are unmeasured (manual checklist).
-  With the release in place, dedicated GPU memory makes ONE step of about 79 MB at an early
-  release (299 → 378 MB) and is flat after; committed memory steps with it once, by about 110
-  MB (ADR-048 addendum "L1.3"). The workspace's render tier is not part of CI's render job: it
-  was measured on the dev box only (GPU, and the soak on WARP).
-- **A residual remains: about 20 kB per destroyed Model** (2 MB per rebuild of the small bench
-  plan, linear over 60 reloads). Its floor is Qt's own cost of creating and destroying a QML
-  object (3.4 kB for a bare `Model` with a material, measured without product code); the rest is
-  not located. It is inside the gate and small for editing; it is NOT small for a story that
-  replaces many Models per tick (date playback) — ADR-048 addendum "L1.3" has the numbers and
-  two ways out.
+  With the release in place, dedicated GPU memory rises once, by about 90 MB over the first
+  releases (289 → 378 MB), and is flat after; committed memory rises with it once, by about
+  100 MB (ADR-048 addendum "L1.3"). The workspace's render tier is not part of CI's render
+  job: it was measured on the dev box only (GPU, and the soak on WARP by hand).
+- **A residual remains: 15 to 20 kB per destroyed Model** (2 MB per rebuild of the small bench
+  plan, 6.4 of the large, linear over 60 rebuilds). It is not graphics state — the same
+  rebuilds in a view that draws nothing leave 1.5 MB each — and its floor is Qt's own cost of
+  creating and destroying a QML object (3.4 kB for a bare `Model` with a material, measured
+  without product code); the rest is not located. It is inside the gate and small for
+  editing; it is NOT small for a story that replaces many Models per tick (date playback) —
+  ADR-048 addendum "L1.3" has the numbers and two ways out.
 - The builder-failure record of `core/scene3d/sync.py` and the record layer's `record_failed`
   record still attach the exception at ERROR (they are the scene contract's, and pinned by its
   tests): decision 13's "one line" holds for this story's five modules.
@@ -4608,19 +4627,20 @@ Default tier (no GPU; the engine replaced at the seam):
   root), `tests/unit/test_plain_text.py` (71), `tests/unit/test_view3d_workspace_i18n.py` (40),
   `tests/unit/test_view3d_workspace_packaging.py` (4).
 - `tests/ui/test_view3d_orbit_input.py` (21), `tests/ui/test_view3d_host_seams.py` (7).
-- `tests/integration/test_view3d_sync_controller.py` (47) — through the real `scene.changed`,
+- `tests/integration/test_view3d_sync_controller.py` (39) — through the real `scene.changed`,
   `stack_changed` and clock channels: **G4** (28 hidden edits: 0 snapshots, 0 sink calls; one
   catch-up pass equal to a from-scratch apply), **G9** (time → light only; date → the dated
-  plants and nothing else; a destroyed subscriber is never called), and the pacing: 1,000
-  edits while the presented-frame counter stands still are ONE pass, then one catch-up pass
-  equal to a from-scratch apply; a pass that sent nothing waits for no frame; a held pass
-  runs by itself soon after the frame; a view that stays dark stops being asked.
+  plants and nothing else; a destroyed subscriber is never called), the ground seam (the
+  stage sees both snapshots; a stage that raises is contained; a ground made in four slices
+  asks for its next pass from inside the pass and then stops asking).
 - `tests/integration/test_view3d_workspace_widget.py` (44) — modes, the kept host, **G3** (the
   pose compared exactly around each of 100 edits of every kind, a date and a time change; a
-  document change frames once; and the catch-up pass after a dark spell does not touch the
-  camera), **G6** (the marker and its notices), the notice painted before the first snapshot,
-  the release thresholds, hostile names. The stand-in engine PRESENTS — a turn of the event
-  loop after each committed transaction, as a visible view does.
+  document change frames once), **G6** (the marker and its notices), the notice painted
+  before the first snapshot, the release thresholds, hostile names — and decision 17: a
+  stand-in host that records `grab` / `wait_ready` / `pick` / `project` sees none of them
+  through passes, polls, the camera's timer, a resize, the splitter, a release, mode
+  switches and a document change; a scan finds no such call in the five modules (and finds
+  one in the offscreen driver, its control).
 - `tests/integration/test_view3d_workspace.py` (22) — the §8.10 workflow through a real
   `GardenPlannerApp`; **G1** in two fresh processes (without the switch: no engine import and
   the canvas view's pixels identical to the build with it in Plan mode); **G10** (#428).
@@ -4639,21 +4659,26 @@ own `main()` in a child, on Direct3D 11 (RTX 4070), 2026-10-12:
 | G5 never / visible / hidden | exit 0, 0 Qt warnings, no ERROR in `app.log`, nothing of Qt Quick imported before 3D is asked for | — |
 | G5 in the frozen build (`installer/workspace_gate.spec`: the product recipe plus the gate's runtime hook; PyInstaller 6.18, Python 3.12) | the same three: exit 0, 0 Qt warnings, 98 parts drawn on the GPU; every store the exe built is the throw-away one. The product exe from the same tree: the 8-second smoke stays up, `--selftest` exit 0 in 4.2 s | — |
 | G6 twin: died → next start → try hardware → next start | compatibility mode on "Microsoft Basic Render Driver" by Qt's own log, then "NVIDIA GeForce RTX 4070" again | — |
-| G7 soak, 20 reloads, rebuild on | **4.90 MB / reload** (reloads 11–20), 20 releases, the frame unchanged in 20 of 20 | < 10 |
-| G7 rebuild off / positive control (+25 MB per reload) / release out of reach | 0.07 / 28.0 (fails, as it must) / 29.0 | < 10 / ≥ 10 / reported |
-| G7 dedicated GPU memory (DXGI, this process) | 298.5 MB before; ONE step, 299 → 378 MB, at the tenth reload; 372–378 after (slope −0.11 MB / reload) | < 10 |
-| G7 elsewhere, with the release (one run each) | the large plan (421 parts): 5.07 MB / reload; WARP: 7.42 (27.1 without the release) | < 10 |
-| G7 over 60 reloads; and with the release inside every pass (20 reloads) | 1.78 MB / reload over reloads 31–60 (60 releases, the frame unchanged in 60 of 60); 2.12 | < 10 |
-| G7 with frames WITHHELD (the view's paint events eaten; 0 frames presented), 20 rebuilds | 98 uploads — one generation —, 19 of 20 rebuilds waited, 0.51 MB / reload, growth −43 MB; the view presents again → 98 parts, the same frame. Without the pacing: 1,960 uploads, +279 MB (8.54 MB / reload) | < 10; one generation |
+| G7 soak, 20 rebuilds, the view PRESENTING, no readback inside the measured loop | **2.00 MB / rebuild** (rebuilds 11–20), growth +125 MB, 20 releases, the frame after the loop equal to the frame before it | < 10 |
+| G7 the same with the view's frames WITHHELD (paint events eaten; 0 frames presented) | **1.48 MB / rebuild**, growth +34 MB, 20 releases; dedicated GPU memory did not move; the view presents again → the same frame | < 10 |
+| G7 rebuild off / positive control (+25 MB per rebuild) / release out of reach | 0.01 / 27.3 (fails, as it must) / 19.3 (1.54 with frames withheld) | < 10 / ≥ 10 / reported |
+| G7 dedicated GPU memory (DXGI, this process), presenting | 289 → 346 → 362 → 378 MB over the first releases, then flat (slope 0.0) | < 10 |
+| G7 elsewhere, with the release (one run each, by hand) | the large plan (421 parts): 6.38 MB / rebuild (65.5 without the release); WARP: 3.32 (20.1 without), 1.23 with frames withheld | < 10 |
+| G7 over 60 rebuilds (by hand); and with the release inside every pass (20 rebuilds) | 1.78 MB / rebuild over rebuilds 31–60 (60 releases, the frame after equal to the frame before); 1.82 | < 10 |
+| What a readback per rebuild adds — why decision 17 (reported, never judged) | frames withheld: 8.48 MB / rebuild with the release, 26.0 without (WARP: 6.20 with); presenting: 3.85 and 16.4 | — |
 | G8 a Qt WebEngine page before and after the 3D host exists | painted both times (`#1e90ff` at its centre); 131 distinct colours in the 3D frame beside it | — |
 | G11 pan step, Split against Plan at the same canvas size (874 × 967) | 1.04 (the fastest tenth: 1.05) | ≤ 1.3 |
 
 Hand mutation (one text mutant at a time, the tests that should notice run, the tree restored;
-a scratch tool, point-in-time, not a gate): on the final code **126 of 126 killed** in 17 sets —
-controller 14, workspace 19, plain text in the dialog 3 and in the workspace 5, the plain-text
-helper 14, log lines 5 + 2 + 2, the application's wiring 11, the switch 2, retired counts and
-plan memories 11, the release 9, the notice 7, the host seam 3, workspace paths that moved 6,
-the pacing 11 and its wiring in the workspace 2. Two findings of the tool itself are worth
+a scratch tool, point-in-time, not a gate): on the final code **every mutant killed** in 18
+sets — controller 14, workspace 19, plain text in the dialog 3 and in the workspace 5, the
+plain-text helper 14, log lines 5 + 2 + 2, the application's wiring 11, the switch 2, retired
+counts and plan memories 11, the release 9, the notice 7, the host seam 3, workspace paths
+that moved 6, a pass asked for from inside the pass 1 (114 mutants), and six mutants that ADD
+a frame-taking call to a steady path — a readback in the health poll, a `wait_ready()` there,
+a readback after every pass, a `project()` per camera step, a readback after a release, a
+`pick()` on a moved splitter — each killed by the recording stand-in host ALONE and by the
+source scan ALONE. Two findings of the tool itself are worth
 keeping: every mutant of `application.py` was once "killed" by the same unrelated test, which
 was failing on the unmutated tree (a mutation verdict is only worth something on a green
 tree — run the story's tests first); and one set listed too few test files and reported a

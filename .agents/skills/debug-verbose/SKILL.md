@@ -2299,11 +2299,25 @@ over reloads 31–60 of a 60-reload run), the control 28, the same soak with the
 reach 29. What is left — about 20 kB per destroyed Model — has a floor in bare Qt: 3.4 kB per
 `Model` with a material created and destroyed without ever being drawn.
 
+**Postscript — the instrument was still in the picture.** Every number of that "After" came
+from a soak that READ BACK once or twice per reload, and so did the next finding built on it
+("a view that presents nothing keeps every byte uploaded to it", and a rule that paced the
+pipeline by presented frames). A reviewer of another story took the readback out of the loop:
+flat. Here, the same twenty rebuilds without a readback in the loop: 2.0 MB per rebuild
+presenting and 1.5 with the view's frames withheld (19 and 1.5 without the release); with one
+readback per rebuild and frames withheld 8.5 (26 without the release). The cached state per
+drawn Model was real — the bare-host rows took no readback — but the dark-view growth was
+the readback's own frame, never presented and so never given back. The pacing was removed;
+the rule that stayed is "nothing takes a frame from the live view, and a soak takes none
+inside its loop".
+
 **Lesson**: **shrink it until one run takes seconds, then change one thing per run** — the
 whole table above cost less than the first three theories. **Scale the suspect**: three vertex
 counts said "not the mesh" in thirty seconds. **A cause must explain the product, not only the
 probe**: theory 3 was real and was not it. **Know what your instrument does to the thing it
-measures** — a readback is not a frame the way the product makes frames. And when a fix lands,
+measures** — a readback is not a frame the way the product makes frames; list every frame the
+measuring loop itself renders and run the loop once without them BEFORE a rule is built on
+the curve. And when a fix lands,
 keep three numbers from one instrument: with it, without it, and a control that must fail.
 
 ## Case study: an access violation in a test that had nothing to do with the change — a Python callable on `destroyed`, and the garbage collector (Phase 17 L1.3, fixed 2026-10-12)

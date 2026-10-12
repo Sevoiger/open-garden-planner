@@ -1327,19 +1327,24 @@ thread once the main window exists.
   `controller.applied` — not `frameSwapped`, and not after `processEvents()` (which adds the
   rest of the 2D side's turn to the 3D number). State the window and pane size with the number:
   a readback grows with the pane's pixels.
-- **Every scripted run presents frames; the soak also runs without.** Qt frees a destroyed
-  Model's buffers at the end of a presented frame; a readback is not one; with the display
-  asleep Windows presents none — and the pipeline waits for presented frames, so a scenario
-  on a sleeping display would stop after its first edit. `run_gate` therefore sets Qt's
-  `QT_D3D_NO_VBLANK_THREAD=1` by default (update requests by timer); the soak reports how
-  many frames each reload presented and the test asserts at least one. The opposite is a
-  scenario of its own (`dark`): the engine story's no-paint filter on the view, twenty
-  rebuilds, and the assertion that ONE generation was uploaded.
-- **A stand-in view presents.** The GPU-less tests' sink "presents" a frame one turn of the
-  event loop after each committed transaction (`ShownSink` in
-  `test_view3d_workspace_widget.py`), as a visible view does; a test about a view that has
-  not presented yet, or presents nothing, says so (`presenting = False`). A fake that never
-  presents would hold every pass after the first.
+- **A memory soak takes no frame inside its measured loop.** A readback renders a frame of its
+  own that is never presented, and what it holds stays until a presented frame ends: a soak
+  that reads back every cycle measures the readback (twenty rebuilds with the view's frames
+  withheld: 1.5 MB per rebuild without a readback, 8.5 with one per rebuild). ONE frame
+  before the loop and ONE after it prove the picture; in between the scenario waits on
+  `health().frames_presented`, never on a grab. The readback stays the measuring device of
+  the LATENCY and PICTURE scenarios, where it is what is being timed or looked at.
+- **The soak is judged twice: presenting, and with frames withheld.** Qt frees a destroyed
+  Model's buffers at the end of a presented frame, and with the display asleep Windows
+  presents none — so `run_gate` sets Qt's `QT_D3D_NO_VBLANK_THREAD=1` by default (update
+  requests by timer: no scenario may depend on whether the dev box's display is awake), the
+  soak reports how many frames each rebuild presented, and the test asserts at least one.
+  The second slope takes the frames away on purpose (`frames="withheld"`: the engine
+  story's no-paint filter on the view) and asserts that none was presented.
+- **A stand-in host records what must not be called.** The GPU-less tests' host has `grab`,
+  `wait_ready`, `pick` and `project` — each only appends its name to a list — so "the
+  workspace takes no frame from the live view" is an assertion on that list after every
+  steady path ran, beside a scan of the source that would also see a call no test reaches.
 - **A slope gate needs its control and its "off" run.** The soak runs with the fix, with 25 MB
   kept per reload (must FAIL) and with the fix out of reach (reported): three numbers from one
   instrument on one machine.
@@ -4311,12 +4316,14 @@ instant_changed ─► sun flag (light only: no snapshot)         ─► SceneSy
 - **A pass owed to a shown pane waits for its notice.** "Building the 3D view…" is set and the
   pass starts after that label PAINTED (an event filter on the label; 250 ms fallback): a first
   pass costs the sum of its items, with the GUI thread inside it.
-- **Uploads are paced by presented frames.** After a pass reached the engine, the next one
-  waits until the view has presented a frame (`presented_frames`, the host's counter); until
-  then a change is a flag, as while hidden. A view that presents nothing — the display asleep
-  — is therefore given ONE generation it has not shown, however the plan changes. A held pass
-  looks for the frame a few times at growing intervals and is then let go by the health poll
-  (`controller.resume()`); a pass that sent nothing starts no wait.
+- **Nothing takes a frame from the live view.** The workspace tells the engine what the plan
+  is; Qt draws it when it draws. No steady path — the pass, the health poll, a timer, a
+  resize, the splitter — calls `grab()`, `wait_ready()`, `pick()` or `project()` on the shown
+  host: a readback renders a frame that is never presented, and what it holds comes back only
+  when a presented frame ends (in a view that presents nothing, never — ADR-057 decision 17).
+  A picture of the 3D view for a file goes through `quick3d/offscreen.py`. A view that
+  presents nothing is NOT held back: the pass applies, nothing is drawn or uploaded, and the
+  first frame after the dark spell shows the plan as it is.
 - **A document change is a plain apply**, not a reset; it drops what 3D remembers of the old plan
   (`_drop_plan_memories`: the plant builder's shapes, the record layer's outlines) and frames the
   camera once, when the new document is in the engine (`document_shown`).
@@ -4361,8 +4368,10 @@ outline) must count them the same way, or measure that they leave nothing.
   depth_cm) -> GroundSpec`, run before `apply` inside the pass (if it raises, the bare
   rectangle is sent and one line is logged). What the bake could not paint joins the
   problems list where the other two sources meet: `problems_dialog.problems_of` and
-  `Scene3DController._set_problems`. A bake uploads: it is paced like every pass, and needs
-  no pacing of its own.
+  `Scene3DController._set_problems`. A bake that stops at a time budget asks for its next
+  slice with `controller.mark_dirty()` (from inside the stage or from a slot on `applied`):
+  the pass is re-runnable, one snapshot per run, and nothing assumes that one pass paints
+  the whole ground.
 - *A look, a sky* (L1.4): through the host; not through the pipeline.
 - *A click in 3D* (L1.8): `try: host.pick(x, y) except HostStateError` in the input filter. The
   workspace calls `wait_ready()` nowhere and must not start to.

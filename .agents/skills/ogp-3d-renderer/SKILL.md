@@ -732,27 +732,35 @@ test patterns: docs §8.10.7. What the ENGINE taught once it ran inside the real
   (`src/open_garden_planner/ui/view3d/workspace.py`). **Anything new that creates and destroys
   engine objects per edit or per tick — a ground texture per bake, a selection outline, plants
   regrown by an animated date — must be counted the same way, or measured to leave nothing.**
-  20 rebuilds of `bench_small` in the production host: 29 to 38 MB per rebuild without the
-  release, 3.9 to 4.9 with it; on WARP 27.1 and 7.4; over 60 rebuilds 1.8 (reloads 31–60).
-- **Creating and destroying a Model is never free.** After the release about 20 kB per
-  destroyed Model remain (2 MB per rebuild of 98 Models, linear over 60). Bare Qt, no product
-  code, nothing drawn, `createObject()` then `destroy()`, the QML engine's collector called
-  every round: 0.78 kB per `QtObject`, 2.2 per `Model`, 3.4 per `Model` with a
-  `PrincipledMaterial` — straight lines over 120 rounds. So: do not design a feature around
-  replacing many Models per tick (a date played back regrows every dated plant). Untried
-  ways out: keep the Model and hand it a new geometry; scale instead of rebuilding.
-- **What is uploaded comes back at the end of a PRESENTED frame — so a view that presents
-  nothing is given one generation.** A readback is not a presented frame: `grabWindow()`
-  emitted `afterFrameEnd` 0 times in 40 grabs. With the display asleep Windows presents one
-  frame and no more (§6), and whatever is uploaded then stays: mesh buffers (here), 16 MB per
-  re-baked ground texture (the ground story). The pipeline therefore applies no second pass
-  before the view presented the first (`Scene3DController(presented_frames=…)`, the workspace
-  hands it `host.health().frames_presented`); twenty rebuilds in a view whose paint events
-  were eaten: 98 uploads instead of 1,960, −43 MB instead of +279. **Anything that uploads
-  outside that controller must pace itself the same way.** And every scripted run must
-  PRESENT: `workspace_gate_support.run_gate` sets Qt's `QT_D3D_NO_VBLANK_THREAD=1` by default
-  (update requests by timer) — on a sleeping display a scenario would otherwise stop after
-  its first edit.
+  20 rebuilds of `bench_small` in the production host, the view presenting, no readback:
+  19 MB per rebuild without the release, 2.0 with it (the large plan 65 and 6.4; WARP 20 and
+  3.3; over 60 rebuilds 1.8).
+- **Creating and destroying a Model is never free.** After the release 15 to 20 kB per
+  destroyed Model remain (2 MB per rebuild of 98 Models, linear over 60) — and it is not
+  graphics state: the same rebuilds in a view that draws nothing leave 1.5 MB each. Bare Qt,
+  no product code, nothing drawn, `createObject()` then `destroy()`, the QML engine's
+  collector called every round: 0.78 kB per `QtObject`, 2.2 per `Model`, 3.4 per `Model`
+  with a `PrincipledMaterial` — straight lines over 120 rounds. So: do not design a feature
+  around replacing many Models per tick (a date played back regrows every dated plant).
+  Untried ways out: keep the Model and hand it a new geometry; scale instead of rebuilding.
+- **Never take a frame from a live, shown host by yourself — a readback is a frame that is
+  never presented.** `grab()` (and `wait_ready()`, `pick()`, `project()`, which need a frame)
+  renders a frame of its own: `grabWindow()` emitted `afterFrameEnd` 0 times in 40 grabs.
+  What that frame holds comes back when a PRESENTED frame ends — and with the display asleep
+  Windows presents one frame and no more (§6). Twenty rebuilds with the view's frames
+  withheld: 1.5 MB per rebuild without a readback (nothing is drawn, dedicated GPU memory
+  does not move), 8.5 with one readback per rebuild, 26 without the release; on WARP 1.2 and
+  6.2. So no steady path of the workspace — the pass, the health poll, a timer, a resize,
+  the splitter — calls any of the four (a recording stand-in host and a source scan pin it);
+  a picture for a file goes through `quick3d/offscreen.py`; a click that picks is a user's
+  action, once. **The pipeline is NOT paced or held for a view that presents nothing** — that
+  was built and taken out again: it fixed nothing and added a way to get stuck.
+- **A memory soak takes no frame inside its measured loop.** One before, one after (they must
+  be equal), and in between it waits on `health().frames_presented`. A soak that reads back
+  every cycle measures the readback — this one did, twice, and a wrong rule was built on
+  it. Judge it presenting AND with frames withheld (`scenario_soak(frames="withheld")`), and
+  let the children present by timer (`run_gate` sets `QT_D3D_NO_VBLANK_THREAD=1` by default)
+  so that no scenario depends on whether the box's display is awake.
 - **Software rendering is chosen per window, not per process.**
   `QSG_RHI_PREFER_SOFTWARE_RENDERER=1` is read ONCE: set before the first Qt Quick window it
   selects WARP, set after it does nothing. `QQuickGraphicsConfiguration.setPreferSoftwareDevice(True)`
@@ -783,7 +791,8 @@ test patterns: docs §8.10.7. What the ENGINE taught once it ran inside the real
 - **Dedicated GPU memory can be read without a counter.** `IDXGIAdapter3::QueryVideoMemoryInfo`
   through `ctypes` — `tests/integration/workspace_gate_measure.py`, `gpu_dedicated_mb()` — gives
   the calling process's usage on the adapter's local segment. With the release in place it
-  makes ONE step of about 79 MB at an early release and is flat after.
+  rises ONCE, by about 90 MB over the first releases (289 → 378 MB), and is flat after; in a
+  view that presents nothing it does not move at all.
 
 Running the workspace's tiers:
 
@@ -804,8 +813,8 @@ Recent Files and a clean close the window geometry, into the user's own settings
 (`tests/integration/workspace_gate_hook.py`) moves the store first and ends the process (exit
 code 97) before a store under any other organisation exists.
 
-**Not measured (L1.3):** where the 20 kB per destroyed Model go beyond Qt's own floor; why
-dedicated GPU memory and committed memory step up ONCE at an early release; the soak in a frozen
+**Not measured (L1.3):** where the 15 to 20 kB per destroyed Model go beyond Qt's own floor; why
+dedicated GPU memory and committed memory step up ONCE with the first releases; the soak in a frozen
 exe or on a CI runner (the workspace's render tier is not in CI's render job); time to photons
 (edit latency ends at a finished readback); a change of the device pixel ratio in mid-session
 and OS display scaling (manual checklist); the real map picker beside the 3D view (the
