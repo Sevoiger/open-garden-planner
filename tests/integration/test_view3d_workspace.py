@@ -99,9 +99,10 @@ def _quiet_boxes(monkeypatch: pytest.MonkeyPatch) -> None:
                         lambda *_a, **_k: QMessageBox.StandardButton.Ok)
 
 
-@pytest.fixture()
-def app3d(qtbot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[GardenPlannerApp, Engines]:
-    """The main window with the workspace switched on and the engine replaced."""
+def build_app3d(qtbot: Any, monkeypatch: pytest.MonkeyPatch,
+                tmp_path: Path) -> tuple[GardenPlannerApp, Engines]:
+    """The main window with the workspace switched on and the engine replaced — what
+    the ``app3d`` fixture of this module (and of ``test_view3d_plan_revision.py``) is."""
     monkeypatch.setenv(SWITCH, "1")
     _quiet_boxes(monkeypatch)
     window = GardenPlannerApp()
@@ -115,6 +116,12 @@ def app3d(qtbot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Garde
     qtbot.waitExposed(window)
     window.canvas_view.set_snap_enabled(False)
     return window, engines
+
+
+@pytest.fixture()
+def app3d(qtbot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[GardenPlannerApp, Engines]:
+    """The main window with the workspace switched on and the engine replaced."""
+    return build_app3d(qtbot, monkeypatch, tmp_path)
 
 
 def _calls(engines: Engines, qtbot: Any, ms: int = 80) -> list[tuple[str, str | None]]:
@@ -497,7 +504,8 @@ def test_a_plan_with_a_refused_item_shows_the_indicator_and_fixing_it_clears_it(
     dialog.activate_row(0)
     assert traced.isSelected()
 
-    traced.setPolygon(QPolygonF(_ring(40)))      # the user simplifies the outline
+    traced.setPolygon(QPolygonF(_ring(40)))      # the user simplifies the outline …
+    scene.note_plan_changed()                    # … and a writer round the undo stack says so
     qtbot.wait(120)
     assert workspace.problems_text() == "" and dialog.row_count() == 0
     assert str(traced.item_id) in engines.sink.item_ids()

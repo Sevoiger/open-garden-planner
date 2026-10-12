@@ -293,7 +293,6 @@ class Workspace(QWidget):
         self._scene: QGraphicsScene | None = None
         self._clock: SimClock | None = None
         self._location: LocationProvider = lambda: None
-        self._command_manager: Any = None
         self._ui_state: Any = None
         self._pane: _Pane3D | None = None
         self._host: EngineHost | None = None
@@ -341,17 +340,23 @@ class Workspace(QWidget):
     # ── wiring ───────────────────────────────────────────────────────────────
 
     def connect_plan(self, scene: QGraphicsScene, clock: SimClock, location: LocationProvider,
-                     command_manager: Any, ui_state: Any = None) -> None:
+                     command_manager: Any = None, ui_state: Any = None) -> None:
         """What the 3D pipeline reads: the canvas scene, the one sim clock, the garden
-        location, the undo stack (its ``stack_changed`` marks the plan dirty) and,
-        optionally, the store the Split position is kept in.
+        location and, optionally, the store the Split position is kept in.
+
+        ``command_manager`` is no longer read: the scene announces every change of
+        its plan itself — the undo stack's among them (``CanvasScene.plan_changed``,
+        ADR-065 decision 5) — and the pipeline listens to the scene. The parameter
+        keeps its place so that a caller written against the first delivery still
+        hands ``ui_state`` to ``ui_state``.
 
         "The document was replaced" has ONE source in the app:
         ``CanvasScene.document_replaced`` (new, open, recovery load — emitted when
         the old document is about to go, and never for an open that FAILED its
         validation). The workspace listens to it here; nobody tells it by hand."""
+        del command_manager
         self._scene, self._clock, self._location = scene, clock, location
-        self._command_manager, self._ui_state = command_manager, ui_state
+        self._ui_state = ui_state
         replaced = getattr(scene, "document_replaced", None)  # a CanvasScene has it
         if replaced is not None:
             replaced.connect(self.document_changed)
@@ -614,8 +619,6 @@ class Workspace(QWidget):
         self._host, self._controller, self._input = host, controller, orbit
         orbit.moved.connect(self._start_camera)
         orbit.reset_requested.connect(self.reset_view)
-        if self._command_manager is not None:
-            self._command_manager.stack_changed.connect(controller.mark_dirty)
         controller.applied.connect(self._on_applied)
         controller.problems_changed.connect(self._update_problems)
         controller.document_shown.connect(self._on_document_shown)
@@ -975,11 +978,6 @@ class Workspace(QWidget):
         controller, self._controller = self._controller, None
         if controller is not None:
             controller.shutdown()
-            if self._command_manager is not None:
-                try:
-                    self._command_manager.stack_changed.disconnect(controller.mark_dirty)
-                except (RuntimeError, TypeError):
-                    _LOG.debug("3D workspace: the undo stack was already disconnected")
             controller.deleteLater()
         host, self._host = self._host, None
         orbit, self._input = self._input, None
