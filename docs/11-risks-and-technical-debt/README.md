@@ -1337,10 +1337,12 @@ a container with the CI job's packages.
   it can simply look at. Each round had added a fact to the state (three, then nine, then
   ten), and each new fact was a new way to be wrong about the one thing that matters: is
   the frame right? *Fix:* the frame answers that. `grab()`, `pick()`, `project()` and
-  `wait_ready()` take a frame and compare its size with the window's, to the device pixel;
+  `wait_ready()` take a frame and compare its size with the window's, to the device pixel
+  (*round 5:* "less than one pixel off" — not exact at 125 %; the entry below);
   another size is a refusal, never an answer, and nothing is remembered about it. The
-  state is what Qt reports when asked, no more. `wait_ready()` is bounded by its timeout
-  INCLUDING the delivery of events (a zero timeout runs none), defaults to 1 s, and says
+  state is what Qt reports when asked, no more. `wait_ready()` starts no delivery of events
+  once its timeout is up (a zero timeout runs none; *round 5:* "bounded by its timeout" was
+  more than a nested event loop can promise — below), defaults to 1 s, and says
   False 0.5 s after the last sign of progress whatever the timeout — for every cause at
   once: no screen, no display, no painting. *Two things found on the way:* a pick right
   after a resize, with no frame in between, MISSES (the engine picks with the viewport of
@@ -1477,6 +1479,55 @@ a container with the CI job's packages.
   refused) with a live supervisor that would have ended it at the deadline. Pinned by
   `test_a_supervisor_that_never_supervised_says_so_in_its_exit_code` and
   `test_a_watchdog_that_cannot_be_armed_leaves_nothing_armed_and_no_supervisor`.
+  *Round 5, the same lesson twice more:* a supervisor whose own wait FAILED also said 0 —
+  the code read "not a timeout" as "released" — and `Armed.supervised` was True beside a
+  gap that said the supervisor had not left. Only the two answers that mean "the process
+  ended" and "released" are 0 now, and the two properties are one statement. Pinned by
+  `test_a_supervisor_whose_wait_fails_says_so_and_terminates_nothing` and
+  `test_what_a_block_says_about_its_supervisor`.
+- **(Round 5) A judge that repeats the suspect's rule is blind exactly where the suspect is
+  wrong — and "exact" needs a definition.** *Symptom:* none in any tier, on three platforms,
+  on CI. Found by a reviewer who set `QT_SCALE_FACTOR=1.25`: a pane made one logical pixel
+  wider, 442 → 443, with the render target behind, and `grab()` handed out the old frame —
+  553 px — for the new pane, whose own frame is 554 px; `pick()` answered with the old
+  viewport. *Wrong theory (round 4's own words):* "the size check is exact to the device
+  pixel". It was "less than one pixel off `logical × ratio`", which IS exact when the ratio
+  is 1, 1.5 or 2 — the three the tests had. *Measured:* Qt sizes a render target as
+  `QSize(logical) * ratio`, `qRound` per side, so the right frame is at most HALF a pixel
+  off; at 1.25 a 442 px pane has 552.5 → 553 px, and 553 is 0.75 off 553.75. 750 of 11,993
+  neighbour frames passed at 1.25; every ratio strictly between 1 and 1.5 had some. *Why no
+  test saw it:* the matrix's judge decided "a frame of the window's size" with the same
+  inequality as the host. Round 1's judge had asked the host for its STATE and was blind to
+  a wrong state; this one asked nothing — and had copied the rule. *Fix:* the host: at most
+  half a device pixel off. The judge: what Qt makes for the window, computed by itself
+  (`qt_round`), and equal to it. The arithmetic for every width from 2 to 3000 at twelve
+  ratios, against `QSize * ratio` asked of Qt, in the default tier; one real-window row at
+  125 % whose raw grab first proves that the render target is behind. *Lesson:* an oracle
+  must be derived independently of what it judges — from the platform's definition, not from
+  the implementation's tolerance; and when a claim says "exact", write down the rounding it
+  is exact against, then test where rounding bites (between the round ratios), not where it
+  cannot. Pinned by `test_the_size_check_is_qts_own_rounding_at_every_ratio`,
+  `test_at_125_percent_a_pane_one_pixel_wider_does_not_get_its_old_frame` and
+  `test_the_judge_knows_a_wrong_frame_when_it_sees_one`.
+- **(Round 5) Three statements about time, each one measurement short.** (1) *"`wait_ready(t)`
+  returns within `t`, plus the one handler that is running."* One pass of Qt's event loop
+  delivers the whole queue: 0.2 s asked, 1.80 s taken behind six handlers of 0.3 s. Not
+  fixable from the thread those handlers run on — so the contract states that bound, and
+  states what the call is: a nested event loop that takes user input, which the workspace
+  needs nowhere on the GUI thread. (2) *"False `STALL_S` after the last sign of progress"*
+  counted WALL time: a GUI thread busy for 0.7 s in another handler looked like 0.7 s of
+  silence, and the repaint queued right behind it was never looked at — False after 0.75 s,
+  True when asked again. Silence is counted pass by pass now; a pass that overran its step
+  was busy. (3) *"`pick()` and `project()` take a frame once per resize."* Once per CALL
+  while the render target was behind: 200 `project()` of one tick, 200 frames, all refused.
+  One per refusal now — renewed by a sign of progress, by other facts, or after 0.25 s — and
+  the caller's rule is written down: a tick stops at its first `HostStateError`. *Lesson:*
+  a bound that names "the one thing" was measured with one thing in the queue; measure the
+  claim under load (N queued handlers, N calls in a row, a busy thread) before writing it
+  into a contract. Pinned by `test_while_the_render_target_is_behind_a_tick_costs_one_frame`,
+  `test_a_busy_pass_of_the_event_loop_is_not_silence`,
+  `test_idle_passes_add_up_to_silence_whatever_a_busy_one_took` and
+  `test_the_bounds_of_wait_ready_are_stated_once`.
 - **(Round 2) Without a slot on `sceneGraphError`, a graphics device that cannot be created
   takes the whole app down.** Forced with `QT_D3D_ADAPTER_INDEX=9`. With a slot connected, Qt
   emits `(ContextNotAvailable, "Failed to initialize graphics backend for D3D11.")` and goes

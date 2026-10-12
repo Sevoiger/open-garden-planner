@@ -304,8 +304,12 @@ are §12, and rows it added to the tables below say "(L1.2)".
   So: no state fact that only an OS paint message can set (a host that waits for one waits
   for ever — CI was red on a 1024 px runner for exactly that), and no geometry test
   either ("is it on a screen?" does not say whether Qt draws). `grabWindow()` costs 0.7 to
-  4 ms; compare its size with the window's, EXACTLY (a two-pixel tolerance handed out a
-  447 px frame for a 448 px window). And a raw `pick()` right after a resize, with no frame
+  4 ms; compare its size with what QT makes for the window — `QSize(logical) * ratio`,
+  `qRound` per side, so the right frame is at most HALF a device pixel off `logical ×
+  ratio`. (Two pixels of tolerance handed out a 447 px frame for a 448 px window; "less
+  than one pixel" handed out the 553 px frame of a 442 px pane for a 443 px one at 125 % —
+  r5. 100 %, 150 % and 200 % are exact whatever the tolerance: test a ratio strictly
+  between 1 and 1.5.) And a raw `pick()` right after a resize, with no frame
   in between, MISSES — the engine picks with the viewport of the frame it rendered last;
   `mapFrom3DScene` is right. One frame, even of the old size, and the pick hits.
 - **`QEventLoop.exec()` returns −1 at once while the application is quitting (L1.2, review
@@ -521,10 +525,14 @@ triangles (`scripts/bench_view3d.py`).
 | `reset()` "succeeds" and the old Models are still drawn (L1.2 r2) | a QML function that threw returned `None`, taken for success | a Model leaves the books only when the engine confirms it; `None` is an `EngineError` |
 | A test run is killed minutes after a watchdog test passed (L1.2 r2) | a supervising process that found its release event already gone and waited on the process alone | a missing event means "released" |
 | An empty folder appears in the real `%APPDATA%` after a test (L1.2 r2) | the test set `APPDATA`; Qt's standard paths follow `USERPROFILE` | give the child a profile of its own; ask `writableLocation` before anything is created |
-| "The host is ready" — and the next grab is an image of the OLD size (L1.2 r3) | `showFullScreen()` delivers its resize inside the call; the swap chain is resized by the NEXT expose | the host takes a frame and compares its size with the window's, to the pixel — another size is a refusal; `wait_ready()` delivers pending events and proves "ready" with such a frame. (r3 waited for that expose instead: the next row) |
+| "The host is ready" — and the next grab is an image of the OLD size (L1.2 r3) | `showFullScreen()` delivers its resize inside the call; the swap chain is resized by the NEXT expose | the host takes a frame and compares its size with the window's, by Qt's own rounding (half a device pixel) — another size is a refusal; `wait_ready()` delivers pending events and proves "ready" with such a frame. (r3 waited for that expose instead: the next row) |
 | A shown pane never becomes ready, `wait_ready()` burns its whole timeout — on a small CI screen only (L1.2 r4) | a state fact that only an `Expose` could set; no expose reaches a pane that grows or is shown beyond the screen's edge | no fact an OS paint message must set: the frame is the witness. `wait_ready()` gives up 0.5 s after the last sign of progress, whatever its timeout |
 | `wait_ready(0)` takes a second (L1.2 r4) | a `processEvents()` pass outside the deadline; one Qt expose handler can take 1 s | the delivery of events is inside the timeout; a zero timeout runs none. What cannot be cut short is the ONE handler already running |
-| A pick right after a resize misses; the projection is right (L1.2 r4) | the engine picks with the viewport of the frame it rendered last | take a frame first — `host.pick()` / `host.project()` do, once per resize |
+| A pick right after a resize misses; the projection is right (L1.2 r4) | the engine picks with the viewport of the frame it rendered last | take a frame first — `host.pick()` / `host.project()` do when the host knows of none for the window's size: one after a resize, none in the steady state, ONE per refusal while the target stays behind (r5: it was one per call) |
+| A stale frame handed out at 125 % only; every tier green at 100 %, 150 %, 200 % (L1.2 r5) | the size check was "less than one pixel off"; Qt rounds a render target to `qRound(logical × ratio)` — and the tests' judge used the host's inequality | `abs(frame − logical × ratio) <= 0.5`; a ratio strictly between 1 and 1.5 in the tests; a judge that computes `qRound` itself and never imports the host's rule |
+| A tick that projects 200 labels takes 0.4 to 0.8 s and draws nothing (L1.2 r5) | `pick()` / `project()` took a probe frame per call while the render target was behind | one probe per refusal — renewed by a sign of progress, by other facts, or after 0.25 s; the caller's tick stops at its first `HostStateError` |
+| `wait_ready(5)` says False after 0.75 s, and True when asked again (L1.2 r5) | the stall bound counted wall time; the GUI thread was busy in another handler, the repaint queued behind it | count silence pass by pass: a pass of the event loop that overran its step was busy, not silent |
+| `wait_ready(0.2)` returns after 1.8 s (L1.2 r5) | one pass of Qt's event loop delivers the WHOLE queue (six handlers of 0.3 s), not one event | nothing to fix from that thread: it is a nested event loop that takes user input — the workspace calls it nowhere on the GUI thread |
 | A lifecycle matrix green on the dev box, red on the runner (L1.2 r4) | its windows were where the window system put them, sized for a large screen | place every window on purpose; cap sizes by `availableGeometry()`; run the walk once as on 1024 × 768; make "nothing draws the view" with an event filter instead of hoping for it |
 | `[selftest_supervisor] ok=True` although the supervisor left 1.5 s into the block (L1.2 r4) | exit code 0 meant both "released" and "found nothing to wait for" | 4 for a supervisor that never supervised; the block keeps its signalled event until the supervisor has left, so "late" is 0 and "lost" is 4 |
 | A healthy block is terminated a few seconds in, and ANOTHER block's log says why (L1.2 r3) | the supervisor's release event was named after the process: a finished block's late supervisor found the next block's event | a random nonce per block in the event's name; one armed watchdog per process |
@@ -548,14 +556,18 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   docstring of `src/open_garden_planner/ui/view3d/quick3d/lifecycle.py`. Read it THERE; it
   is deliberately written down nowhere else** (it stood in nine places once, this skill
   among them, and three were wrong; a test now fails a second copy of the state table). At
-  the keyboard: when you NEED a frame — the view was just opened, an export is about to
-  read it — `if not host.wait_ready(): …`, and act on the answer; never count event-loop
-  passes (§6). It is back within its timeout (1 s by default, event delivery included; the
-  first show of a process needs 0.7 to 1.7 s of it, so pass more where the first frame
-  matters) and says False 0.5 s after the last sign of progress. It RUNS THE EVENT LOOP:
-  never from a timer slot, a sync tick, a paint or a resize handler — and a click handler
-  just calls `host.pick(x, y)` in `try` / `except HostStateError`. `grab()`, `pick()` and
-  `project()` never pump; each answers for the window's current size or refuses. A
+  the keyboard: **the workspace needs `wait_ready()` nowhere on the GUI thread** — it is a
+  NESTED EVENT LOOP that takes user input. A click, a hover, a tick that draws just calls
+  `host.pick(x, y)` / `host.project(...)` in `try` / `except HostStateError`, and **a tick
+  stops at its first `HostStateError`** (while the render target is behind, the next call
+  gets the same refusal without another frame). Where a frame must be HAD and the caller
+  can wait — an export, a tool, a test — `if not host.wait_ready(): …`, and act on the
+  answer; never count event-loop passes (§6). It starts no pass once its timeout is up
+  (1 s by default) and returns within that plus whatever was queued on the event loop —
+  one pass delivers the whole queue — and the first show of a process takes 0.7 to 1.7 s;
+  it says False after 0.5 s of silence. Never from a timer slot, a sync tick, a paint or a
+  resize handler. `grab()`, `pick()` and `project()` never pump; each answers for the
+  window's current size or refuses. A
   refusal is a `HostStateError` whose text names what is missing and what to do. Under
   the software scene graph `host.renders_3d()` is False and `grab` / `pick` raise
   `EngineError`.
@@ -638,7 +650,7 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   a random nonce per block — and refuses anything else with exit code 2. Its exit code says
   what it did: 0 it held the block's release event (released, or it ended a hang), 4 it
   found no block to wait for and never supervised (review round 4: that used to be 0), 3
-  it failed itself. The log's `[watchdog] armed=True … supervisor=process <pid>` line says
+  it failed itself (round 5: also when its own wait fails — that was 0 too). The log's `[watchdog] armed=True … supervisor=process <pid>` line says
   it started, `[selftest_supervisor] ok=True` that it was released and left, a
   `[supervisor] fired=True` line that it had to act. On Windows the self-test FAILS without
   it (`FAIL self-test supervisor -> …`). There is no start timeout while the block runs;
@@ -656,8 +668,12 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   WARP; 92 passed and 8 skipped in 184 s in the container. After round 4 (104 tests: a
   second walk as on 1024 × 768, rows for the pane beyond the edge, a 2 × 60 px pane and a
   view that nothing draws): 103 passed and one control reported, not asserted, in 458 s on the GPU; 101 passed, the two hardware-only budgets skipped and the control reported, in 355 s on WARP; 96 passed and 8 skipped in 241 s
-  in the container.
-- **Not measured:** platforms that un-expose an occluded window (macOS, Wayland) — a visible,
+  in the container. After round 5 (105 tests: the 125 % row joined): 104 passed and one control reported, not asserted, in 411 s on the
+  GPU; 102 passed, the two hardware-only budgets skipped and the control reported, in 287 s on WARP; the lifecycle file on xcb in the container 41 passed, 4 skipped in 159 s.
+- **Not measured:** real display scaling of the operating system (the ratios between 1 and 3
+  were set with `QT_SCALE_FACTOR` on a 100 % screen); what the one frame `pick()` /
+  `project()` take after each resize costs with the display awake (asleep: about 1 s a
+  step on the GPU, 25 ms on WARP); platforms that un-expose an occluded window (macOS, Wayland) — a visible,
   covered host may read `starting` there (`wait_ready()` then says False after 0.5 s, as
   for every other cause); a change of the device pixel ratio in mid-session (L1.3's manual
   checklist: drag the window between two monitors); what GitHub's Windows runner does with

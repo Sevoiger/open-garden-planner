@@ -735,10 +735,24 @@ pixel, resize, maximise, full screen, minimise, hide and show the pane, the host
 window), each followed by a look at once, after `wait_ready()`, or after the event loop ran.
 Its judge knows only what QT said about the window at that look — its size, and how much of
 it is on a screen: the answer is the scene at that size or a refusal; `wait_ready()` True is
-followed by a frame; every `wait_ready(t)` is back within `t` (plus the one Qt handler that
-was running) and a False within half a second of the last sign of progress; and where ALL
-of the pane is on a screen, a window Qt shows comes up. The seed is fixed — a failure must be
-the same failure twice.
+followed by a frame; every `wait_ready(t)` is back within `t` plus what Qt had queued for the
+window (the matrix queues nothing of its own and allows 2.0 s) and a False within half a
+second of silence; and where ALL of the pane is on a screen, a window Qt shows comes up. The
+seed is fixed — a failure must be the same failure twice.
+
+**The judge computes; it does not repeat the host** (review round 5). "A frame of the
+window's size" was the same inequality in the host and in the judge — less than one device
+pixel off — and at 125 % both took the 553 px frame of a 442 px pane for a 443 px one. The
+judge now works out what QT makes for a window (`qt_round`: the logical size times the ratio,
+half a pixel up, per side) and asks for exactly that; the host has its own formulation (at
+most half a pixel off). Two rules written twice are a check; one rule imported is not. The
+ratios that matter are the ones strictly between 1 and 1.5 — 100 %, 150 % and 200 % are exact
+whatever the tolerance — so the arithmetic runs in the default tier for every width from 2 to
+3000 at twelve ratios against `QSize * ratio` asked of Qt
+(`test_the_size_check_is_qts_own_rounding_at_every_ratio`), and one row of the matrix runs a
+real window at `QT_SCALE_FACTOR=1.25` with the render target held behind
+(`test_at_125_percent_a_pane_one_pixel_wider_does_not_get_its_old_frame`); a raw grab in that
+row proves the target IS behind — without it the row would prove nothing.
 
 **The matrix must not depend on the screen it runs on** (review round 4: it did — the walk
 asked for 1203 and 1500 px wide windows on whatever it found, and on a 1024 px CI runner the
@@ -778,7 +792,11 @@ call order and several attempts per control, is about two minutes of it. After r
 99 passed and one control reported, not asserted, in 321 s on the RTX 4070, and 97 passed, the
 two hardware-only budgets skipped and the one control reported, in 244 s on WARP; the walk
 alone took 105 s on the GPU. After review round 4 (104 tests: the second walk and three rows
-joined): 103 passed and one control reported, not asserted, in 458 s on the RTX 4070 and 101 passed, the two hardware-only budgets skipped and the control reported, in 355 s on WARP.
+joined): 103 passed and one control reported, not asserted, in 458 s on the RTX 4070 and 101
+passed, the two hardware-only budgets skipped and the control reported, in 355 s on WARP.
+After round 5 (105 tests: the 125 % row joined): 104 passed and the control reported in 411 s
+on the RTX 4070; 102 passed, the two budgets skipped and the control reported in 287 s on
+WARP; the lifecycle file alone on xcb in the container, 41 passed and 4 skipped in 159 s.
 
 **Linux without a Linux machine.** The CI job's stack — Ubuntu 24.04, xvfb, xcb, OpenGL on
 Mesa llvmpipe, Python 3.11, the repository's lock — fits in a container, and Docker on the
@@ -3195,24 +3213,32 @@ wrong (review round 3); `tests/unit/test_quick3d_packaging.py` now fails a secon
 state table. Read it there before calling the host. What this section adds is how to live
 with it:
 
-- **When you NEED a frame — the view was just opened, an export is about to read it — call
-  `wait_ready()` after `show()` or after the change of size or visibility, and act on its
-  answer.** Do not reason about passes of the event loop: Qt delivers some resizes inside
-  the call that caused them and others later (§11.4.12), and the main window the workspace
-  is embedded in is put into full screen by `application.py`. It is bounded — its timeout,
-  1 s by default, the delivery of events included — and it answers False promptly when
-  nothing is on its way; False is not "never", the cause may go. The first show of a
-  process is the slow one (its first expose creates the graphics device): with the default,
-  True came after 0.70 to 0.92 s for a top-level host and after 1.52 to 1.73 s for an
-  embedded one — the one Qt handler that was running when the second was up cannot be cut
-  short. Where that takes longer the answer is False while the host is on its way: pass a
-  longer timeout when the first frame is needed (it costs nothing when nothing comes), or
-  ask again.
-- **`wait_ready()` runs the event loop: never call it from a timer slot, a sync tick, a
-  paint or a resize handler — and not from a click handler either.** There, just call:
-  `try: host.pick(x, y)` / `except HostStateError` — the host takes the frame it needs
-  itself, and a refusal costs a few milliseconds. `grab()`, `pick()` and `project()` never
-  run the event loop.
+- **The workspace needs `wait_ready()` nowhere on the GUI thread.** It is a nested event
+  loop, and it takes user input: clicks, keys, timers and other objects' slots run inside
+  it. A view shows itself — Qt draws it when the platform asks. A click, a hover, a tick
+  that draws just calls: `try: host.pick(x, y)` / `except HostStateError` — the host takes
+  the frame it needs itself. Never call `wait_ready()` from a timer slot, a sync tick, a
+  paint or a resize handler. `grab()`, `pick()` and `project()` never run the event loop.
+- **A tick that draws stops at its first `HostStateError`.** In the steady state `pick()`
+  and `project()` take no frame at all (500 + 500 calls: 0 frames); after a resize, one.
+  While the render target is behind they refuse on the evidence of ONE frame and take no
+  other until a sign of progress is counted, the facts change, or 0.25 s have passed — so
+  the next call of the same tick would get the same answer. (Review round 5: they took a
+  frame per call — a tick that projected 200 labels spent 0.4 to 0.8 s on 200 refusals.)
+- **Where a frame must be HAD and the caller can wait — an export, a tool, a test — call
+  `wait_ready()` and act on its answer.** Do not reason about passes of the event loop: Qt
+  delivers some resizes inside the call that caused them and others later (§11.4.12), and
+  the main window the workspace is embedded in is put into full screen by
+  `application.py`. It starts no pass of the event loop once its timeout — 1 s by default —
+  is up, and it returns within that PLUS whatever was queued on the event loop when its
+  last pass began: one pass delivers the whole queue (0.2 s asked, 1.80 s taken behind six
+  handlers of 0.3 s); only `wait_ready(0)` is bounded by itself. It answers False after
+  half a second of silence — time the event loop was idle, not time it was busy with
+  something else; False is not "never", the cause may go. The first show of a process is
+  the slow one (its first expose creates the graphics device) and overruns the default as a
+  rule: True came after 0.70 to 0.92 s for a top-level host and after 0.96 to 1.73 s for an
+  embedded one. Where that takes longer the answer is False while the host is on its way:
+  pass a longer timeout (it costs nothing when nothing comes), or ask again.
 - **A refusal is an answer.** `HostStateError` says "not now", names the fact that is missing
   and what to do; a caller that draws on a timer skips that tick. `EngineError` says the
   engine failed.
@@ -3357,7 +3383,8 @@ of its release event — a name per process let a finished block's late supervis
 the block after it (§11.4.12); and arguments it may not act on end it with exit code 2 and one
 line, before anything is opened. The safety net is checked like the subsystems it guards: on
 Windows the self-test FAILS when that process did not start, refused, never found this block
-(exit code 4 — it used to leave with 0, like one that did its job), or did not leave within
+(exit code 4 — it used to leave with 0, like one that did its job), failed itself (3 — also
+when its own wait fails, which read as 0 until review round 5), or did not leave within
 15 s of its release (`[selftest_supervisor]` in the log; its line on stdout is `FAIL
 self-test supervisor -> …`, so it cannot be mistaken for a render failure). It also fails
 when a Qt message of the render arrived on another thread than the one that rendered.

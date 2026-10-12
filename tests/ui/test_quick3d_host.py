@@ -1249,27 +1249,39 @@ class TestWaitReady:
         assert len(passes) == 2 and taken == [(49, 240)]
         assert host.longest_quiet_s < 0.1, "the busy pass is no quiet spell either"
 
-    def test_idle_passes_add_up_to_silence_whatever_a_busy_one_took(self, host) -> None:
+    def test_idle_passes_add_up_to_silence_whatever_a_busy_one_took(
+            self, host, monkeypatch: pytest.MonkeyPatch) -> None:
         """The other half: a busy pass does not START the stall bound again — it is simply
-        not counted. Idle time before it and idle time after it add up to ``STALL_S``."""
+        not counted. Idle time before it and idle time after it add up to ``STALL_S``.
+        (On a clock of its own: how long a pass "took" is what is under test, and a
+        loaded machine must not decide it.)"""
+        from types import SimpleNamespace
+
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
         from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
 
+        now = [1000.0]
+        monkeypatch.setattr(host_module, "time", SimpleNamespace(perf_counter=lambda: now[0]))
         _force(host, scene_graph=False, exposed=False)
-        idle, busy = 0.02, 0.3
+        # an idle pass; a pass in which somebody's handler ran (binary fractions: the clock
+        # must add them up without a rounding error deciding the count)
+        idle, busy = 1 / 64, 0.25
         took: list[float] = []
 
         def run_events(_milliseconds: int) -> bool:
             took.append(busy if len(took) == 5 else idle)
-            time.sleep(took[-1])
+            now[0] += took[-1]
             return True
 
         host._run_events = run_events  # noqa: SLF001
-        started = time.perf_counter()
         assert host.wait_ready(30.0) is False
-        elapsed = time.perf_counter() - started
-        counted = sum(t for t in took if t == idle)
-        assert STALL_S - idle <= counted <= STALL_S + 4 * idle, (counted, len(took))
-        assert busy in took and elapsed >= counted + busy - 0.05
+        assert took.count(busy) == 1 and took[5] == busy
+        idle_passes = took.count(idle)
+        assert idle_passes == round(STALL_S / idle) == 32, (
+            f"{idle_passes} idle passes of {idle} s before it gave up: silence must be the "
+            f"idle time alone — {STALL_S} s of it, neither less (the busy pass counted) nor "
+            "more (the busy pass started the count again)")
+        assert now[0] - 1000.0 == STALL_S + busy
 
     def test_it_comes_back_at_once_when_no_event_loop_can_run(self, host) -> None:
         """Review round 3, P2-1. Once the application is quitting ``QEventLoop.exec()``

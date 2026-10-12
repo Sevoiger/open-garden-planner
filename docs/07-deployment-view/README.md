@@ -305,7 +305,7 @@ machine, 4.0–6.5 s on a busy one.
 | (none) | everybody | the application |
 | `--selftest` | the release gate; a developer before a merge | the three blocks above; the exit code is the verdict |
 | `--spike-q3d …` | nobody any more | the dormant L0 spike (ADR-048); it retires in L1.10 |
-| `--selftest-supervisor` and six arguments | **internal** — only the self-test's own watchdog passes it | the process that ends a hung self-test from outside (below). Started by hand, or with arguments that do not name a running block of its own parent process, it refuses: one line, exit code 2, nothing opened, nothing terminated. (0: it held its block's release event — it was released, or it ended a hang; 4: it found no block to wait for and never supervised; 3: it failed itself) |
+| `--selftest-supervisor` and six arguments | **internal** — only the self-test's own watchdog passes it | the process that ends a hung self-test from outside (below). Started by hand, or with arguments that do not name a running block of its own parent process, it refuses: one line, exit code 2, nothing opened, nothing terminated. (0: it held its block's release event — it was released, or it ended a hang; 4: it found no block to wait for and never supervised; 3: it failed itself — also when its own wait fails) |
 
 **It cannot hang a job.** Inside the exe ONE watchdog bounds the whole self-test — all three
 blocks, not only the render: after 300 s it writes the reason in words and every thread's stack
