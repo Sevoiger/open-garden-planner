@@ -2181,9 +2181,9 @@ was a defect nobody saw on the canvas:
 | writer | what it left behind | what the user lost |
 |--------|---------------------|--------------------|
 | the project loader, rectangles (`core/project.py`) | the brush set, `fill_color` at the type's default | **a recoloured rectangle was written back in its type's default colour by the next save** — measured on `master`, load → save → load of `#ffc81e1e`: `#ff90ee90` (GENERIC_RECTANGLE), `#ff64b43c` (LAWN), `#ffdeb887` (TERRACE_PATIO), `#ff8b5a2b` (GARDEN_BED); the same wrong colour in the clipboard, in the Agent API's read and on the canvas below 40 % zoom |
-| the project loader, every shape | the pen set, `stroke_color` / `stroke_width` / `stroke_style` at the type's defaults | the properties panel showed the default stroke of a loaded item; undoing a change of its width put the default back |
-| the project saver, polylines | no `stroke_style` written | **a dashed line came back solid** |
-| the project loader, polylines with a style preset | the saved stroke read for style NONE only | a restyled path's own colour and width came back as the preset's |
+| the project loader, rectangle / circle / ellipse / polygon | the pen set (colour, width and dash style all survive load → save → load), `stroke_color` / `stroke_width` at the type's defaults (`stroke_style` was set) — measured for `#dc1e50c8`, 7.5: the attributes read `#ff228b22` 2.5 (GARDEN_BED), `#ffdb7093` 2.0 (GENERIC_CIRCLE), `#ffc88c00` 2.0 (GENERIC_ELLIPSE), `#ff3c821e` 2.0 (LAWN) | the properties panel showed the type's default stroke colour and width of a loaded item; a command that takes its "old value" from the attribute puts the default back |
+| the project saver, polylines | no `stroke_style` written | **a dashed line came back solid** (`DashDotLine` → `SolidLine`; its colour and width survive) |
+| the project loader, polylines with a style preset | the saved stroke read for style NONE only | **a restyled path's own colour and width came back as the preset's** — a gravel path saved with `#dc1e50c8`, 7.5 loads as `#ffb4aa96`, 8.0, and the next save writes that |
 | the offset tool (polygons, polylines), the chamfer and fillet tools, `PolylineItem.clone_with_points`, the trim tool's results | brush and pen copied, the attributes at the type's defaults | **the copy changed colour and pattern on save** (an offset copy of a blue brick terrace: default wood); in 3D it was baked as the default at once |
 
 *Fix:* `core/item_style.py` — `copy_visual_style(source, dest)` carries a look from item to item,
