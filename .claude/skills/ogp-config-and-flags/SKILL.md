@@ -229,9 +229,9 @@ visibility calls.
 
 | Toggle | Where | Status |
 |---|---|---|
-| **Smart Symbols sidebar panel hidden** | `application.py:5265` `set_panel_visible("smart_symbols", False)` | **experimental / deferred UI** (US-C4). Engine, persistence, DXF export, and properties editing all ship and are tested; symbols in existing `.ogp` files still regenerate. Re-enable by deleting that one line (the comment says exactly this). |
+| **Smart Symbols sidebar panel hidden** | `application.py:5324` `set_panel_visible("smart_symbols", False)` | **experimental / deferred UI** (US-C4). Engine, persistence, DXF export, and properties editing all ship and are tested; symbols in existing `.ogp` files still regenerate. Re-enable by deleting that one line (the comment says exactly this). |
 | Contextual panels hidden until relevant selection | `set_panel_visible(key, relevant)` for `plant_details` / `companion` / `crop_rotation` in the selection updaters (ADR-030) | production behavior — not a bug when they're absent with nothing selected |
-| Satellite menu action disabled | `application.py:7857` `_update_satellite_menu_state` when both the Preferences key and `OGP_GOOGLE_MAPS_KEY` are unset (§3) | production guard |
+| Satellite menu action disabled | `application.py:7968` `_update_satellite_menu_state` when both the Preferences key and `OGP_GOOGLE_MAPS_KEY` are unset (§3) | production guard |
 | Nearest / perpendicular / tangent snap default-OFF | §1 snap table | production, opt-in |
 
 If "a feature seems disabled", check this table before debugging.
@@ -363,3 +363,19 @@ Re-verify each section before relying on it after significant time/version drift
 | §6 tooling | `grep -n "tool.ruff\|tool.mypy\|tool.pytest\|mcp>=\|WebEngine" pyproject.toml; grep -n "multiprocessing\|mcp.cli\|upx_exclude" installer/ogp.spec` |
 | §7 CI | `grep -n "chore\|major\|minor\|QT_QPA_PLATFORM" .github/workflows/release.yml .github/workflows/ci.yml` |
 | §8 exemplar | `grep -n "agent_api" src/open_garden_planner/ui/dialogs/preferences_dialog.py src/open_garden_planner/app/application.py` |
+
+## Package F1/F2 configuration (ADR-054/055)
+
+`ProjectData.auto_assign_permaculture_layers` is plan-scoped, default false, and
+changed through `AutoAssignPermacultureCommand`. Matching uses the optional
+`Layer.permaculture_layer` semantic tag, never translated/editable layer names.
+Only existing visible/unlocked layers qualify; otherwise the normal active layer
+is used. The preset adds missing tags in one undo step and keeps the active layer.
+These are additive fields in `.ogp` 1.4.
+
+User templates live under `get_app_data_dir()/guilds/*.json` (see
+`services/guild_library.py`). User IDs override bundled IDs. Bad user files are
+logged/skipped individually and shown with filename/reason in the picker. The
+editor saves atomically and edits user files only; library edits do not enter plan
+history or change already placed snapshots. No new environment variables or
+QSettings keys are introduced.

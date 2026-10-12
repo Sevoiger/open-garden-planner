@@ -37,6 +37,10 @@ import workspace_gate_hook as hook  # the runner's module: already imported, fir
 step = hook.step
 facts = hook.workspace_facts
 
+#: How long a scenario waits for a frame of the window's size (the engine story's
+#: ``OPEN_TIMEOUT_S``): the host's own default is one second, for one call in a GUI.
+OPEN_WAIT_S = 10.0
+
 
 # ── small tools ──────────────────────────────────────────────────────────────
 
@@ -197,12 +201,14 @@ def _enter_and_wait(window: Any, mode: str) -> Iterator[Any]:
 
 
 def _live(window: Any) -> Any:
-    """The engine host, live (``wait_ready`` is called here — in a test's own loop —
-    and nowhere in the product)."""
+    """The engine host, with a frame of the window's size just taken (``wait_ready`` is
+    called here — in a test's own loop — and nowhere in the product). ``OPEN_WAIT_S``:
+    the first frame of a process can take longer than the host's default second; the
+    wait costs nothing when nothing comes (False 0.5 s after the last sign)."""
     host = window._workspace.host
     assert host is not None, "no engine host"
-    ready = host.wait_ready()
-    assert ready, f"the host is not live: {host.state.value}"
+    ready = host.wait_ready(OPEN_WAIT_S)
+    assert ready, f"the host has no frame of its window's size: {host.state.value}"
     return host
 
 
@@ -215,7 +221,7 @@ def _grab(host: Any) -> tuple[float, Any]:
     try:
         image = host.grab()
     except HostStateError:
-        host.wait_ready()
+        host.wait_ready(OPEN_WAIT_S)
         image = host.grab()
     return (time.perf_counter() - started) * 1000.0, image
 

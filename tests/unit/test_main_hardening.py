@@ -408,10 +408,13 @@ class TestBoundedSelfTest:
         ("none", "none (it could not be started)"),
         (OSError("no such interpreter"),
          "none (it could not be started: OSError: no such interpreter)"),
-        (2, "its supervising process ended with exit code 2"),
-        (3, "its supervising process ended with exit code 3"),
-        (None, "its supervising process did not leave when it was released"),
-    ], ids=["nothing started", "start raised", "refused", "failed", "did not leave"])
+        (2, "its supervising process refused: this block was not one it may act for (exit code 2)"),
+        (3, "its supervising process failed itself (exit code 3)"),
+        # review round 4, P2-1: it left without ever holding this block — and used to say 0
+        (4, "its supervising process left without having supervised"),
+        (None, "its supervising process had not left 15 s after its release"),
+    ], ids=["nothing started", "start raised", "refused", "failed", "never supervised",
+            "did not leave"])
     def test_without_its_supervisor_the_selftest_fails_on_windows(
             self, monkeypatch, tmp_path, capsys, supervisors, outcome: Any, words: str) -> None:
         """Review round 3, P2-5 — the #291 pattern in the gate's own safety net. A

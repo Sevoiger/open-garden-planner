@@ -7,6 +7,15 @@ argument: "Optional: short description of the bug or area to instrument"
 
 # Verbose Debug Instrumentation
 
+## Case study: guild names and gallery-click layer assignment (PR #433, 2026-10-11)
+
+**Symptom.** A German guild picker showed Apple Tree/Runner Bean/Borage/Strawberry. With auto-assignment enabled, a gallery-selected blueberry drawn on the canvas still used the active layer.
+**Wrong theories.** No theory adopted before tracing; a failed checkbox or missing shrub trait was ruled out by the runtime values.
+**Evidence.** `[F1] auto=True species=shrub chosen=<active-id> active=<active-id>`; `traceback.format_stack()` identified `CircleTool._finalize_circle -> CanvasView.add_item -> CreateItemCommand.execute`. `[F2] centre=Apple Tree members=['Runner Bean', 'Borage', 'Strawberry']` reproduced the German widget contents.
+**Root cause.** The existing drop test bypassed gallery-click circle creation, which constructed its own plant with the active layer. Guild controls directly displayed catalog common_name values without translation.
+**Fix.** Reuse `build_plant` for circle-based plant placement; translate guild catalog labels at display time in the existing GalleryData context and register all missing bundled common names. Preserve explicit user names and canonical saved species identity. Remove all probe prints before committing.
+**Lesson.** Test each actual creation surface, and assert displayed translated data as well as static labels. A green drop workflow and a complete translation table cannot establish click-placement or data-label behavior.
+
 **Core principle**: stop theorising, start observing. The first step for any non-trivial bug is to instrument the code so the actual runtime sequence is printed to stdout, then reproduce with manual testing and read what happened. Fix from evidence, not assumptions.
 
 ---
@@ -364,7 +373,7 @@ from_dict: ..., nutrient_demand=...,                            raw_data=...
 
 Three brand-new fields were declared on the dataclass (US-12.10d) but never added to either serialization site. So the live data flow `library → plant_database_panel.set_plant_data() → metadata["plant_species"] = data.to_dict() → ... → PlantSpeciesData.from_dict(metadata["plant_species"])` silently dropped every per-nutrient demand value, leaving `n_demand=p_demand=k_demand=None` on the reconstructed spec. The N rule still fired via the `nutrient_demand="heavy"` legacy fallback in `_effective_demand`, but it now used the *fallback* mapping, not the direct field — and any test that set the direct fields would silently no-op.
 
-**Root cause**: `models/plant_data.py:165` `to_dict` and `models/plant_data.py:227` `from_dict` — neither was updated when `n_demand`/`p_demand`/`k_demand` were added to the dataclass.
+**Root cause**: `models/plant_data.py:210` `to_dict` and `models/plant_data.py:275` `from_dict` — neither was updated when `n_demand`/`p_demand`/`k_demand` were added to the dataclass.
 
 **Fix**: Add the three keys to both serialization sites. Add a regression test [tests/unit/test_plant_data_serialization.py](tests/unit/test_plant_data_serialization.py) that iterates over every `dataclasses.fields(PlantSpeciesData)` and asserts presence in `to_dict()` output, plus a full equality round-trip.
 
@@ -726,7 +735,7 @@ Coverage of a supposedly constant-width line fell from full (110) at the top to 
 
 **Symptom.** `pytest tests/` (5,400 tests) died at 13 %: `tests/integration/test_plant_sprite_rendering.py ...........Windows fatal exception: code 0xc0000374` — no assertion, no traceback beyond the faulthandler dump. The same battery had passed twice that day on the sibling branch.
 
-**Wrong theory (2 minutes, discarded on evidence).** "My icon changes to `PlantSearchPanel` broke something in the plant search dialog." The panel and the dialog are different classes; the crashing frame was inside `plant_search_dialog.py:246` `QMessageBox.warning(self, …)` — the *except* branch of `_perform_search` — reached from `pytestqt/plugin.py:220` `_process_events` inside `pytest_runtest_setup` of the sprite test.
+**Wrong theory (2 minutes, discarded on evidence).** "My icon changes to `PlantSearchPanel` broke something in the plant search dialog." The panel and the dialog are different classes; the crashing frame was inside `plant_search_dialog.py` (historical line 246) `QMessageBox.warning(self, …)` — the *except* branch of `_perform_search` — reached from `pytestqt/plugin.py:220` `_process_events` inside `pytest_runtest_setup` of the sprite test.
 
 **Key evidence.** The stack itself: a dialog slot running during the SETUP of an unrelated test means nobody in that test called it — an event did. `grep -n "QTimer()" src/…/plant_search_dialog.py` → `self._search_timer = QTimer()` — no parent. `grep search_input.setText tests/` → six tests type into the box (arming the 500 ms debounce), call `_perform_search()` synchronously themselves and finish in milliseconds. So: dialog closed and deleted by qtbot, Python-owned timer alive, fires 500 ms later into whichever test is then processing events; the real `requests.Session.get` (monkeypatch already undone) raises `PlantAPIError`, and a modal box is opened with a deleted parent → heap corruption. Two new test files (`test_iconography_3c.py`, `test_icon_names_referenced_in_src.py`) had shifted the schedule so the fire landed on a setup `processEvents` instead of a harmless gap.
 
@@ -1788,6 +1797,35 @@ The point moved by 1.8 cm in x AND y. Nothing about the plant's geometry had cha
 **Fix**: the helper (`OverlayWatch.settled`) waits for the recompute count, THEN for a `scene.changed` delivered since that recompute, then for the debounce the echo starts. `tests/integration/test_scene3d_base_stacking.py::TestTheOverlaysOwnEcho` holds both halves of the race still by calling `recompute_now()` directly — the echo is then certainly undelivered — once without waiting for it (exactly one extra recompute) and once through the helper (none). With the old helper the second test fails three times out of three.
 
 **Lesson**: "the timer is idle" is not "nothing is pending". When a system answers its own action with a signal, wait for that signal. And a race is turned into a regression by taking the event loop out of the step that hides it: run that step synchronously, and the bad interleaving is the only one there is.
+
+## Case study: grouped guild navigation test picked a child instead of the group (F1/F2)
+
+**Symptom.** A grouped-centre diagnostic assertion passed alone and failed in a combined run.
+**Wrong theory.** The coordinator had failed to remap the centre to its enclosing group.
+**Evidence.** `[GUILD-GROUP] selected` printed a `GroupItem` plus selected `CircleItem` child wrappers; their order varied. `centre.parentItem()` and the diagnostic agreed.
+**Fix.** Address the group through the centre's actual parent, never `scene.selectedItems()[0]`. A second idempotence assertion printed `[GUILD-REFRESH] changed keys ['metadata']`: serialization stamps `modified` on every call. Compare content after removing only that volatile timestamp.
+**Lesson.** Inspect framework state before changing correct production logic. Keep selection/serialization tests independent of unspecified ordering and wall-clock stamps. All temporary prints were removed.
+
+## Case study: guild previews and deferred navigation outlive a document (F1/F2, 2026-10-11)
+
+**Symptom.** Independent review reproduced a deleted-wrapper exception when a plan was cleared while its guild preview was open. A pending sidebar click selected an object in a newly loaded copy of the plan.
+**Wrong theories.** None adopted; the old branch was exercised directly before changing the lifecycle contract.
+**Evidence.** A temporary probe against the second review snapshot printed `[GUILD-LIFECYCLE] markers_after_clear 4`, followed by `RuntimeError: wrapped C/C++ object of type QGraphicsEllipseItem has been deleted` in `clear_preview()`. The same probe printed `[GUILD-NAVIGATION] selected_after_load 1` when the replacement document reused the original UUIDs. The final regression passes after the fix; all probe prints and files were removed.
+**Root cause.** A UUID guards object identity within a document, not across document replacement. Preview wrappers also outlived the C++ objects owned by the scene.
+**Fix.** Close the picker on `document_replaced` before scene teardown, invalidate its document generation, and tolerate already-destroyed preview wrappers during idempotent cleanup. Stop pending sidebar navigation and discard queued IDs at replacement.
+**Lesson.** Every deferred GUI operation needs both object identity and a document-lifetime boundary. A teardown test must cover a replacement that retains the same object UUIDs, not just an empty scene.
+
+## Case study: the guild coordinator assumed every plant was a circle (F1/F2, 2026-10-11)
+
+**Symptom.** The complete suite reported Qt event-loop errors in existing agent task/soil workflows even though the guild-specific tests passed.
+**Wrong theories.** None adopted; the captured exception identified the accessed property before any lifecycle theory was pursued.
+**Evidence.** The traceback ended at `GuildCoordinator.refresh`, reading `item.radius`: `AttributeError: 'RectangleItem' object has no attribute 'radius'`. A focused regression printed `[GUILD-GEOMETRY] plant RectangleItem has_radius False` and failed both directly and at Qt teardown before the fix.
+**Root cause.** The plant ObjectType predicate is semantic; saved/imported or directly constructed plant records need not use CircleItem. Badge-signature calculation unnecessarily inspected geometry even for unassigned plants.
+**Fix.** Skip badge geometry for plants with neither a missing-role status nor an existing badge. For a badge that needs updating, use the item's rectangle or bounding rectangle, retaining the circle radius where provided. The regression also pins a rectangular centre's badge and unchanged serialized geometry.
+**Lesson.** A semantic type predicate does not prove a concrete graphics-item class. Run the complete suite to exercise representations absent from the new subsystem fixtures. The temporary print was removed.
+
+**Follow-up: imported polygon centres.** Review then exercised the real save/load/picker path, not only badge refresh. A temporary regression printed `[GUILD-CENTRE] loaded_type PolygonItem eligible_index 1`; Insert refused with `PolygonItem object has no attribute rect`. An initial probe omitted a layer and correctly found no eligible centre; the decisive probe persisted a valid visible/unlocked layer. `guild_plant_bounds()` now supplies base-shape bounds to existing-centre placement, whole-layout preflight, preview and badges. Polygon/path bounds exclude painted shadows and cosmetic children. Round-trip insertion and exact undo restoration are pinned at 0?, 45? and 215?, including the centre-relative mature-spacing layout. All probe prints were removed.
+
 ## Case study: a broken shader failed the render, and the run's own summary counted 0 Qt errors (Phase 17 L1.2, fixed 2026-10-11)
 
 **Symptom**: the positive control "a broken shader fails the render" did what it should: the
@@ -2035,13 +2073,15 @@ platform window was created": `Resize` clears it, the next `Expose` of the expos
 it, and "live" needs it. `wait_ready()` delivers what is pending once for ANY visible host
 before it answers. A grab whose image has another size after all raises `HostStateError` — a
 state, like every other "not now" — instead of `EngineError`. And the contract moved into ONE
-docstring (`quick3d/lifecycle.py`); the nine copies had drifted apart.
+docstring (`quick3d/lifecycle.py`); the nine copies had drifted apart. *(Review round 4: the
+latch was the next defect — "a host that waited for a message that never came", below. The
+size check stayed; the fact went.)*
 
 **Lesson**: **"one event-loop pass" is not a unit.** Before writing a rule about "after a
 resize", print what each CALL delivers before it returns — per call, per platform. And when a
 hand-written matrix of orders has missed the failing order twice, **add an order nobody wrote**:
 a seeded random walk whose judge knows only what Qt said about the window (it found nothing
-more, which is the point of having it).
+more on the dev box — and on a 1024 px CI runner it found the defect of this very fix).
 
 ## Case study: a healthy block was terminated four seconds in — and another block's log said why (Phase 17 L1.2, fixed 2026-10-11)
 
@@ -2090,3 +2130,68 @@ self-test passed; on Windows the self-test now FAILS without one.
 name it was handed — never by what the next user will have too. And **a safety net is a
 subsystem**: if nothing checks that it started, the day it cannot start looks like every other
 day until it is needed.
+
+## Case study: a host that waited for a message that never came — red on the CI runner's small screen, green on the dev box (Phase 17 L1.2, fixed 2026-10-12)
+
+**Symptom**: `Render 3D (windows-latest)` red, one test: the story's own seeded walk, 7 problems
+in 252 looks. Three looks where Qt showed the pane and the host never came up, and
+`wait_ready()` taking its whole 5 s three times in a row on a 2 × 60 px pane. The same commit:
+green on the RTX 4070, green on WARP, green on xcb in a container, 99 of 100 each.
+
+**Wrong theories**:
+
+1. *"A grab has the wrong size exactly between a `Resize` event and the next `Expose` — so
+   'live' waits for that expose."* The fix of the round before (the case study above the last
+   one), measured in every order anyone had written. It made an OS paint message a condition
+   of a state.
+2. *"Then name the place: a state for 'no part of the view is on a screen'."* The review
+   offered it. Measured before building it: beyond the SAME edge of the SAME screen the pane
+   kept its old render target while the display slept and got the new one while it was awake
+   — both ways on one day, and on WARP the new one either way. Geometry does not say whether
+   Qt draws.
+3. *"The local tiers pass, so it is the runner."* They passed because every window of the
+   matrix fits on a 5120 px screen. The walk asked for 1203 and 1500 px wide windows on
+   whatever screen it found.
+
+**Key evidence**: the runner's own line — every fact Qt reports is in place, and the one the
+host had invented is not:
+
+```
+[59] setSizes(.., 49) / pump window=[56, 701] state=starting: STUCK — Qt shows the window and the host does not come up:
+     WindowFacts(surface_created=True, visible=True, minimised=False, width=56, height=701, scene_graph=True, exposed=True, root_width=56.0, root_height=701.0, target_synced=False)
+```
+
+and the events the view gets when the pane grows beyond the screen's right edge (an event
+filter on the view, the raw `grabWindow()` beside it, then the FIXED host) — the same probe,
+the same day, the display awake and, 25 idle minutes later, asleep:
+
+```
+grown to 137  : window 137x500 events ['Resize', 'Move', 'UpdateRequest'] exposed=True raw grab 137x500 ok; host: state=live wait_ready(5)=True
+grown to 137  : window 137x500 events ['Resize', 'Move'] exposed=True raw grab 49x500 STALE; host: state=live wait_ready(5)=False
+```
+
+**Root cause**: the host had made a MESSAGE its evidence for something it can look at. Windows
+sends no expose to a pane that grows where no screen is; a state that waits for one waits for
+ever. And the test that should have caught it let the window system decide where its windows
+were.
+
+**Fix**: the frame is the witness. `grab()`, `pick()`, `project()` and `wait_ready()` take a
+frame and compare its size with the window's, to the device pixel; another size is a refusal
+and nothing is remembered. `wait_ready()` is bounded by its timeout including the delivery of
+events (a zero timeout runs none; it had taken 1.0 to 1.4 s), defaults to 1 s instead of 10,
+and answers False 0.5 s after the last sign of progress — for every cause at once. In the
+tests: every window is placed on the screen on purpose; the walk runs a second time where a
+1024 × 768 screen leaves the window; and the condition is MADE, not hoped for — an event filter
+that eats the view's `Expose` / `UpdateRequest` / `Paint`:
+
+```
+linux: grown live/refused; shrunk live/refused; wait_ready(5) after grown: False in 0.502 s, wait_ready(60) after long: False in 0.503 s, wait_ready(0) after zero: False in 0.002 s; frames refused for their size 20
+```
+
+**Lesson**: **do not infer what you can observe** — three rounds had each added a fact to the
+state (three, nine, ten), and each new fact was a new way to be wrong about the one question
+that matters: is the frame right? Ask the frame. **A test must not depend on where the window
+system puts a window, or on how large the screen is**: place it, and run once as on the
+smallest screen you ship to. And **a condition that differs between two days on one machine
+cannot be a pin**: reproduce it on purpose (here: withhold the paint events), pin THAT, and
+assert only what holds on every machine for the real thing.

@@ -1,12 +1,12 @@
 """Pytest configuration and fixtures."""
 
 import atexit
+import importlib.util
 import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -154,26 +154,19 @@ if sys.platform == "darwin":
 # A test that needs another answer monkeypatches the function as before.
 from PyQt6.QtCore import QStandardPaths as _QStandardPaths  # noqa: E402
 
-REDIRECTED_QT_LOCATIONS = frozenset({
-    _QStandardPaths.StandardLocation.AppDataLocation,
-    _QStandardPaths.StandardLocation.AppLocalDataLocation,
-    _QStandardPaths.StandardLocation.AppConfigLocation,
-    _QStandardPaths.StandardLocation.CacheLocation,
-    _QStandardPaths.StandardLocation.DocumentsLocation,
-})
-_qt_writable_location = _QStandardPaths.writableLocation
-
-
-def _test_writable_location(location: Any) -> str:
-    if location in REDIRECTED_QT_LOCATIONS:
-        # The path only — Qt does not create the folder it names, and neither does
-        # this stand-in: a writer that forgets its `mkdir` must fail here as it
-        # would on a user's first run.
-        return (TEST_DATA_ROOT / "qt" / location.name).as_posix()  # forward slashes, as Qt answers
-    return str(_qt_writable_location(location))
-
-
-_QStandardPaths.writableLocation = _test_writable_location  # type: ignore[method-assign]
+# THE stand-in is `scripts/script_isolation.redirect_qt_locations` — one function for
+# the suite and for every script that isolates itself (a script runs outside pytest,
+# and on Windows no environment variable moves `AppLocalDataLocation`). Loaded from
+# its file and registered under its name, so that a fixture generator a test imports
+# (`import script_isolation`) gets this very module and not a second state.
+_isolation_spec = importlib.util.spec_from_file_location(
+    "script_isolation", Path(__file__).parent.parent / "scripts" / "script_isolation.py")
+assert _isolation_spec is not None and _isolation_spec.loader is not None
+_script_isolation = importlib.util.module_from_spec(_isolation_spec)
+sys.modules["script_isolation"] = _script_isolation
+_isolation_spec.loader.exec_module(_script_isolation)
+REDIRECTED_QT_LOCATIONS = _script_isolation.redirect_qt_locations(TEST_DATA_ROOT)
+assert REDIRECTED_QT_LOCATIONS and _QStandardPaths.writableLocation.__name__ == "writable_location"
 
 
 @pytest.fixture(autouse=True, scope="session")

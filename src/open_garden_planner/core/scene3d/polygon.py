@@ -39,7 +39,9 @@ and a plan file can be written by anybody (security review of fix round 3):
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Sequence
+import weakref
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import Any, Final, Generic, NamedTuple, NoReturn, ParamSpec, TypeAlias, TypeVar
 
 import numpy as np
@@ -59,18 +61,49 @@ _Floats: TypeAlias = "NDArray[np.float64] | float"
 #: the clipper returns for it, together). The first is asked of the item before
 #: one vertex is read, the second of the clipper's answer before one ring of it
 #: is. Far above what the work bound lets through (a plain outline of about
-#: 3,500 vertices; a stroke of about 4,300), so it never refuses what could be
-#: built — it is what makes the answer for 200,000 points ONE comparison, and
-#: what bounds a key.
+#: 3,500 vertices; a straight path of about 6,600 points, whose pairs alone are
+#: the bound), so it never refuses what could be built — it is what makes the
+#: answer for 200,000 points ONE comparison, and what bounds a key.
 MAX_ITEM_VERTICES: Final = 16_384
-#: How many vertices ONE ``ring_keyed`` function holds at most, keys and answers
-#: together. At 104 bytes a vertex (a tuple of two floats, and its place in the
-#: ring) that is 27 MB if nothing were shared; the rings are the records' own, so
-#: a full cache adds little to what the records already hold. (Before: 2,048 to
-#: 8,192 ANSWERS each, whatever their size — a traced outline of 4,000 vertices
-#: dragged for a minute was a gigabyte.)
+#: How many vertices of STALE answers ONE ``ring_keyed`` function holds at most,
+#: keys and answers together — answers the plan no longer asks for: the ring an
+#: outline had before its last edit. At 104 bytes a vertex (a tuple of two
+#: floats, and its place in the ring) that is 27 MB. (Before fix round 3: 2,048
+#: to 8,192 ANSWERS each, whatever their size — a traced outline of 4,000
+#: vertices dragged for a minute was a gigabyte.) What the plan DOES ask for is
+#: not counted against it and never dropped (``snapshot_generation``): those
+#: rings are the records' own, and dropping them made every tick of an
+#: unchanged plan above the cap recompute the plan (review of fix round 3).
 HELD_VERTICES: Final = 262_144
 _ENTRY_VERTICES: Final = 8  # what an answer weighs beyond its rings: the entry itself
+
+_generation = 0  # the snapshot being taken, or the last one that was
+_snapshotting = False
+_memories: weakref.WeakSet[RingKeyed[Any, Any]] = weakref.WeakSet()  # every ``ring_keyed`` function
+
+
+@contextmanager
+def snapshot_generation() -> Iterator[int]:
+    """ONE snapshot of the plan (``ui.view3d.snapshot.snapshot_records`` runs in it).
+
+    An answer a ``ring_keyed`` function is asked for INSIDE a snapshot is LIVE
+    for that snapshot and the next: it is never dropped, however much is held —
+    an unchanged plan is then answered from memory on every tick, whatever its
+    size. An answer no snapshot has asked for since the one before the last is
+    STALE, and so is one asked for outside any snapshot (a builder's own rings,
+    a script's loop): only those are counted against ``HELD_VERTICES`` and
+    dropped, least recently asked first — at the latest when the snapshot ends,
+    also from a memory this snapshot did not ask (the plan's last fence is gone).
+    """
+    global _generation, _snapshotting  # noqa: PLW0603 - the one clock of what is remembered
+    _generation += 1
+    outer, _snapshotting = _snapshotting, True
+    try:
+        yield _generation
+    finally:
+        _snapshotting = outer
+        for memory in list(_memories):
+            memory.settle()
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -87,10 +120,11 @@ class CacheInfo(NamedTuple):
 
 
 class _Entry(Generic[_R]):
-    __slots__ = ("answer", "asked", "weight")
+    __slots__ = ("answer", "asked", "generation", "weight")
 
     def __init__(self, answer: _R, weight: int, asked: int) -> None:
         self.answer, self.weight, self.asked = answer, weight, asked
+        self.generation = -2  # the last snapshot that asked for it; -2: none has (stale from the start)
 
 
 class RingKeyed(Generic[_P, _R]):
@@ -98,10 +132,12 @@ class RingKeyed(Generic[_P, _R]):
     does, bounded by the VERTICES held instead of the number of answers.
 
     An answer about a traced outline of 4,000 vertices is a thousand times an
-    answer about a rectangle; a bound on entries is no bound on memory. Answers
-    are kept until their keys (``vertices(*args)``) and what ``holds(answer)``
-    says of the answers add up to ``max_vertices``; then the least recently
-    asked go, down to three quarters. A call about more than
+    answer about a rectangle; a bound on entries is no bound on memory. What is
+    bounded is the STALE answers (``snapshot_generation``): they are kept until
+    their keys (``vertices(*args)``) and what ``holds(answer)`` says of the
+    answers add up to ``max_vertices``; then the least recently asked of them
+    go, down to three quarters. A LIVE answer — asked for by the snapshot being
+    taken or the one before — is never dropped. A call about more than
     ``MAX_ITEM_VERTICES`` vertices is answered and NOT kept: such a ring is
     never hashed and never a key. Positional arguments only are remembered.
     Safe to call from several threads, like ``lru_cache``; an exception is not
@@ -116,7 +152,9 @@ class RingKeyed(Generic[_P, _R]):
         self._vertices, self._holds, self._max = vertices, holds, max_vertices
         self._entries: dict[tuple[Any, ...], _Entry[_R]] = {}
         self._held = self._asked = self._hits = self._misses = 0
+        self._limit = max_vertices  # what is held is looked through for stale answers beyond this
         self._lock = threading.Lock()
+        _memories.add(self)
 
     def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         if kwargs:
@@ -144,7 +182,17 @@ class RingKeyed(Generic[_P, _R]):
             else:
                 entry.asked = self._asked
                 self._hits += 1
+                if _snapshotting:
+                    entry.generation = _generation  # asked for by a snapshot: LIVE from now on
             return entry
+
+    def settle(self) -> None:
+        """Hold no more stale answers than the cap — asked of every memory when a
+        snapshot ends (``snapshot_generation``). Nothing to do while all it holds
+        fits the cap; beyond that one look through what it holds."""
+        with self._lock:
+            if self._held > self._max:
+                self._forget()
 
     def known(self, *args: Any) -> _R | None:
         """The remembered answer to these arguments, or None. Nothing is computed."""
@@ -160,23 +208,35 @@ class RingKeyed(Generic[_P, _R]):
         weight = _ENTRY_VERTICES + size + (self._holds(answer) if self._holds is not None else 0)
         with self._lock:
             if args not in self._entries:
-                self._entries[args] = _Entry(answer, weight, self._asked)
+                entry = self._entries[args] = _Entry(answer, weight, self._asked)
+                if _snapshotting:
+                    entry.generation = _generation
                 self._held += weight
-                if self._held > self._max:
+                if self._held > self._limit:
                     self._forget()
 
     def _forget(self) -> None:
-        """Drop the least recently asked answers until three quarters of the room is in use."""
-        for key, entry in sorted(self._entries.items(), key=lambda item: item[1].asked):
-            if self._held <= self._max * 3 // 4:
-                break
-            del self._entries[key]
-            self._held -= entry.weight
+        """(Under the lock.) When the STALE answers are more than the cap, drop the
+        least recently asked of them until they take three quarters of it. A live
+        answer is never among them — whatever is held. One look through all that
+        is held; the next not before a quarter of the cap has come in again."""
+        stale = [(key, entry) for key, entry in self._entries.items()
+                 if entry.generation < _generation - 1]
+        weight = sum(entry.weight for _key, entry in stale)
+        if weight > self._max:
+            for key, entry in sorted(stale, key=lambda item: item[1].asked):
+                if weight <= self._max * 3 // 4:
+                    break
+                del self._entries[key]
+                self._held -= entry.weight
+                weight -= entry.weight
+        self._limit = max(self._max, self._held + self._max // 4)
 
     def cache_clear(self) -> None:
         with self._lock:
             self._entries.clear()
             self._held = self._hits = self._misses = 0
+            self._limit = self._max
 
     def cache_info(self) -> CacheInfo:
         return CacheInfo(self._hits, self._misses, self._max, self._held, len(self._entries))
@@ -288,6 +348,47 @@ def segments_touch(a: Sequence[float], b: Sequence[float],
         return True
     return ((d1 == 0 and _on_segment(a, c, d)) or (d2 == 0 and _on_segment(b, c, d))
             or (d3 == 0 and _on_segment(c, a, b)) or (d4 == 0 and _on_segment(d, a, b)))
+
+
+#: By how much of the product of its two edges a corner must turn LEFT for
+#: ``is_convex_ring`` to count it: far above what floats can get wrong (1e-16),
+#: far below the corners of a real shape (a 24-gon turns by 0.26).
+_CONVEX_TURN: Final = 1e-9
+#: … and how much of the square of its reach the ring must cover, unless it is
+#: small: the proof of a cut compares two sums of areas to 1e-9 (of 1 cm², or of
+#: the area when that is more), and each sum is off by about 1e-13 of the largest
+#: coordinate squared. A bed of 120 m by 2 µm is convex and fails that proof.
+_CONVEX_BODY: Final = 1e-3
+
+
+def is_convex_ring(ring: Sequence[Sequence[float]]) -> bool:
+    """True when every corner of ``ring`` turns left by more than float noise, and
+    the ring is not a sliver for its reach (its area, or 1 cm², is at least a
+    thousandth of its farthest coordinate squared).
+
+    For a ring that is convex BY CONSTRUCTION and winds once — a circle's, an
+    ellipse's, a rectangle's footprint — that makes it a strictly convex polygon
+    on the record grid as well, and such a ring is buildable WITHOUT being cut:
+    it is simple, its ears are its corners, and their areas are its area beyond
+    what floats can blur (so ``is_convex_ring(r)`` implies
+    ``is_buildable_region(r)``; pinned over 2,000 shapes of every size and
+    slenderness). Arithmetic on its corners where the predicate cuts a
+    triangulation: the snapshot asks this first, because a date scrub gives every
+    dated plant a new radius on every tick. It says nothing about a ring that is
+    not convex by construction (a ring that winds twice turns left as well).
+    """
+    if len(ring) < 3:
+        return False
+    (x0, y0), (x1, y1) = ring[-2], ring[-1]
+    twice = reach = 0.0
+    for x2, y2 in ring:
+        ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x1, y2 - y1
+        if ax * by - ay * bx <= _CONVEX_TURN * (abs(ax) + abs(ay)) * (abs(bx) + abs(by)):
+            return False
+        twice += x1 * y2 - x2 * y1
+        reach = max(reach, x2 * x2 + y2 * y2)
+        x0, y0, x1, y1 = x1, y1, x2, y2
+    return max(1.0, twice / 2.0) >= _CONVEX_BODY * reach
 
 
 def is_flat_ring(ring: Sequence[Sequence[float]]) -> bool:
@@ -591,12 +692,19 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 #: tables in section 8.27.1). As ONE region: a plain traced outline of 3,557
 #: vertices; a comb of 1,648; a spiral of 4,334. As a whole outline, clipper and
 #: all: a closed fence along 1,321 traced points (933 when every segment lies
-#: level with every other); a ladder of 164 rungs or a mesh of 15 x 15 openings
-#: drawn as one stroke; a drawn outline of 1,513 vertices that crosses itself.
-#: What a large plan needs is far inside it — a closed fence along 400 traced
-#: points 16 % of the bound, a line of 2 km 0.02 %, a rectangle 10,200 units. A
-#: unit took 0.35 to 1.15 ns on the development box when it was quiet and 0.7 to
-#: 2.3 ns beside three other test runs: the bound is 0.05 to 0.35 s.
+#: nearly level with every other); a straight fence of about 6,650 posts east–
+#: west or north–south (4,514 at 30 degrees, where its outline keeps a vertex
+#: per post); a ladder of 168 rungs or a mesh of 15 x 15 openings drawn as one
+#: stroke; a drawn outline of 1,513 vertices that crosses itself. What a large
+#: plan needs is far inside it — a closed fence along 400 traced points 16 % of
+#: the bound, a line of 2 km 0.02 %, a rectangle 10,200 units.
+#:
+#: In TIME the bound is a measurement, not a promise. A unit of the reference (a
+#: plain traced outline) took 0.35 to 1.15 ns on the development box when it was
+#: quiet and 0.7 to 2.3 ns beside other test runs, and a unit CHARGED for
+#: something else took 0.1 to 1.7 times that (the script prints the ratio for
+#: every row; the dearest is a wide path with close points). So one item costs
+#: at most 0.05 to 0.35 s of the reference — up to 0.6 s where both factors meet.
 MAX_REGION_WORK: Final = 150_000_000
 
 # The price list, in work units. Fitted to measurements on the development box
@@ -650,9 +758,12 @@ def _refuse(what: str) -> NoReturn:
 class WorkBudget:
     """What is left to spend — on ONE region's cut, or on everything ONE item's
     outline needs. ``spend`` raises ``RegionTooLargeError`` the moment the bound
-    is passed, so nothing runs for longer than the bound: pay for a step BEFORE
+    is passed, so no more UNITS are spent than the bound: pay for a step BEFORE
     it runs wherever its price is known beforehand, and as it goes where it is
-    not (the ears, the bridges)."""
+    not (the ears, the bridges). What a unit takes is measured, per step, by
+    ``scripts/measure_region_work.py`` — a price that is too low is a step that
+    runs longer than its units say (``StrictlySimple`` as a tree did: 3.6 s
+    inside the budget, until the review of fix round 3)."""
 
     __slots__ = ("budget", "left", "what")
 
@@ -742,7 +853,8 @@ def touching_pairs(points: Sequence[Sequence[float]], work: WorkBudget, *, close
     return near_pairs, touching
 
 
-def stack_height(rings: Sequence[Sequence[Sequence[float]]], *, closed: bool, reach: float = 0.0) -> int:
+def stack_height(rings: Sequence[Sequence[Sequence[float]]], *, closed: bool, reach: float = 0.0,
+                 flat: bool = True) -> int:
     """The most segments of ``rings`` — of paths when not ``closed`` — that ONE
     horizontal line crosses, each segment's height widened by ``reach``.
 
@@ -750,6 +862,12 @@ def stack_height(rings: Sequence[Sequence[Sequence[float]]], *, closed: bool, re
     crosses. A zigzag of 4,000 points whose teeth stand side by side, crossing
     nothing, has a stack of 4,000 and took the clipper 1.6 s to inflate; lying on
     its side it has a stack of 2 and took 4 ms. Linear to compute (one sort).
+
+    ``flat=False`` leaves out the segments WITHOUT a height — for a path the
+    clipper inflates: the two sides of an exactly level segment are level edges,
+    which the sweep walks along and does not carry. (Counted, a straight fence
+    running east–west was charged its points squared for 7 ms of work, and fitted
+    a fifth of the points the same fence fitted running north–south.)
     """
     lows, highs = [], []
     for ring in rings:
@@ -759,9 +877,11 @@ def stack_height(rings: Sequence[Sequence[Sequence[float]]], *, closed: bool, re
         following = np.roll(y, -1)
         if not closed:
             y, following = y[:-1], following[:-1]
+        if not flat:
+            y, following = y[y != following], following[y != following]
         lows.append(np.minimum(y, following))
         highs.append(np.maximum(y, following))
-    if not lows:
+    if not sum(len(low) for low in lows):
         return 0
     low, high = np.sort(np.concatenate(lows) - reach), np.sort(np.concatenate(highs) + reach)
     # at the k-th lowest lower end: k + 1 segments have begun, and those whose upper end

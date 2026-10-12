@@ -21,15 +21,18 @@ It prints three tables.
 2. OUTLINES. The same for whole outlines, through the snapshot's own functions:
    strokes (a closed fence along a traced outline, a ladder and a mesh drawn as
    one stroke, a wall traced finer than it is wide, a line whose every segment
-   lies level with every other) and a drawn outline that crosses itself.
+   lies level with every other, a straight fence in three directions, a wide
+   path with close points) and drawn outlines (a regular polygon — a DXF circle
+   —, a traced pond, one that crosses itself, the two-level zigzag).
 3. REFUSALS. Outlines built to cost the clipper as much as they can: what
    saying no costs — in units, which are bounded, and in time. For each, what
    the clipper would have taken had it been asked (the reason the price exists).
 
 The price of a step is right when a unit CHARGED takes no longer than a unit of
-the reference (a plain traced outline, table 1): compare the last columns. The
-time columns are this machine at this moment — quote them with their
-conditions. The unit columns are exact.
+the reference (a plain traced outline, the first row of table 1). Every row of
+tables 2 and 3 ends with that ratio — cost to price — and the script ends with
+the worst of them. The time columns are this machine at this moment — quote them
+with their conditions. The unit columns are exact.
 
 Imports ``ui.view3d.snapshot`` (and with it PyQt6); no window, no application,
 no plan. It isolates itself all the same (``scripts/script_isolation.py``): the
@@ -177,12 +180,65 @@ def level_line(points: int) -> tuple[Path2, float]:
     return tuple((k * 50.0, round(rng.uniform(-3.0, 3.0), 3)) for k in range(points)), 10.0
 
 
+def straight_fence(turn_deg: float) -> Callable[[int], tuple[Path2, float]]:
+    """A straight fence with a post every 2 m, 10 cm wide, drawn at ``turn_deg``."""
+    c, s = math.cos(math.radians(turn_deg)), math.sin(math.radians(turn_deg))
+    return lambda points: (tuple((round(200.0 * k * c, 7), round(200.0 * k * s, 7))
+                                 for k in range(points)), 10.0)
+
+
+def meander(width: float, step: float) -> Callable[[int], tuple[Path2, float]]:
+    """A garden path that wanders: ``width`` wide, a point every ``step`` cm, its
+    heading swinging a little over a radian."""
+
+    def make(points: int) -> tuple[Path2, float]:
+        x = y = 0.0
+        path = []
+        for k in range(points):
+            path.append((round(x, 3), round(y, 3)))
+            heading = 0.6 + 0.6 * math.sin(k * step / 1500.0)
+            x, y = x + step * math.cos(heading), y + step * math.sin(heading)
+        return tuple(path), width
+
+    return make
+
+
 STROKES: tuple[tuple[str, str, Callable[[int], tuple[Path2, float]], int, int], ...] = (
     ("a closed fence along a traced outline", "points", closed_fence, 50, 8000),
     ("the same fence, every segment level with every other", "points", level_line, 50, 8000),
+    ("a straight fence, a post every 2 m, east-west", "points", straight_fence(0.0), 50, 8000),
+    ("… north-south", "points", straight_fence(90.0), 50, 8000),
+    ("… at 30 degrees", "points", straight_fence(30.0), 50, 8000),
+    ("a path 100 cm wide, a point every 25 cm", "points", meander(100.0, 25.0), 50, 8000),
+    ("a path 60 cm wide, a point every 50 cm", "points", meander(60.0, 50.0), 50, 8000),
     ("a ladder drawn as one stroke", "pairs of rungs", ladder, 3, 800),
     ("a square mesh drawn as one stroke", "cells a side", mesh, 2, 60),
     ("a wall traced finer than it is wide", "points", fine_wall, 50, 8000),
+)
+
+
+def regular(vertices: int) -> Path2:
+    """A regular polygon of 20 m: what a DXF import makes of a circle."""
+    return tuple((round(1000.0 * math.cos(2.0 * math.pi * k / vertices), 7),
+                  round(1000.0 * math.sin(2.0 * math.pi * k / vertices), 7)) for k in range(vertices))
+
+
+def two_level(vertices: int, turn_deg: float = 0.0) -> Path2:
+    """Every vertex on one of two levels, x at random: a closed zigzag whose teeth
+    cross each other everywhere (review of fix round 3: 340 of them held the
+    strict union for 3.6 s as a tree). Turned, it is no kinder."""
+    rng = random.Random(100003 + vertices)
+    c, s = math.cos(math.radians(turn_deg)), math.sin(math.radians(turn_deg))
+    points = [(round(rng.uniform(0.0, 2000.0), 3), 0.0 if k % 2 == 0 else 1000.0) for k in range(vertices)]
+    return tuple((round(x * c - y * s, 3), round(x * s + y * c, 3)) for x, y in points)
+
+
+POLYGONS: tuple[tuple[str, str, Callable[[int], Path2], int, int], ...] = (
+    ("a regular polygon (a DXF circle)", "vertices", regular, 100, 8000),
+    ("a traced pond", "vertices", lambda vertices: traced(vertices)[0], 100, 8000),
+    ("a drawn outline that crosses itself", "vertices", lambda vertices: crossed(vertices), 100, 8000),
+    ("a two-level zigzag", "vertices", two_level, 8, 400),
+    ("… turned 30 degrees", "vertices", lambda vertices: two_level(vertices, 30.0), 8, 400),
 )
 
 
@@ -284,28 +340,43 @@ def measure_cut(label: str, unit: str, make: Callable[[int], Region], low: int, 
     return took * 1e6 / work
 
 
+#: (cost to price, what) of every row of tables 2 and 3: the time a row took, in units of
+#: the reference, over the units it was charged.
+RATIOS: list[tuple[float, str]] = []
+
+
 def measure_outline(label: str, unit: str, run_of: Callable[[int], Callable[[WorkBudget], object]],
-                    low: int, high: int) -> float:
+                    low: int, high: int, reference: float) -> None:
+    """The largest member that fits and the first that does not. ``reference``:
+    what a unit of the first row of table 1 took, in nanoseconds."""
     low, high = _largest(lambda n: _outline(run_of(n))[0] is not None, low, high)
     work, _charged, took = min((_outline(run_of(low)) for _ in range(3)), key=lambda result: result[2])
     assert work is not None
+    ratio = took * 1e6 / work / reference
+    RATIOS.append((ratio, f"{label}, {low:,} {unit}"))
     print(f"{label}\n    fits:    {low:,} {unit}: {work / 1e6:6.1f} M units, {took:6.1f} ms, "
-          f"{took * 1e6 / work:4.2f} ns per unit charged")
+          f"cost to price {ratio:4.2f}")
     _none, charged, took_no = min((_outline(run_of(high)) for _ in range(3)), key=lambda result: result[2])
+    refused = took_no * 1e6 / max(charged, 1) / reference
+    if charged >= polygon.MAX_REGION_WORK // 100:  # a refusal from the size alone is charged nothing
+        RATIOS.append((refused, f"{label}, {high:,} {unit}, refused"))
     print(f"    refused: {high:,} {unit}, after {charged / 1e6:6.1f} M units, in {took_no:7.3f} ms")
-    return took * 1e6 / work
 
 
 def measure_refusal(label: str, run: Callable[[WorkBudget], object],
-                    clipper: Callable[[], object] | None) -> None:
-    work, charged, took = _outline(run)
+                    clipper: Callable[[], object] | None, reference: float) -> None:
+    work, charged, took = min((_outline(run) for _ in range(2)), key=lambda result: result[2])
     verdict = "REFUSED" if work is None else "built  "
     asked = ""
     if clipper is not None:
         start = time.perf_counter()
         clipper()
         asked = f"; the clipper alone, had it been asked: {(time.perf_counter() - start) * 1e3:9.1f} ms"
-    print(f"    {verdict} {label}: {charged / 1e6:6.1f} M units charged, {took:8.3f} ms{asked}")
+    ratio = ""
+    if charged >= polygon.MAX_REGION_WORK // 100:
+        RATIOS.append((took * 1e6 / charged / reference, label))
+        ratio = f", cost to price {RATIOS[-1][0]:4.2f}"
+    print(f"    {verdict} {label}: {charged / 1e6:6.1f} M units charged, {took:8.3f} ms{ratio}{asked}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -321,36 +392,46 @@ def main(argv: list[str] | None = None) -> int:
           f"{polygon.MAX_REGION_WORK * max(rates) / 1e9:.2f} s")
     if args.quick:
         return 0
+    reference = rates[0]  # a plain traced outline: what a unit is priced by
     print("\n2. OUTLINES (everything the outline needs, out of one budget)\n")
-    charged = [measure_outline(label, unit, lambda n, make=make: _stroke(make(n)), low, high)
-               for label, unit, make, low, high in STROKES]
-    charged.append(measure_outline("a drawn outline that crosses itself", "vertices",
-                                   lambda n: _polygon(crossed(n)), 100, 8000))
-    print(f"\na unit CHARGED took {min(charged):.2f} to {max(charged):.2f} ns (a price is right when "
-          f"this does not exceed the {max(rates):.2f} ns of the cuts)")
+    for label, unit, make, low, high in STROKES:
+        measure_outline(label, unit, lambda n, make=make: _stroke(make(n)), low, high, reference)
+    for label, unit, ring_of, low, high in POLYGONS:
+        measure_outline(label, unit, lambda n, ring_of=ring_of: _polygon(ring_of(n)), low, high, reference)
     print("\n3. REFUSALS (outlines built to cost the clipper as much as they can)\n")
     for points in (400, 800, 1600):
         path = scribble(points)
         measure_refusal(f"a stroke scribbled over {points:,} points", _stroke((path, 10.0)),
-                        lambda path=path: polyline_footprint(list(path), 10.0))
+                        lambda path=path: polyline_footprint(list(path), 10.0), reference)
     for points in (2000, 4000):
         path = standing_teeth(points)
         measure_refusal(f"a stroke of {points:,} teeth standing side by side", _stroke((path, 10.0)),
-                        lambda path=path: polyline_footprint(list(path), 10.0))
+                        lambda path=path: polyline_footprint(list(path), 10.0), reference)
     path = tight_zigzag(1600)
     measure_refusal("a stroke of 1,600 teeth half a centimetre apart", _stroke((path, 10.0)),
-                    lambda path=path: polyline_footprint(list(path), 10.0))
+                    lambda path=path: polyline_footprint(list(path), 10.0), reference)
+    path = tuple((50.0 * (k // 2 + k % 2), 0.001 * (k // 2)) for k in range(4_000))
+    measure_refusal("a staircase of 2,000 level runs (only the rises stack)", _stroke((path, 10.0)),
+                    lambda path=path: polyline_footprint(list(path), 10.0), reference)
     path = tuple((k * 20.0, (k % 5) * 40.0) for k in range(16_000))
-    measure_refusal("a stroke of 16,000 points", _stroke((path, 10.0)), None)
+    measure_refusal("a stroke of 16,000 points", _stroke((path, 10.0)), None, reference)
     for vertices in (200, 400, 800, 1600):
         ring = scribble(vertices)
         grid = [snapshot._to_grid(ring)]
         measure_refusal(f"an outline scribbled over {vertices:,} vertices", _polygon(ring),
-                        (lambda grid=grid: snapshot._clip_tree(grid, 1, band=grid)) if vertices <= 400 else None)
+                        (lambda grid=grid: snapshot._clip_tree(grid, 1, band=grid)) if vertices <= 400 else None,
+                        reference)
+    for vertices, turn in ((200, 0.0), (340, 0.0), (340, 30.0), (800, 0.0)):
+        ring = two_level(vertices, turn)
+        measure_refusal(f"a two-level zigzag of {vertices} vertices" + (f", turned {turn:g} degrees" if turn else ""),
+                        _polygon(ring), None, reference)
     ring = traced(10_000)[0]
-    measure_refusal("a plain outline of 10,000 vertices", _polygon(ring), None)
+    measure_refusal("a plain outline of 10,000 vertices", _polygon(ring), None, reference)
     print("\n(an item of more than MAX_ITEM_VERTICES vertices is refused before one of them is read: "
           "one comparison)")
+    worst, what = max(RATIOS)
+    print(f"\nthe worst cost to price of {len(RATIOS)} rows: {worst:.2f} ({what}); above 1 a row took longer "
+          f"than its units say — the reference unit took {reference:.2f} ns")
     return 0
 
 

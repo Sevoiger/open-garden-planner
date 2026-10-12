@@ -266,7 +266,7 @@ a GitHub job.
 offscreen platform Qt Quick uses the software scene graph. The `render3d` job runs
 `tests/integration/test_quick3d_render.py`, `test_quick3d_engine.py`,
 `test_quick3d_selftest.py` and `test_quick3d_lifecycle.py` with a driver process on a real Qt
-platform (§8.10.4). Both runners are GPU-less, so the job proves correctness on software
+platform (§8.10.6). Both runners are GPU-less, so the job proves correctness on software
 rasterisers — small frames, no sky light probe, timing budgets skipped — and it is deliberately
 not a required check. Measured locally (2026-10-11): the tier passes on an RTX 4070 and on
 WARP. **First run on GitHub's runners (commit af9300d, the first three files):** windows-latest
@@ -276,7 +276,7 @@ llvmpipe work; the failure was a list of expected graphics-API names typed on Wi
 skips on Linux are by design — two hardware-only timing budgets and two Windows-only self-test
 checks. **Second run (commit 10d6e15, with the lifecycle matrix):** ubuntu-latest 71 passed,
 7 skipped, 1 failed — a call order the matrix had pinned as safe from a Windows measurement
-segfaulted on xcb (§11.4.9). **The tree after review round 2** was measured before the push,
+segfaulted on xcb (§11.4.12). **The tree after review round 2** was measured before the push,
 in a container with the job's stack (Ubuntu 24.04, xvfb, xcb, OpenGL on llvmpipe, Python 3.11,
 the lock): 88 passed, 8 skipped — the two hardware budgets, the two Windows-only self-test
 checks, and four Windows-only lifecycle tests (minimising needs a window manager; the forced
@@ -305,20 +305,22 @@ machine, 4.0–6.5 s on a busy one.
 | (none) | everybody | the application |
 | `--selftest` | the release gate; a developer before a merge | the three blocks above; the exit code is the verdict |
 | `--spike-q3d …` | nobody any more | the dormant L0 spike (ADR-048); it retires in L1.10 |
-| `--selftest-supervisor` and six arguments | **internal** — only the self-test's own watchdog passes it | the process that ends a hung self-test from outside (below). Started by hand, or with arguments that do not name a running block of its own parent process, it refuses: one line, exit code 2, nothing opened, nothing terminated. (0: it had nothing to do, or it did its job; 3: it failed itself) |
+| `--selftest-supervisor` and six arguments | **internal** — only the self-test's own watchdog passes it | the process that ends a hung self-test from outside (below). Started by hand, or with arguments that do not name a running block of its own parent process, it refuses: one line, exit code 2, nothing opened, nothing terminated. (0: it held its block's release event — it was released, or it ended a hang; 4: it found no block to wait for and never supervised; 3: it failed itself) |
 
 **It cannot hang a job.** Inside the exe ONE watchdog bounds the whole self-test — all three
 blocks, not only the render: after 300 s it writes the reason in words and every thread's stack
 into the log and ends the process with exit code 1; without a log file and without a stderr it
 still ends the process. That exit was measured NOT to end a Windows process whose threads are
-deadlocked inside Qt (§11.4.9), so the watchdog is supervised: the exe starts itself a second
+deadlocked inside Qt (§11.4.12), so the watchdog is supervised: the exe starts itself a second
 time (`--selftest-supervisor` with the first process's pid and creation time, a random name
 for this run's release event, the deadline and the log), and that process terminates the
 first with exit code 1 — and says so in the log — when it is still alive at 310 s. It ends
 with the self-test and can only ever touch the process that started it, for the one run it
 was started for. **On Windows the self-test FAILS when that process did not start, refused,
-or did not leave after its release** — the log's `[selftest_supervisor]` line says which; a
-missing safety net used to pass unnoticed. On other platforms there is none: the in-process
+never found the run it was started for, or did not leave within 15 s of its release** — the
+log's `[selftest_supervisor]` line and the `FAIL self-test supervisor -> …` line say which; a
+missing safety net used to pass unnoticed. There is no start timeout while the self-test
+runs: those 15 s at its end are the bound, and they include the supervisor's own start. On other platforms there is none: the in-process
 exit was measured to end the deadlock on Linux, and beyond that the bound is the caller's own
 time limit — in CI the step's — which the log's `[watchdog]` line says in so many words.
 Around it, the workflow steps that run the self-test have a limit of 10 minutes; the release

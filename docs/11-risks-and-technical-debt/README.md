@@ -13,7 +13,7 @@ Dated audit snapshots: [audit-2026-10.md](audit-2026-10.md) (numbers: `audit-202
 | ~~Qt 3D is deprecated since Qt 6.8 — which renderer carries Phase 17's "Living Garden 3D"?~~ **RESOLVED (ADR-048, 2026-10-05)** | 3D look, shadows, upgrade path past the #277 pin pair | **GO** — Qt Quick 3D replaces Qt 3D for Phase 17 (the L0 spike passed the twelve pre-committed criteria, including on the owner's GPU); `QQuickView` host chosen; the D3D11 leak half is accepted open and closes in L1.3. Evidence in ADR-048 (entry 19 = owner run). |
 | Bundled plant database source? | Offline functionality | Evaluate USDA Plants Database, consider one-time Trefle.io bulk export. **Partially resolved (ADR-014):** 118 bundled species ship with licence metadata (#311); a bulk-export source remains open. |
 | ~~AI-generated SVG quality consistency?~~ **RESOLVED (ADR-040, ADR-042)** | Visual appeal | Procedural generators replaced AI-generated SVGs. |
-| NSIS installer signing? | Trust/distribution | Unsigned initially, document for users. **Partially addressed (ADR-044, 2026-09-15):** build provenance attestation (`gh attestation verify`) proves the binary traces back to a public CI run of the public source — free, no cert needed. Still open: a paid Authenticode cert, which is what actually removes the SmartScreen/Defender/Norton reputation warning itself, remains unfunded. Reputation detections now observed from a second vendor: Norton 360 `FileRepMalware[Misc]` on the 1.27.9 installer (issue #358, 2026-09-22), same zero-reputation FP class as Defender in #356. Authenticode is tracked in #375. |
+| NSIS installer signing? | Trust/distribution | Unsigned initially, document for users. **Partially addressed (ADR-044, 2026-09-15):** build provenance attestation (`gh attestation verify`) proves the binary traces back to a public CI run of the public source — free, no cert needed. Releases remain unsigned. Signing options, including no-cost proposals, are under evaluation in [#375](https://github.com/cofade/open-garden-planner/issues/375); no option has been adopted, and effectiveness against these detections is unproven for this project. Reputation detections now observed from a second vendor: Norton 360 `FileRepMalware[Misc]` on the 1.27.9 installer (issue #358, 2026-09-22), same zero-reputation FP class as Defender in #356. Authenticode is tracked in #375. |
 
 ## 11.2 Risks
 
@@ -26,7 +26,7 @@ Dated audit snapshots: [audit-2026-10.md](audit-2026-10.md) (numbers: `audit-202
 | Project not attracting contributors | Medium | High | Excellent documentation, clean code, contributor guide, CI/CD. **Status 2026-10:** no CONTRIBUTING.md exists; the contribution rules live in CLAUDE.md/AGENTS.md and are written for agents (audit-2026-10 §5.10). |
 | External API deprecation | Low | Medium | Fallback chain: Trefle -> Permapeople -> Bundled DB. **Status 2026-10:** the bundled-DB step of the chain is not implemented (TD-003). |
 | ~~AI-generated SVGs inconsistent quality~~ **Closed (ADR-040, ADR-042)** | Medium | Medium | Sprites and textures are generated, not drawn. |
-| Windows installer blocked by SmartScreen | Medium | Low | Document workaround, investigate signing options. Build provenance attestation shipped (ADR-044) as a verifiable trust signal alongside the checksum; does not itself suppress SmartScreen/Defender (issue #356) or Norton `FileRepMalware[Misc]` (issue #358 — second AV vendor, same unsigned zero-reputation profile) — that needs paid signing, still unfunded. FP path per vendor: Microsoft file-submission forms (#356), Norton portal `submissions.norton.com/reportfalsepositive` (#358; both portals are CAPTCHA-protected, so submissions are manual, not automatable by the maintainer). |
+| Windows installer blocked by SmartScreen | Medium | Low | Document workaround, investigate signing options. Build provenance attestation shipped (ADR-044) as a verifiable trust signal alongside the checksum; does not itself suppress SmartScreen/Defender (issue #356) or Norton `FileRepMalware[Misc]` (issue #358 — second AV vendor, same unsigned zero-reputation profile). Releases remain unsigned; signing options, including no-cost proposals, are under evaluation in [#375](https://github.com/cofade/open-garden-planner/issues/375). No option has been adopted, and no signed release has established effectiveness against these detections. FP path per vendor: Microsoft file-submission forms (#356), Norton portal `submissions.norton.com/reportfalsepositive` (#358; both portals are CAPTCHA-protected, so submissions are manual, not automatable by the maintainer). |
 | Large bundle size from PyInstaller | Medium | Low | Optimize includes, strip unused Qt modules |
 
 **Build-backend advisory, 2026-10-09.** The first Dependabot scan of uv.lock reported
@@ -305,7 +305,7 @@ Hard-won lessons from implementation. Read these before modifying the related su
   - **The same search found three more writers outside the test root**, none of them into the user's own app folder, all through `QStandardPaths.writableLocation`: (1) `tests/unit/test_main_hardening.py::TestExceptHook` appended a traceback to `%APPDATA%/pytest-qt-qapp/crash.log` on every run — 331 of them, 82 kB, when counted; (2) the companion, climate and thumbnail caches under `%LOCALAPPDATA%/pytest-qt-qapp/`, which survive from run to run, so a test could pass on a cache an earlier run had filled; (3) `tests/unit/test_paths.py::test_get_projects_dir_falls_back_to_home` created `~/Documents/Open Garden Planner` on every machine it ran on, because `get_projects_dir()` creates what it returns. (1) and (2) are closed by redirecting the Python-level function, (3) by giving that test a home of its own.
   - **Lessons.** *List every place the app writes* (`get_app_data_dir`, `QStandardPaths`, `Path.home()`, the temp directory) and decide each one — redirected, or left with a reason. *A test that is correct about the unit can still be wrong about the world:* the Walnut test asserts what it should and has passed since it was written. *A known gap written into a docstring is a defect with a comment on it.* And the pin must not need the thing it protects: the end-to-end test never reads the real directory — it watches what the process opens (`tests/integration/test_app_data_isolation.py`).
 
-  - **One review later: four more, each outside what "the app-data directory" had made anyone look at** (L1.1 fix round 3, 2026-10-11). (1) **A test read another tool's credentials.** `tests/unit/test_ai_client_onboarding.py` redirected `APPDATA` for the client it was about; `detect_clients()` asks every client in the registry, and the others hang off `Path.home()` — the test opened the developer's real `~/.claude.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.jsonc` and `~/.gemini/config/mcp_config.json`. Reads, not writes; of files that hold tokens. The module now gives every test a home of its own. (2) **A library has user files too.** ezdxf loads `~/.config/ezdxf/ezdxf.ini` when it is imported and builds *and writes* `~/.cache/ezdxf/font_manager_cache.json` when that is missing (read in the installed 1.4.3, not by touching the home); `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` now point into the test root. (3) **The stand-in was kinder than the thing it stands for.** The replacement for `QStandardPaths.writableLocation` created the folder it named; Qt does not, so a writer without its own `mkdir` would have passed every test and failed on a first run. It names the path only, and a test shows every writer making its folder. (4) **Scripts are outside all of it.** A script that imports the app is not a pytest process: its settings are the user's own — on Windows the registry, which no environment variable moves — and `ProjectManager.save()` / `.load()` end with `add_recent_file`. Probe and generator runs replaced a developer's whole Recent Files list with fixture paths. `scripts/script_isolation.py` (§8.10, "A script is not a test") and a test that runs each script as a script. *The question "where does the app write?" has a second half: "and who else runs the app?" — a test, a child process, a script, a probe. Each needs its own answer, and an answer for one is none for the next.*
+  - **One review later: four more, each outside what "the app-data directory" had made anyone look at** (L1.1 fix round 3, 2026-10-11). (1) **A test read another tool's credentials.** `tests/unit/test_ai_client_onboarding.py` redirected `APPDATA` for the client it was about; `detect_clients()` asks every client in the registry, and the others hang off `Path.home()` — the test opened the developer's real `~/.claude.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.jsonc` and `~/.gemini/config/mcp_config.json`. Reads, not writes; of files that hold tokens. The module now gives every test a home of its own. (2) **A library has user files too.** ezdxf loads `~/.config/ezdxf/ezdxf.ini` when it is imported and builds *and writes* `~/.cache/ezdxf/font_manager_cache.json` when that is missing (read in the installed 1.4.3, not by touching the home); `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` now point into the test root. (3) **The stand-in was kinder than the thing it stands for.** The replacement for `QStandardPaths.writableLocation` created the folder it named; Qt does not, so a writer without its own `mkdir` would have passed every test and failed on a first run. It names the path only, and a test shows every writer making its folder. (4) **Scripts are outside all of it.** A script that imports the app is not a pytest process: its settings are the user's own — on Windows the registry, which no environment variable moves — and `ProjectManager.save()` / `.load()` end with `add_recent_file`. Probe and generator runs replaced a developer's whole Recent Files list with fixture paths. `scripts/script_isolation.py` (§8.10, "A script is not a test") and a test that runs each script as a script. (5) **And one layer further, a review later** (fix round 4): on Windows the profile variables move only part of what Qt hands out — `AppLocalDataLocation` and `CacheLocation` follow the shell, not the environment — so a script's isolation installs the suite's own stand-in too; the list of scripts that isolate themselves was kept by hand, so every file under `scripts/` is read now; and one onboarding test could still START a client CLI it found. *The question "where does the app write?" has a second half: "and who else runs the app?" — a test, a child process, a script, a probe. Each needs its own answer, and an answer for one is none for the next.*
 
 - **A "nobody may use X" gate belongs in the AST, not in a regex — and it must be falsified twice** (#285, gate-design lesson): `test_settings_chokepoint.py` started as a line-anchored regex for `QSettings\s*\(`. Falsifying it by restoring the pre-#285 code as `from PyQt6.QtCore import QSettings as _Q` … `_Q("cofade", …)` — a two-line edit anyone could make while "just fixing an import cycle" — sailed through, so an **import** pattern was added. A senior review then broke *that* in one experiment: `from PyQt6.QtCore import (\n    QSettings as _Q,\n)` names the class on a line with no `import` keyword, so both regexes passed and only the behavioural test caught the bug. Rewritten as an `ast` walk over `Import`/`ImportFrom`/`Name`/`Attribute`, all spellings collapse into one check — and the same walk cheaply expresses a rule no regex could ("no `create_qsettings()` call that is evaluated at import time", distinguishing a function *body* from a decorator or default argument). Lessons for every textual gate in this repo (QSS colors, icon conformance, texture tileability): match the **name binding**, not just the use, because you cannot use what you have not first named; prefer the AST when the language has one; give every detector a **positive control** fed the exact escape it exists to catch, since a detector that stops matching anything reads as a green gate forever; and treat "my falsification passed" as one data point, not proof — the second reviewer found the second hole in one try.
 
@@ -1186,6 +1186,23 @@ building on.
   simplicity test was priced at the square of its edges and cost a hundred times that for a
   ring whose every pair of edges lies close, found by measuring a refusal that took longer
   than its units allowed.
+- **(Fix round 4.) A cache smaller than its working set is not a small cache — it is no
+  cache, plus its bookkeeping.** Round 3 bounded what the ring memories hold (262,144 vertices,
+  least recently asked dropped first) to stop an edit session from holding a gigabyte. A
+  snapshot asks the plan in the same order on every tick, so in a plan larger than the cap each
+  answer was the oldest when its turn came: nearly every lookup missed, and an UNCHANGED plan
+  was recomputed on every tick — 160 polygons of 1,000 vertices 4.6 to 5.3 s per idle tick
+  (0.2 s before the cap), 110 closed fences 14 s. Every test of the round ran far below the
+  cap. Fix: a snapshot is one generation; what it asks for is live and never dropped; the cap
+  bounds the stale rest (ADR-056 decision 9, §8.27.1). *Bound what is beyond the working set,
+  never the working set; and test a cache at the size where it is full — shrink the cap in
+  the test, count the recomputations on the second tick.*
+- **(Fix round 4.) The same library call can cost a thousand times more for how it is asked.**
+  pyclipper's union with `StrictlySimple`: 19 ms as a flat list (`Execute`), 4,382 ms as a tree
+  (`Execute2`), same input — a closed zigzag of 340 vertices on two levels. The price was read
+  off the rings that came back; the cost followed the splits the tree build tried. *When a
+  call into a library is priced, measure that call on input built to hurt it, in each form it
+  can be made; a price fitted on kind inputs is a guess.*
 - **(Fix round 3.) "Unreachable" was a sample.** A fallback was reported as a path no real
   stroke takes because 0 of 4,500 random strokes took it. A fence whose two butt ends meet
   corner to corner takes it every time, and nothing tested it: replaced by "no regions", 694
@@ -1708,7 +1725,8 @@ Found by the last review pass and at the merge of the plant story (`5c44578`):
 The rest of that pass is method and lives in §8.10.5: a running timer asserted as a fact, "up
 to N" without the worst direction, a source guard without a census, a committed script outside
 the suite's isolation.
-### 11.4.9 What the engine taught while the production package was built (Phase 17 L1.2, #385)
+
+### 11.4.12 What the engine taught while the production package was built (Phase 17 L1.2, #385)
 
 The first six were found by measuring before building on them; the rest by two independent
 reviews and by CI's runs of the branch — each of those is a thing a green suite did not see
@@ -1820,7 +1838,44 @@ a container with the CI job's packages.
   against orders nobody wrote down: the hand-written matrix had no full-screen row, the
   seeded random walk that joined it (250 operations) has found nothing since. Pinned by
   `test_after_wait_ready_the_frame_has_the_windows_new_size` and
-  `test_a_seeded_random_order_never_yields_a_wrong_frame`.
+  `test_a_seeded_random_order_never_yields_a_wrong_frame`. *Corrected in review round 4:
+  the fix itself — a fact that an expose switches on — was the next defect, and "has found
+  nothing since" lasted until the walk ran on a small screen. The entry below.*
+- **(Round 4) A fact that only an OS paint message can set is a fact you may wait for for
+  ever — the frame is the witness.** *Symptom:* CI red on `windows-latest` only: the seeded
+  walk, 7 problems in 252 looks — three looks where Qt showed the pane and the host never
+  came up, and `wait_ready()` taking its whole 5 s three times in a row on a 2 × 60 px
+  pane. Green on the dev box, on the GPU and on WARP. *Wrong theory (round 3's fix, the
+  entry above):* "a grab has the wrong size exactly between a `Resize` event and the next
+  `Expose` — so wait for that expose". *Measured:* Windows sends NO expose to a pane that
+  grows where no screen is, and none to one that is shown there. The walk asked for 1203
+  and 1500 px wide windows on whatever screen it found; on the runner's 1024 px the pane
+  lay beyond the edge. With the window placed like that, the dev box showed the same
+  indices — while its display slept. With the display awake, the same pane beyond the same
+  edge got an `UpdateRequest` (still no expose), Qt drew, and the frame was right; asleep
+  again (the session idle for 25 min), stale again — and on WARP, in those same minutes,
+  right. Whether a frame can be had there is not a fact of the platform: it changes with
+  the adapter, and within a day on one machine. *Root cause:* the host had made a MESSAGE its evidence for something
+  it can simply look at. Each round had added a fact to the state (three, then nine, then
+  ten), and each new fact was a new way to be wrong about the one thing that matters: is
+  the frame right? *Fix:* the frame answers that. `grab()`, `pick()`, `project()` and
+  `wait_ready()` take a frame and compare its size with the window's, to the device pixel;
+  another size is a refusal, never an answer, and nothing is remembered about it. The
+  state is what Qt reports when asked, no more. `wait_ready()` is bounded by its timeout
+  INCLUDING the delivery of events (a zero timeout runs none), defaults to 1 s, and says
+  False 0.5 s after the last sign of progress whatever the timeout — for every cause at
+  once: no screen, no display, no painting. *Two things found on the way:* a pick right
+  after a resize, with no frame in between, MISSES (the engine picks with the viewport of
+  the frame it rendered last) — so `pick()` and `project()` take a frame of their own
+  then; and the size check had a tolerance of two pixels, through which a 447 px frame
+  passed for a 448 px window. *Lesson:* do not infer what you can observe; and a test must
+  not let the window system decide where its windows are — the matrix places every window
+  on the screen on purpose now, runs its walk once as on 1024 × 768, and reproduces "nothing
+  draws the view" with an event filter instead of hoping for a machine in that condition.
+  Pinned by `test_a_view_that_nothing_draws_is_refused_promptly_and_answers_when_painting_resumes`,
+  `test_the_same_walk_where_a_small_screen_leaves_the_pane_beyond_the_edge`,
+  `test_a_pane_beyond_the_screens_edge_gets_a_frame_or_a_prompt_refusal_and_answers_when_it_is_back`
+  and, without a window, `tests/ui/test_quick3d_host.py::TestWaitReady`.
 - **(Round 3) A contract written down in nine places is wrong in three.** The host's state
   table stood in `lifecycle.py`, `host.py`, §8.27.2, ADR-048, this section, the glossary, the
   building-block view and both copies of the `ogp-3d-renderer` skill; after round 2 three of
@@ -1931,6 +1986,19 @@ a container with the CI job's packages.
   `test_a_finished_blocks_supervisor_cannot_end_the_block_after_it`,
   `test_the_supervisor_only_acts_for_the_process_that_started_it` and
   `test_without_its_supervisor_the_selftest_fails_on_windows`.
+- **(Round 4) "It left with exit code 0" is not "it did its job".** A supervising process
+  that could not find its block — a creation time that was not the process's — left 1.5 s
+  into a 20 s block with exit code 0, the same code as one that was released; the block
+  called itself supervised and the self-test logged `ok=True detail=started, released,
+  left` for a run without a safety net. *Fix:* 0 only for a supervisor that held the
+  block's release event; 4 for one that found nothing to wait for. And so that "came up
+  late" is not mistaken for "lost": the block signals its event and KEEPS it until the
+  supervisor has left (at most 15 s — the only start bound there is), so a late one finds
+  it, signalled, and leaves as released. Also: everything that arms a watchdog is inside
+  its `try` — a failure while arming had left the process "armed" (every later watchdog
+  refused) with a live supervisor that would have ended it at the deadline. Pinned by
+  `test_a_supervisor_that_never_supervised_says_so_in_its_exit_code` and
+  `test_a_watchdog_that_cannot_be_armed_leaves_nothing_armed_and_no_supervisor`.
 - **(Round 2) Without a slot on `sceneGraphError`, a graphics device that cannot be created
   takes the whole app down.** Forced with `QT_D3D_ADAPTER_INDEX=9`. With a slot connected, Qt
   emits `(ContextNotAvailable, "Failed to initialize graphics backend for D3D11.")` and goes
@@ -1954,7 +2022,7 @@ a container with the CI job's packages.
   log directory wrote into the developer's real roaming profile — under a throwaway
   organisation name, which is how the empty directory it left behind was found. Qt Quick's
   shader cache and the graphics driver's caches hang on the same profile. *Fix:* the children
-  of the engine tests get a profile of the test process's own (§8.10.4), and the one test
+  of the engine tests get a profile of the test process's own (§8.10.6), and the one test
   that resolves the log directory first ASKS Qt where it would be — which creates nothing —
   and stops unless the answer is inside that profile.
 - **`exposure` is not a property of `SceneEnvironment`.** Only `ExtendedSceneEnvironment`
@@ -2067,6 +2135,20 @@ automatic security-update support is unresolved, not a successful remediation. A
 bootstrap pin must be checked against hosted update tooling as well as installation tooling.
 
 **Unicode CLI output needs an explicit stream encoding** (issue #417): UTF-8 wiki files did not prevent redirected Windows stdout from using cp1252. The comparison command emitted byte 0x96 for an en dash and failed to encode a check mark. `scripts/sync_wiki.py` now sets stdout and stderr to UTF-8 before printing. The subprocess comparison regression in `tests/integration/test_wiki_publication.py` captures real Unicode diffs without a UTF-8 environment override.
+
+### 11.4.8 Guild boundaries found by independent review (F1/F2)
+
+Guild happy-path insertion tests did not establish document lifetime, copy isolation or translated refusal behavior. Review reproduced a mirror copy whose species dictionary still aliased the source, a grouped existing centre whose ancestor layer was locked, a stale search-detail response accepted after another selection, and malformed imported trait shapes that could invent functions through substring matching. The fixes deep-copy the complete copied metadata, check every ancestor layer, invalidate enrichment on selection changes, and normalize imported trait containers without inferring values. Unknown data remains preserved.
+
+A second review exercised plan replacement while a placement preview or sidebar click was pending. Four preview wrappers survived scene clearing and `clear_preview()` raised a deleted-C++-object exception; loading a plan with the same UUIDs caused the queued click to select an object in the replacement document. Document replacement now closes the picker before teardown, clears coordinator status synchronously, and cancels pending navigation. UUID resolution must be coupled to document lifetime. Regression tests cover same-ID replacement as well as empty scenes.
+
+Validation errors now have Qt-free codes and structured parameters. API text stays English; UI adapters translate the known code and field labels. Translating only an outer error sentence left its generated reason in English. Actual German editor and deleted-centre refusal tests pin the complete user-visible message, beyond the unfinished-translation gate. No undocumented Qt timer-reentrancy claim is made: the separate timer experiment did not reproduce it.
+
+The full battery found one further representation boundary: existing task/soil tests construct `RectangleItem` plants, so semantic `is_plant_type` does not guarantee `CircleItem.radius`. The badge coordinator now skips geometry for plants with no badge/status and uses the actual rectangle or bounding rectangle when an update is needed. A regression covers an ordinary rectangular plant and an imported rectangular guild centre, retaining serialized geometry. Subsystem-only green tests had omitted this representation. Review also loaded a polygon plant and selected it through the real picker: it was eligible but insertion assumed `rect()`. One `guild_plant_bounds()` helper now uses the base rectangle/polygon/path geometry for centre positioning, boundary preflight, previews and badges. Rotation-parametrized round-trip picker tests cover this path and exact undo restoration.
+
+**F1/F2 owner manual-pass follow-up (PR #433).** The German guild picker displayed English catalog names, and selecting a gallery plant then drawing it ignored food-forest auto-assignment. Instrumentation showed `[F1] auto=True species=shrub chosen=<active-id> active=<active-id>` from `CircleTool._finalize_circle`; the previous integration test exercised only the drag/drop constructor. Circle placement now uses the same `build_plant` constructor as drops, preserving plant metadata, planting-date stamping, parentage and one-step undo. Names in the guild picker, editor and member list use display-time translations, including the previously unregistered bundled catalog names. The saved English names and canonical keys are unchanged, and explicit object names are preserved. Regression tests assert German widget contents and both eligible-layer assignment and fallback behavior; table completeness alone cannot establish either contract.
+
+**Final PR #433 review: deferred P2 maintenance finding.** The synchronous `PlantSearchDialog._enrich_selected_plant()` helper has no callers; selection acceptance uses the asynchronous `_on_accept()` / `_poll_results()` path. Stale comments in the dialog and provider base still reference the synchronous helper. This creates a future validation/fallback maintenance risk, with no observed runtime defect or outstanding P0/P1. A separate cleanup should remove the unused helper and update those references while retaining the asynchronous enrichment integration tests.
 
 ## 11.5 Community and Governance
 

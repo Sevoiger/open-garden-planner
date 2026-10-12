@@ -54,7 +54,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Final
 
-from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsScene
 
 from open_garden_planner.core.plain_text import log_text
@@ -311,13 +311,13 @@ class Scene3DController(QObject):
                 # due, and a zero timer waits behind the 2D side's debounced work
                 # (spacing, companions, the minimap) — measured on the large bench
                 # plan: 5 % of the passes started more than 228 ms late (ADR-057).
-                # NORMAL priority, on purpose: the scene's own queued ``changed`` for
-                # the same edit was posted first and is delivered first, so the undo
-                # stack's signal and the scene's share ONE pass. (At high priority the
-                # pass ran before it, and ``changed`` then cost a second snapshot.)
+                # NORMAL priority (postEvent's default), on purpose: the scene's own
+                # queued ``changed`` for the same edit was posted first and is delivered
+                # first, so the undo stack's signal and the scene's share ONE pass. (At
+                # high priority the pass ran before it, and ``changed`` then cost a
+                # second snapshot.)
                 self._posted = True
-                QCoreApplication.postEvent(self, QEvent(_PASS_EVENT),
-                                           Qt.EventPriority.NormalEventPriority.value)
+                QCoreApplication.postEvent(self, QEvent(_PASS_EVENT))
 
     def event(self, event: QEvent | None) -> bool:
         if event is not None and event.type() == _PASS_EVENT:

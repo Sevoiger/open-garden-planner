@@ -279,7 +279,7 @@ store would read and write the developer's own settings: loading a plan ends wit
 write to Recent Files. The rule: **a child has the two names rebound before it can
 build a store, and empties its own key when it exits.** For the children of the 3D
 engine's tests that is not left to each child. Their environments have one source,
-`tests/integration/quick3d_render_support.isolated_env` (gated: §8.10.4), and it puts
+`tests/integration/quick3d_render_support.isolated_env` (gated: §8.10.6), and it puts
 a directory holding one `sitecustomize.py` first on the child's `PYTHONPATH`. Python
 imports that file at start-up; it imports nothing of the app, waits for the import of
 `app/settings.py`, and rebinds the names the moment that module's body has run —
@@ -490,17 +490,38 @@ developer's whole list had been replaced by fixture paths). `scripts/script_isol
 one place for it, and a script calls it in two steps: `isolate_profile()` under
 `if __name__ == "__main__":` **above the first import of the app** (the profile variables —
 `USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA`, the three `XDG_*` — to a temporary directory
-of the process), and `isolate()` as **the first statement of `main()`** (that, and the two
-settings names rebound to a key of the process, cleared at exit). Not at import: tests import
-the fixture generators into the pytest process, and a second redirection there would take its
-test key away. `scripts/make_scene3d_edge_plan.py` and `scripts/measure_region_work.py` do this;
-`scripts/mutation_check_scene3d.py` imports nothing of the app (its children are pytest).
-`tests/integration/test_script_isolation.py` runs each of them **as a script, in a child
-process**, and checks every settings store the child builds and that nothing — not a file, not a
-folder — appears in the profile it was started with; the child is handed a decoy pair in place
-of the production names, so a script that failed to isolate itself would write there and not
-into anybody's settings. A probe that is not committed has no such test: write it as a pytest
-test, or give it the same two calls.
+of the process), and `isolate()` as **the first statement of `main()`** (that; the two
+settings names rebound to a key of the process, cleared at exit; and the stand-in for
+`QStandardPaths.writableLocation` — on Windows the variables move `AppDataLocation` and
+`DocumentsLocation` but NOT `AppLocalDataLocation` or `CacheLocation`, where the companion,
+climate and thumbnail caches live: Qt asks the shell). That stand-in is ONE function,
+`script_isolation.redirect_qt_locations`: `tests/conftest.py` loads `script_isolation` and
+installs the same one for the suite. Not at import: tests import the fixture generators into
+the pytest process, and a second redirection there would take its test key away.
+
+**Every script is read, not a list of them kept.** `tests/integration/test_script_isolation.py`
+parses every file under `scripts/`: one that imports the app or builds a Qt application either
+calls `script_isolation.isolate()` — with `isolate_profile()` above its first app import and
+`isolate()` first in `main()` — or stands on the test's `NOT_ISOLATED` list **with the reason**
+(eight today: the isolation itself, a spike benchmark with a helper of its own, three developer
+tools that are meant to run in the real profile, three that build no store). A new script that
+reaches the app fails the test until it does one or the other. The three that isolate
+themselves — `make_bench_plans.py` (until this story it rebound the names to a standing key
+nothing cleared, and left the profile alone), `make_scene3d_edge_plan.py`,
+`measure_region_work.py` — are each run **as a script, in a child process**: every settings
+store the child builds, where its profile variables and Qt's five locations point when it ends,
+and that nothing — not a file, not a folder — appeared in the profile it was started with. The
+child is handed a decoy pair in place of the production names, so a script that failed to
+isolate itself would write there and not into anybody's settings.
+`scripts/mutation_check_scene3d.py` imports nothing of the app (its children are pytest). A
+probe that is not committed has no such test: write it as a pytest test, or give it the same
+two calls.
+
+**No test starts another tool.** `detect_clients()` probes a client CLI it finds on `PATH` by
+running it. `tests/unit/test_ai_client_onboarding.py` puts no CLI on `PATH` by default and makes
+the module's `subprocess.run` raise; a test that plays a CLI replaces it, and the one that only
+needs a CLI to be *found* stubs `cli_supported_flags` (it used to stub `which` to
+`/usr/local/bin/claude` for every client and let the probe run whatever was there).
 
 Pinned by `tests/integration/test_app_data_isolation.py`: the four variables are assigned at
 conftest module scope before the first import of the app (an AST check, the counterpart of
@@ -733,7 +754,7 @@ suite (ADR-056, "What the first version got wrong").
   turning" test turned the item *before* taking its baseline, one named for `reset()` never called
   it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
   fails if the named behaviour breaks?"
-- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 149
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 167
   single-rule mutations to the pipeline, each against the tests that must notice; its first run
   found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
@@ -993,7 +1014,8 @@ Added by the senior review's first round (the same story):
   (`test_run_as_documented_the_script_reaches_no_settings_no_plan_and_no_app_data`). Watch what
   is constructed and opened, not what is imported: importing the `core` package loads the
   settings module and PyQt6 either way.
-### 8.10.4 The 3D render tier (Phase 17 L1.2)
+
+### 8.10.6 The 3D render tier (Phase 17 L1.2)
 
 3D cannot be rendered in the default test run: `tests/conftest.py` sets
 `QT_QPA_PLATFORM=offscreen`, and under that platform Qt Quick falls back to the software scene
@@ -1023,9 +1045,24 @@ written (a collapsed pane; `showFullScreen()`). So its last test is not: a seede
 — 250 operations a parent can do to an embedded host (collapse the pane, squeeze it to one
 pixel, resize, maximise, full screen, minimise, hide and show the pane, the host, the
 window), each followed by a look at once, after `wait_ready()`, or after the event loop ran.
-Its judge knows only what QT said about the window at that look: the answer is the scene at
-that size or a refusal, `wait_ready()` True is followed by a frame, and a window Qt shows is
-never stuck. The seed is fixed — a failure must be the same failure twice.
+Its judge knows only what QT said about the window at that look — its size, and how much of
+it is on a screen: the answer is the scene at that size or a refusal; `wait_ready()` True is
+followed by a frame; every `wait_ready(t)` is back within `t` (plus the one Qt handler that
+was running) and a False within half a second of the last sign of progress; and where ALL
+of the pane is on a screen, a window Qt shows comes up. The seed is fixed — a failure must be
+the same failure twice.
+
+**The matrix must not depend on the screen it runs on** (review round 4: it did — the walk
+asked for 1203 and 1500 px wide windows on whatever it found, and on a 1024 px CI runner the
+pane lay beyond the edge, where Windows sends no expose; the local tiers were green "only
+because every window fits on this screen"). So: every window of the matrix is PLACED on the
+screen on purpose (`_splitter_window`); the walk runs twice — once with every size capped by
+`availableGeometry()` (asserted: the pane is on the screen whenever it shows), once with the
+window where a 1024 × 768 screen leaves it (asserted: the pane WAS shown beyond the edge);
+and the condition that broke CI is not waited for, it is made: `pane_without_paint` puts an
+event filter on the view that eats `Expose`, `UpdateRequest` and `Paint` — the view is on
+the screen and nothing draws it — because whether a machine withholds those by itself was
+measured to change within a day (display asleep, display awake; §11.4.12).
 
 **Running it** (it opens windows on the desktop):
 
@@ -1052,13 +1089,15 @@ call order and several attempts per control, is about two minutes of it. After r
 3 (100 tests: two window-state orders, the random walk and the control of its judge joined):
 99 passed and one control reported, not asserted, in 321 s on the RTX 4070, and 97 passed, the
 two hardware-only budgets skipped and the one control reported, in 244 s on WARP; the walk
-alone took 105 s on the GPU.
+alone took 105 s on the GPU. After review round 4 (104 tests: the second walk and three rows
+joined): 103 passed and one control reported, not asserted, in 458 s on the RTX 4070 and 101 passed, the two hardware-only budgets skipped and the control reported, in 355 s on WARP.
 
 **Linux without a Linux machine.** The CI job's stack — Ubuntu 24.04, xvfb, xcb, OpenGL on
 Mesa llvmpipe, Python 3.11, the repository's lock — fits in a container, and Docker on the
 developer's machine runs the tier there in minutes. That is how the round-2 tree was measured
 on xcb before it was pushed, after the round-1 tree had met xcb for the first time in a red
-CI job: 88 passed and 8 skipped in under two minutes (round 3: 92 passed and 8 skipped in 184 s). A container is
+CI job: 88 passed and 8 skipped in under two minutes (round 3: 92 passed and 8 skipped in 184 s;
+round 4: 96 passed and 8 skipped in 241 s). A container is
 not GitHub's runner; say which one a number came from.
 
 **The tier below it.** Not everything about the engine needs pixels. Under the offscreen
@@ -1096,7 +1135,7 @@ and must report failures and not one skip (measured: 9 failed, 43 errors, 12 pas
   embedding test must turn the window into an RHI surface. Angles that cannot tell two senses
   apart (0°, 90° for a rectangle) are not enough — the matrix has two that can.
 - **`grab()` on a live host is the only moment of certainty.** The tier never waits for a frame
-  to be presented (§11.4.9: with the display asleep a visible window presents one frame and
+  to be presented (§11.4.12: with the display asleep a visible window presents one frame and
   then none); every step is "change, grab, judge" — after `wait_ready()` said the host is live,
   an answer the driver checks at every place it asks.
 - **A crash is not an exception: one call order per process.** The lifecycle matrix starts a
@@ -1263,7 +1302,7 @@ another local user before the app writes it. Bandit does not flag this form (it 
   unpredictable name, mode 0700) and is removed afterwards.
 - **Tests never write under a real user location**: they pass an explicit path
   (`OGP_SELFTEST_LOG`), or give the child process a user profile of its own
-  (`quick3d_render_support.isolated_env`, §8.10.4). A throwaway application NAME is not
+  (`quick3d_render_support.isolated_env`, §8.10.6). A throwaway application NAME is not
   enough — the first version of this rule said it was: the directory is then still created in
   the developer's real profile, under that name (found in review round 2; on Windows
   `QStandardPaths` follows `USERPROFILE`, not `APPDATA`). A test that lets the app resolve a
@@ -3209,6 +3248,32 @@ concern at the layer counts this app supports, and unchanged by #338 (the
 formula was already `layer.z_order * 100` before per-object stacking; #338
 only subdivides the same band, it does not widen it).
 
+## 8.26 Recorded permaculture traits and guild templates
+
+Species traits are curated facts/design annotations, not a planting-success score. `unknown` and empty functions mean no recorded fact. Botanical niche is independent of the illustration category and drawing layer. `scripts/curate_permaculture_traits.py` is the explicit reviewable assignment table for all 118 bundled species: tall woodland/walnut trees use canopy; fruit/smaller ornamental trees sub-canopy; woody bushes/subshrubs shrub; selected low spreading plants ground-cover; harvested underground crops root; climbing/trailing crops vine; remaining herbaceous crops/bulbs/flowers herbaceous. This is a representative food-forest niche, not a universal cultivar height prediction. A bulb grown for flowers stays herbaceous, while garlic grown underground is root. User snapshots can be edited independently.
+
+### Function evidence and limitations
+
+| Recorded function | Bundled records | Evidence |
+|---|---|---|
+| Nitrogen fixer | Bush/runner beans, garden pea, broad bean | [UMN legume physiology](https://extension.umn.edu/agriculture/crop-production/forages/legume-life-cycles-and-characteristics), [rhizobia](https://blog-fruit-vegetable-ipm.extension.umn.edu/2022/01/rhizobia-inoculation-for-organic.html), [Cornell Three Sisters](https://warren.cce.cornell.edu/gardening-landscape/warren-county-master-gardener-articles/creating-a-three-sisters-garden). Function depends on compatible symbionts and conditions; it does not mean immediate nitrogen supply to neighbours. |
+| Pollinator attractor | Borage, aster, strawberry | [RHS lists](https://www.rhs.org.uk/science/research/plants-for-pollinators), [aster profile](https://www.rhs.org.uk/garden-inspiration/wildlife/top-12-plants-for-autumn-pollinators). |
+| Ground cover | Strawberry, winter squash | Strawberry's runner habit and RHS profile, Cornell squash shade/cover guidance. Coverage is design use, not guaranteed weed suppression. Common thyme's low-layer niche does not imply a recorded ground-cover function. |
+
+Other functions remain empty unless recorded by an imported provider or the owner. No role is inferred from companion prose or the crop-rotation demand class. Permapeople complete normalized tokens map Tall trees/Trees/Shrubs/Herbs/Ground cover/Roots/Vines directly; Uses mapping preserves unmapped text, including generic Utility, in the original raw response. The Apple fixture records the issue's 2026-08-17 response (Trees; Utility, Animal feed, Attracts insects, Hedgerow); it is not a claim about today's API response.
+
+### Authoring and operating guilds
+
+Plants → Insert guild opens the bundled/user picker. New, Duplicate and Edit open a form; bundled templates are read-only and Duplicate creates a user-owned ID. User JSON files live in `<app-data>/guilds/`; Reload reads them again and reports invalid filenames without hiding valid templates. Required keys are `id`, positive integer `version`, `name`, `centre`, `roles`, `license`, `attribution`; optional German names/descriptions and source references are supported. A centre is a canonical species key or `function:<token>`. Each role has `function`, positive `count_min`, `ring_radius_cm` (finite positive cm or `canopy_edge`), and ordered `suggested_species` canonical keys. The editor resolves choices from the complete offline catalog and shows eligibility. Replace unresolved user suggestions before insertion. At most 200 plants including centre are allowed.
+
+Pick an instance name, centre species/eligible existing plant, centimetre coordinates and role species. Preview draws transient markers; Cancel/Escape leaves no saved plants/history. Insertion preflights the full layout and commits one command. Centre deletion dissolves links on surviving plants and undo restores them. Right-click plant actions add/remove/transfer membership in one step. A complete copy gets an independent guild; a partial copy loses membership. Editing/reloading templates does not change existing saved snapshots.
+
+The walnut template uses Penn State's [reported tolerance list](https://extension.psu.edu/landscaping-and-gardening-around-walnuts-and-other-juglone-producing-plants), largely observational, including asters under their historical genus. It is not a controlled-trial guarantee for every Symphyotrichum cultivar. The Three Sisters template recognises Indigenous planting traditions and Cornell's cultivar/timing guidance; sturdy corn and staggered planting matter, and the bundled sweet-corn record is an editable planning snapshot rather than a promise of adequate support for every runner bean.
+
+### Runtime and testing discipline
+
+Guild links are orthogonal to §8.14 plant-parent relationships; no new bed predicate or parentage path exists. The canonical build-only plant constructor is shared by gallery, Plant Lists and guild insertion, and creation commands retain `_auto_parent_plant`. A 100 ms parented timer coordinates snapshots/badges/panels. Cosmetic updates are idempotent, and navigation resolves UUIDs after the clicked row callback. API diagnostics may lag one debounce tick; reads do not force recomputation. Tests must compare refusal scene/history state, undo depth, copied metadata independence, editor failure preservation, unchanged-panel signatures and rotated centre geometry in addition to ordinary success.
+
 ## 8.27 3D scene pipeline (Phase 17 L1, #385, ADR-056)
 
 How the plan reaches a 3D engine. Each L1 story adds its own `### 8.27.N` subsection at the end;
@@ -3309,10 +3374,18 @@ The snapshot hands on only regions for which it holds, so for every record
 its own: each outer ring is a simple counter-clockwise polygon, each hole a simple clockwise one
 inside it, holes do not overlap, and a triangulation exists — `cut_region(outer, holes)` returns
 it (`(vertices, triangles)`, remembered). Rings may *touch* in a point; a region whose rings
-touch so that it cannot be cut never arrives. The predicate is asked of every region of every
-record — a circle's, an ellipse's and a rectangle's ring too (on the record grid a circle of
-radius 2e-7 cm is no polygon). **Regions can nest:** an island standing in a hole is a region of
-its own, inside another region's hole; a builder that fills "the hole" fills the island.
+touch so that it cannot be cut never arrives. Every region of every record is judged — a
+circle's, an ellipse's and a rectangle's ring too (on the record grid a circle of radius 2e-7 cm
+is no polygon) — but a ring that is convex BY CONSTRUCTION is judged without being cut: a
+circle of 1e-3 cm and more by its radius, an ellipse or a rectangle by arithmetic on its corners
+(`polygon.is_convex_ring`: every corner turns left, and the ring is no sliver for its reach),
+and only a ring that is not convex on the record grid is asked the cut. The arithmetic implies
+the predicate (0 exceptions among 78,874 such rings in a sweep of 120,000 shapes; 2,000 in the
+suite), so the promise above holds for them unasked. It is there for the date scrub: every dated
+plant has a new radius on every tick, and cutting each 24-gon made that snapshot 2.9 times
+slower (`bench_large`, 80 plants changing: 11.6 ms at the base, 33 ms cut, 12.7 ms now).
+**Regions can nest:** an island standing in a hole is a region of its own, inside another
+region's hole; a builder that fills "the hole" fills the island.
 
 **What an outline may cost — one budget, paid before the work.** An item's outline comes out of
 a plan file, anybody can write one, and the snapshot runs on the GUI thread on every edit tick.
@@ -3330,19 +3403,34 @@ Two rules hold for everything between the item and its record (§8.11 has them a
    | Step | What it is priced from |
    | ---- | ---------------------- |
    | counting the pairs of the path's segments (`polygon.touching_pairs`) | the points, squared; then every pair whose boxes meet — all of them before one is tested |
-   | the clipper inflating the path | the points; their **stack** (`polygon.stack_height`: a sweep line carries every edge it crosses — 4,000 teeth standing side by side took the clipper 1.6 s without one crossing, lying down 4 ms); the pairs that cross (800 points scribbled across a plan: 73,000, half a second, 53,000 rings) or lie within the stroke's reach of each other |
+   | the clipper inflating the path | the points; their **stack** (`polygon.stack_height`: a sweep line carries every edge it crosses — 4,000 teeth standing side by side took the clipper 1.6 s without one crossing, lying down 4 ms — except an exactly LEVEL one, which it walks along: a straight fence costs the same east–west as north–south); the pairs that cross (800 points scribbled across a plan: 73,000, half a second, 53,000 rings) or lie within the stroke's reach of each other |
    | reading what came back | every ring and every vertex, counted first |
    | sorting rings into regions (`group_rings`) | holes × outer rings, each question the outer ring's vertices (2,000 × 2,000 small rings took 3.8 s when nothing asked) |
    | each region's cut (`polygon.pay_for_region`) | the simplicity test (the edges squared, and the pairs it has to look at), a bridge per hole, the ears — cut out of what the ITEM has left, not out of a bound per region: a thousand regions that each fit do not fit together |
-   | resolving an outline that crosses or touches itself | each union and each band from the vertices, their stack and the **crossings** (the last reading of 800 scribbled vertices took ten seconds; a bound on the vertex count did not see it); each reading's rings before they are read; each comparison with the drawn outline on its lattice |
+   | resolving an outline that crosses or touches itself | each union and each band from the vertices, their stack and the **crossings** (the last reading of 800 scribbled vertices took ten seconds; a bound on the vertex count did not see it); each reading's rings before they are read; sorting the strict union's rings (`group_rings`, as above); each comparison with the drawn outline on its lattice |
 
    What the budget does not cover is refused — `polygon.RegionTooLargeError` inside, the
-   skip code `outline_too_large` outside — and the refusal is remembered like any other answer,
-   so an unchanged outline costs one lookup on the next tick. The counted work of one item is at
-   most the bound, to the unit; a refusal costs at most the bound and usually far less.
+   skip code `outline_too_large` outside — and the refusal is remembered like any other answer
+   for as long as the item is there. The counted work of one item is at most the bound, to the
+   unit; a refusal costs at most the bound and usually far less.
 
-Measured (`scripts/measure_region_work.py`, development box, 2026-10-11, beside other test runs:
-a unit took 0.7 to 2.3 ns; on the quiet machine 0.35 to 1.15 ns — the bound is 0.05 to 0.35 s):
+   *Never `StrictlySimple` together with a tree.* The strict union is asked for a flat list
+   (`Execute`) and `group_rings` says which hole is whose. As a tree (`Execute2`) the same union
+   costs by the rings it makes and the splits it tries, which no price can be read off
+   beforehand: one outline of 340 vertices, every vertex on one of two levels, held the GUI
+   thread for 3.6 s INSIDE the budget (pyclipper alone 4,382 ms as a tree, 19 ms as a list); it
+   is refused in 31 ms now.
+
+**In time the bound is a measurement.** A unit of the reference — a plain traced outline — took
+0.35 to 1.15 ns on the development box when it was quiet and 0.7 to 2.3 ns beside other test
+runs: 0.05 to 0.35 s for the bound. A unit charged for something else took 0.1 to 1.7 times the
+reference (`scripts/measure_region_work.py` prints that ratio, cost to price, for each of its 46
+rows): every outline built to hurt the clipper stayed at 0.6 or below, the accepted outlines of
+tables 1 and 2 between 0.75 and 1.45, and the dearest row was a path 100 cm wide with a point
+every 25 cm at 1.7. So "one item costs at most the bound" holds in units; in seconds it is
+0.05 to 0.35, and up to 0.6 where a busy machine meets the dearest family.
+
+Measured (`scripts/measure_region_work.py`, development box, 2026-10-11; the units are exact):
 
 | What fits, at most | | What it costs |
 | ---- | ---- | ---- |
@@ -3350,40 +3438,88 @@ a unit took 0.7 to 2.3 ns; on the quiet machine 0.35 to 1.15 ns — the bound is
 | … a comb (the ear clipper's worst case) | 1,648 vertices | 149.9 M |
 | … a spiral | 4,334 vertices | 149.9 M |
 | a whole outline: a closed fence along a traced outline, 10 cm | 1,321 points | 144.5 M |
-| … the same fence, every segment level with every other | 933 points | 148.9 M |
-| … a ladder drawn as one stroke | 164 rungs | 148.1 M |
-| … a square mesh drawn as one stroke | 15 × 15 openings | 146.8 M |
+| … the same fence, every segment nearly level with every other | 933 points | 148.9 M |
+| … a straight fence with a post every 2 m, east–west / north–south | 6,666 / 6,645 points | 150.0 M (the pairs of its posts) |
+| … the same at 30° (its outline keeps a vertex per post on the grid) | 4,514 points | 150.0 M |
+| … a path 100 cm wide with a point every 25 cm | 900 points, 225 m (the review's generator: 1,011) | 149.9 M |
+| … a path 60 cm wide with a point every 50 cm | 962 points, 481 m (the review's: 1,201) | 149.8 M |
+| … a ladder drawn as one stroke | 168 rungs | 145.1 M |
+| … a square mesh drawn as one stroke | 15 × 15 openings | 146.3 M |
 | … a wall 30 cm wide traced with a point every 2 cm | 919 points | 149.9 M |
+| … a regular polygon (what a DXF import makes of a circle) | 3,456 vertices | 150.0 M |
+| … a traced pond | 3,538 vertices (the review's freehand pond: 3,497) | 148.4 M |
 | … a drawn outline that crosses itself | 1,513 vertices | 149.5 M |
+| … a two-level zigzag (every tooth crosses the others) | 80 vertices | 146.2 M |
 | **what a large plan needs:** a closed fence along 400 traced points | | 24.3 M — 16 % of the bound |
-| … a line of 2 km (2 points) | | 31,340 units — 0.02 % |
-| … a line of 2 km with a point every 5 m | 401 points | 45.6 M — 30 % (its segments lie level) |
+| … a line of 2 km (2 points) | | 31,200 units — 0.02 % |
+| … a straight line of 2 km with a post every 5 m | 401 points | 1.5 M — 1 % |
+| … the same line with every post 2 cm off it | 401 points | 45.6 M — 30 % (its segments stack) |
 | … a traced outline of 400 vertices | | 6.2 M — 4 % |
-| … a rectangle | | 10,200 units |
+| … a rectangle drawn as a polygon | | 10,200 units |
+
+**What is refused that somebody could want.** These limits are low enough to meet: a garden
+path of more than about 900 points, a closed boundary fence traced with more than 1,321, a DXF
+circle of more than 3,456 segments, a traced pond of more than about 3,500 vertices (the fence
+was built up to about 2,600 points before the bound existed — in 1.9 s per edit). Such an item
+is ABSENT from the 3D view — no solid, no decal — while the 2D canvas draws it as always, and
+the direction a wobbly line runs in changes how many points fit (933 nearly level, 1,321 round
+a loop): the clipper's sweep is not symmetric, and its price follows it. So the user-visible
+message for `outline_too_large` is an **acceptance criterion of the workspace story (L1.3)**,
+not a hope: an item that silently is not there reads as a bug of the 3D view.
 
 | What is refused | What saying no took | What the clipper alone would have taken |
 | ---- | ---- | ---- |
-| a stroke scribbled over 800 / 1,600 points | 27 ms / 19 ms | 0.58 s / 2.4 s |
-| a stroke of 2,000 / 4,000 teeth standing side by side | 22 ms / 74 ms | 0.41 s / 1.8 s |
-| a stroke scribbled over 400 points | 111 ms — its inflation is inside the budget (the clipper is asked, once), what comes back is not | 0.12 s |
-| an outline scribbled over 400 / 800 / 1,600 vertices | 102 ms / 53 ms / 19 ms | 1.2 s for the last reading of 400 |
-| a plain outline of 10,000 vertices | 3 ms (two linear passes; its size is known from its length) | — |
+| a stroke scribbled over 800 / 1,600 points | 15 ms / 12 ms | 0.34 s / 1.7 s |
+| a stroke of 2,000 / 4,000 teeth standing side by side | 14 ms / 51 ms | 0.26 s / 1.1 s |
+| a stroke scribbled over 400 points | 65 ms — its inflation is inside the budget (the clipper is asked, once), what comes back is not | 0.07 s |
+| an outline scribbled over 400 / 800 / 1,600 vertices | 30 ms / 32 ms / 12 ms | 0.74 s for the last reading of 400 |
+| a two-level zigzag of 200 / 340 / 800 vertices | 43 ms / 27 ms / 34 ms | (as a tree: 1.1 s / 3.6 s) |
+| a plain outline of 10,000 vertices | 2 ms (two linear passes; its size is known from its length) | — |
 | an item of more than 16,384 vertices | one comparison; not one vertex is read | — |
 
-Not bounded, and stated: a **plan** is the sum of its items — a plan of ten thousand outlines
-at the bound costs ten thousand bounds on the first snapshot, as it costs the 2D canvas ten
-thousand paints. A budget across a plan would make a record depend on what else is on the plan.
-And the shipped Qt 3D collector (`collect_scene3d_records`, removed with L1.10) and the 2D
-shadow overlay inflate a polyline with no bound at all, as they always have.
+Not bounded, and stated — three things:
 
-**What is remembered is bounded by vertices, not by answers.** `polygon.ring_keyed` is the one
-memory for functions of rings (`ring_area`, the verdict-and-cut of a region, a record's ring
-facts, the regions of a polygon and of a stroke): each holds at most `HELD_VERTICES` = 262,144
-vertices, keys and answers together, and drops the least recently asked quarter beyond that; a
-ring of more than `MAX_ITEM_VERTICES` is never hashed and never a key. An `lru_cache` bounds the
-number of answers — 2,048 answers about an outline of 4,000 vertices that is being dragged were
-a gigabyte. `cut_region`, `is_buildable_region` and `is_region_too_large` share one memory (a
-refusal is remembered with its words); `is_simple_ring` is not remembered.
+- A **plan** is the sum of its items: there is no budget across a plan (it would make a record
+  depend on what else is on the plan). The FIRST snapshot of a plan costs what its items cost,
+  and so does every item again when it is edited: two hundred accepted outlines at the bound
+  are 30,000 M units — the review measured 33 to 40 s for such a plan — on the first tick, and
+  one bound on a tick that edits one of them.
+- An **idle tick is linear in the plan's vertices** even when everything is remembered: every
+  ring is read off its item, moved into its frame and looked up (0.25 s at 120,000 polygon
+  vertices, the same before this pipeline's bounds existed). Asking only the items that changed
+  is a later optimisation; nothing here prevents it.
+- The shipped Qt 3D collector (`collect_scene3d_records`, removed with L1.10) and the 2D
+  shadow overlay inflate a polyline with no bound at all, as they always have.
+
+**What is remembered: everything the plan asks for, and a bounded rest.** `polygon.ring_keyed`
+is the one memory for functions of rings (`ring_area`, the verdict-and-cut of a region, a
+record's ring facts, the regions of a polygon and of a stroke). A snapshot is one *generation*
+(`polygon.snapshot_generation`; `snapshot_records` runs in it): an answer asked for by the
+snapshot being taken or the one before is LIVE and is never dropped, so **an unchanged plan is
+answered from memory on every tick, whatever its size** — zero cuts, zero inflations. What is
+bounded is the STALE answers — the ring an outline had before its last edit, a builder's own
+rings, anything asked outside a snapshot: at most `HELD_VERTICES` = 262,144 vertices of them per
+memory, keys and answers together, the least recently asked dropped first, settled at the end
+of every snapshot. A ring of more than `MAX_ITEM_VERTICES` is never hashed and never a key.
+
+Two forms came before this one, and both were wrong in a way a green suite did not show. An
+`lru_cache` bounds the number of answers — 2,048 answers about an outline of 4,000 vertices
+that is being dragged were a gigabyte. A cap on the vertices held, dropping the least recently
+asked (fix round 3), bounded the memory and **recomputed the plan on every tick** once the plan
+was larger than the cap: a snapshot asks in the same order every time, so each answer was the
+oldest when its turn came — 160 polygons of 1,000 vertices re-cut all 160 regions per idle tick
+(4.6 to 5.3 s where 0.2 s had been), 110 closed fences took 14 s. *A cache must hold its
+working set; bound what is beyond it.* The live answers cost memory in proportion to the plan:
+an answer's rings are the records' own, and its key is the outline as drawn — the same ring
+when that turns counter-clockwise, one more copy of it (104 bytes a vertex) when it does not.
+The generation is the PROCESS's clock, not a scene's: the app snapshots one scene. Were
+several scenes snapshotted in turn, the answers of one would be stale by the time its turn
+came again, and bounded by the cap as before. One consequence
+worth knowing: the CUT of a region is asked for when it is made and when the solid is built,
+not on idle ticks, so in a plan above the cap it goes stale and may be dropped — a full rebuild
+(a new sync, `reset()`) then cuts those regions again, once. `cut_region`,
+`is_buildable_region` and `is_region_too_large` share one memory (a refusal is remembered with
+its words); `is_simple_ring` is not remembered.
 
 **A resolved outline says so.** A polygon that crosses or touches itself does not arrive as it
 was drawn: the snapshot resolves it by the non-zero rule — the rule the 2D shadow fills a
@@ -3423,7 +3559,8 @@ class name and message as strings, empty when nothing was raised. It does not ho
 equal. Each is also logged once per item and kind of failure (the exception's type), not once
 per edit — `record_failed` as an error with the traceback, the other codes as a warning with
 the message; after 2,048 different failures one line says that further ones are
-not logged, and none are. The wiring (L1.3) is expected to pass a list and show it — and
+not logged, and none are. The wiring (L1.3) must pass a list and show it (for
+`outline_too_large` that is an acceptance criterion, see above) — and
 `SceneSync.failures` — where a user can find them.
 
 Where the local frame hangs: the circle's centre; `rect().center()` of an ellipse or rectangle;
@@ -3587,6 +3724,282 @@ for each rule your builder must keep to `scripts/mutation_check_scene3d.py`.
 `translated(mesh, …)` → `mesh.translated(…)` *within the local frame*, `normal_vs_winding`,
 `srgb_to_linear` and `item_seed` keep their names. Drift-guard tests keep the ported helpers equal
 to the spike's until L1.10 deletes it.
+
+### 8.27.2 The engine package — `ui/view3d/quick3d/` (L1.2)
+
+The other side of the `EngineSink` seam: Qt Quick 3D. The decision, what was ported from the
+spike and every measurement are the **ADR-048 addendum "L1.2"**; the engine's traps are §11.4.12
+and the `ogp-3d-renderer` skill. L1.2 wires nothing into the app — the shipped "3D View…" still
+opens the Qt 3D window; L1.3 embeds this package's host.
+
+**The package.** It is the only place in the product that imports `PyQt6.QtQuick3D`, `QtQuick`,
+`QtQml` or `QtQuickWidgets` (it does not import the last one at all), and inside it only two
+modules do. Everything that is a decision rather than a Qt call lives in an engine-free module,
+which is why the GPU-less test run covers it.
+
+| Module | Engine? | What it is |
+|---|---|---|
+| `core/scene3d/interleave.py` | Qt-free | `engine_buffers(mesh)`: a `Mesh` as the bytes the engine uploads — stride 48, little-endian (position @0, normal @12, linear colour @24, uv @40), uint32 indices, bounds. THE place a mesh crosses into the engine frame |
+| `adapter.py` | no | `Quick3DSink` (the `EngineSink`) and `EngineScene`, the narrow boundary it drives |
+| `lifecycle.py` | no | **the host's state contract** — its module docstring is the one place it is written down — the six states as a pure function of the facts (`state_of`), and the words of every refusal |
+| `materials.py` | no | material kind → QML part component; the tint rule |
+| `look.py` | no | `Look` — a mood as plain data — and `NEUTRAL_DAY`, the one look of L1.2 |
+| `shots.py` | no | `PerspectiveShot`, `TopDownShot`; `top_down_pixel`, our own projection |
+| `qt_messages.py` | no | Qt's messages recorded and classified (by level first) — for rendering on the calling thread only; the graphics adapter read from Qt's log |
+| `runlog.py` | no | a line-flushed log; a watchdog that says why before it ends the process; and the second process that ends what the watchdog cannot |
+| `selftest.py` | lazy | the 3D part of `--selftest`: the scene, the judge, the run |
+| `geometry.py` | **yes** | `BufferGeometry`: `EngineBuffers` → `QQuick3DGeometry`, one upload per object |
+| `host.py` | **yes** | `Quick3DHost`: the `QQuickView`, the facts it reads from Qt, the `EngineScene` (it owns every Model), grab, pick, camera, look, `health()` |
+| `offscreen.py` | **yes** | `render_records(...)`: records in, one `QImage` out, no window — for processes that own themselves |
+| `qml/Garden.qml` + 4 shaders | — | the scene; one part `Component` per material kind |
+
+Importing the package itself is free (`__init__` is a docstring); the engine loads when `host` or
+`offscreen` is imported. Measured in the running app on the dev box: the package 1 ms, the sink
+with `core/scene3d` 17 ms, the engine bindings 17 ms.
+
+**One Model per mesh part, one geometry per Model lifetime.** `Quick3DSink.add` creates one
+engine `Model` per `MeshPart` (a part without triangles gets none), each with its OWN geometry
+object and its own material instance. `remove` destroys them; `replace_geometry` destroys and
+creates; `clear()` destroys everything. A geometry is never handed to a second Model and never
+re-filled — `BufferGeometry` has no method to do it — because the spike measured what reuse
+costs: a blank frame and 0 of 20 picks. There is no `Repeater3D` over a list: any change of the
+list recreates every delegate. The render tier pins the consequence: an item removed and added
+again, and the whole scene cleared and re-sent, come back pixel-identical and pickable.
+
+**A move or a recolour uploads nothing.** `update_transform` sets the Models' `position` and
+`eulerRotation.y`; `update_material` sets their tint. The upload counter (`BufferGeometry.uploads`,
+read by the render tier around each edit) does not move.
+
+**Frames, once.** A mesh is mapped to the engine frame in `engine_buffers`; a record's transform
+becomes a Model pose in `engine_pose` — position `(east, base, −north)`, `eulerRotation.y =
++rotation_deg`, measured on the engine to be the counter-clockwise turn seen from above (the
+proof L1.1 left open); the sun and the ground are mapped in the sink; camera placements and pick
+results are mapped in the host, with the same `core/scene3d/frame.py` functions. `Garden.qml`
+converts nothing.
+
+**The tint rule.** For every material kind: `albedo = vertex colour × tint`, in linear light.
+The tint is the item's `Material.tint_rgba` for a part with `tinted=True` and white otherwise;
+it is a property of the Model, never baked into the vertex buffer. `vc`, `roof` and `glass` take
+it as `PrincipledMaterial.baseColor` (the engine linearises it); `foliage`, `grass` and `water`
+take it as a linear `vec3` uniform computed in Python. Measured on one swatch per kind: 171 and
+169 of 255 for the two paths.
+
+**Light.** `set_sun` hands over the unit vector the light travels along (the negated sun vector
+from `core/solar`); the host turns it into the rotation that puts the light's local −Z onto it.
+A sun below `MIN_SUN_ELEVATION_DEG` — the 2D shadow overlay's own threshold — switches the sun
+off; a flat fill light remains, so a night is dim rather than black (the night rig is L1.4).
+L1.2 has ONE look, `NEUTRAL_DAY`: the spike's noon rig (sun `#fff1dc` × 1.9, exposure 0.85), a
+plain sky colour and no image-based light probe; the fill is the mean of the noon sky's top and
+horizon in linear light times the spike's probe exposure — derived, not chosen. L1.4 passes its
+own `Look` to `Quick3DHost.set_look`.
+
+**Two views.** The perspective view is the one people look at: filmic tone mapping, exposed by
+the look. The **top-down shot** is the truth view: orthographic, north up, NOT tone-mapped — a
+pixel is the surface's linear radiance — and its projection is plain arithmetic
+(`shots.top_down_pixel`), which is what lets a test say where a box must be.
+
+**The host is a state machine.** `Quick3DHost` is a `QQuickView`; `container()` wraps it for a
+QWidget layout (`QWidget.createWindowContainer` — a native window: sibling widgets do not paint
+over it). Never a `QQuickWidget`: with the container beside the 2D canvas the top-level window
+stays a raster surface and a 2D pan step costs the same (×0.97 measured); a `QQuickWidget` in
+the same place turns the window into a Direct3D surface. Create the host once, keep it, hide and
+show it.
+
+A Qt Quick window can be asked for a frame at moments when answering kills the process — not
+with an exception: the grab returns a correct image and the process dies in the next passes of
+the event loop — and at moments when the answer is a picture that is not the scene (§11.4.12).
+So the host never guesses. `host.state` is derived on every call from facts the host reads
+from Qt (`Quick3DHost._facts()` → `lifecycle.state_of`, a pure function whose whole truth table
+runs in the unit tests) plus the two things Qt cannot report: the one offscreen frame was
+taken, and `close()` ran. There is no "was shown" flag: an embedded host is shown, hidden,
+resized and collapsed by its parent, which asks nobody.
+
+**The contract is written down in ONE place: the module docstring of
+`src/open_garden_planner/ui/view3d/quick3d/lifecycle.py`** — the facts, the six states, what
+each state promises, which call is legal in which state, what `wait_ready()` means and what
+raises what. Nothing else restates it — not this section, not ADR-048, not §11.4.12, not the
+`ogp-3d-renderer` skill, not `host.py`. It stood in nine places once, and three of them were
+wrong (review round 3); `tests/unit/test_quick3d_packaging.py` now fails a second copy of the
+state table. Read it there before calling the host. What this section adds is how to live
+with it:
+
+- **When you NEED a frame — the view was just opened, an export is about to read it — call
+  `wait_ready()` after `show()` or after the change of size or visibility, and act on its
+  answer.** Do not reason about passes of the event loop: Qt delivers some resizes inside
+  the call that caused them and others later (§11.4.12), and the main window the workspace
+  is embedded in is put into full screen by `application.py`. It is bounded — its timeout,
+  1 s by default, the delivery of events included — and it answers False promptly when
+  nothing is on its way; False is not "never", the cause may go. The first show of a
+  process is the slow one (its first expose creates the graphics device): with the default,
+  True came after 0.70 to 0.92 s for a top-level host and after 1.52 to 1.73 s for an
+  embedded one — the one Qt handler that was running when the second was up cannot be cut
+  short. Where that takes longer the answer is False while the host is on its way: pass a
+  longer timeout when the first frame is needed (it costs nothing when nothing comes), or
+  ask again.
+- **`wait_ready()` runs the event loop: never call it from a timer slot, a sync tick, a
+  paint or a resize handler — and not from a click handler either.** There, just call:
+  `try: host.pick(x, y)` / `except HostStateError` — the host takes the frame it needs
+  itself, and a refusal costs a few milliseconds. `grab()`, `pick()` and `project()` never
+  run the event loop.
+- **A refusal is an answer.** `HostStateError` says "not now", names the fact that is missing
+  and what to do; a caller that draws on a timer skips that tick. `EngineError` says the
+  engine failed.
+- **`grab()` on a live host is the synchronisation point**: it renders the current state now
+  and reads it back. Do not wait for `frameSwapped` to be sure of a frame (§11.4.12).
+- **`pick(x, y)` answers for the frame rendered last** and returns the item id, the part index
+  and the hit point in the SCENE frame. "No hit" never means "could not look": a scene
+  function that fails is an `EngineError`, not an empty answer.
+- **A host is closed by `close()` — and by Qt**, when the widget that parents its container
+  is destroyed (closing the main window does that). The host asks Qt on every call, so it
+  reads closed either way and never raises sip's `RuntimeError` from a deleted C++ object.
+- **A backend that renders no 3D says so.** Under the software scene graph — what
+  `QT_QPA_PLATFORM=offscreen` selects — `renders_3d()` is `False` and `grab` / `pick` /
+  `project` raise `EngineError`: a frame without the garden must not pass for one. Nothing
+  collapses or minimises there either, which is why the default test tier checks the state
+  machine's logic with the facts put where a window system would put them, and the render
+  tier checks that Qt really reports them (§8.10.6).
+- **Every property write is checked.** A name `Garden.qml` does not declare is an
+  `EngineError` that names it — not a dynamic property that swallows the value.
+
+The contract is tested from three sides: the truth table over every combination of the facts
+(`tests/unit/test_quick3d_lifecycle_states.py`); the host's plumbing, with the facts put in
+place (`tests/ui/test_quick3d_host.py`); and Qt itself —
+`tests/integration/test_quick3d_lifecycle.py`, one call order per child process, because the
+failure it guards against is a dead process, not an exception, judged against a table of what
+a truthful host must answer and never against the state the host reports. Its last test is a
+seeded random walk: 250 things a parent can do to an embedded host, in an order nobody chose,
+and after each one either the scene at the size Qt gives for the window, or a refusal.
+
+**Teardown and recovery: one owner.** The host owns every Model and its geometry —
+`EngineScene.clear()` destroys them all, switches the sun off and drops the plan ground — and
+the sink holds handles as names. `Quick3DSink.clear()`, the `EngineSink` verb that
+`SceneSync.reset()` calls, asks the host once and empties its own books in a `finally`: legal
+inside a transaction an engine error broke half way, twice in a row, and on a host that is
+closed or destroyed, where it simply forgets.
+
+A LIVE engine that cannot destroy a Model is the other case, and it is exception-safe too. A
+Model leaves the host's books only when the engine confirms it — the Model is deleted or
+retired — so after a failed `destroy_part` the handle is still a live part, and after a failed
+`clear()` (which tries every Model, then the sun, then the ground, and raises one `EngineError`
+at the end) `part_count()` still equals what `engine_parts()` reads from the engine. The sync
+stays poisoned, the next `reset()` tries the same Models again, and until one `clear()` went
+through the sink refuses `begin()`: its books are empty, the engine is not, and nothing is
+built on that. `close()` goes through whatever a Model's teardown said (the Model dies with
+the view) and counts the host as closed only at its very end — a `close()` that raised can be
+called again.
+
+One sink per scene: `Quick3DSink(host)` and `sink.attach(host)` refuse a host that already
+holds Models (`SinkProtocolError`). They refuse rather than clear, because clearing would
+destroy what another owner is showing.
+
+Recovery after a failed engine call is `sync.reset()`, then `sync.apply(...)`; when the engine
+itself died, `sink.attach(fresh_host)` in between points the emptied sink at a new host. It is
+proven for every engine call the sink makes — one call fails in mid-transaction, reset, apply
+— against `sync.expected_state()` (§8.27.1), on a list-backed engine, on the real host, and in
+pixels; and with an engine that REFUSES to destroy, where no `reset()` may report success
+while a Model is left.
+
+**Trouble in a live view: `health()`.** `render_records` raises on a shader or QML error; a
+SHOWN view has nobody to raise to, and a frozen exe has no stderr. What Qt reports about a
+shown host ON THE GUI THREAD is collected in `host.health()` — a frozen `HostHealth` — and
+written to the app's log (`app.log`, ADR-052) as it arrives:
+
+| Field | From | Means |
+|---|---|---|
+| `qml_warnings`, `qml_warning_count` | the QML engine's `warnings` signal | a binding failed at run time, a scene function threw (file and line included); the first 50 are kept and logged, all are counted, and the log says once that further ones are only counted |
+| `scene_graph_error` | the window's `sceneGraphError` signal | Qt could not create the graphics device: the host will never be live, and `wait_ready()` says so at once |
+| `frames_presented` | `frameSwapped` | 0 some time after `wait_ready()` said yes: nothing reaches the screen. (With the display asleep it stays at 1 — never wait for a count) |
+| `ok` | — | no QML warning and no graphics failure |
+
+It is a poll surface: the workspace (L1.3) asks on a timer and turns the answer into a notice;
+it answers in every state, also on a closed host. Three things about it are not negotiable:
+
+- **There is no Qt message recorder for a shown host, and none may be added.** Qt renders a
+  shown window on a thread of its own; PyQt's message-handler trampoline needs the GIL; and a
+  render-thread message that arrives while the GUI thread sits in a Python-called `hide()`
+  deadlocks the process for good — every run, on Direct3D 11 and on xcb (ADR-048, review
+  round 2; pinned by a control in the lifecycle matrix). What keeps the product clear of it
+  is a STATIC guard, an AST scan over all of `src/` (`tests/unit/test_quick3d_boundary.py`):
+  the two Qt calls that install a process-wide Python callback (`qInstallMessageHandler`,
+  `QLoggingCategory.installFilter`) may be named only by the recorder module, the recorder's
+  `install` may be reached only from `offscreen.py`, and a render-thread signal may be
+  touched only through the one queued-connect helper. **It is necessary, not sufficient**:
+  it cannot see a handler that a third-party package installs (pytest-qt does, in tests),
+  nor a Python override of a virtual that Qt calls on the render thread — and the host does
+  not refuse to show itself beside such a handler (ruled out in review round 3: it cannot
+  know whose it is). One exception is on record: the dormant L0 spike installs a
+  process-wide Python handler beside shown windows (`spike_q3d/qt_messages.py`). It runs
+  only under `--spike-q3d` and retires with the spike in L1.10.
+- **`sceneGraphError` is connected, always.** With no slot on it Qt answers a failed graphics
+  initialisation with a modal error box and then aborts the process — the whole 2D app.
+- **No Python runs on Qt's render thread.** The two signals Qt may emit from it are connected
+  QUEUED; the host counts every slot call that arrives on another thread
+  (`slot_calls_off_the_gui_thread`), and the render tier requires 0.
+
+What `health()` cannot see: a shader of a shipped material that does not compile — that is a
+Qt message, and the frame still renders, without that material. **Shader errors of the shipped
+shaders are caught before release, not at run time**: the render tier and the frozen
+self-test compile every one of them on the calling thread, under a recorder, and the tier
+shows that a shown window draws what that offscreen frame draws.
+
+**The offscreen path — for processes that own themselves.** `offscreen.render_records(records,
+shot=…, sun=…, ground=…, size=…)` runs the real `SceneSync` → `Quick3DSink` → `Quick3DHost` on a
+host that is never shown — records, sun and ground in one transaction — reads one frame back and
+closes the host: one host per frame, because a never-shown host has exactly one (the
+contract). It is for the self-test, a tool, a test. **Not for the running app:** each call blocks the GUI thread for 0.4–1.3 s and
+creates and destroys a graphics device, the pattern behind the memory growth ADR-048 criterion
+10 still has open; the app shows a host and keeps it. The clock (`open_ms`) stops at the
+finished readback. Every Qt message of the render is recorded; a QML error or a shader that
+does not compile raises `RenderError` (which carries the recorder's report as `.qt`) — the
+frame would have rendered anyway, in the wrong colours — and so does a backend that renders no
+3D. This is the one place a Qt message recorder is installed, and it is safe only because a
+never-shown window is rendered on the calling thread: the recorder counts every message that
+arrives on another thread (`frame.qt["other_threads"]`, required to be 0 by the render tier
+and by the self-test itself), and the call refuses to run while a Qt Quick window is shown in
+the process. A builder that failed is contained by the
+pipeline and leaves its item without a solid: `OffscreenFrame.build_failures` names every such
+item, and the self-test and the render tests require it to be empty. The call leaves the
+process as it found it: no output unless a `log` is passed, the Qt message handler and Qt's
+logging rules put back. A process that owns itself wraps the call in `runlog.watchdog`: when
+the time is up the reason, then every thread's stack, are written to the log and the process
+exits with code 1. With `supervised=True` a second process ends the first from outside ten
+seconds later if it is still there — on Windows the in-process exit was measured not to end a
+process deadlocked inside Qt (§11.4.12). One watchdog per process at a time: a second one
+while the first is armed raises `WatchdogError` (the timer behind it is one per process, and
+a supervising process acts for exactly one block).
+
+**The self-test.** `--selftest` (`main._run_selftest_bounded` → `quick3d/selftest.py`) renders
+one hidden 160 × 120 frame from the bundle's own QML and shaders — a lit box, its shadow, one
+swatch per material kind, so every shipped shader is compiled by the real backend — and judges
+the pixels with a pure function: the box where our projection puts it, meadow beside it, shadow
+where `core/shadow_geometry` puts the 2D shadow, every swatch drawn, no builder failed. It
+needs no GPU (§7.4). ONE watchdog bounds the whole command — the Qt3D imports and the Agent API
+block as well as the render — and one log records it: after 300 s the reason is written in
+words, then every thread's stack, and the process exits with code 1. The watchdog is
+supervised: the exe starts itself a second time with the internal flag
+`--selftest-supervisor`, and that process terminates the first — exit code 1, the reason in
+the log — when it is still alive at 310 s. It acts for ONE block of ONE process and for
+nothing else: the process is named by pid and creation time and must be the supervisor's own
+parent (in the frozen build: running the same image); the block by a random nonce in the name
+of its release event — a name per process let a finished block's late supervisor terminate
+the block after it (§11.4.12); and arguments it may not act on end it with exit code 2 and one
+line, before anything is opened. The safety net is checked like the subsystems it guards: on
+Windows the self-test FAILS when that process did not start, refused, never found this block
+(exit code 4 — it used to leave with 0, like one that did its job), or did not leave within
+15 s of its release (`[selftest_supervisor]` in the log; its line on stdout is `FAIL
+self-test supervisor -> …`, so it cannot be mistaken for a render failure). It also fails
+when a Qt message of the render arrived on another thread than the one that rendered.
+
+**What is not here.** No input handling and no orbit camera (L1.3); no look presets, sky, fog,
+night rig or wind animation (L1.4) — `windTime` exists and stands still, and at 0 the wind
+shaders move nothing: every vertex is drawn exactly where its mesh puts it, also one with the
+full wind weight in a strong wind (the sway eases in over the clock's first two seconds).
+"At rest" means the clock IS 0: a clock PAUSED at another value keeps the sway of that moment
+in the frame. A truth probe — and the look story, when it animates the clock — pins
+`windTime` to 0 or the wind strength to 0, not "paused"; no
+ground texture
+(L1.5: `set_ground` sizes the bare plan rectangle and the endless meadow, both in the one meadow
+albedo); no builders beyond the default prism (L1.6, L1.7); no selection (L1.8).
 
 ### 8.27.6 Built-world builders and base stacking (L1.6)
 
@@ -4248,264 +4661,3 @@ proportions use it (a count that depends on the proportion must not move the str
 then run by themselves — `tests/unit/test_scene3d_plants.py` builds every recipe of both tables
 at every proportion step and at six real sizes — and `scripts/mutation_check_plant_art.py` says
 whether they would notice a broken rule.
-### 8.27.2 The engine package — `ui/view3d/quick3d/` (L1.2)
-
-The other side of the `EngineSink` seam: Qt Quick 3D. The decision, what was ported from the
-spike and every measurement are the **ADR-048 addendum "L1.2"**; the engine's traps are §11.4.9
-and the `ogp-3d-renderer` skill. L1.2 wires nothing into the app — the shipped "3D View…" still
-opens the Qt 3D window; L1.3 embeds this package's host.
-
-**The package.** It is the only place in the product that imports `PyQt6.QtQuick3D`, `QtQuick`,
-`QtQml` or `QtQuickWidgets` (it does not import the last one at all), and inside it only two
-modules do. Everything that is a decision rather than a Qt call lives in an engine-free module,
-which is why the GPU-less test run covers it.
-
-| Module | Engine? | What it is |
-|---|---|---|
-| `core/scene3d/interleave.py` | Qt-free | `engine_buffers(mesh)`: a `Mesh` as the bytes the engine uploads — stride 48, little-endian (position @0, normal @12, linear colour @24, uv @40), uint32 indices, bounds. THE place a mesh crosses into the engine frame |
-| `adapter.py` | no | `Quick3DSink` (the `EngineSink`) and `EngineScene`, the narrow boundary it drives |
-| `lifecycle.py` | no | **the host's state contract** — its module docstring is the one place it is written down — the six states as a pure function of the facts (`state_of`), and the words of every refusal |
-| `materials.py` | no | material kind → QML part component; the tint rule |
-| `look.py` | no | `Look` — a mood as plain data — and `NEUTRAL_DAY`, the one look of L1.2 |
-| `shots.py` | no | `PerspectiveShot`, `TopDownShot`; `top_down_pixel`, our own projection |
-| `qt_messages.py` | no | Qt's messages recorded and classified (by level first) — for rendering on the calling thread only; the graphics adapter read from Qt's log |
-| `runlog.py` | no | a line-flushed log; a watchdog that says why before it ends the process; and the second process that ends what the watchdog cannot |
-| `selftest.py` | lazy | the 3D part of `--selftest`: the scene, the judge, the run |
-| `geometry.py` | **yes** | `BufferGeometry`: `EngineBuffers` → `QQuick3DGeometry`, one upload per object |
-| `host.py` | **yes** | `Quick3DHost`: the `QQuickView`, the facts it reads from Qt, the `EngineScene` (it owns every Model), grab, pick, camera, look, `health()` |
-| `offscreen.py` | **yes** | `render_records(...)`: records in, one `QImage` out, no window — for processes that own themselves |
-| `qml/Garden.qml` + 4 shaders | — | the scene; one part `Component` per material kind |
-
-Importing the package itself is free (`__init__` is a docstring); the engine loads when `host` or
-`offscreen` is imported. Measured in the running app on the dev box: the package 1 ms, the sink
-with `core/scene3d` 17 ms, the engine bindings 17 ms.
-
-**One Model per mesh part, one geometry per Model lifetime.** `Quick3DSink.add` creates one
-engine `Model` per `MeshPart` (a part without triangles gets none), each with its OWN geometry
-object and its own material instance. `remove` destroys them; `replace_geometry` destroys and
-creates; `clear()` destroys everything. A geometry is never handed to a second Model and never
-re-filled — `BufferGeometry` has no method to do it — because the spike measured what reuse
-costs: a blank frame and 0 of 20 picks. There is no `Repeater3D` over a list: any change of the
-list recreates every delegate. The render tier pins the consequence: an item removed and added
-again, and the whole scene cleared and re-sent, come back pixel-identical and pickable.
-
-**A move or a recolour uploads nothing.** `update_transform` sets the Models' `position` and
-`eulerRotation.y`; `update_material` sets their tint. The upload counter (`BufferGeometry.uploads`,
-read by the render tier around each edit) does not move.
-
-**Frames, once.** A mesh is mapped to the engine frame in `engine_buffers`; a record's transform
-becomes a Model pose in `engine_pose` — position `(east, base, −north)`, `eulerRotation.y =
-+rotation_deg`, measured on the engine to be the counter-clockwise turn seen from above (the
-proof L1.1 left open); the sun and the ground are mapped in the sink; camera placements and pick
-results are mapped in the host, with the same `core/scene3d/frame.py` functions. `Garden.qml`
-converts nothing.
-
-**The tint rule.** For every material kind: `albedo = vertex colour × tint`, in linear light.
-The tint is the item's `Material.tint_rgba` for a part with `tinted=True` and white otherwise;
-it is a property of the Model, never baked into the vertex buffer. `vc`, `roof` and `glass` take
-it as `PrincipledMaterial.baseColor` (the engine linearises it); `foliage`, `grass` and `water`
-take it as a linear `vec3` uniform computed in Python. Measured on one swatch per kind: 171 and
-169 of 255 for the two paths.
-
-**Light.** `set_sun` hands over the unit vector the light travels along (the negated sun vector
-from `core/solar`); the host turns it into the rotation that puts the light's local −Z onto it.
-A sun below `MIN_SUN_ELEVATION_DEG` — the 2D shadow overlay's own threshold — switches the sun
-off; a flat fill light remains, so a night is dim rather than black (the night rig is L1.4).
-L1.2 has ONE look, `NEUTRAL_DAY`: the spike's noon rig (sun `#fff1dc` × 1.9, exposure 0.85), a
-plain sky colour and no image-based light probe; the fill is the mean of the noon sky's top and
-horizon in linear light times the spike's probe exposure — derived, not chosen. L1.4 passes its
-own `Look` to `Quick3DHost.set_look`.
-
-**Two views.** The perspective view is the one people look at: filmic tone mapping, exposed by
-the look. The **top-down shot** is the truth view: orthographic, north up, NOT tone-mapped — a
-pixel is the surface's linear radiance — and its projection is plain arithmetic
-(`shots.top_down_pixel`), which is what lets a test say where a box must be.
-
-**The host is a state machine.** `Quick3DHost` is a `QQuickView`; `container()` wraps it for a
-QWidget layout (`QWidget.createWindowContainer` — a native window: sibling widgets do not paint
-over it). Never a `QQuickWidget`: with the container beside the 2D canvas the top-level window
-stays a raster surface and a 2D pan step costs the same (×0.97 measured); a `QQuickWidget` in
-the same place turns the window into a Direct3D surface. Create the host once, keep it, hide and
-show it.
-
-A Qt Quick window can be asked for a frame at moments when answering kills the process — not
-with an exception: the grab returns a correct image and the process dies in the next passes of
-the event loop — and at moments when the answer is a picture that is not the scene (§11.4.9).
-So the host never guesses. `host.state` is derived on every call from facts the host reads
-from Qt (`Quick3DHost._facts()` → `lifecycle.state_of`, a pure function whose whole truth table
-runs in the unit tests) plus the two things Qt cannot report: the one offscreen frame was
-taken, and `close()` ran. There is no "was shown" flag: an embedded host is shown, hidden,
-resized and collapsed by its parent, which asks nobody.
-
-**The contract is written down in ONE place: the module docstring of
-`src/open_garden_planner/ui/view3d/quick3d/lifecycle.py`** — the facts, the six states, what
-each state promises, which call is legal in which state, what `wait_ready()` means and what
-raises what. Nothing else restates it — not this section, not ADR-048, not §11.4.9, not the
-`ogp-3d-renderer` skill, not `host.py`. It stood in nine places once, and three of them were
-wrong (review round 3); `tests/unit/test_quick3d_packaging.py` now fails a second copy of the
-state table. Read it there before calling the host. What this section adds is how to live
-with it:
-
-- **After `show()` and after ANY change of size or visibility — yours or the parent's — call
-  `wait_ready()` and act on its answer** before a `grab()`, a `pick()` or a `project()`. Do
-  not reason about passes of the event loop: Qt delivers some resizes inside the call that
-  caused them and others later (§11.4.9), and the main window the workspace is embedded in
-  is put into full screen by `application.py`. `wait_ready()` runs the event loop, so call
-  it where re-entrancy is acceptable; `grab()` never does.
-- **A refusal is an answer.** `HostStateError` says "not now", names the fact that is missing
-  and what to do; a caller that draws on a timer skips that tick. `EngineError` says the
-  engine failed.
-- **`grab()` on a live host is the synchronisation point**: it renders the current state now
-  and reads it back. Do not wait for `frameSwapped` to be sure of a frame (§11.4.9).
-- **`pick(x, y)` answers for the frame rendered last** and returns the item id, the part index
-  and the hit point in the SCENE frame. "No hit" never means "could not look": a scene
-  function that fails is an `EngineError`, not an empty answer.
-- **A host is closed by `close()` — and by Qt**, when the widget that parents its container
-  is destroyed (closing the main window does that). The host asks Qt on every call, so it
-  reads closed either way and never raises sip's `RuntimeError` from a deleted C++ object.
-- **A backend that renders no 3D says so.** Under the software scene graph — what
-  `QT_QPA_PLATFORM=offscreen` selects — `renders_3d()` is `False` and `grab` / `pick` /
-  `project` raise `EngineError`: a frame without the garden must not pass for one. Nothing
-  collapses or minimises there either, which is why the default test tier checks the state
-  machine's logic with the facts put where a window system would put them, and the render
-  tier checks that Qt really reports them (§8.10.4).
-- **Every property write is checked.** A name `Garden.qml` does not declare is an
-  `EngineError` that names it — not a dynamic property that swallows the value.
-
-The contract is tested from three sides: the truth table over every combination of the facts
-(`tests/unit/test_quick3d_lifecycle_states.py`); the host's plumbing, with the facts put in
-place (`tests/ui/test_quick3d_host.py`); and Qt itself —
-`tests/integration/test_quick3d_lifecycle.py`, one call order per child process, because the
-failure it guards against is a dead process, not an exception, judged against a table of what
-a truthful host must answer and never against the state the host reports. Its last test is a
-seeded random walk: 250 things a parent can do to an embedded host, in an order nobody chose,
-and after each one either the scene at the size Qt gives for the window, or a refusal.
-
-**Teardown and recovery: one owner.** The host owns every Model and its geometry —
-`EngineScene.clear()` destroys them all, switches the sun off and drops the plan ground — and
-the sink holds handles as names. `Quick3DSink.clear()`, the `EngineSink` verb that
-`SceneSync.reset()` calls, asks the host once and empties its own books in a `finally`: legal
-inside a transaction an engine error broke half way, twice in a row, and on a host that is
-closed or destroyed, where it simply forgets.
-
-A LIVE engine that cannot destroy a Model is the other case, and it is exception-safe too. A
-Model leaves the host's books only when the engine confirms it — the Model is deleted or
-retired — so after a failed `destroy_part` the handle is still a live part, and after a failed
-`clear()` (which tries every Model, then the sun, then the ground, and raises one `EngineError`
-at the end) `part_count()` still equals what `engine_parts()` reads from the engine. The sync
-stays poisoned, the next `reset()` tries the same Models again, and until one `clear()` went
-through the sink refuses `begin()`: its books are empty, the engine is not, and nothing is
-built on that. `close()` goes through whatever a Model's teardown said (the Model dies with
-the view) and counts the host as closed only at its very end — a `close()` that raised can be
-called again.
-
-One sink per scene: `Quick3DSink(host)` and `sink.attach(host)` refuse a host that already
-holds Models (`SinkProtocolError`). They refuse rather than clear, because clearing would
-destroy what another owner is showing.
-
-Recovery after a failed engine call is `sync.reset()`, then `sync.apply(...)`; when the engine
-itself died, `sink.attach(fresh_host)` in between points the emptied sink at a new host. It is
-proven for every engine call the sink makes — one call fails in mid-transaction, reset, apply
-— against `sync.expected_state()` (§8.27.1), on a list-backed engine, on the real host, and in
-pixels; and with an engine that REFUSES to destroy, where no `reset()` may report success
-while a Model is left.
-
-**Trouble in a live view: `health()`.** `render_records` raises on a shader or QML error; a
-SHOWN view has nobody to raise to, and a frozen exe has no stderr. What Qt reports about a
-shown host ON THE GUI THREAD is collected in `host.health()` — a frozen `HostHealth` — and
-written to the app's log (`app.log`, ADR-052) as it arrives:
-
-| Field | From | Means |
-|---|---|---|
-| `qml_warnings`, `qml_warning_count` | the QML engine's `warnings` signal | a binding failed at run time, a scene function threw (file and line included); the first 50 are kept and logged, all are counted, and the log says once that further ones are only counted |
-| `scene_graph_error` | the window's `sceneGraphError` signal | Qt could not create the graphics device: the host will never be live, and `wait_ready()` says so at once |
-| `frames_presented` | `frameSwapped` | 0 some time after `wait_ready()` said yes: nothing reaches the screen. (With the display asleep it stays at 1 — never wait for a count) |
-| `ok` | — | no QML warning and no graphics failure |
-
-It is a poll surface: the workspace (L1.3) asks on a timer and turns the answer into a notice;
-it answers in every state, also on a closed host. Three things about it are not negotiable:
-
-- **There is no Qt message recorder for a shown host, and none may be added.** Qt renders a
-  shown window on a thread of its own; PyQt's message-handler trampoline needs the GIL; and a
-  render-thread message that arrives while the GUI thread sits in a Python-called `hide()`
-  deadlocks the process for good — every run, on Direct3D 11 and on xcb (ADR-048, review
-  round 2; pinned by a control in the lifecycle matrix). What keeps the product clear of it
-  is a STATIC guard, an AST scan over all of `src/` (`tests/unit/test_quick3d_boundary.py`):
-  the two Qt calls that install a process-wide Python callback (`qInstallMessageHandler`,
-  `QLoggingCategory.installFilter`) may be named only by the recorder module, the recorder's
-  `install` may be reached only from `offscreen.py`, and a render-thread signal may be
-  touched only through the one queued-connect helper. **It is necessary, not sufficient**:
-  it cannot see a handler that a third-party package installs (pytest-qt does, in tests),
-  nor a Python override of a virtual that Qt calls on the render thread — and the host does
-  not refuse to show itself beside such a handler (ruled out in review round 3: it cannot
-  know whose it is). One exception is on record: the dormant L0 spike installs a
-  process-wide Python handler beside shown windows (`spike_q3d/qt_messages.py`). It runs
-  only under `--spike-q3d` and retires with the spike in L1.10.
-- **`sceneGraphError` is connected, always.** With no slot on it Qt answers a failed graphics
-  initialisation with a modal error box and then aborts the process — the whole 2D app.
-- **No Python runs on Qt's render thread.** The two signals Qt may emit from it are connected
-  QUEUED; the host counts every slot call that arrives on another thread
-  (`slot_calls_off_the_gui_thread`), and the render tier requires 0.
-
-What `health()` cannot see: a shader of a shipped material that does not compile — that is a
-Qt message, and the frame still renders, without that material. **Shader errors of the shipped
-shaders are caught before release, not at run time**: the render tier and the frozen
-self-test compile every one of them on the calling thread, under a recorder, and the tier
-shows that a shown window draws what that offscreen frame draws.
-
-**The offscreen path — for processes that own themselves.** `offscreen.render_records(records,
-shot=…, sun=…, ground=…, size=…)` runs the real `SceneSync` → `Quick3DSink` → `Quick3DHost` on a
-host that is never shown — records, sun and ground in one transaction — reads one frame back and
-closes the host: one host per frame, because a never-shown host has exactly one (the
-contract). It is for the self-test, a tool, a test. **Not for the running app:** each call blocks the GUI thread for 0.4–1.3 s and
-creates and destroys a graphics device, the pattern behind the memory growth ADR-048 criterion
-10 still has open; the app shows a host and keeps it. The clock (`open_ms`) stops at the
-finished readback. Every Qt message of the render is recorded; a QML error or a shader that
-does not compile raises `RenderError` (which carries the recorder's report as `.qt`) — the
-frame would have rendered anyway, in the wrong colours — and so does a backend that renders no
-3D. This is the one place a Qt message recorder is installed, and it is safe only because a
-never-shown window is rendered on the calling thread: the recorder counts every message that
-arrives on another thread (`frame.qt["other_threads"]`, required to be 0 by the render tier
-and by the self-test itself), and the call refuses to run while a Qt Quick window is shown in
-the process. A builder that failed is contained by the
-pipeline and leaves its item without a solid: `OffscreenFrame.build_failures` names every such
-item, and the self-test and the render tests require it to be empty. The call leaves the
-process as it found it: no output unless a `log` is passed, the Qt message handler and Qt's
-logging rules put back. A process that owns itself wraps the call in `runlog.watchdog`: when
-the time is up the reason, then every thread's stack, are written to the log and the process
-exits with code 1. With `supervised=True` a second process ends the first from outside ten
-seconds later if it is still there — on Windows the in-process exit was measured not to end a
-process deadlocked inside Qt (§11.4.9). One watchdog per process at a time: a second one
-while the first is armed raises `WatchdogError` (the timer behind it is one per process, and
-a supervising process acts for exactly one block).
-
-**The self-test.** `--selftest` (`main._run_selftest_bounded` → `quick3d/selftest.py`) renders
-one hidden 160 × 120 frame from the bundle's own QML and shaders — a lit box, its shadow, one
-swatch per material kind, so every shipped shader is compiled by the real backend — and judges
-the pixels with a pure function: the box where our projection puts it, meadow beside it, shadow
-where `core/shadow_geometry` puts the 2D shadow, every swatch drawn, no builder failed. It
-needs no GPU (§7.4). ONE watchdog bounds the whole command — the Qt3D imports and the Agent API
-block as well as the render — and one log records it: after 300 s the reason is written in
-words, then every thread's stack, and the process exits with code 1. The watchdog is
-supervised: the exe starts itself a second time with the internal flag
-`--selftest-supervisor`, and that process terminates the first — exit code 1, the reason in
-the log — when it is still alive at 310 s. It acts for ONE block of ONE process and for
-nothing else: the process is named by pid and creation time and must be the supervisor's own
-parent (in the frozen build: running the same image); the block by a random nonce in the name
-of its release event — a name per process let a finished block's late supervisor terminate
-the block after it (§11.4.9); and arguments it may not act on end it with exit code 2 and one
-line, before anything is opened. The safety net is checked like the subsystems it guards: on
-Windows the self-test FAILS when that process did not start, refused, or did not leave after
-its release (`[selftest_supervisor]` in the log). It also fails when a Qt message of the
-render arrived on another thread than the one that rendered.
-
-**What is not here.** No input handling and no orbit camera (L1.3); no look presets, sky, fog,
-night rig or wind animation (L1.4) — `windTime` exists and stands still, and at 0 the wind
-shaders move nothing: every vertex is drawn exactly where its mesh puts it, also one with the
-full wind weight in a strong wind (the sway eases in over the clock's first two seconds).
-"At rest" means the clock IS 0: a clock PAUSED at another value keeps the sway of that moment
-in the frame. A truth probe — and the look story, when it animates the clock — pins
-`windTime` to 0 or the wind strength to 0, not "paused"; no
-ground texture
-(L1.5: `set_ground` sizes the bare plan rectangle and the endless meadow, both in the one meadow
-albedo); no builders beyond the default prism (L1.6, L1.7); no selection (L1.8).

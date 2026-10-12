@@ -212,8 +212,9 @@ def _run_selftest_bounded() -> int:
     to end a process that is deadlocked inside Qt and the graphics driver
     (``runlog.py``). That safety net is a subsystem like the three under test:
     on Windows the self-test FAILS when its supervising process did not start,
-    refused, or did not leave when it was released (the #291 pattern - a dead
-    subsystem that the gate itself would never have noticed).
+    refused, never found this block, or did not leave when it was released
+    (the #291 pattern - a dead subsystem that the gate itself would never have
+    noticed). Its line, "FAIL self-test supervisor -> ...", names which.
 
     If the log cannot be opened the blocks still run, still under the watchdog
     (it ends a hang without a file to dump into), and the result is FAIL: a
@@ -240,14 +241,9 @@ def _run_selftest_bounded() -> int:
         with watchdog(SELFTEST_WATCHDOG_S, log, what="--selftest", supervised=True) as armed:
             code = _run_selftest(log)
         if sys.platform == "win32":
-            if armed.supervisor is None:
-                missing = armed.unsupervised_because
-            elif armed.supervisor_exit is None:
-                missing = "its supervising process did not leave when it was released"
-            elif armed.supervisor_exit != 0:
-                missing = f"its supervising process ended with exit code {armed.supervisor_exit}"
-            else:
-                missing = ""
+            # "" only when a supervising process started, held this block's release
+            # event, and left when it was released (runlog.Armed.gap)
+            missing = armed.gap
             log("selftest_supervisor", ok=not missing, detail=missing or "started, released, left")
             if missing:
                 print(f"  FAIL self-test supervisor -> {missing}")

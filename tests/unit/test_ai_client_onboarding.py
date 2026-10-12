@@ -35,13 +35,36 @@ def _isolated_home(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.Tem
 
     Client CLIs are off by default for the same reason (``detect_clients`` asks
     a CLI it finds on ``PATH`` what it can do — by running it); a test that
-    wants one stubs ``onboarding.shutil.which`` itself.
+    wants one stubs ``onboarding.shutil.which`` itself — and then also what would
+    RUN it: no test may start another tool. As a floor under that, the module's
+    ``subprocess.run`` raises here; a test that plays a CLI replaces it.
     """
     home = tmp_path_factory.mktemp("isolated-home")  # not in the test's own tmp_path: some list it
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(onboarding.shutil, "which", lambda _cmd: None)
+
+    def no_tool(args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"a test started another tool: {args!r}")
+
+    monkeypatch.setattr(onboarding.subprocess, "run", no_tool)
     return home
+
+
+def _no_cli_probe(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """``cli_supported_flags`` answers "nothing" without running anything; returns
+    the executables it was asked about. (It stubs ``which`` to a path for EVERY
+    client, and ``detect_clients`` probes each CLI it finds: with a real
+    ``/usr/local/bin/claude`` on a developer's Mac, the review saw it started.)"""
+    asked: list[str] = []
+
+    def supported(exe: str, _probe: tuple[str, ...]) -> frozenset[str]:
+        asked.append(exe)
+        return frozenset()
+
+    supported.cache_clear = lambda: None  # type: ignore[attr-defined]  # as the real one has
+    monkeypatch.setattr(onboarding, "cli_supported_flags", supported)
+    return asked
 
 
 @pytest.fixture(autouse=True)
@@ -207,11 +230,18 @@ class TestDetectClients:
     def test_claude_code_detected_via_cli(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setattr(onboarding.shutil, "which", lambda _cmd: "/usr/local/bin/claude")
+        probed = _no_cli_probe(monkeypatch)
 
         clients = {c.client_id: c for c in onboarding.detect_clients()}
 
         assert clients["claude_code"].detected is True
         assert clients["claude_code"].install_method == "cli"
+        # the clients whose CLI must be asked what it can do were "asked" — and nothing ran
+        assert probed and set(probed) == {"/usr/local/bin/claude"}
+
+    def test_no_test_of_this_module_can_start_a_tool(self) -> None:
+        with pytest.raises(AssertionError, match="started another tool"):
+            onboarding.subprocess.run(["claude", "--help"], check=False)
 
     def test_claude_code_detected_via_config_without_cli(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

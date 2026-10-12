@@ -376,10 +376,17 @@ class Context:
         return host
 
 
+#: How long a driver waits for a host it has just shown. NOT the host's default (1 s, made
+#: for the GUI thread): the first expose of a process creates the graphics device — 0.7 to
+#: 1.0 s on the dev box, and a CI runner is slower. It costs nothing when nothing comes:
+#: ``wait_ready()`` gives up 0.5 s after the last sign of progress, whatever its timeout.
+OPEN_TIMEOUT_S = 10.0
+
+
 def require_ready(host: Any, what: str) -> None:
     """``wait_ready()`` answers; a driver that drops the answer would go on to ask a
     host that is not live for frames (and get a HostStateError far from the cause)."""
-    if not host.wait_ready():
+    if not host.wait_ready(OPEN_TIMEOUT_S):
         state = host.state.value
         host.close()
         raise RuntimeError(f"{what} did not become live within the timeout "

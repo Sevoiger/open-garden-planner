@@ -1,7 +1,7 @@
 """One call order of the host's lifecycle, in a process of its own — not a test module.
 
     python tests/integration/quick3d_lifecycle_child.py <order> [<qml dir>]
-    python tests/integration/quick3d_lifecycle_child.py random_walk <seed> <steps>
+    python tests/integration/quick3d_lifecycle_child.py random_walk <seed> <steps> <fit|1024x768>
 
 Why a process per order: the failures this matrix exists for are not exceptions.
 A Qt Quick window grabbed at the wrong moment returns a perfectly good image, and
@@ -188,12 +188,42 @@ def _window_size(host: Any) -> list[int] | None:
     return None if sip.isdeleted(view) else [int(view.width()), int(view.height())]
 
 
+def _on_screen(host: Any) -> str:
+    """How much of the Qt Quick window lies on a screen: ``all``, ``part`` or ``none`` —
+    geometry asked of QT, never of the host (which has no such notion: it takes a frame
+    and looks at it). The judge uses it to know where a host MUST come up, and where a
+    prompt refusal is the truthful answer."""
+    from PyQt6 import sip
+    from PyQt6.QtCore import QPoint, QRect
+    from PyQt6.QtGui import QGuiApplication
+
+    view = host._view  # noqa: SLF001 - the matrix asks Qt directly
+    if sip.isdeleted(view):
+        return "none"
+    rect = QRect(view.mapToGlobal(QPoint(0, 0)), view.size())
+    area = max(rect.width(), 0) * max(rect.height(), 0)
+    seen = 0
+    for screen in QGuiApplication.screens():
+        part = rect.intersected(screen.geometry())
+        seen += max(part.width(), 0) * max(part.height(), 0)
+    return "none" if seen <= 0 or area <= 0 else ("all" if seen >= area else "part")
+
+
 def _look(host: Any) -> dict[str, Any]:
     """Everything a caller can ask a host at one moment: state, frame, pick, projection —
-    and, asked of Qt BEFORE the grab, the size the window has at that moment."""
-    return {"state": host.state.value, "window": _window_size(host), "grab": _grab(host),
-            "pick": _centre_pick(host), "project": _attempt(lambda: host.project(0.0, 0.0, 20.0)),
+    and, asked of Qt BEFORE the grab, the size the window has at that moment and how
+    much of it is on a screen."""
+    return {"state": host.state.value, "window": _window_size(host), "on_screen": _on_screen(host),
+            "grab": _grab(host), "pick": _centre_pick(host),
+            "project": _attempt(lambda: host.project(0.0, 0.0, 20.0)),
             "view": _attempt(host.view_size)}
+
+
+def _timed_wait(host: Any, timeout_s: float) -> tuple[Any, float]:
+    """``wait_ready(timeout_s)`` and how long it took, seconds."""
+    started = time.perf_counter()
+    answer = _attempt(lambda: host.wait_ready(timeout_s))
+    return answer, round(time.perf_counter() - started, 3)
 
 
 # ── the orders ───────────────────────────────────────────────────────────────
@@ -352,7 +382,21 @@ def parent_destroyed_anything(app: Any, _qml: Path | None = None) -> dict[str, A
     return out
 
 
+#: Where the matrix puts a main window: this far inside the screen's available area.
+HOME = (20, 40)
+
+
+def _available() -> Any:
+    from PyQt6.QtGui import QGuiApplication
+
+    return QGuiApplication.primaryScreen().availableGeometry()
+
+
 def _splitter_window() -> tuple[Any, Any]:
+    """A main window with a splitter — put ON the screen on purpose (round 4: where the
+    window system would have put it is not something a test may depend on; on a 1024 px
+    wide runner a pane ended up beyond the screen's edge, where Windows may ask for no
+    drawing)."""
     from PyQt6.QtWidgets import QMainWindow, QSplitter, QWidget
 
     window = QMainWindow()
@@ -360,6 +404,8 @@ def _splitter_window() -> tuple[Any, Any]:
     splitter.addWidget(QWidget())
     window.setCentralWidget(splitter)
     window.resize(900, 500)
+    area = _available()
+    window.move(area.left() + HOME[0], area.top() + HOME[1])
     return window, splitter
 
 
@@ -436,6 +482,147 @@ def collapsed_pane(app: Any, _qml: Path | None = None) -> dict[str, Any]:
     out["narrow"] = _look(host)
     _pump(app, 300)
     out["narrow_later"] = _look(host)
+    host.close()
+    window.close()
+    return out
+
+
+def tiny_pane(app: Any, _qml: Path | None = None) -> dict[str, Any]:
+    """Review round 4. A pane 2 px wide and 60 px high — the smallest that shows 3D — ON
+    the screen: hidden and shown again by the host, then with its window. (On a 1024 px
+    runner this very pane lay beyond the screen's edge and three ``wait_ready()`` calls
+    in a row took their whole 5 s.)"""
+    window, splitter, host = _in_splitter()
+    out: dict[str, Any] = {"ready": host.wait_ready(10.0), "open": _look(host)}
+    window.resize(901, 60)
+    splitter.setSizes([sum(splitter.sizes()) - 2, 2])
+    out["tiny_at_once"] = _look(host)
+    out["ready_tiny"], out["wait_tiny_s"] = _timed_wait(host, 5.0)
+    out["tiny"] = _look(host)
+    host.hide()
+    out["host_hidden"] = _look(host)
+    host.show()
+    out["host_reshown_at_once"] = _look(host)
+    out["ready_host"], out["wait_host_s"] = _timed_wait(host, 5.0)
+    out["host_reshown"] = _look(host)
+    window.hide()
+    out["window_hidden"] = _look(host)
+    window.show()
+    out["window_reshown_at_once"] = _look(host)
+    out["ready_window"], out["wait_window_s"] = _timed_wait(host, 5.0)
+    out["window_reshown"] = _look(host)
+    _pump(app, 300)
+    out["later"] = _look(host)
+    out["health"] = _health(host)
+    host.close()
+    window.close()
+    return out
+
+
+def pane_without_paint(app: Any, _qml: Path | None = None) -> dict[str, Any]:
+    """Review round 4 — the stuck class, made ON PURPOSE, on any machine and any day.
+
+    Qt resizes the render target when it next DRAWS the window, and it draws when the
+    platform asks: an expose, an update request. A view gets neither while no part of it
+    is on a screen AND no frame is due (a runner without a display, a display asleep) —
+    that is where the walk stuck on CI. Whether a given machine is in that condition
+    changes within a day (measured: the same pane beyond the same screen's edge kept its
+    old render target while the display slept, and got the new one through an update
+    request while it was awake). So this order does not wait for the platform to be in
+    it: an event filter eats the view's expose, update-request and paint events — the
+    view is on the screen, shown, exposed, and nothing draws it.
+
+    Then the pane is resized. A truthful host refuses — on the evidence of the frame —
+    and ``wait_ready()`` says False promptly, whatever its timeout; when painting resumes
+    the host answers again. Nothing is judged in here."""
+    from PyQt6.QtCore import QEvent, QObject
+
+    class NoPaint(QObject):
+        eaten = 0
+
+        def eventFilter(self, _watched: Any, event: Any) -> bool:  # noqa: N802 - Qt's name
+            if event.type() in (QEvent.Type.Expose, QEvent.Type.UpdateRequest, QEvent.Type.Paint):
+                NoPaint.eaten += 1
+                return True
+            return False
+
+    window, splitter, host = _in_splitter()
+    view = host._view  # noqa: SLF001 - the matrix asks Qt directly
+    out: dict[str, Any] = {"ready": host.wait_ready(10.0), "open": _look(host)}
+    total = sum(splitter.sizes())
+    blocker = NoPaint(view)
+    view.installEventFilter(blocker)  # installed last: it runs before the host's own watch
+    for step, width in (("grown", 600), ("shrunk", 200)):
+        splitter.setSizes([total - width, width])
+        _pump(app, 250)  # the resize arrives, the scene follows; nothing draws
+        out[f"{step}_at_once"] = _look(host)
+        out[f"ready_{step}"], out[f"wait_{step}_s"] = _timed_wait(host, 5.0)
+        out[step] = _look(host)
+    out["ready_zero"], out["wait_zero_s"] = _timed_wait(host, 0.0)
+    out["ready_default"], out["wait_default_s"] = _timed_wait(host, 1.0)
+    out["ready_long"], out["wait_long_s"] = _timed_wait(host, 60.0)
+    out["without_paint"] = _look(host)
+    out["eaten"] = NoPaint.eaten
+    view.removeEventFilter(blocker)
+    splitter.setSizes([total // 2, total - total // 2])  # painting resumes with the next resize
+    out["ready_painting"], out["wait_painting_s"] = _timed_wait(host, 5.0)
+    out["painting"] = _look(host)
+    _pump(app, 300)
+    out["later"] = _look(host)
+    out.update(stale_frames=host.stale_frames, probes=host.probes, health=_health(host))
+    host.close()
+    window.close()
+    return out
+
+
+def pane_off_screen(app: Any, _qml: Path | None = None) -> dict[str, Any]:
+    """Review round 4 — where CI found it. The main window is moved so that the 3D pane
+    lies entirely beyond the right edge of every screen. Then the pane is made smaller,
+    larger, hidden and shown — and the window is moved back.
+
+    What the platform does there is NOT one fact (measured on one Windows machine, on two
+    days): a pane that grows beyond the edge gets its resize event and no expose; with
+    the display asleep nothing else arrives either and Qt's frame keeps the old size for
+    as long as the pane stays there; with the display awake an update request arrives
+    and the frame is right. A pane SHOWN there was not exposed on either day. A truthful
+    host gives a frame of the window's size or refuses — promptly: no ``wait_ready()``
+    may wait for what will not come — and answers again once the pane is back on a
+    screen. Nothing is judged in here."""
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtGui import QGuiApplication
+
+    window, splitter, host = _in_splitter()
+    view = host._view  # noqa: SLF001 - the matrix asks Qt directly
+    out: dict[str, Any] = {"ready": host.wait_ready(10.0), "open": _look(host)}
+    home = window.pos()
+    total = sum(splitter.sizes())
+    # the pane is the right part of the window: its left edge goes past the last screen
+    edge = max(screen.geometry().right() for screen in QGuiApplication.screens()) + 1
+    window.move(edge + 20 - (view.mapToGlobal(QPoint(0, 0)).x() - window.x()), window.y())
+    _pump(app, 300)
+    out["moved"] = _look(host)
+    for step, sizes in (("shrunk", [total - 49, 49]), ("grown", [total - 137, 137]),
+                        ("grown_more", [total // 2, total - total // 2])):
+        splitter.setSizes(sizes)
+        _pump(app, 250)  # the resize is delivered; whether an expose follows is the platform's
+        out[f"{step}_at_once"] = _look(host)
+        out[f"ready_{step}"], out[f"wait_{step}_s"] = _timed_wait(host, 5.0)
+        out[step] = _look(host)
+    out["ready_zero"], out["wait_zero_s"] = _timed_wait(host, 0.0)
+    out["ready_default"], out["wait_default_s"] = _timed_wait(host, 1.0)
+    host.hide()
+    _pump(app, 100)
+    host.show()
+    _pump(app, 250)
+    out["reshown_at_once"] = _look(host)
+    out["ready_reshown"], out["wait_reshown_s"] = _timed_wait(host, 5.0)
+    out["reshown"] = _look(host)
+    window.move(home)
+    out["ready_back"], out["wait_back_s"] = _timed_wait(host, 5.0)
+    out["back"] = _look(host)
+    _pump(app, 300)
+    out["later"] = _look(host)
+    out.update(stale_frames=host.stale_frames, probes=host.probes, health=_health(host))
     host.close()
     window.close()
     return out
@@ -526,9 +713,9 @@ def _through_window_states(app: Any, host: Any, target: Any, out: dict[str, Any]
                          ("normal_again", target.showNormal)):
         change()
         out[f"{step}_at_once"] = _look(host)
-        started = time.perf_counter()
-        out[f"ready_{step}"] = host.wait_ready(10.0)
-        out[f"wait_{step}_s"] = round(time.perf_counter() - started, 3)
+        # no event is delivered by a zero timeout: what the host says is what a frame says
+        out[f"ready0_{step}"], out[f"wait0_{step}_s"] = _timed_wait(host, 0.0)
+        out[f"ready_{step}"], out[f"wait_{step}_s"] = _timed_wait(host, 10.0)
         out[step] = _look(host)
         _pump(app, 200)
         out[f"{step}_later"] = _look(host)
@@ -560,23 +747,58 @@ def window_states_embedded(app: Any, _qml: Path | None = None) -> dict[str, Any]
     return out
 
 
-def random_walk(app: Any, seed: str = "1", steps: str = "250") -> dict[str, Any]:
-    """Review round 3 — the state machine under a SEEDED random order of everything a
+#: The window sizes the walk asks for (it picks one of each list).
+WALK_WIDTHS, WALK_HEIGHTS = (320, 500, 901, 1203, 1500), (60, 120, 333, 500, 701)
+#: How the walk meets the screen (``random_walk``).
+WALK_SCREENS = ("fit", "1024x768")
+
+
+def random_walk(app: Any, seed: str = "1", steps: str = "250", screen: str = "fit") -> dict[str, Any]:
+    """Review rounds 3 and 4 — the host under a SEEDED random order of everything a
     parent can do to an embedded host: move the splitter (to nothing, to one pixel, wide),
     resize, maximise, full screen, minimise, hide and show the pane, the host, the window.
     After every operation the host is asked for a frame, a pick and a projection — at once,
-    after ``wait_ready()``, or after the event loop ran. Nothing is judged in here: every
-    answer is recorded beside what QT said about the window at that moment."""
+    after ``wait_ready()`` (with a timeout of 5 s, 0.3 s or none), or after the event loop
+    ran. Nothing is judged in here: every answer is recorded beside what QT said about the
+    window at that moment — its size, and how much of it is on a screen.
+
+    ``screen`` — the walk must not depend on the screen it happens to find (round 4: it
+    asked for 1203 and 1500 px wide windows on whatever was there; on a 1024 px runner the
+    pane ended up beyond the edge):
+
+    - ``fit``: every size is capped by the screen's AVAILABLE area and the window is put
+      at its top-left, so that the whole window is on the screen on any screen.
+    - ``1024x768``: the window where such a screen leaves it — the sizes as asked,
+      capped as Windows caps them there, the window placed so that this screen's right
+      and bottom edges are where that screen's would be. Parts of this walk have the
+      pane beyond the edge, on every machine.
+
+    The ORDER of operations is the same for both and for every screen: one generator
+    draws the operations, a second one the timeouts.
+    """
     import random
 
+    if screen not in WALK_SCREENS:
+        raise ValueError(f"screen must be one of {WALK_SCREENS}, not {screen!r}")
     rng = random.Random(int(seed))
+    timeouts = random.Random(int(seed) + 1)
     window, splitter, host = _in_splitter()
     view = host._view  # noqa: SLF001 - the matrix asks Qt directly
     records: list[dict[str, Any]] = []
+    if screen == "fit":
+        area = _available()
+        widths = [min(width, area.width() - 2 * HOME[0]) for width in WALK_WIDTHS]
+        heights = [min(height, area.height() - HOME[1] - 60) for height in WALK_HEIGHTS]
+    else:
+        widths, heights = list(WALK_WIDTHS), list(WALK_HEIGHTS)
+        whole = window.screen().geometry()
+        window.setMaximumSize(1040, 784)  # what Windows lets a window be on 1024 x 768
+        window.move(whole.right() + 1 - 1024 + 78, whole.bottom() + 1 - 768 + 60)
 
     def qt_says() -> dict[str, Any]:
         return {"window": [int(view.width()), int(view.height())], "visible": bool(view.isVisible()),
-                "exposed": bool(view.isExposed()), "minimised": bool(window.isMinimized())}
+                "exposed": bool(view.isExposed()), "minimised": bool(window.isMinimized()),
+                "on_screen": _on_screen(host)}
 
     def observe(what: str, **extra: Any) -> None:
         said = qt_says()  # before the grab
@@ -588,7 +810,7 @@ def random_walk(app: Any, seed: str = "1", steps: str = "250") -> dict[str, Any]
         return f"setSizes(.., {width})"
 
     def window_resize() -> str:
-        width, height = rng.choice([320, 500, 901, 1203, 1500]), rng.choice([60, 120, 333, 500, 701])
+        width, height = rng.choice(widths), rng.choice(heights)
         window.resize(width, height)
         return f"window.resize({width}, {height})"
 
@@ -612,8 +834,9 @@ def random_walk(app: Any, seed: str = "1", steps: str = "250") -> dict[str, Any]
         "show_window": named(window.show, "window.show"),
     }
     names = sorted(operations)
-    out: dict[str, Any] = {"seed": int(seed), "steps": int(steps), "ready": host.wait_ready(10.0),
-                           "api": host.graphics_api(), "dpr": host.device_pixel_ratio()}
+    out: dict[str, Any] = {"seed": int(seed), "steps": int(steps), "screen": screen,
+                           "ready": host.wait_ready(10.0), "api": host.graphics_api(),
+                           "dpr": host.device_pixel_ratio()}
     observe("open", mode="open")
     for _ in range(int(steps)):
         label = operations[rng.choice(names)]()
@@ -624,27 +847,34 @@ def random_walk(app: Any, seed: str = "1", steps: str = "250") -> dict[str, Any]
         if mode in ("pump", "pump_wait"):
             _pump(app, 120)
         if mode in ("wait", "pump_wait"):
-            started = time.perf_counter()
-            ready = host.wait_ready(5.0)
-            observe(label, mode=mode, ready=ready, took=round(time.perf_counter() - started, 3))
+            timeout = timeouts.choice([5.0, 5.0, 5.0, 0.3, 0.0])
+            ready, took = _timed_wait(host, timeout)
+            observe(label, mode=mode, ready=ready, took=took, timeout=timeout)
         else:
             observe(label, mode=mode)
-        # liveness: Qt says the window can show something, and the event loop has run
+        # liveness: Qt says the window can show something, and the event loop has run.
+        # WHERE the window is decides what must follow (the judge): all of it on a screen
+        # — the host must come up; else it may refuse, but promptly.
         _pump(app, 150)
         said = qt_says()
         if (said["visible"] and said["exposed"] and not said["minimised"]
                 and min(said["window"]) >= 2):
-            records[-1]["settles"] = host.wait_ready(3.0)
-            if not records[-1]["settles"]:
+            settles, took = _timed_wait(host, 3.0)
+            records[-1].update(settles=settles, settle_took=took, settle_on_screen=said["on_screen"])
+            if settles is not True:
                 records[-1]["stuck"] = f"{host.state.value}: {host._facts()}"  # noqa: SLF001
     window.showNormal()
     window.show()
     container.show()
+    area = _available()
+    window.move(area.left() + HOME[0], area.top() + HOME[1])  # back on the screen, whatever the walk did
+    window.resize(min(900, area.width() - 2 * HOME[0]), min(500, area.height() - HOME[1] - 60))
     splitter.setSizes([450, 450])
-    out["final_ready"] = host.wait_ready(10.0)
-    observe("final", mode="wait", ready=out["final_ready"], took=0.0)
+    out["final_ready"], took = _timed_wait(host, 10.0)
+    observe("final", mode="wait", ready=out["final_ready"], took=took, timeout=10.0)
     _pump(app, 300)
-    out.update(records=records, stale_frames=host.stale_frames, health=_health(host))
+    out.update(records=records, stale_frames=host.stale_frames, probes=host.probes,
+               longest_quiet_s=round(host.longest_quiet_s, 3), health=_health(host))
     host.close()
     window.close()
     return out
@@ -944,6 +1174,9 @@ ORDERS: dict[str, Callable[..., dict[str, Any]]] = {
     "parent_destroyed_anything": parent_destroyed_anything,
     "embedded_splitter": embedded_splitter,
     "collapsed_pane": collapsed_pane,
+    "tiny_pane": tiny_pane,
+    "pane_off_screen": pane_off_screen,
+    "pane_without_paint": pane_without_paint,
     "minimised_window": minimised_window,
     "embedded_never_shown_grab": embedded_never_shown_grab,
     "embed_after_show": embed_after_show,
@@ -966,9 +1199,9 @@ ORDERS: dict[str, Callable[..., dict[str, Any]]] = {
 }
 
 
-#: Orders whose arguments are their own (a log path; a seed and a number of steps) and not
-#: a QML directory.
-OWN_ARGUMENTS = {"deadlock_supervised": 1, "random_walk": 2}
+#: Orders whose arguments are their own (a log path; a seed, a number of steps and how the
+#: walk meets the screen) and not a QML directory.
+OWN_ARGUMENTS = {"deadlock_supervised": 1, "random_walk": 3}
 
 
 def main(argv: list[str]) -> int:
@@ -976,7 +1209,8 @@ def main(argv: list[str]) -> int:
     wanted = (OWN_ARGUMENTS[order],) if order in OWN_ARGUMENTS else (0, 1)
     if order not in ORDERS or len(argv) - 1 not in wanted:
         print(f"usage: quick3d_lifecycle_child.py <{'|'.join(ORDERS)}> [<qml dir>] "
-              "(random_walk: <seed> <steps>; deadlock_supervised: <log>)", file=sys.stderr)
+              f"(random_walk: <seed> <steps> <{'|'.join(WALK_SCREENS)}>; deadlock_supervised: <log>)",
+              file=sys.stderr)
         return 2
     faulthandler.enable(all_threads=True)
     # a hang is a failure too (the random walk is the long one)
@@ -986,7 +1220,7 @@ def main(argv: list[str]) -> int:
     app = QApplication(sys.argv[:1])
     _register_calls()
     if order == "random_walk":
-        result = random_walk(app, argv[1], argv[2])
+        result = random_walk(app, argv[1], argv[2], argv[3])
     else:
         qml_dir = Path(argv[1]).resolve() if len(argv) == 2 and order not in OWN_ARGUMENTS else None
         result = ORDERS[order](app, qml_dir)

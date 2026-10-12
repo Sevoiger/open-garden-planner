@@ -532,6 +532,39 @@ _SUPERVISED = textwrap.dedent("""
         with runlog.watchdog(30.0, log, what="block B", supervised=True) as b:
             time.sleep(5.0)
         print("EXITS", a.supervisor_exit, b.supervisor_exit, flush=True)
+    elif mode == "left-at-once":
+        # The reviewer's gap (round 4, P2-1): the block hands its supervisor a creation
+        # time that is not the one Windows reports. The supervisor leaves AT ONCE, while
+        # the block still runs — and used to say 0, like one that did its job.
+        real_created = runlog._created
+        runlog._created = lambda k32, handle: real_created(k32, handle) + 1
+        with runlog.watchdog(20.0, log, what="the supervised block", supervised=True) as armed:
+            time.sleep(1.5)
+            print("DURING", armed.supervisor.process.poll(), flush=True)
+        print("AFTER", armed.supervisor_exit, armed.supervised, "|", armed.gap, flush=True)
+    elif mode == "arming-fails":
+        # Round 4, P2-2: the supervising process is started — and then arming fails.
+        started = []
+        real_start = runlog.start_supervisor
+        runlog.start_supervisor = lambda *a: started.append(real_start(*a)) or started[-1]
+        real_arm = faulthandler.dump_traceback_later
+
+        def cannot_arm(*_args, **_kwargs):
+            raise RuntimeError("unable to start watchdog thread")
+
+        faulthandler.dump_traceback_later = cannot_arm
+        try:
+            with runlog.watchdog(3.0, log, what="the block that cannot be armed", supervised=True):
+                print("THE BLOCK RAN", flush=True)
+        except RuntimeError as error:
+            print("RAISED", error, flush=True)
+        faulthandler.dump_traceback_later = real_arm
+        print("ARMED", [item.what for item in runlog._ARMED], flush=True)
+        print("STRAY", started[0].process.poll() is None, flush=True)
+        with runlog.watchdog(30.0, log, what="the next block", supervised=True) as armed:
+            time.sleep(1.0)
+        print("NEXT", armed.supervisor_exit, armed.supervised, flush=True)
+        time.sleep(6.5)   # past the first block's deadline and grace period: nobody ends us
     elif mode == "wrong-creation-time":
         # Our own child, the right pid, the right event — and a creation time that is not
         # ours: a process that reused the pid. Only that check stands between it and us.
@@ -543,6 +576,16 @@ _SUPERVISED = textwrap.dedent("""
                                    "1", "-", "what:not ours"])
         print("HELPER", helper.wait(timeout=30), flush=True)
         time.sleep(2.0)
+    elif mode == "no-event":
+        # Our own child, the right pid, the right creation time — and no release event of
+        # that name: not a block it can find. It must not wait on the process alone (it
+        # would end us 1 s from now), and it must not say that it supervised.
+        k32 = runlog._kernel32()
+        created = runlog._created(k32, k32.GetCurrentProcess())
+        helper = subprocess.Popen([*runlog.self_command(), str(os.getpid()), str(created),
+                                   "fedcba9876543210fedcba9876543210", "1", "-", "what:no such block"])
+        print("HELPER", helper.wait(timeout=30), flush=True)
+        time.sleep(3.0)   # past the deadline it was given
     print("returned", flush=True)
 """)
 
@@ -570,17 +613,55 @@ def test_the_supervisor_ends_a_process_its_own_watchdog_cannot_end(tmp_path: Pat
 
 @windows_only
 def test_the_supervisor_leaves_a_process_alone_whose_block_finished_first(tmp_path: Path) -> None:
-    """The block is over before the supervising process has started. It created the
-    release event, signalled and destroyed it; the late supervisor finds NO event. Had
-    it waited on the process alone, it would have ended — 3.5 s later — a process that
-    finished its block and simply lives on: a pytest run that called the bounded
-    self-test, 310 s after the test passed."""
+    """The block is over before the supervising process has started. Had the late
+    supervisor waited on the process alone, it would have ended — 3.5 s later — a
+    process that finished its block and simply lives on: a pytest run that called the
+    bounded self-test, 310 s after the test passed.
+
+    The block signals its release event and KEEPS it until the supervisor has left
+    (review round 4): the late supervisor finds it, signalled, and leaves with the code
+    for "released" — which it can therefore tell from "there is no such block"."""
     proc, text = _supervised("in-time", tmp_path)
     assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
     assert "supervisor=process " in text and "[supervisor]" not in text
-    # the block learns how its supervisor ended: it left, with the code for "done"
     assert "SUPERVISOR_EXIT 0 True" in proc.stdout
     assert "[watchdog] released=True what=the supervised block supervisor_exit=0" in text
+
+
+@windows_only
+def test_a_supervisor_that_never_supervised_says_so_in_its_exit_code(tmp_path: Path) -> None:
+    """Review round 4, P2-1 — the reviewer's sequence. The supervisor cannot find its
+    block (a creation time that is not the process's) and leaves AT ONCE: 1.5 s into a
+    20 s block it is gone. It used to exit 0, the block's ``Armed`` said "supervised",
+    and the self-test logged ``ok=True detail=started, released, left`` — for a run
+    that had no safety net at all. Its exit code is 4 now, and the block says why."""
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    proc, text = _supervised("left-at-once", tmp_path)
+    assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
+    assert runlog.SUPERVISOR_IDLE == 4
+    assert "DURING 4" in proc.stdout, "it left while the block ran — and said that it had not supervised"
+    (after,) = [line for line in proc.stdout.splitlines() if line.startswith("AFTER ")]
+    assert after.startswith("AFTER 4 False | its supervising process left without having supervised")
+    assert "exit code 4" in after
+    assert "released=True what=the supervised block supervisor_exit=4 note=the supervising process left" in text
+
+
+@windows_only
+def test_a_watchdog_that_cannot_be_armed_leaves_nothing_armed_and_no_supervisor(tmp_path: Path) -> None:
+    """Review round 4, P2-2. The supervising process was started and the process marked
+    armed BEFORE the ``try``: when arming then failed, every later watchdog was refused
+    ("already armed") and a live supervisor remained that would have ended the process
+    at the deadline. Now the failure disarms what was armed so far: nothing is left,
+    the supervisor is released and gone, the next block is armed and supervised — and
+    the process lives past the failed block's deadline."""
+    proc, text = _supervised("arming-fails", tmp_path)
+    assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
+    lines = [line for line in proc.stdout.splitlines() if line]
+    assert "THE BLOCK RAN" not in lines, "a block that could not be armed must not run"
+    assert lines[:3] == ["RAISED unable to start watchdog thread", "ARMED []", "STRAY False"], lines
+    assert "NEXT 0 True" in lines
+    assert "[supervisor]" not in text, "nobody was terminated"
 
 
 @windows_only
@@ -605,6 +686,8 @@ def test_a_finished_blocks_supervisor_cannot_end_the_block_after_it(tmp_path: Pa
     assert proc.returncode == 0 and "returned" in proc.stdout, (
         f"exit {proc.returncode}: the healthy second block did not survive the first one's "
         f"supervisor\n{proc.stdout}{proc.stderr[-1500:]}\n{text}")
+    # A's supervisor came up after A was over: it found A's own event, signalled, and
+    # left as "released" (0) — it never looked at B's, whose name carries another nonce
     assert "EXITS 0 0" in proc.stdout, proc.stdout
     assert "[supervisor]" not in text, text
 
@@ -613,10 +696,79 @@ def test_a_finished_blocks_supervisor_cannot_end_the_block_after_it(tmp_path: Pa
 def test_the_supervisor_never_ends_another_process_that_got_the_pid(tmp_path: Path) -> None:
     """A pid is reused. The supervisor knows its process by pid AND creation time: here
     it is our own child, the pid is ours, the release event exists — and the creation
-    time is not ours. It leaves; we live."""
+    time is not ours. It leaves — saying that it supervised nobody (4) — and we live."""
     proc, _text = _supervised("wrong-creation-time", tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:]
-    assert "HELPER 0" in proc.stdout and "returned" in proc.stdout
+    assert "HELPER 4" in proc.stdout and "returned" in proc.stdout
+
+
+@windows_only
+def test_a_supervisor_that_finds_no_release_event_leaves_and_says_it_never_supervised(
+        tmp_path: Path) -> None:
+    """The process is the one named, and there is no release event of the block's name:
+    not a block the supervisor can find (or one that ended more than 15 s ago). It leaves
+    at once — waiting on the process alone would end, at the deadline, a process that
+    finished its block and simply lives on — and its exit code is 4, not 0: it never
+    supervised (review round 4, P2-1; a mutant that answered 0 here survived the first
+    version of these tests)."""
+    proc, text = _supervised("no-event", tmp_path)
+    assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
+    assert "HELPER 4" in proc.stdout, proc.stdout
+    assert "[supervisor]" not in text, "nobody was terminated"
+
+
+def test_a_watchdog_whose_arming_fails_is_not_left_armed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """P2-2 on every platform, without a supervisor: arming fails (``faulthandler`` cannot
+    start its thread) — the error reaches the caller, the block does not run, and the
+    process is not left "armed": the next watchdog works."""
+    import faulthandler
+
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    log = runlog.RenderLog(tmp_path / "arming.log", mirror=False)
+    real = faulthandler.dump_traceback_later
+
+    def cannot_arm(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("unable to start watchdog thread")
+
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", cannot_arm)
+    ran: list[int] = []
+    with pytest.raises(RuntimeError, match="unable to start watchdog thread"), \
+            runlog.watchdog(5.0, log, what="cannot be armed"):
+        ran.append(1)
+    assert ran == [] and runlog._ARMED == []  # noqa: SLF001
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", real)
+    with runlog.watchdog(5.0, log, what="the next block") as armed:
+        assert len(runlog._ARMED) == 1 and runlog._ARMED[0] is armed  # noqa: SLF001
+    assert runlog._ARMED == []  # noqa: SLF001
+    log.close()
+
+
+def test_what_a_block_says_about_its_supervisor() -> None:
+    """``Armed.gap``: "" only for a supervisor that held the block's event and left; else
+    words a log line and the self-test's FAIL line can carry."""
+    from open_garden_planner.ui.view3d.quick3d import runlog
+
+    class Gone:
+        pass
+
+    def armed(exit_code: int | None, supervisor: object = Gone()) -> runlog.Armed:  # noqa: B008
+        made = runlog.Armed(5.0, "x", supervisor=supervisor)  # type: ignore[arg-type]
+        made.supervisor_exit = exit_code
+        return made
+
+    assert armed(0).gap == "" and armed(0).supervised is True
+    for code, words in ((2, "refused"), (3, "failed itself"), (4, "left without having supervised"),
+                        (None, "had not left 15 s after its release"), (9, "ended with exit code 9")):
+        gap = armed(code).gap
+        assert gap.startswith("its supervising process ") and words in gap, gap
+        assert armed(code).supervised is (code is None)
+    none = runlog.Armed(5.0, "x", unsupervised_because="none (it could not be started)")
+    assert none.gap == "none (it could not be started)" and none.supervised is False
+    assert (runlog.SUPERVISOR_DONE, runlog.SUPERVISOR_REFUSED, runlog.SUPERVISOR_FAILED,
+            runlog.SUPERVISOR_IDLE) == (0, 2, 3, 4)
+    doc = runlog.__doc__ or ""
+    assert "NO start timeout DURING the block" in doc and "``SUPERVISOR_EXIT_WAIT_S``" in doc
 
 
 @windows_only

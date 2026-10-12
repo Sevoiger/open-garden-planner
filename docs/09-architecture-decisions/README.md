@@ -808,6 +808,10 @@ guard make support decisions explicit. Direct `ROOF_RIDGE`,
 is refused with reasons; these are deliberate gaps, not accidental omissions.
 The extension is additive and does not bump `FILE_VERSION`.
 
+### ADR-034 addendum: Package F1/F2 curated traits and shared diagnostics
+
+`garden://species` includes recorded food-forest layers/functions. `get_object` exposes curated lowercase trait values for plants (unknown/empty defaults) and null for other objects, alongside the saved metadata. These are read-only additions; authentication and write tools are unchanged. Diagnostic records retain existing fields/messages and add structured `details`; guild warnings carry guild/centre IDs, function and required/present counts. The API adapter delegates to `services/diagnostics.py`, also consumed by the sidebar. Guild warnings come from the last coordinator snapshot, subject to the documented debounce delay.
+
 ## ADR-035: AI Client Onboarding — Safe Cross-App Config Registration (US-D1.6)
 
 **Status**: Accepted (Phase 13 — Package D, US-D1.6).
@@ -1305,7 +1309,7 @@ The independent review caught four P1s, all fixed before the PR: **(1)** the urg
 
 **Status**: Accepted (2026-09-15)
 
-**Context**: A user's Windows Defender quarantined the installed `OpenGardenPlanner.exe` as `Trojan:Script/Wacatac.C!ml` (issue #356). This matches a well-documented false-positive pattern for PyInstaller-built executables (confirmed against multiple upstream PyInstaller issues and community reports) — Defender's ML heuristics are prone to misfire on unsigned, UPX-compressed, low-download-reputation binaries, and `installer/ogp.spec` builds exactly that profile (`upx=True`, no Authenticode signature). This isn't new: issue #89 hit the milder SmartScreen "unrecognized publisher" warning on the same installer and was closed `not_planned` — the project has no budget for a paid Authenticode code-signing certificate, so users were pointed at Microsoft's false-positive submission forms instead (§11.1, §11.2). The only existing compensating control, `SHA256SUMS.txt`, proves download integrity (the file wasn't corrupted or tampered with in transit) but says nothing about whether the binary actually traces back to this project's public source — it can't answer "prove this wasn't built from a compromised or modified copy," which is the standard of proof a security-conscious reporter reasonably wants before trusting a "just a false positive" explanation.
+**Context**: A user's Windows Defender quarantined the installed `OpenGardenPlanner.exe` as `Trojan:Script/Wacatac.C!ml` (issue #356). This matches a well-documented false-positive pattern for PyInstaller-built executables (confirmed against multiple upstream PyInstaller issues and community reports) — Defender's ML heuristics are prone to misfire on unsigned, UPX-compressed, low-download-reputation binaries, and `installer/ogp.spec` builds exactly that profile (`upx=True`, no Authenticode signature). This isn't new: issue #89 hit the milder SmartScreen "unrecognized publisher" warning on the same installer and was closed `not_planned` — as of this decision on 2026-09-15, the project had no budget for a paid Authenticode code-signing certificate, so users were pointed at Microsoft's false-positive submission forms instead (§11.1, §11.2). The only existing compensating control, `SHA256SUMS.txt`, proves download integrity (the file wasn't corrupted or tampered with in transit) but says nothing about whether the binary actually traces back to this project's public source — it can't answer "prove this wasn't built from a compromised or modified copy," which is the standard of proof a security-conscious reporter reasonably wants before trusting a "just a false positive" explanation.
 
 **Decision**: Ship GitHub Artifact Attestations (build provenance) on every release, via `actions/attest-build-provenance@v4` in `release.yml`, run after the GitHub Release is created (attestation is keyed to each artifact's digest, not to the release, so this ordering costs nothing and keeps a Sigstore/attestations-API hiccup from ever blocking a release — see "Rejected placement" below). This is a free, GitHub-native, Sigstore-backed mechanism: it cryptographically binds each artifact's digest to the exact commit SHA and public workflow run that produced it. It covers three subjects, not just the installer: the NSIS installer, `SHA256SUMS.txt`, and the raw app exe the installer packages (`dist/OpenGardenPlanner/OpenGardenPlanner.exe` — the exact file Defender quarantined in #356; attesting only the installer would not let that reporter verify the file they actually have). Anyone can independently verify with `gh attestation verify OpenGardenPlanner-<version>-Setup.exe -R cofade/open-garden-planner --signer-workflow cofade/open-garden-planner/.github/workflows/release.yml` — no account, no paid tooling, no trust in the maintainer's word required. This directly answers the "prove it, don't just assert it" bar: the artifact's provenance is checkable against the project's own public Actions run history and source commit, which is itself open for inspection. Upstream documents `attest-build-provenance` as "simply a wrapper on top of `actions/attest`" and recommends new integrations call `actions/attest` directly — noted here so a future maintainer bumping past v4 (or hitting the wrapper's eventual retirement) knows that migration path exists; not adopted now since the wrapper is simpler for this workflow's single-purpose use.
 
@@ -1313,7 +1317,7 @@ The independent review caught four P1s, all fixed before the PR: **(1)** the urg
 
 | Option | Why not |
 |--------|---------|
-| Paid Authenticode code-signing certificate | Would additionally suppress the SmartScreen/Defender reputation warning itself (the actual UX friction), but costs a recurring fee the project has no budget for (§11.1, reaffirmed from issue #89's original rejection). Not ruled out permanently — tracked as the still-open half of §11.1/§11.2 — but out of scope for resolving #356's "prove there's no trojan" ask. |
+| Paid Authenticode code-signing certificate | At the 2026-09-15 decision, a recurring certificate fee was outside the project's budget (issue #89), and signing was outside #356's source-provenance scope. This historical rejection does not rule out no-cost options. Signing is being reconsidered in [#375](https://github.com/cofade/open-garden-planner/issues/375), including eligibility, publisher identity and effectiveness; no signed release has established that it suppresses these detections. |
 | Do nothing beyond re-explaining the false-positive pattern | Repeats the #89 response, which already reads to a security-conscious user as "trust us." Doesn't meet the bar of independently checkable proof the reporter asked for. |
 | Self-hosted GPG signing of release assets | Requires the maintainer to generate, protect, and publish a personal key, and requires each user to independently establish trust in *that* key out-of-band — strictly weaker than GitHub's attestation, which roots trust in the platform hosting the public source and the workflow run logs directly, with no separate key-distribution problem. |
 
@@ -1321,7 +1325,7 @@ The independent review caught four P1s, all fixed before the PR: **(1)** the urg
 
 **Rejected placement**: running `Attest build provenance` *before* `Create GitHub Release` (the original draft). Rejected in review: it put a never-yet-executed step, pinned to a since-discovered-stale action major, directly in the critical path ahead of the release — any Sigstore/Fulcio hiccup or transient attestations-API error would have failed the whole release, not just the provenance record. Attestation is keyed to the artifact's digest, not to the release, so ordering after release creation is free and strictly safer.
 
-**Addendum (#358, 2026-09-22)**: Norton 360 flagged the v1.27.9 installer as `FileRepMalware[Misc]` — a second AV vendor hitting the same unsigned, zero-reputation PyInstaller profile this ADR already scoped (the only source changes between the clean-scanning v1.27.8 and v1.27.9 were the attestation workflow and the version bump, so the detection tracks a fresh hash, not new application behavior). This confirms the ADR's stated boundary: provenance attestation answers "was this built from the public source?" but deliberately does not answer "does the vendor's reputation engine trust it?" — the paid Authenticode cert remains the only fix for the latter and is still unfunded (§11.1/§11.2). Operational path: false-positive submissions per vendor (Microsoft forms for #356, Norton portal `submissions.norton.com/reportfalsepositive` for #358). Both submission portals are CAPTCHA-protected (Norton: math challenge + reCAPTCHA; Symantec SymSubmit: reCAPTCHA v3), so these are human submissions — the maintainer cannot automate them, and neither can a script-kitted "auto-file our FPs" step be added to `release.yml` without bypassing anti-bot measures, which is out of scope. The reporter was additionally advised they can file from inside their own Norton quarantine UI, where their alert's Alert ID is available.
+**Addendum (#358, 2026-09-22)**: Norton 360 flagged the v1.27.9 installer as `FileRepMalware[Misc]` — a second AV vendor hitting the same unsigned, zero-reputation PyInstaller profile this ADR already scoped (the only source changes between the clean-scanning v1.27.8 and v1.27.9 were the attestation workflow and the version bump, so the detection tracks a fresh hash, not new application behavior). This confirms the ADR's stated boundary: provenance attestation answers "was this built from the public source?" but deliberately does not answer "does the vendor's reputation engine trust it?" — releases remain unsigned (§11.1/§11.2). **Correction (#376, 2026-10-11):** the earlier claim that a paid certificate was the only fix is withdrawn. Signing options, including no-cost proposals raised after this decision, are being evaluated in [#375](https://github.com/cofade/open-garden-planner/issues/375); none has been adopted, and effectiveness against Defender ML and Norton FileRep remains unproven for this project. Operational path: false-positive submissions per vendor (Microsoft forms for #356, Norton portal `submissions.norton.com/reportfalsepositive` for #358). Both submission portals are CAPTCHA-protected (Norton: math challenge + reCAPTCHA; Symantec SymSubmit: reCAPTCHA v3), so these are human submissions — the maintainer cannot automate them, and neither can a script-kitted "auto-file our FPs" step be added to `release.yml` without bypassing anti-bot measures, which is out of scope. The reporter was additionally advised they can file from inside their own Norton quarantine UI, where their alert's Alert ID is available.
 
 ### ADR-034 addendum: succession domain schema, determinism, and a SHARED season-segment fallback (US-D3.2, #331)
 
@@ -2013,7 +2017,12 @@ never shown can render at all, and what the self-test costs on WARP.
    window is maximised, the embedded view has not changed at all until the layout ran. So
    `LIVE` also needs the render target to have caught up — a tenth fact, latched from the
    window's own resize and expose events — and the documentation stopped speaking of
-   "passes".
+   "passes". *Corrected in review round 4:* that tenth fact could only be switched on by an
+   expose — a paint message of the operating system — and Windows sends none to a pane that
+   grows where no screen is: the host read "starting" for ever. The fact is gone. **The
+   frame is the witness.** The state holds only what Qt reports when it is asked; `LIVE`
+   means a frame may be ASKED for; whether it has the window's size is said by the frame,
+   which the host checks — to the device pixel — every time it takes one.
 6. **`grab()` on a LIVE host is the synchronisation point.** Nothing in the package or its
    tests waits for a frame to be presented. *Corrected in review round 1:* a host that was just
    shown is not live until its first expose was delivered, and a grab before that is fatal;
@@ -2031,6 +2040,13 @@ never shown can render at all, and what the self-test costs on WARP.
    `HostStateError`; the host reads starting until the next expose), no longer an
    `EngineError`. It also answers False at once when the application is quitting: Qt's
    event loop returns immediately then, and the wait span (158,574 looks in 3.0 s).
+   *Corrected in review round 4:* `wait_ready()` proves readiness with a frame of its own —
+   True means that frame had the window's size — instead of believing the state. It is back
+   within its timeout, the delivery of pending events included (a zero timeout runs no
+   event at all; it had taken 1.0 to 1.4 s); its default is 1 s (was 10); and it answers
+   False 0.5 s after the last sign of progress, whatever the timeout — "starting" no longer
+   means "wait for it". `pick()` and `project()` take a frame of their own after a resize:
+   without one the engine picks with the old viewport and misses.
 7. **Offscreen = one never-shown host per frame**, through the real `SceneSync` → sink → host
    path, with every Qt message recorded and an error-class message raising `RenderError`. It is
    for processes that own themselves — it blocks for 0.4–1.3 s and builds a graphics device per
@@ -2057,7 +2073,11 @@ never shown can render at all, and what the self-test costs on WARP.
    that does not run its own image; its arguments are validated before anything is opened;
    and one watchdog is armed per process at a time. And the safety net is checked like the
    subsystems it guards: on Windows the self-test FAILS when its supervising process did
-   not start, refused, or did not leave.
+   not start, refused, or did not leave. *Round 4:* a supervisor that found nothing to
+   wait for exits 4, not 0 — it never supervised, and the self-test fails on it; a block
+   keeps its signalled release event until its supervisor has left, so that one which
+   comes up late is "released" and not "lost"; a watchdog that fails while arming disarms
+   what it had armed.
 10. **A render tier in two processes**: a driver with a real Qt platform renders; the tests, in
     the ordinary offscreen process, judge with a CPU projection of their own. The host's
     lifecycle is a matrix of call orders, one process each. CI runs the tier in a `render3d`
@@ -2125,7 +2145,7 @@ rig's numbers.
 | the water colour as one uniform for every pond | water albedo = vertex colour × tint (`VAR_COLOR`) | the same rule as every other kind; the mesh carries its colour |
 | sky light probe, fog, glow, AO, four presets | plain sky colour, flat fill, one look | L1.4 owns looks; a probe costs 40–85 s once on WARP — nothing for a self-test |
 | the meadow hidden and a white probe ground in the orthographic view | the meadow and the plan rectangle always shown | the truth view shows the scene, not a probe rig |
-| `wait_frames` on `frameSwapped`, then grab | grab only | a visible window may present one frame and no more (§11.4.9) |
+| `wait_frames` on `frameSwapped`, then grab | grab only | a visible window may present one frame and no more (§11.4.12) |
 | two hosts, `QQuickView` and `QQuickWidget` | `QQuickView` only | criterion 3; the package does not import `QtQuickWidgets` |
 | one process-wide message recorder | recorders that chain; an exact `environment` class | a render inside a recorded run, or inside the app, must not deafen the outer listener |
 | `SunState` with colour and brightness | direction (`core/scene3d.SunState`) apart from the look | where the sun stands is truth; what it looks like is art direction |
@@ -2176,6 +2196,17 @@ rig's numbers.
 - *Deriving "the render target has caught up" from `frameSwapped`* (round 3). That signal is
   queued from the render thread: one emitted before a resize can arrive after it. The
   window's own resize and expose events are delivered on the GUI thread, in order.
+- *Deriving it from the window's `Resize` / `Expose` events* — round 3's own choice,
+  rejected in round 4: no expose reaches a window that is not on a screen, and a state that
+  waits for one waits for ever.
+- *A named state "nothing of the view is on any screen", derived from geometry* (round 4;
+  the other option the review offered). It would have closed the off-screen case and no
+  other. The same stale render target was measured ON the screen — with the view's paint
+  events withheld — and on one machine the pane beyond one edge kept its old target while
+  the display slept (no update request arrives either) and got the new one while it was
+  awake, both on the same day — and on WARP it got the new one either way. Geometry does
+  not say whether Qt draws; a frame does. The probe is also
+  the smaller change: it removes a fact instead of adding a state.
 - *Treating a change of the device pixel ratio as a resize* (round 3). Unmeasured — the
   machine has one scale — and an event whose order relative to the expose is unknown could
   leave a host starting for ever. The grab's own size check covers the case: such a frame
@@ -2272,7 +2303,7 @@ a first fix had not seen:
 4. *Teardown was not exception-safe* (the fourth `reset()` "succeeded" with three Models left),
    *`attach()` accepted an occupied host*, *`wait_ready()` span to its timeout*, *the watchdog's
    exit was not guaranteed*, and *tests of the package wrote into the developer's profile.*
-   → decisions 2, 6 and 9, and §8.10.4.
+   → decisions 2, 6 and 9, and §8.10.6.
 5. Found while fixing, before any reviewer saw it: the first supervised watchdog would have
    ENDED A PROCESS THAT HAD FINISHED ITS BLOCK. A block that is over before the supervising
    process is up destroys the release event; the late supervisor found none, waited on the
@@ -2294,7 +2325,7 @@ a first fix had not seen:
 | A QML function called from Python that fails | missing: PyQt raises `RuntimeError`; one that THROWS: the call returns `None`, silently, and the QML engine emits a warning. Both are an `EngineError` now |
 | pytest-qt and the rule of decision 11 | pytest-qt 4.5 installs a Python Qt message handler for every test (`_QtMessageCapture`), unless the test is marked `no_qt_log`. Under the offscreen platform Qt logs "Loading backend software" and announces no render loop; the in-process host tier ran under that handler several hundred times without a hang. It is marked `no_qt_log` all the same, and real-platform hosts stay in child processes |
 | The frozen gate after review round 2 (built from 7ca084f, locked Python 3.11) | 646,640,942 bytes, 2,442 files — the exe +37,668 bytes and three QML / shader files +691 against round 1's build, plus Git's two OpenSSL DLLs (the PATH effect below). Smoke: exit 124. `--selftest` through `Start-Process -Wait -PassThru`, three runs each: exit 0; 6.1–7.2 s on the GPU and 7.1 s on WARP with a full test suite running on the machine (3.0–4.9 s for the build of 264f06b on a quieter one); `other_threads=0`; the supervising process started in every run and had nothing to do. The frozen exe AS the supervising process, against a dummy: past the deadline the dummy ends with exit code 1 and the reason is in the log; with the wrong creation time it is left alone; released, the supervisor is gone 0.07 s later; with no event it leaves after 0.4 s |
-| Where does `QStandardPaths` point on Windows? | at `<USERPROFILE>/AppData/Roaming` and `…/Local` — the shell expands its known folders from `USERPROFILE`; the `APPDATA` variable is not read. Hence the test children's profile (§8.10.4) |
+| Where does `QStandardPaths` point on Windows? | at `<USERPROFILE>/AppData/Roaming` and `…/Local` — the shell expands its known folders from `USERPROFILE`; the `APPDATA` variable is not read. Hence the test children's profile (§8.10.6) |
 | The lifecycle matrix (round 2) | 19 call orders and 9 controls, one process each, judged against the truth table: green on the GPU and on WARP, and on xcb in the container — where every control that can run there (the three killing orders, the collapsed pane's wrong frames, the message-handler deadlock) fails the way it was first measured to on Windows, and the fourth killing order, `show(); hide(); grab()`, fails only there |
 
 **Review round 3 (2026-10-11).** The scoped re-review confirmed the three round-2 P1 fixes on
@@ -2326,22 +2357,57 @@ exit code 1, 4.7 s in). What a green suite on three platforms had not seen:
 | `showMaximized()` of a standalone view | nothing inside the call: the window has the new size, the root item the old one. `Resize`, `Move`, `WindowStateChange`, `Expose` in the next pass |
 | `showMaximized()` of a main window that embeds the view | nothing has changed for the view — its size, its root item, no event — until the next pass (`Resize`, `Move`, `Expose`); a grab before that is a correct frame of the OLD size |
 | A splitter move, `resize()` | `Resize` and `Expose` in the next pass |
-| The rule that covers all five | a grab has the wrong size exactly between a `Resize` event and the next `Expose` event of the exposed window |
+| The rule that covers all five | a grab has the wrong size exactly between a `Resize` event and the next `Expose` event of the exposed window. (*Round 4:* true of these five, and not a rule to wait on — where no expose comes the grab stays wrong, and a host that waits for one waits for ever) |
 | How long is "the next pass"? | 6–13 ms; up to about 1 s on this machine when a grab preceded the resize and the display is asleep — spent inside Qt's own expose handling, not in the host's wait |
 | The reviewer's reproducer against the fix | full screen / normal / maximised, standalone, embedded and re-parented: 38 of 38 transitions give the scene at the new size after `wait_ready()`. Before: `EngineError` after 20 of 20 `showFullScreen()` |
-| A seeded random walk (seed 20261011, 250 steps, an embedded host) | GPU: 252 looks — 70 frames, 182 refusals; `wait_ready()` answered True 50 times, each followed by a frame, and False 105 times. WARP: the same 70 / 182 and 50 / 105. xcb + llvmpipe: 63 frames, 189 refusals; True 44 times, False 111 times. No wrong frame, no stuck host and 0 frames of a stale size on any of the three |
+| A seeded random walk (seed 20261011, 250 steps, an embedded host) | GPU: 252 looks — 70 frames, 182 refusals; `wait_ready()` answered True 50 times, each followed by a frame, and False 105 times. WARP: the same 70 / 182 and 50 / 105. xcb + llvmpipe: 63 frames, 189 refusals; True 44 times, False 111 times. No wrong frame, no stuck host and 0 frames of a stale size on any of the three. (*Round 4:* on this machine's 5120 px screen. On the CI runner's 1024 px screen the same walk reported three stuck hosts and three waits of 5 s — its 1203 and 1500 px wide windows put the pane beyond the edge) |
 | `QEventLoop.exec()` once the application is quitting | inside a running main loop after `QCoreApplication.quit()`: it returns −1 in about 2 µs, every time. Without a running main loop `quit()` does nothing |
 | Two supervised blocks in one process | before: block A (1 s budget, empty), then block B (60 s, healthy) — A's supervisor terminated the process 4.1 s into B. After: both blocks run to their end, exit 0; with the nonce taken out of the event's name again, the pin fails |
 | The supervising process, started by hand or aimed elsewhere | a deadline of `nan`, `inf`, `0` or `-1`; a pid that is no number; a nonce that is not 32 hex digits; a log that does not exist: exit code 2, one line, nothing opened. A process that is not its parent — given the right pid, creation time and nonce of a live block: exit code 2, the process lives |
 | The lifecycle matrix (round 3) | 21 call orders, the random walk and 9 controls, one process each. The whole render tier: 99 passed and one control reported, not asserted, in 321 s on the GPU, 97 passed, the two hardware-only budgets skipped and the one control reported, in 244 s on WARP, 92 passed and 8 skipped in 184 s on xcb in the container |
 | The frozen gate after review round 3 (built from 324fcf3, locked Python 3.11) | 646,651,032 bytes, 2,442 files (+10,090 bytes against round 2's build). Smoke: exit 124. `--selftest` through `Start-Process -Wait -PassThru`, three runs each: exit 0 in 4.05–4.09 s on the GPU and 4.03–6.08 s on WARP; in every run a supervising process started, was released and left with exit code 0 (`[selftest_supervisor] ok=True`), and `other_threads=0`. The frozen exe started as a supervisor by anything else — malformed arguments (six cases), a live process that is not its parent, its real parent running another image: exit code 2 in 0.2–1.1 s, one ASCII line, the process it named alive, nothing written. Its TERMINATE path cannot be reached from outside any more, by design; from source it runs in every run of its pin |
 
+**Review round 4 (2026-10-12).** The scoped check confirmed round 3's two P1 and ten P2 fixes
+— and CI was red: on `windows-latest` the story's own seeded walk reported 7 problems in 252
+looks. One blocking finding and five P2; none refuted.
+
+1. *A shown pane that never came up.* Round 3's tenth fact could only become true through an
+   `Expose`. The walk asked for 1203 and 1500 px wide windows on whatever screen it found;
+   on the runner's small screen the pane lay beyond the edge, where Windows sends none. The
+   host read "starting", and every `wait_ready()` took its whole timeout. Never a wrong
+   frame — the refusal was truthful; liveness was broken. → decisions 5 and 6.
+2. *The matrix depended on the screen it ran on* — "the local render tiers pass only because
+   every window fits on this screen". → every window of the matrix is placed on the screen
+   on purpose; the walk runs twice, once fitted to the screen it finds and once where a
+   1024 × 768 screen leaves the window; rows for the pane beyond the edge, for a 2 × 60 px
+   pane, and for a view that nothing draws.
+3. *`wait_ready(0)` took 1.0 to 1.4 s, and the default was 10 s on the GUI thread.*
+   → decision 6.
+4. *A supervisor that never supervised exited 0*, and *a watchdog that failed while arming
+   stayed "armed"*. → decision 9.
+
+| Question (review round 4) | Measured (Qt 6.11, Direct3D 11 on an RTX 4070, one 5120 × 1440 screen, unless a row says otherwise) |
+|---|---|
+| What does a pane get that GROWS beyond the screen's edge? | With the display asleep (2026-10-11): `Resize`, `Move` — nothing else. A raw grab is 49 × 500 px for a 136 × 500 window, for as long as the pane stays there; `view.update()` and 1.5 s change nothing (the review: 4 of 13 steps). With the display awake (2026-10-12), the same pane beyond the same edge: `Resize`, `Move`, `UpdateRequest` — still no expose — and the raw grab has the new size. Later that day, the session idle for 25 min with a display-off time of 5 min: `Resize`, `Move` again, the grab stale, the host "live" and `wait_ready(5)` False. On WARP in those same minutes, the display still asleep: `Resize`, `Move`, `UpdateRequest`, and the frame is right — the update request depends on the adapter too; the EXPOSE round 3 waited for came in none of these. A pane SHOWN there was exposed in none of them either |
+| The same condition made on purpose: the pane ON the screen, an event filter eats the view's `Expose` / `UpdateRequest` / `Paint` | grown and shrunk, Qt's frame stays 447 × 500 px for a 600 × 500 and a 200 × 500 window. The host says "live" — every fact Qt reports is in place — and refuses on the evidence of the frame. `wait_ready(5)`: False in 0.50 s; `wait_ready(60)`: False in 0.50 s; `wait_ready(0)`: False in 0.00 s. Painting resumes: True, and a frame of the window's size |
+| A raw pick right after a resize, no frame in between | MISS — at once after `showFullScreen()`, and for the pane that grew beyond the edge; after one frame, even one of the old size, it hits. The projection is right in both |
+| What does a probe frame cost? | 0.7 to 4 ms; 18 to 27 ms right after `showFullScreen()`; about 0.25 s for a 5120 × 1440 frame, or behind a frame Qt is presenting. A whole `wait_ready()` on a host that is live, its probe included: 2 to 6 ms on the GPU, 26 to 31 ms on WARP (447 × 500 px) |
+| How long until the expose arrives? | after a resize: 1.0 to 1.5 ms, in the first pass of the event loop; after `show()`: 12 to 91 ms. The pass that handles the first expose takes 0.83 to 1.0 s (it creates the graphics device); one that handles an expose after a grab, about 1 s on this machine |
+| `wait_ready()` in the walks | the longest wait beyond its timeout — each time ONE Qt handler that was running when the time was up: 0.75 s on the GPU with the display awake, 1.22 s with it asleep, 0.20 s on WARP, 0.007 s on xcb. `wait_ready(0)`: at most 11 ms (31 calls). A False that was not behind such a handler: 0.500 to 0.504 s. Longest quiet spell before a host came up: 0.0 s on Direct3D 11, 0.0 s on xcb + llvmpipe — the bound is 0.5 s |
+| The default `wait_ready()` on the FIRST show of a process (18 processes) | top-level: True after 0.86–0.92 s (GPU), 0.70–0.75 s (WARP). Embedded in a splitter: True after 1.67–1.73 s (GPU), 1.52–1.63 s (WARP) — beyond its second by the expose handler of its own window, which was running when the second was up |
+| The size check | it allowed two pixels: a 447 × 500 frame was handed out for a 448 × 500 window. Exact to the device pixel now |
+| The walk, fitted to the screen (seed 20261011, 250 steps) | GPU: 252 looks — 67 frames, 185 refusals; `wait_ready()` answered True 47 times, each followed by a frame, and False 108 times; the host took 110 frames for itself and refused none for its size. WARP: the same 67 / 185 and 47 / 108. xcb + llvmpipe: 61 frames, 191 refusals; True 42 times, False 113 times. No wrong frame, every host came up, every wait within its bound |
+| The same walk where a 1024 × 768 screen leaves the window | GPU: 61 frames, 191 refusals; True 43, False 112; 11 looks with the pane shown beyond the edge; 9 frames refused for their size (the display was asleep). WARP: 63 / 189 and 44 / 111; 11 looks beyond the edge; no frame refused for its size. xcb + llvmpipe: 61 / 191 and 42 / 113; 26 looks beyond the edge; 1 frame refused for its size. No wrong frame; no wait beyond its bound; no False later than 0.5 s after the last sign of progress plus one Qt handler |
+| A supervisor that cannot find its block (a creation time that is not the process's) | it is gone 1.5 s into a 20 s block — with exit code 4 now (it was 0), and the block says "left without having supervised". One that comes up after its block is over: exit code 0, released |
+| The whole render tier (round 4: 104 tests) | 103 passed and one control reported, not asserted, in 458 s on the GPU; 101 passed, the two hardware-only budgets skipped and the control reported, in 355 s on WARP — both with the display asleep, the condition in which round 3's head showed the runner's failure on this machine; 96 passed and 8 skipped in 241 s on xcb in the container |
+
 **Not measured** — stated so nobody assumes it: platforms that un-expose an occluded window
 (macOS, Wayland) — a visible, covered window may read "starting" there for as long as it is
-covered, and `wait_ready()` would use its whole timeout; a change of the device pixel ratio in
-mid-session (a window dragged to a display with another scale); a render target that is stale
-with no expose on its way (seen in no order — the host would read "starting" until the window
-is next exposed, and count it). The round-2 tree on GitHub's own runners (the
+covered; `wait_ready()` then answers False after 0.5 s, like for every other cause; a change
+of the device pixel ratio in mid-session (a window dragged to a display with another scale);
+what GitHub's Windows runner does with a pane beyond its screen (the walk failed there; this
+tree has not run there — the stuck condition is made on purpose in the tier instead). The
+round-2 tree on GitHub's own runners (the
 Linux numbers above are from a container with the job's packages on the developer's machine,
 not from the runner). The `frozen-selftest.yml` workflow: written without access to the
 runners and unproven until its first run, in particular the 8-second smoke, which no workflow
@@ -2768,11 +2834,47 @@ It pins:
 - an unparented controller dies without a GC cycle.
 
 All three P1 tests (round 1's two, round 2's typing test) fail when their fix is reverted.
+## ADR-054: Recorded species traits and semantic food-forest layers (#312)
+
+**Status:** Accepted for Package F1, October 2026. Additive `.ogp` version 1.4.
+
+**Context.** Artwork archetypes, botanical niches and user-managed drawing layers have different meanings. Permapeople's Layer is a design niche, not a lifecycle. A selected plant's saved species snapshot may differ from the offline catalog and must remain undoable without updating a user's machine-wide library.
+
+**Decision.** `PermacultureLayer` has seven concrete lowercase values plus `unknown`; `PlantFunction` has twelve stable lowercase values. Missing facts remain unspecified. Serialization orders/deduplicates functions and preserves unrecognized imported values in `raw_data`. One Qt-free exact-token provider mapper interprets Layer/Uses independently of lifecycle. No prose, name or nutrient-demand inference is permitted. The bundled database uses an explicit curation table, with function evidence documented in §8.26.
+
+Selected-plant traits use `ChangePropertyCommand`, targeting only one saved species field with copied list snapshots. Persistent Plant Details controls refresh in place with blocked signals. Search filters the complete bundled/custom catalog before its display limit. A nonempty query with zero filtered offline matches invokes the configured provider chain; explicit online search is also available. Network requests run on workers, with dialog generation checks and parented polling timers rejecting obsolete results.
+
+A canvas `Layer.permaculture_layer` semantic tag survives renaming/language changes. The seven-layer preset adds only missing tags in one command, preserving existing layers and active layer. The per-project auto-assignment setting defaults off and is undoable. The canonical plant constructor chooses an existing visible/unlocked tagged layer before the creation command; otherwise it uses the ordinary active layer. Editing plant traits never moves existing plants.
+
+**Alternatives rejected.** Inferring traits from gallery categories misclassifies botanical facts; storing translated layer names as identifiers breaks renamed plans; changing the custom library silently changes other plans. Provider requests on the GUI thread freeze interaction.
+
+**Evidence.** `test_permaculture_traits.py`, `test_permaculture_layer.py`, `test_permaculture_search.py`; the recorded Apple provider fixture is pinned offline. Live provider availability is delivery evidence, not a CI dependency.
+
+## ADR-055: Explicit guild membership and immutable template snapshots (#313)
+
+**Status:** Accepted for Package F2, October 2026. Additive `.ogp` version 1.4.
+
+**Decision.** A guild is metadata on plants, not a Qt group or bed. Each plant has at most one `{guild_id, role}` link. The centre additionally stores instance name and the complete versioned template snapshot. Saved instances remain usable without user template files, and library edits affect future insertions only. Membership does not alter parent-bed, child-list or stacking contracts.
+
+Templates validate identities, versions, twelve role tokens, unique role functions, positive integer minima and finite positive centimetre radii (or `canopy_edge`). Stamps are limited to 200 plants including the centre. Bundled files validate eagerly; each user file is an Exception-catching trust boundary with logged filename/reason and visible picker errors. User files may override bundled IDs. Editor saves use fsync plus atomic replacement, and stay open on failure; file edits are outside the plan undo stack.
+
+Layout is deterministic in CAD scene centimetres. Equal-radius slots are spaced evenly in template order. Canopy-edge means mature effective spacing: manual override before database spread/2. Missing spacing requires an explicit radius. Existing saved plants may have rectangular, polygon or path geometry; one base-shape bounds helper supplies centre positioning, footprint preflight and cosmetic badge/preview placement without painted shadow margins. Every species, existing-centre edit, layer and footprint is preflighted; invalid layouts are refused as a whole instead of clamping members independently. `InsertGuildCommand` composes canonical multi-plant creation with targeted membership snapshots in one undo step.
+
+Coverage counts actual recorded functions on explicitly assigned plants, including the centre. A member counts once per function; multifunctional members can cover multiple requirements. Assigned role labels do not create evidence, and nearby unassigned plants do not count. Malformed saved metadata is preserved, excluded and reported as a data warning. Centre deletion preserves surviving plants and dissolves links in the same undo operation. Copy paths share deep-copy/remapping: complete copies get fresh guild IDs, partial copies omit links.
+
+One parented/debounced coordinator computes guild status and applies idempotent runtime badges. Badges are cosmetic child items and do not alter the centre's bounds or rotation pivot. Companion Guilds, Diagnostics and MCP consume the same computed snapshot. A shared Qt-free converter owns all warning-record conversion, keeping API messages English and translating UI messages separately. MCP reads never recompute domain logic.
+
+**Alternatives rejected.** Nearby-radius membership silently changes requirements as plants move; a Qt group would move members together and compete with bed parentage; re-resolving template files on load would mutate existing plans. Fake function coverage from role labels would claim validation without checking facts.
+
+**Evidence.** Guild workflow, layout/trust-boundary, copy/persistence, real MCP, golden eight-parent and rotated badge tests. Agronomic limitations and template authoring are documented in §8.26.
 
 ## ADR-056: 3D scene pipeline and the truth principle (Phase 17, L1.1)
 
 **Status**: Accepted (2026-10-11, #385 story L1.1, epic #383). This is the scene-pipeline ADR the
 epic reserved as "ADR-049" (that number went to frost dates; ADR-053 announced it for L1.1). It
+was written as "ADR-054" and renumbered before it reached master, where Package F had taken
+ADR-054 and ADR-055 (likewise its concept section, §8.27, written as 8.26, and FR-33, written
+as FR-32) — an older note or branch that says "ADR-054, 3D scene pipeline" means this record. It
 builds on ADR-048 (Qt Quick 3D, GO) and ADR-053 (one sim clock). Nothing is rendered by this
 story: it is the Qt-free foundation L1.2–L1.7 build on. **Amended the same day by the independent
 review of the story** (two interface defects and a list of smaller ones — decisions 1, 3, 8, 9, 10
@@ -3017,6 +3119,13 @@ it stands after that round.
         16,384 is one comparison. What the budget does not cover is `RegionTooLargeError`
         inside and the skip code `outline_too_large` outside. Section 8.27.1 has the table of
         what fits and what a refusal costs; section 8.11 the two patterns.
+        *Corrected in fix round 4:* the strict union was asked for a tree (`StrictlySimple`
+        with `Execute2`), whose cost follows the rings it makes and the splits it tries, not
+        anything this price list reads — a two-level zigzag of 340 vertices took it 3.6 s
+        inside the budget. It is asked for a flat list now and `group_rings` sorts it (19 ms).
+        And a level segment is no longer counted into a path's stack: the sweep walks along a
+        level edge, so a straight fence costs the same in either direction (it fitted 1,416
+        posts east–west and 6,645 north–south).
      The clipper cannot be counted, only priced, and a price is a measurement: each is the
      dearest case found (`scripts/measure_region_work.py` prints units charged against time for
      every family it knows). A family nobody has drawn yet can be dearer than its price — the
@@ -3025,14 +3134,29 @@ it stands after that round.
      the machine and the moment, and Python cannot interrupt the clipper); a cap on vertices
      alone (it admits the scribble and refuses the long honest fence); a budget across the whole
      plan (a record would depend on what else is on the plan).
-   - **What is remembered is bounded by vertices.** The verdict and the cut of a region, a
-     ring's area, a record's ring facts and the regions of an outline are remembered by
-     `polygon.ring_keyed` — at most 262,144 vertices per function, keys and answers together,
-     the least recently asked dropped first, and a ring of more than `MAX_ITEM_VERTICES` never
-     hashed. Before, each was an `lru_cache` of 2,048 to 8,192 ANSWERS: an outline of 4,000
-     vertices dragged for a minute was a gigabyte, and this ADR had it at "16 kB per entry" (it
-     had counted two floats per vertex; a tuple of two Python floats and its place in the ring
-     are 104 bytes).
+   - **What is remembered: what the plan asks for, and a bounded rest.** The verdict and the
+     cut of a region, a ring's area, a record's ring facts and the regions of an outline are
+     remembered by `polygon.ring_keyed`. A snapshot is one generation; an answer asked for by
+     the snapshot being taken or the one before is live and never dropped; the STALE answers
+     are bounded — 262,144 vertices per function, keys and answers together, the least recently
+     asked dropped first — and a ring of more than `MAX_ITEM_VERTICES` is never hashed. Two
+     forms came before. Each was an `lru_cache` of 2,048 to 8,192 ANSWERS: an outline of 4,000
+     vertices dragged for a minute was a gigabyte (this ADR had it at "16 kB per entry": it had
+     counted two floats per vertex; a tuple of two Python floats and its place in the ring are
+     104 bytes). Then (fix round 3) a cap on ALL vertices held, least recently asked first —
+     which bounded the memory and recomputed an unchanged plan on every tick once the plan was
+     larger than the cap, because a snapshot asks in the same order each time (160 polygons of
+     1,000 vertices: all 160 regions cut again per idle tick, 4.6 to 5.3 s). *Rejected now:* a
+     larger cap (the cliff moves, it does not go); no cap (the gigabyte); a cap per item (an
+     edit session of one item is the case to bound).
+   - **A ring that is convex by construction is judged without a cut** (fix round 4): a circle
+     from 1e-3 cm by its radius, an ellipse or a rectangle by arithmetic on its corners
+     (`is_convex_ring`), and only a ring that is not convex on the record grid by the cut — so
+     no verdict changed. The predicate had been asked of every circle since fix round 3, which
+     cut a 24-gon per new radius: scrubbing the date on `bench_large` went from 11.6 to 33 ms a
+     snapshot; 12.7 now. The arithmetic had to learn one thing from the cut before it could
+     stand in for it — a bed of 120 m by 2 µm turns left at every corner and fails the cut's
+     proof on float noise — and a sweep of 120,000 shapes found no second.
    - **Where the cap is cut, and what that costs an outline under edit.** Because the predicate
      needs the triangulation, it is computed in the snapshot and cached; the builder reuses it.
      A ring that is being edited misses the cache on every tick, as before — only now in the
@@ -3253,7 +3377,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 149 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 167 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
   resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to
@@ -3325,6 +3449,16 @@ Recorded because each of these passed every gate the story had set itself:
   for (the cut's own size check, shadowed by its caller's; the size check of
   `triangulate_region`, shadowed by the budget running out twenty bridges later). All three
   have a test now. *Run the mutation script before the report, not after it.*
+- **(Fix round 4.) The bound of round 3 had two holes, and the suite was green over both.**
+  A memory that drops the least recently asked answer recomputes the whole plan every tick
+  once the plan outgrows it; every test of round 3 used a plan far below the cap. And one call
+  of the clipper was priced by what came back while its cost followed how it was asked
+  (`StrictlySimple` as a tree). Both were found by a reviewer who built the input the
+  mechanism's own comment described as its limit. Now pinned by counting what an UNCHANGED
+  plan does on its second and third tick with the cap shrunk under it (zero cuts, zero
+  inflations), and by a clipper stand-in that records whether a strict union was ever asked
+  for a tree. *For a cache, test at the size where it is full; for a priced call, measure the
+  call, not its answer.*
 - **One malformed plant blanked the plan**, a roof ridge had a record that broke "rotate →
   transform only", a late builder registration left stale geometry, and a clock tick took two
   transactions. Decisions 3, 9, 10 and 12.

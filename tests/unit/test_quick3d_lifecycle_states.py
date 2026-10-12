@@ -1,18 +1,24 @@
 """The host's states as a function of Qt's facts — the whole truth table (L1.2, #385).
 
-``ui/view3d/quick3d/lifecycle.py`` is engine-free: it turns ten facts about a
-window into one of six states, and ``Quick3DHost`` contains no state logic of its
-own. So the table can be checked here, without a window, on every machine. The
-contract itself is written down in that module's docstring, and only there.
+``ui/view3d/quick3d/lifecycle.py`` is engine-free: it turns the facts Qt reports
+about a window into one of six states, and ``Quick3DHost`` contains no state logic
+of its own. So the table can be checked here, without a window, on every machine.
+The contract itself is written down in that module's docstring, and only there.
+
+What the table does NOT say since review round 4: that a frame of a live host has
+the window's size. Only a frame says that (``Quick3DHost._frame``; the host tier and
+the render tier test it). Round 3 had put it into the state — a fact an ``Expose``
+event switched on — and Windows sends no expose to a pane that is not on a screen.
 
 Two kinds of test:
 
 - ``MEASURED`` — the rows somebody paid for: each is what Qt 6.11 was MEASURED to
   report in a situation (Direct3D 11 on an RTX 4070 and on WARP; the xcb row on
   GitHub's runner), and the state a truthful host must derive from it. Three of
-  them were wrong in the first state machine (review round 2) and one in the
-  second (round 3): they are marked.
-- invariants over EVERY combination of the facts (6,144) — stated as what must
+  them were wrong in the first state machine (review round 2): they are marked.
+  Two are rows where the state says "live" and a frame may still have the wrong
+  size (rounds 3 and 4): they are marked too.
+- invariants over EVERY combination of the facts (3,072) — stated as what must
   never happen, not as a second copy of the function.
 
 That Qt really reports these facts, and what a host does in each state, is the
@@ -27,8 +33,11 @@ from typing import Any
 
 import pytest
 
+from open_garden_planner.ui.view3d.quick3d import lifecycle
 from open_garden_planner.ui.view3d.quick3d.lifecycle import (
     MIN_SIDE_PX,
+    STALL_S,
+    WAIT_READY_DEFAULT_S,
     HostState,
     WindowFacts,
     state_of,
@@ -37,8 +46,7 @@ from open_garden_planner.ui.view3d.quick3d.lifecycle import (
 
 LIVE_FACTS: dict[str, Any] = {
     "surface_created": True, "visible": True, "minimised": False, "width": 447, "height": 500,
-    "scene_graph": True, "exposed": True, "root_width": 447.0, "root_height": 500.0,
-    "target_synced": True}
+    "scene_graph": True, "exposed": True, "root_width": 447.0, "root_height": 500.0}
 
 
 def facts(**changes: Any) -> WindowFacts:
@@ -48,10 +56,8 @@ def facts(**changes: Any) -> WindowFacts:
 # (what was done, the facts Qt reported, the state)
 MEASURED: list[tuple[str, dict[str, Any], str]] = [
     ("a new QQuickView",
-     {"surface_created": False, "visible": False, "scene_graph": False, "exposed": False,
-      "target_synced": False}, "new"),
-    ("show(), no event yet",
-     {"scene_graph": False, "exposed": False, "target_synced": False}, "starting"),
+     {"surface_created": False, "visible": False, "scene_graph": False, "exposed": False}, "new"),
+    ("show(), no event yet", {"scene_graph": False, "exposed": False}, "starting"),
     ("show(), one pass of the event loop", {}, "live"),
     ("hide(), no event yet: Qt still says exposed", {"visible": False}, "hidden"),
     ("hide(), later", {"visible": False, "exposed": False}, "hidden"),
@@ -59,8 +65,7 @@ MEASURED: list[tuple[str, dict[str, Any], str]] = [
     ("minimised: Qt still says visible", {"minimised": True, "exposed": False}, "hidden"),
     # review round 2, P1-A — read as "new", took the offscreen frame, segfault on xcb
     ("show(); hide() before any event",
-     {"visible": False, "scene_graph": False, "exposed": False, "target_synced": False},
-     "hidden"),
+     {"visible": False, "scene_graph": False, "exposed": False}, "hidden"),
     # review round 2, P1-B — read as "live": a blank frame of the old size, a bogus pick
     ("the splitter pane collapsed to width 0: visible AND exposed", {"width": 0}, "hidden"),
     ("the pane reopened, no event yet: the scene is still 0 wide", {"root_width": 0.0}, "starting"),
@@ -68,23 +73,20 @@ MEASURED: list[tuple[str, dict[str, Any], str]] = [
     ("one pixel high", {"height": 1, "root_height": 1.0}, "hidden"),
     ("two pixels wide: the scene is drawn", {"width": 2, "root_width": 2.0}, "live"),
     ("resized, no event yet: the scene has the old size", {"width": 200}, "starting"),
-    # review round 3, P1-1 — read as "live": wait_ready() said True and the grab raised.
-    # Qt delivers THIS resize inside the call: window and scene agree at once, and the
-    # render target is only resized by the expose of the next pass.
-    ("showFullScreen(): the resize is delivered at once, the expose is not",
-     {"width": 5120, "height": 1440, "root_width": 5120.0, "root_height": 1440.0,
-      "target_synced": False}, "starting"),
-    ("a splitter moved, the resize event delivered, the expose pending",
-     {"width": 300, "root_width": 300.0, "target_synced": False}, "starting"),
+    # Reviews 3 and 4 — two rows where every fact Qt reports is in place and a frame
+    # still has the OLD size. The state is "live": a frame may be asked for. That it has
+    # the window's size is said by the frame alone (the host checks; the tiers test it).
+    ("showFullScreen(): Qt delivered the resize inside the call — a frame is still the old size",
+     {"width": 5120, "height": 1440, "root_width": 5120.0, "root_height": 1440.0}, "live"),
+    ("a pane that grew beyond the screen's edge: resized, and never drawn again",
+     {"width": 137, "root_width": 137.0}, "live"),
+    ("a pane SHOWN beyond the screen's edge: Windows never exposes it", {"exposed": False}, "starting"),
     ("the main window was maximised, no event yet: the embedded view has not changed at all",
      {}, "live"),
-    ("a grab came back in another size than the window's: the host noted it",
-     {"target_synced": False}, "starting"),
     # a window closed with its X button loses its platform window and keeps the scene graph
     ("closed by the user", {"visible": False, "exposed": False}, "hidden"),
     # no graphics device: Qt says visible and exposed and never gets a scene graph
-    ("the graphics device could not be created",
-     {"scene_graph": False, "target_synced": False}, "starting"),
+    ("the graphics device could not be created", {"scene_graph": False}, "starting"),
 ]
 
 
@@ -100,20 +102,19 @@ def test_only_live_is_answerable() -> None:
 
 
 def every_combination() -> Iterator[WindowFacts]:
-    for (surface, visible, minimised, width, height, graph, exposed, root_w, root_h,
-         target) in itertools.product(
+    for surface, visible, minimised, width, height, graph, exposed, root_w, root_h in itertools.product(
             (False, True), (False, True), (False, True), (0, 1, 2, 447), (0, 1, 2, 500),
-            (False, True), (False, True), ("same", 0.0, 320.0), ("same", 240.0), (False, True)):
+            (False, True), (False, True), ("same", 0.0, 320.0), ("same", 240.0)):
         yield WindowFacts(surface, visible, minimised, width, height, graph, exposed,
                           float(width) if root_w == "same" else root_w,
-                          float(height) if root_h == "same" else root_h, target)
+                          float(height) if root_h == "same" else root_h)
 
 
 ALL = list(every_combination())
 
 
 def test_the_table_is_complete() -> None:
-    assert len(ALL) == 6144
+    assert len(ALL) == 3072
     assert {state_of(row) for row in ALL} == {
         HostState.NEW, HostState.STARTING, HostState.LIVE, HostState.HIDDEN}
 
@@ -138,25 +139,48 @@ def test_live_needs_every_fact() -> None:
     for row in ALL:
         everything = (row.surface_created and row.visible and not row.minimised
                       and row.width >= 2 and row.height >= 2 and row.scene_graph and row.exposed
-                      and round(row.root_width) == row.width and round(row.root_height) == row.height
-                      and row.target_synced)
+                      and round(row.root_width) == row.width and round(row.root_height) == row.height)
         assert (state_of(row) is HostState.LIVE) is everything, row
 
 
-def test_a_render_target_that_lags_is_the_only_thing_the_tenth_fact_changes() -> None:
-    """T turns live into starting and nothing else: it never hides a host, never makes one
-    new, and a host without it is still waited for (``wait_ready()`` waits while starting)."""
-    for row in ALL:
-        if row.target_synced:
-            continue
-        with_it = WindowFacts(row.surface_created, row.visible, row.minimised, row.width,
-                              row.height, row.scene_graph, row.exposed, row.root_width,
-                              row.root_height, True)
-        before, after = state_of(with_it), state_of(row)
-        if before is HostState.LIVE:
-            assert after is HostState.STARTING, row
-        else:
-            assert after is before, row
+def test_no_fact_of_the_state_is_one_only_an_os_message_can_set() -> None:
+    """Review round 4, the ruling. Round 3 added a tenth fact — "an expose arrived after
+    the last resize" — as the sign that a frame would have the window's size. Only a
+    paint message of the operating system could switch it on, and Windows sends none to a
+    pane that grows where no screen is: the host waited for it for ever. The frame is the
+    witness; the state holds what Qt REPORTS when asked, and nothing else."""
+    names = list(WindowFacts.__dataclass_fields__)
+    assert names == ["surface_created", "visible", "minimised", "width", "height", "scene_graph",
+                     "exposed", "root_width", "root_height"]
+    assert not hasattr(facts(), "target_synced")
+
+
+def test_the_bounds_of_wait_ready_are_stated_once() -> None:
+    """Sentences 2 and 3 of the contract name two numbers; they are constants of the
+    module whose docstring is the contract, and the docstring quotes them."""
+    assert WAIT_READY_DEFAULT_S == 1.0, "small enough for ONE call on the GUI thread; 10 s was not"
+    assert STALL_S == 0.5 and STALL_S < WAIT_READY_DEFAULT_S
+    text = lifecycle.__doc__ or ""
+    assert "``STALL_S`` (0.5 s)" in text and "``WAIT_READY_DEFAULT_S`` (1 s)" in text
+    for sentence in ("returns the scene at the window's current size, or it raises",
+                     "returns within ``timeout_s`` — the delivery of",
+                     "returns False promptly"):
+        assert sentence in text, sentence
+    assert "never call it" in text and "timer slot" in text
+
+
+def test_what_raises_what_is_complete() -> None:
+    """Review round 4, P2-3: the contract's "What raises what" left out the ONE offscreen
+    frame that comes back in another size — an ``EngineError`` (the host is spent by
+    then: there is no "later" a ``HostStateError`` could promise). Both errors a frame
+    can end in are named, each with its case. (That the host raises them so:
+    ``tests/ui/test_quick3d_host.py::TestStateMachine``.)"""
+    text = lifecycle.__doc__ or ""
+    raises = text[text.index("What raises what"):text.index("Why these facts and no fewer")]
+    state_error, engine_error = raises.split("``EngineError``:")
+    assert "``HostStateError``:" in state_error and "has another size than the window" in state_error
+    assert "the ONE offscreen frame" in engine_error and "another size than the window" in engine_error
+    assert "the host is spent by then" in engine_error
 
 
 def test_without_a_scene_graph_no_state_gives_a_frame_but_new() -> None:
@@ -167,8 +191,11 @@ def test_without_a_scene_graph_no_state_gives_a_frame_but_new() -> None:
 
 
 def test_starting_means_on_its_way() -> None:
-    """``wait_ready()`` waits while the host is starting — so nothing that will not come
-    by itself may read as starting: not hidden, not minimised, not collapsed."""
+    """``wait_ready()`` waits while the host is starting — so nothing that is KNOWN not to
+    come by itself may read as starting: not hidden, not minimised, not collapsed. (What
+    cannot be known from Qt's facts — a pane no screen shows, a session that paints nothing
+    — is bounded in ``wait_ready()`` itself since round 4: it gives a starting host up
+    ``STALL_S`` after the last sign of progress; ``tests/ui/test_quick3d_host.py``.)"""
     for row in ALL:
         if state_of(row) is HostState.STARTING:
             assert row.visible and not row.minimised and row.has_area, row
@@ -214,12 +241,11 @@ def test_every_refusal_says_why_and_what_to_do() -> None:
     ({"scene_graph": False, "exposed": False}, False, "would kill the process"),
     ({"exposed": False}, False, "shown again but not exposed yet"),
     ({"root_width": 0.0}, False, "window 447 x 500, scene 0 x 500"),
-    ({"target_synced": False}, False,
-     "the render target has not caught up with the window's size yet (window 447 x 500"),
-    # the order of the reasons: the fatal one first, the scene before its target
-    ({"scene_graph": False, "target_synced": False}, False, "would kill the process"),
-    ({"exposed": False, "target_synced": False}, False, "shown again but not exposed yet"),
-    ({"root_width": 0.0, "target_synced": False}, False, "scene 0 x 500"),
+    # the order of the reasons: the fatal one first, then the exposure, then the scene
+    ({"scene_graph": False, "root_width": 0.0}, False, "would kill the process"),
+    ({"exposed": False, "root_width": 0.0}, False, "shown again but not exposed yet"),
+    # a pane shown where no screen is stays in this state: the text says so
+    ({"exposed": False}, False, "will not be while no part of it is on a screen"),
     ({"visible": False}, False, "not visible"),
     ({"minimised": True}, False, "minimised"),
     ({"width": 0}, False, "no usable area (0 x 500 px"),
@@ -235,7 +261,7 @@ def test_the_refusal_names_the_fact_that_is_missing(changes: dict[str, Any], emb
 def test_a_host_whose_graphics_device_never_came_is_not_told_to_wait() -> None:
     """Review round 3, P2-6: ``wait_ready()`` answers False for such a host — the refusal
     said "Call wait_ready() first". It names the failure and where to read it instead."""
-    row = facts(scene_graph=False, target_synced=False)
+    row = facts(scene_graph=False)
     assert state_of(row) is HostState.STARTING
     text = why_no_frame(HostState.STARTING, row, embedded=False,
                         graphics_error="Failed to create the D3D11 device")

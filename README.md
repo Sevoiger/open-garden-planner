@@ -77,8 +77,11 @@ The provenance step runs after release publication. If no attestation is found, 
 The same command works against the **installed app exe** too — `C:\Program Files (x86)\Open Garden Planner\OpenGardenPlanner.exe` — which is the exact file Windows Defender has been reported flagging (issue #356); it is attested separately from the installer, not just implied by it. `--signer-workflow` pins the check to *this repo's own* release workflow, not merely "any workflow in this repository" (the plain `-R` form is still valid, just slightly less specific).
 
 **Why Windows may warn anyway:** the installer is not Authenticode-signed
-(see `docs/11-risks-and-technical-debt` §11.1/§11.2) — that costs a paid
-certificate this free/open-source project doesn't currently budget for. An
+(see `docs/11-risks-and-technical-debt` §11.1/§11.2). Signing options, including
+no-cost proposals, are being evaluated in [#375](https://github.com/cofade/open-garden-planner/issues/375);
+no option has been adopted, and whether signing reduces these detections remains
+unproven for this project. Today's compensating controls are the checksum and
+build provenance attestation above. An
 unsigned, low-download-volume executable is exactly the profile Windows
 SmartScreen, Defender's ML heuristics (e.g. `Wacatac.B/C!ml`), and Norton's
 file-reputation engine (e.g. `FileRepMalware[Misc]`, issue #358) are prone to
@@ -178,6 +181,10 @@ We welcome contributions! This project aims to be technically clean and attracti
 - PRs must pass CI: tests, full-tree linting, security/secrets scans, context parity, locked dependency checks and per-file type baselines. Coverage reports enforce measured package line floors. See [quality requirements](docs/10-quality-requirements/).
 
 **AI-assisted development is welcome.** Feel free to use Claude Code, GitHub Copilot, Cursor, or other AI-powered coding tools. We care about the quality of the result, not how you got there. Just ensure every contribution includes proper tests - unit tests, integration tests, and UI tests where applicable.
+
+## Permaculture planning
+
+Filter species by recorded food-forest layer/functions, edit a selected plant's snapshot with undo, and optionally create semantic food-forest drawing layers. Plants → Insert guild provides three sourced templates, previews and user-template authoring. Explicit guild membership produces missing-function warnings in the canvas, Companion section, Diagnostics and read-only Agent API. Recorded functions do not guarantee growing success; [authoring and evidence](docs/08-crosscutting-concepts/README.md#826-recorded-permaculture-traits-and-guild-templates) explains the limits.
 
 ## License
 
