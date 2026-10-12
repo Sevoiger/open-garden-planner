@@ -2586,11 +2586,24 @@ it stands after that round.
         And a level segment is no longer counted into a path's stack: the sweep walks along a
         level edge, so a straight fence costs the same in either direction (it fitted 1,416
         posts east–west and 6,645 north–south).
+        *Corrected again in fix round 5:* the PLAIN union was still asked for a tree — and the
+        tree flattened on the next line. ONE ring with 720 holes bridged to its wall, 4,324
+        vertices, took it 5.3 s inside the budget (as a list: the whole item in 0.25 to
+        0.31 s, the same answer for the same units). `_clip_tree` is split so that it cannot
+        be written again: `_union_rings` (`Execute`) serves both unions, and `_band_tree`
+        (`Execute2`) is called only by the two band readings that read a hierarchy. A band's
+        tree is not priced by its rings and need not be — a band leaves nothing to join, and
+        the call costs the same as a list and as a tree (801 rings 1.8 / 3.0 ms, 1,600 rings
+        123 / 144 ms).
      The clipper cannot be counted, only priced, and a price is a measurement: each is the
      dearest case found (`scripts/measure_region_work.py` prints units charged against time for
-     every family it knows). A family nobody has drawn yet can be dearer than its price — the
-     simplicity test was, by a factor of a hundred, for a ring whose every pair of edges lies
-     close, until its near pairs were priced. *Rejected:* a time-out (the verdict would depend on
+     every family it knows — and, since fix round 5, FAILS when a row costs more than 12 times
+     its price: a union as a tree stood at 14 to 76). A family nobody has drawn yet can be
+     dearer than its price — the simplicity test was, by a factor of a hundred, for a ring
+     whose every pair of edges lies close, until its near pairs were priced; and one family in
+     the table still is: a ring whose holes touch its outer ring costs 3.6 to 8.1 times its
+     price in the cut's bridge search (110 such holes: refused after 0.6 to 1.5 s), known and
+     not re-priced. *Rejected:* a time-out (the verdict would depend on
      the machine and the moment, and Python cannot interrupt the clipper); a cap on vertices
      alone (it admits the scribble and refuses the long honest fence); a budget across the whole
      plan (a record would depend on what else is on the plan).
@@ -2609,6 +2622,22 @@ it stands after that round.
      1,000 vertices: all 160 regions cut again per idle tick, 4.6 to 5.3 s). *Rejected now:* a
      larger cap (the cliff moves, it does not go); no cap (the gigabyte); a cap per item (an
      edit session of one item is the case to bound).
+     Two things this leaves, stated since fix round 5. What a LIVE plan holds has no cap —
+     linear in the plan, 130 bytes a vertex (400 accepted polygons of 3,000 vertices: 156 MB),
+     112 bytes a point for a refused line, at most about 1.8 MB an item. And the generation
+     is the process's clock: **one snapshotting scene per process is the supported case**
+     (three scenes in turn recompute each other), and a plan that is gone stays held until
+     two more snapshots have run. No redesign: `ui.view3d.snapshot.clear_outline_cache()` is
+     the one public call that drops everything, live and stale; the workspace calls it on a
+     document change and when the 3D view closes. *Rejected:* a generation per scene (a
+     second mechanism, for a case the app does not have).
+   - **The regions of a record stand in a stated order** (fix round 5): by the smallest vertex
+     of the outer ring, put in that order before they are judged. The order had been whatever
+     the clipper handed out, and it changed with a clipper mode — seven outlines of 13,740
+     when the plain union became a list. A signature must not follow that. Over those 13,740:
+     no verdict changed, 9,077 answers are identical, 4,663 are the same regions in the
+     stated order. A region's holes keep the reading's order (the cut that was proven joins
+     them in it).
    - **A ring that is convex by construction is judged without a cut** (fix round 4): a circle
      from 1e-3 cm by its radius, an ellipse or a rectangle by arithmetic on its corners
      (`is_convex_ring`), and only a ring that is not convex on the record grid by the cut — so
@@ -2837,7 +2866,7 @@ it stands after that round.
   the diff matrix again as a table of 70 edit × shape cases through `SceneSync` and
   `RecordingSink`, each with its exact sink calls and builder invocations.
 - **`tests/perf/test_scene3d_snapshot_budget.py`**: the snapshot budget.
-- **`scripts/mutation_check_scene3d.py`** — 167 single-rule breaks (mirrored frame, flipped
+- **`scripts/mutation_check_scene3d.py`** — 180 single-rule breaks (mirrored frame, flipped
   rotation, no grid, no value compare, colour baked into the mesh, a prism 1 % too tall, holes
   ignored, `reset()` that clears no sink, a bad item that raises, a ridge with a record, a
   resolved house that keeps its ridge, a reading of pyclipper's taken on trust, a hole given to
@@ -2909,6 +2938,14 @@ Recorded because each of these passed every gate the story had set itself:
   for (the cut's own size check, shadowed by its caller's; the size check of
   `triangulate_region`, shadowed by the budget running out twenty bridges later). All three
   have a test now. *Run the mutation script before the report, not after it.*
+- **(Fix round 5.) The same defect, one call away.** Round 4 took the tree from the strict
+  union and left it on the plain one — eight lines above, in the same function, with a test
+  that pinned `("tree", False)` as EXPECTED. The fix was made for the call the review named,
+  not for the rule the review found. Now the rule is in the code's shape (one function makes
+  unions and cannot return a tree; one makes the band's tree), a test watches
+  `pyclipper.Pyclipper` itself below every seam, and the measuring script fails instead of
+  printing. *When a review finds a defect, fix the rule and then search for every other place
+  the same thing is done — the next one is usually within sight.*
 - **(Fix round 4.) The bound of round 3 had two holes, and the suite was green over both.**
   A memory that drops the least recently asked answer recomputes the whole plan every tick
   once the plan outgrows it; every test of round 3 used a plan far below the cap. And one call
