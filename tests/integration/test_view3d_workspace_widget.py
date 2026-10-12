@@ -9,12 +9,14 @@ build. The real engine runs the same paths in ``test_view3d_workspace_render.py`
 
 from __future__ import annotations
 
+import logging
+import time as stopwatch
 from datetime import date, time
 from pathlib import Path
 from typing import Any
 
 import pytest
-from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
@@ -39,6 +41,8 @@ from open_garden_planner.ui.canvas.geometry_apply import (
 )
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
 from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
+from open_garden_planner.ui.view3d import sync_controller
+from open_garden_planner.ui.view3d import workspace as workspace_module
 from open_garden_planner.ui.view3d.init_guard import COMPAT_NAME, Init3DGuard, marker_name
 from open_garden_planner.ui.view3d.workspace import (
     MIN_PANE_WIDTH,
@@ -51,6 +55,7 @@ from tests.integration.test_view3d_sync_controller import NOON
 
 PLAN, VIEW3D, SPLIT = WorkspaceMode.PLAN, WorkspaceMode.VIEW3D, WorkspaceMode.SPLIT
 ME = 4242
+NOTICE = "Building the 3D view\N{HORIZONTAL ELLIPSIS}"
 
 
 class FakeHealth:
@@ -71,6 +76,13 @@ class FakeHost:
         self.size = (800.0, 500.0)
         self.widget: QWidget | None = None
         self.closed = False
+        self.releases = 0
+        self.release_error: Exception | None = None
+
+    def release_cached_resources(self) -> None:
+        self.releases += 1
+        if self.release_error is not None:
+            raise self.release_error
 
     def container(self, parent: QWidget | None = None) -> QWidget:
         self.widget = QWidget(parent)
@@ -296,6 +308,236 @@ def test_fullscreen_preview_hides_the_workspaces_own_controls(bench: Bench) -> N
     assert not workspace._floating.isVisible() and not workspace.pane.strip.isVisible()
     workspace.set_chrome_visible(True)
     assert workspace._floating.isVisible() and workspace.pane.strip.isVisible()
+
+
+# ── the "building" notice is painted before the first snapshot ───────────────
+
+
+class PaintLog(QObject):
+    """What a label showed each time it was PAINTED. An event filter runs before the
+    widget handles the event: the text the label has then is the text it paints.
+    ``swallow``: the label is never painted at all."""
+
+    def __init__(self, label: Any, *, swallow: bool = False) -> None:
+        super().__init__(label)
+        self._label, self._swallow = label, swallow
+        self.texts: list[str] = []
+        label.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802
+        if watched is self._label and event is not None and event.type() == QEvent.Type.Paint:
+            self.texts.append(self._label.text())
+            return self._swallow
+        return False
+
+
+def _note_each_snapshot(monkeypatch: pytest.MonkeyPatch, note: Any) -> None:
+    """Call ``note()`` at the START of every whole-plan snapshot the pipeline takes."""
+    real = sync_controller.snapshot_records
+
+    def watched(*arguments: Any, **options: Any) -> Any:
+        note()
+        return real(*arguments, **options)
+
+    monkeypatch.setattr(sync_controller, "snapshot_records", watched)
+
+
+def test_the_building_notice_is_painted_before_the_first_snapshot_starts(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A first pass costs the sum of its items — seconds for a hostile plan — and the
+    GUI thread is inside it: what the pane shows when the snapshot STARTS is what the
+    user looks at until it ends. So the notice must have been painted by then, and
+    not by luck of the event loop: here every timer of the start is overdue before
+    the loop runs again (a busy GUI thread), which is when a timer would win."""
+    bench.bed()
+    workspace = bench.workspace
+    seen: list[tuple[str, bool, list[str]]] = []
+    paints: list[PaintLog] = []
+    _note_each_snapshot(monkeypatch, lambda: seen.append(
+        (workspace.status_text(), workspace._status_label.isVisible(), list(paints[0].texts))))
+    workspace.set_mode(SPLIT)
+    paints.append(PaintLog(workspace._status_label))
+    assert workspace.status_text() == NOTICE and seen == []
+    stopwatch.sleep(0.12)
+    bench.qtbot.waitUntil(lambda: bool(seen), timeout=3000)
+    text, visible, painted = seen[0]
+    assert text == NOTICE and visible is True
+    assert NOTICE in painted, "the notice was painted before the snapshot began"
+    bench.settle()
+    assert workspace.status_text() == "" and len(seen) == 1
+
+
+def test_a_notice_that_is_never_painted_does_not_hold_3d_back(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workspace_module, "BUILD_NOTICE_WAIT_MS", 120)
+    bed = bench.bed()
+    workspace = bench.workspace
+    workspace.set_mode(SPLIT)
+    log = PaintLog(workspace._status_label, swallow=True)
+    bench.settle(40)
+    assert bench.sink.item_ids() == (), "it waits for the notice first"
+    bench.qtbot.waitUntil(lambda: bench.sink.item_ids() == (str(bed.item_id),), timeout=3000)
+    assert workspace.controller is not None and workspace.controller.active
+    assert log.texts and set(log.texts) == {NOTICE}, "the label was asked to paint, and could not"
+
+
+def test_with_its_controls_hidden_3d_does_not_wait_for_a_notice_nobody_can_read(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workspace_module, "BUILD_NOTICE_WAIT_MS", 60_000)
+    bed = bench.bed()
+    bench.workspace.set_chrome_visible(False)     # the fullscreen preview
+    bench.workspace.set_mode(SPLIT)
+    bench.settle()
+    assert bench.sink.item_ids() == (str(bed.item_id),)
+
+
+def test_hiding_3d_before_the_notice_was_painted_starts_nothing(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workspace_module, "BUILD_NOTICE_WAIT_MS", 40)
+    bench.bed()
+    workspace = bench.workspace
+    workspace.set_mode(SPLIT)
+    workspace.set_mode(PLAN)                      # before the event loop ran once
+    bench.settle(150)
+    assert bench.sink.item_ids() == () and workspace.controller is not None
+    assert workspace.controller.active is False and workspace.controller.snapshot_count == 0
+
+
+def test_a_new_document_is_announced_before_its_first_snapshot_too(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = bench.workspace
+    bench.bed()
+    workspace.set_mode(SPLIT)
+    bench.settle()
+    assert workspace.status_text() == ""
+    paints = PaintLog(workspace._status_label)
+    seen: list[tuple[str, list[str]]] = []
+    _note_each_snapshot(monkeypatch, lambda: seen.append(
+        (workspace.status_text(), list(paints.texts))))
+
+    bench.scene.clear()                           # what "open" does, in one turn of the loop
+    new = bench.bed(100.0, 100.0)
+    workspace.document_changed()
+    assert workspace.status_text() == NOTICE and seen == []
+    stopwatch.sleep(0.12)
+    bench.qtbot.waitUntil(lambda: bool(seen), timeout=3000)
+    text, painted = seen[0]
+    assert text == NOTICE and NOTICE in painted
+    bench.settle()
+    assert bench.sink.item_ids() == (str(new.item_id),) and workspace.status_text() == ""
+    assert len(seen) == 1, "the new document is ONE snapshot"
+
+
+# ── what a destroyed Model leaves behind in the engine ───────────────────────
+
+
+class Releases:
+    """A workspace in Split mode over ``beds`` raised beds, the thresholds small and the
+    clock in the test's hands."""
+
+    def __init__(self, bench: Bench, monkeypatch: pytest.MonkeyPatch, *, after: int,
+                 at_once: int = 10_000, beds: int = 6) -> None:
+        monkeypatch.setattr(workspace_module, "RELEASE_AFTER_RETIRED", after)
+        monkeypatch.setattr(workspace_module, "RELEASE_NOW_RETIRED", at_once)
+        self.now = 1000.0
+        monkeypatch.setattr(workspace_module, "_now", lambda: self.now)
+        self.bench = bench
+        self.beds = [bench.bed(300.0 + 420.0 * index, 300.0) for index in range(beds)]
+        bench.workspace.set_mode(SPLIT)
+        bench.settle()
+
+    def delete(self, count: int) -> None:
+        gone, self.beds = self.beds[:count], self.beds[count:]
+        self.bench.commands.execute(DeleteItemsCommand(self.bench.scene, gone))
+        self.bench.settle()
+
+    def idle(self) -> None:
+        self.now += workspace_module.RELEASE_IDLE_S
+
+
+def test_enough_destroyed_models_and_a_quiet_pipeline_release_the_engines_caches(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Qt keeps graphics state for every Model it once drew, until it is told to let go
+    (measured: 0.1 to 0.35 MB per Model, ADR-057). The workspace tells it — when
+    enough Models were destroyed AND the pipeline has been quiet for a moment."""
+    rig = Releases(bench, monkeypatch, after=3)
+    host = bench.host
+    rig.idle()
+    bench.poll()
+    assert host.releases == 0, "building a plan destroys nothing"
+    rig.delete(2)
+    rig.idle()
+    bench.poll()
+    assert host.releases == 0, "two Models: below the threshold"
+    rig.delete(1)
+    bench.poll()
+    assert host.releases == 0, "three, but the pipeline worked a moment ago"
+    rig.idle()
+    bench.poll()
+    assert host.releases == 1
+    rig.idle()
+    bench.poll()
+    assert host.releases == 1, "it counts from zero again"
+
+
+def test_a_flood_of_destroyed_models_is_released_at_once(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An animated date regrows every dated plant on every tick: the pipeline is never
+    quiet, and waiting for quiet would keep hundreds of megabytes. Above the second
+    threshold the release happens with the pass, whatever the clock says."""
+    rig = Releases(bench, monkeypatch, after=2, at_once=4)
+    rig.delete(3)
+    assert bench.host.releases == 0
+    rig.delete(1)
+    assert bench.host.releases == 1, "four destroyed: released with the pass, no poll, no quiet"
+    rig.idle()
+    bench.poll()
+    assert bench.host.releases == 1
+
+
+def test_a_new_document_releases_what_the_old_one_left(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Releases(bench, monkeypatch, after=5)
+    bench.scene.clear()
+    bench.bed(100.0, 100.0)
+    bench.workspace.document_changed()
+    bench.settle(150)
+    assert bench.workspace.controller is not None and not bench.workspace.controller.dirty
+    rig.idle()
+    bench.poll()
+    assert bench.host.releases == 1, "six Models of the old plan were destroyed"
+
+
+def test_nothing_is_released_while_3d_is_hidden(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Releases(bench, monkeypatch, after=2)
+    rig.delete(2)
+    bench.workspace.set_mode(PLAN)
+    rig.idle()
+    bench.poll()
+    assert bench.host.releases == 0, "a hidden view is left alone"
+    bench.workspace.set_mode(SPLIT)
+    bench.settle()
+    rig.idle()
+    bench.poll()
+    assert bench.host.releases == 1, "and what was owed is released when it is back"
+
+
+def test_a_host_that_cannot_release_is_one_log_line_and_no_loop(
+        bench: Bench, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Releases(bench, monkeypatch, after=2)
+    bench.host.release_error = RuntimeError("the device said no\n2026-10-12 ERROR forged line")
+    rig.delete(2)
+    rig.idle()
+    with caplog.at_level(logging.DEBUG, logger="open_garden_planner.ui.view3d.workspace"):
+        bench.poll()
+        bench.poll()
+        bench.poll()
+    assert bench.host.releases == 1, "asked once; the count starts again"
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(errors) == 1 and "\n" not in errors[0].getMessage()
+    assert "cached graphics state" in errors[0].getMessage()
+    assert bench.workspace.view3d_state is not View3DState.FAILED, "the view goes on"
 
 
 # ── gate G3: edits never move the camera ─────────────────────────────────────

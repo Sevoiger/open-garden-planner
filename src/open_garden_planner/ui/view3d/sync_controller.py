@@ -127,6 +127,12 @@ class TickReport:
     apply_ms: float
     #: True when this pass had to reset the sync first (a sink failure before it).
     recovered: bool = False
+    #: Items whose engine Models were DESTROYED since the pass before: removed
+    #: items, items whose geometry was replaced (new geometry is a new Model), and
+    #: everything a reset cleared. Qt keeps graphics state for every Model it once
+    #: drew until it is told to let go; the workspace counts these to know when
+    #: (ADR-057, "what a destroyed Model leaves behind").
+    retired: int = 0
 
     @property
     def total_ms(self) -> float:
@@ -166,6 +172,7 @@ class Scene3DController(QObject):
         self._skipped: tuple[SkippedItem, ...] = ()
         self._failures: dict[str, BuildFailure] = {}
         self._last_error: str | None = None
+        self._retired_by_reset = 0  # items a reset destroyed, not yet reported
         #: Instruments (the gates read them): whole-plan snapshots taken, passes that
         #: called ``SceneSync.apply``, light-only passes, recoveries, the last pass.
         self.snapshot_count = 0
@@ -254,13 +261,11 @@ class Scene3DController(QObject):
         """A new, opened or recovered plan replaced the scene's content.
 
         Not a reset: the next pass is a plain apply of the new snapshot. What it
-        does: drop the plant builder's shape cache (it is per plan), mark the
-        records dirty, and announce the new document once it is in the sink
-        (``document_shown`` — the camera frames it).
+        does: drop what 3D remembers of the old plan, mark the records dirty, and
+        announce the new document once it is in the sink (``document_shown`` — the
+        camera frames it).
         """
-        from open_garden_planner.core.scene3d.builders.plants import clear_shape_cache
-
-        clear_shape_cache()
+        self._drop_plan_memories()
         self._document_pending = True
         self.mark_dirty()
 
@@ -273,6 +278,7 @@ class Scene3DController(QObject):
     def reset(self) -> None:
         """The ENGINE's scene was rebuilt (a fresh host): forget what was sent; the
         next pass sends everything again. Contained like any sink failure."""
+        self._retired_by_reset += len(self._sync.records)
         try:
             self._sync.reset()
         except Exception as error:  # noqa: BLE001 - a dead engine must not take the app down
@@ -287,7 +293,10 @@ class Scene3DController(QObject):
         self._tick()
 
     def shutdown(self) -> None:
-        """Stop for good (the main window closes). The sink is not touched."""
+        """Stop for good (the 3D view closes, or the main window does). The sink is
+        not touched; what 3D remembers of the plan is dropped — a closed view keeps
+        no plan's worth of memory alive."""
+        self._drop_plan_memories()
         self._active = False
         with contextlib.suppress(RuntimeError):
             self._timer.stop()
@@ -296,6 +305,16 @@ class Scene3DController(QObject):
                 signal.disconnect(self._on_scene_changed)
 
     # ── internals ────────────────────────────────────────────────────────────
+
+    def _drop_plan_memories(self) -> None:
+        """Everything the pipeline keeps PER PLAN goes — on a document change and when
+        the 3D view closes. ONE place, so that a new memory is one line here."""
+        from open_garden_planner.core.scene3d.builders.plants import clear_shape_cache
+
+        clear_shape_cache()  # the plant builder's shapes
+        # SEAM (L1.1, fix round 5): the record layer's outline memories are per plan
+        # too, and that round adds ONE public call that drops them. It goes HERE,
+        # next to clear_shape_cache() — one line, nothing else changes.
 
     def _schedule(self, delay_ms: int) -> None:
         if not self._active:
@@ -363,6 +382,11 @@ class Scene3DController(QObject):
         started = time.perf_counter()
         skipped: list[SkippedItem] = []
         try:
+            # THE ONE snapshotting scene of the process. The record layer's outline
+            # memories ride a process-wide generation clock: one scene snapshotted
+            # tick after tick is answered from memory; several scenes taking turns
+            # would recompute everything on every tick. The workspace has one canvas
+            # scene and one controller — keep it that way (L1.1's contract).
             records = snapshot_records(self._scene, self._clock.plan_date, skipped=skipped)
         except Exception as error:  # noqa: BLE001 - one item never raises; this is the scene itself
             self._give_up("the plan could not be read for the 3D view", error)
@@ -380,6 +404,7 @@ class Scene3DController(QObject):
             _log_failure("a pass failed; resetting the 3D scene and applying again", error)
             self.recovery_count += 1
             recovered = True
+            self._retired_by_reset += len(self._sync.records)
             try:
                 self._sync.reset()
                 changes = self._sync.apply(
@@ -390,8 +415,10 @@ class Scene3DController(QObject):
         self.apply_count += 1
         self._last_error = None
         self._set_problems(tuple(skipped), dict(self._sync.failures))
+        retired = self._retired_by_reset + len(changes.removed) + len(changes.geometry)
+        self._retired_by_reset = 0
         self._done(TickReport(changes, True, len(records), snapshot_ms,
-                              (time.perf_counter() - started) * 1000.0, recovered))
+                              (time.perf_counter() - started) * 1000.0, recovered, retired))
         if self._document_pending:
             self._document_pending = False
             self.document_shown.emit()

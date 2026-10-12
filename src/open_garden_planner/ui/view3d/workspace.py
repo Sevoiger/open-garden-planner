@@ -24,11 +24,29 @@ What moves the camera: user input (``OrbitInput``), "Reset 3D view", the first
 open, and a document change — the four calls in ``_on_document_shown``,
 ``reset_view`` and the input filter. No edit does.
 
-Timers: the pipeline's tick is ``Scene3DController``'s; this module adds two, and
-both stop when the 3D pane is hidden — the camera step (runs only while the camera
-is still moving) and the health poll (``Quick3DHost.health()``: first frame,
+Timers: the pipeline's tick is ``Scene3DController``'s; this module adds three, and
+all stop when the 3D pane is hidden — the camera step (runs only while the camera
+is still moving), the health poll (``Quick3DHost.health()``: first frame,
 graphics failure, QML warnings — never a Qt message handler, which deadlocks
-beside Qt's render thread).
+beside Qt's render thread) and the build notice's fallback (below).
+
+THE FIRST PASS OF A DOCUMENT WAITS FOR ITS NOTICE. A first pass costs the sum of
+its items — milliseconds for a garden, seconds for a hostile plan — with the GUI
+thread inside it. So "Building the 3D view…" is set, and the pipeline is started
+by THE PAINT of that label (``_announce_build`` / ``eventFilter``), not by a timer
+that hopes the paint came first; a label that is never painted releases the
+pipeline after ``BUILD_NOTICE_WAIT_MS``. The same for a new document while 3D is
+shown.
+
+WHAT A DESTROYED MODEL LEAVES BEHIND (ADR-057, measured). Qt Quick 3D keeps
+graphics state for every Model it once drew — 0.1 to 0.35 MB each on Direct3D 11
+with the sun's shadow passes — until ``QQuickWindow.releaseResources()`` is
+called; nothing else gives it back (20 reloads of the small bench plan: 34.6
+MB per reload without, 2.3 with). The pipeline's passes say how many items lost
+their Models (``TickReport.retired``); the workspace counts them and tells the
+host to let go — when the pipeline has been quiet for a moment
+(``RELEASE_AFTER_RETIRED``), or at once when a flood of them piles up
+(``RELEASE_NOW_RETIRED``: an animated date regrows every dated plant per tick).
 """
 
 from __future__ import annotations
@@ -79,6 +97,18 @@ CAMERA_STEP_MS: Final = 16
 #: The health poll: fast until the first frame was presented, then slow.
 HEALTH_FAST_MS: Final = 200
 HEALTH_SLOW_MS: Final = 2000
+#: How long the first pass of a document waits for its notice to be painted before it
+#: starts anyway (a label that some platform never paints must not hold 3D back).
+BUILD_NOTICE_WAIT_MS: Final = 250
+#: The engine's cached graphics state is released once this many items lost their
+#: Models AND the pipeline has been quiet for ``RELEASE_IDLE_S`` (the health poll
+#: looks) — at 0.1 to 0.35 MB per Model that is 6 to 22 MB.
+RELEASE_AFTER_RETIRED: Final = 64
+RELEASE_IDLE_S: Final = 0.5
+#: … and at once, with the pass, when this many piled up: a pipeline that is never
+#: quiet (an animated date) must not keep hundreds of megabytes waiting for quiet.
+#: One release costs 2 to 10 ms and the next frame as much again (measured).
+RELEASE_NOW_RETIRED: Final = 512
 #: Where the floating mode switch sits over the canvas: clear of the rulers' corner.
 _FLOAT_OFFSET: Final = 28
 _SPLITTER_KEY: Final = "workspace"
@@ -100,11 +130,17 @@ class View3DState(enum.Enum):
     FAILED = "failed"             # building the engine raised (an import, the scene file)
 
 
+def _now() -> float:
+    """The clock "quiet for a moment" is measured on (the tests hold it)."""
+    return time.monotonic()
+
+
 class EngineHost(Protocol):
     """What the workspace needs from the engine's host (``Quick3DHost`` has it all)."""
 
     def container(self, parent: QWidget | None = None) -> QWidget: ...
     def install_event_filter(self, watcher: QObject) -> None: ...
+    def release_cached_resources(self) -> None: ...
     def set_camera(self, eye_scene: tuple[float, float, float],
                    target_scene: tuple[float, float, float], fov_deg: float = ...) -> None: ...
     def view_size(self) -> tuple[float, float]: ...
@@ -259,6 +295,9 @@ class Workspace(QWidget):
         self._qml_warnings_seen = 0
         self._split_sizes: list[int] | None = None
         self._window_watched: QWidget | None = None
+        self._build_pending = False   # a first pass waits for its notice to be painted
+        self._retired = 0             # items that lost their Models since the last release
+        self._applied_at = 0.0        # when the pipeline last worked (``_now``)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -274,6 +313,11 @@ class Workspace(QWidget):
         self._camera_timer.timeout.connect(self._step_camera)
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._poll_health)
+        # one single-shot timer for both ways a held first pass is let go: 0 ms after
+        # its notice was painted, BUILD_NOTICE_WAIT_MS after it was asked for
+        self._build_timer = QTimer(self)
+        self._build_timer.setSingleShot(True)
+        self._build_timer.timeout.connect(self._begin_build)
 
         self._build_actions()
         # on the widget itself too: the shortcuts work whichever button row is shown
@@ -479,9 +523,11 @@ class Workspace(QWidget):
         self._reset_button.setAutoRaise(True)
         self._reset_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         strip.addWidget(self._reset_button)
-        self._status_label = QLabel("", pane.strip)
-        self._status_label.setTextFormat(Qt.TextFormat.PlainText)
-        strip.addWidget(self._status_label)
+        status = QLabel("", pane.strip)
+        status.setTextFormat(Qt.TextFormat.PlainText)
+        status.installEventFilter(self)  # its paint starts a held first pass
+        strip.addWidget(status)
+        self._status_label = status
         strip.addStretch(1)
         self._problems_button = QToolButton(pane.strip)
         self._problems_button.setAutoRaise(True)
@@ -577,18 +623,52 @@ class Workspace(QWidget):
         if controller is None or self._host is None:
             self._health_timer.stop()
             self._camera_timer.stop()
+            self._drop_held_build()
             return
-        if showing and controller.dirty and not controller.active:
-            # the first build of a large plan can take a second: say so, paint, then build
-            self._status_label.setText(self.tr("Building the 3D view…"))
-        controller.set_active(showing)
-        if showing:
-            self._health_timer.start(HEALTH_SLOW_MS if self._first_frame_seen else HEALTH_FAST_MS)
-            self._apply_camera()
-            self._start_camera()
-        else:
+        if not showing:
+            self._drop_held_build()
+            controller.set_active(False)
             self._health_timer.stop()
             self._camera_timer.stop()
+            return
+        self._health_timer.start(HEALTH_SLOW_MS if self._first_frame_seen else HEALTH_FAST_MS)
+        self._apply_camera()
+        self._start_camera()
+        if controller.active or self._build_pending:
+            return
+        if controller.dirty:
+            self._announce_build()  # a pass is owed: its notice is painted first
+        else:
+            controller.set_active(True)
+
+    def _announce_build(self) -> None:
+        """Say "Building the 3D view…" and start the pipeline only once that was
+        PAINTED (module docstring). The controller stays paused until then."""
+        controller = self._controller
+        if controller is None or self._build_pending:
+            return
+        label = self._status_label
+        label.setText(self.tr("Building the 3D view…"))
+        if not label.isVisible():
+            # the controls are hidden (fullscreen preview): there is no notice to wait for
+            controller.set_active(True)
+            return
+        self._build_pending = True
+        label.update()
+        self._build_timer.start(BUILD_NOTICE_WAIT_MS)
+
+    def _begin_build(self) -> None:
+        """The notice was painted (or will not be): let the held pass go."""
+        if not self._build_pending:
+            return
+        self._drop_held_build()
+        controller = self._controller
+        if controller is not None and self._pane_is_showing():
+            controller.set_active(True)
+
+    def _drop_held_build(self) -> None:
+        self._build_pending = False
+        self._build_timer.stop()
 
     def _watch_window(self) -> None:
         window = self.window()
@@ -599,10 +679,16 @@ class Workspace(QWidget):
             self._window_watched = window
 
     def eventFilter(self, watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802
+        if event is None:
+            return False
         # a minimised window still calls its children "visible": the pipeline pauses anyway
-        if (event is not None and watched is self._window_watched
-                and event.type() == QEvent.Type.WindowStateChange):
+        if watched is self._window_watched and event.type() == QEvent.Type.WindowStateChange:
             self._on_pane_showing()
+        elif (self._build_pending and event.type() == QEvent.Type.Paint
+              and watched is self._status_label):
+            # A filter runs BEFORE the label paints. The held pass starts from the
+            # event loop — after this paint, and the flush that follows it, are done.
+            self._build_timer.start(0)
         return False
 
     # ── camera ───────────────────────────────────────────────────────────────
@@ -661,16 +747,42 @@ class Workspace(QWidget):
     # ── the pipeline's reports ───────────────────────────────────────────────
 
     def document_changed(self) -> None:
-        """A new, opened or recovered plan replaced the scene (the main window says so)."""
-        if self._controller is not None:
-            self._controller.document_changed()
+        """A new, opened or recovered plan replaced the scene (the main window says so).
+
+        While 3D is shown, the new document's first pass is held like the very first
+        one: it costs the sum of the plan's items, so its notice is painted first.
+        While 3D is hidden this leaves flags only (the controller is paused)."""
+        controller = self._controller
+        if controller is None:
+            return
+        controller.document_changed()
+        if controller.active and self._pane_is_showing():
+            controller.set_active(False)  # whatever pass is on its way finds it paused
+            self._announce_build()
 
     def location_changed(self, *_arguments: object) -> None:
         if self._controller is not None:
             self._controller.refresh_sun()
 
-    def _on_applied(self, _report: TickReport) -> None:
+    def _on_applied(self, report: TickReport) -> None:
         self._status_label.setText("")
+        self._applied_at = _now()
+        self._retired += report.retired
+        if self._retired >= RELEASE_NOW_RETIRED:
+            self._release_engine_caches()  # a flood: not worth waiting for quiet
+
+    def _release_engine_caches(self) -> None:
+        """Tell the engine to let go of the graphics state Qt keeps for Models that
+        were destroyed (module docstring). The count starts again whatever the host
+        says: a host that cannot release is asked once per threshold, never in a loop."""
+        host = self._host
+        self._retired = 0
+        if host is None:
+            return
+        try:
+            host.release_cached_resources()
+        except Exception as error:  # noqa: BLE001 - memory hygiene must never take the view down
+            _log_failure("The 3D view could not release its cached graphics state", error)
 
     def _on_sync_failed(self, _message: str) -> None:
         self._status_label.setText(self.tr(
@@ -761,6 +873,9 @@ class Workspace(QWidget):
             self._qml_warnings_seen = warnings
             self._status_label.setText(self.tr(
                 "The 3D view reported a problem. Details are in the log file."))
+        if (self._retired >= RELEASE_AFTER_RETIRED and self._pane_is_showing()
+                and _now() - self._applied_at >= RELEASE_IDLE_S):
+            self._release_engine_caches()
 
     def _graphics_failed(self, error: str) -> None:
         """Qt could not create the graphics device: this host will never show a frame.
@@ -828,6 +943,8 @@ class Workspace(QWidget):
     def _stop_engine(self) -> None:
         self._camera_timer.stop()
         self._health_timer.stop()
+        self._drop_held_build()
+        self._retired = 0  # the host goes, and what it cached with it
         controller, self._controller = self._controller, None
         if controller is not None:
             controller.shutdown()

@@ -491,9 +491,21 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
     """``variant``: ``rebuild_off`` (a reload is a plain apply: the plan's ids are the
     same, so no Model is rebuilt), ``rebuild_on`` (every reload also tears the engine
     scene down and builds every Model and geometry again), ``control`` (rebuild on,
-    plus 25 MB kept alive per reload — the gate must FAIL on it)."""
+    plus 25 MB kept alive per reload — the gate must FAIL on it).
+
+    ``release``: ``product`` (the default — the workspace's own release of the
+    engine's cached graphics state, waited for after each reload, as a user who
+    opens a plan and looks at it gives it time) or ``off`` (the workspace's two
+    thresholds out of reach: what the same soak reads WITHOUT the release — the
+    A of this A/B, and the number ADR-048 could not explain)."""
+    from open_garden_planner.ui.view3d import workspace as workspace_module
+
     variant = str(args.get("variant", "rebuild_on"))
     reloads = int(args.get("reloads", 20))
+    release = str(args.get("release", "product"))
+    if release == "off":
+        workspace_module.RELEASE_AFTER_RETIRED = 10**9  # type: ignore[misc]
+        workspace_module.RELEASE_NOW_RETIRED = 10**9  # type: ignore[misc]
     plan = str(window._project_manager.current_file)  # the plan main() was started on
     yield from _enter_and_wait(window, "split")
     workspace = window._workspace
@@ -505,9 +517,9 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
     curve: list[float] = []
     gpu_curve: list[float | None] = []
     presented: list[int] = []
-    release_ms: list[float] = []
-    hitch_ms: list[float] = []
     same: list[bool] = []
+    owed: list[int] = []
+    releases_before = host.cache_releases
     uploads_before = getattr(controller.sync.sink, "geometry_uploads", None)
     trace = bool(args.get("trace", False))  # where PYTHON-side memory grows, if it does
     traced: dict[str, Any] = {}
@@ -533,14 +545,14 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
         wanted = host.health().frames_presented + 2
         _pump_until(lambda wanted=wanted: host.health().frames_presented >= wanted, 2.0)
         _pump(30)
-        if args.get("poke_release"):  # an experiment: Qt's own release, poked from outside
+        owed.append(workspace._retired)
+        if release == "product" and workspace._retired >= workspace_module.RELEASE_AFTER_RETIRED:
+            # the workspace releases at its next health poll once the pipeline was
+            # quiet for a moment: wait for exactly that, and look at the frame
+            # before and after — a release must not change a pixel
             before_release = _grab(host)[1]
-            started = time.perf_counter()
-            host._view.releaseResources()
-            release_ms.append(round((time.perf_counter() - started) * 1000.0, 1))
-            took, after_release = _grab(host)
-            hitch_ms.append(round(took, 1))
-            same.append(before_release == after_release)
+            _pump_until(lambda: workspace._retired == 0, 10.0)
+            same.append(before_release == _grab(host)[1])
             wanted = host.health().frames_presented + 2
             _pump_until(lambda wanted=wanted: host.health().frames_presented >= wanted, 2.0)
         presented.append(host.health().frames_presented - frames)
@@ -577,8 +589,10 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
          geometry_uploads=(getattr(controller.sync.sink, "geometry_uploads", 0) - uploads_before
                            if uploads_before is not None else None),
          kept_mb=25 * len(kept), parts=host.part_count(),
-         frames_presented_per_reload=presented, release_ms=release_ms,
-         grab_after_release_ms=hitch_ms, same_image_after_release=same, facts=facts(window))
+         frames_presented_per_reload=presented, release=release,
+         retired_before_release_per_reload=owed,
+         cache_releases=host.cache_releases - releases_before,
+         same_image_after_release=same, facts=facts(window))
     yield 100
 
 

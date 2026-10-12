@@ -395,6 +395,8 @@ class Quick3DHost:
         #: window created at any time, while QSG_RHI_PREFER_SOFTWARE_RENDERER is read
         #: once per process and does nothing after the first Qt Quick window.
         self.prefers_software = bool(prefer_software)
+        #: How often ``release_cached_resources()`` was called (L1.3; the soak reads it).
+        self.cache_releases = 0
         if prefer_software:
             configuration = QQuickGraphicsConfiguration()
             configuration.setPreferSoftwareDevice(True)
@@ -912,6 +914,28 @@ class Quick3DHost:
         thread — unlike a message handler it is safe beside the render thread."""
         self._open("install_event_filter")
         self._view.installEventFilter(watcher)
+
+    def release_cached_resources(self) -> None:
+        """Tell Qt to let go of the graphics state it caches for this window
+        (``QQuickWindow.releaseResources()``). Legal in every open state; the scene,
+        the Models and the host's state are untouched, and the next frame is the
+        same frame (L1.3, measured on Direct3D 11: identical in 32 of 32).
+
+        WHY (L1.3, ADR-057): Qt Quick 3D keeps per-draw-call state for every Model
+        it ever DREW — and keeps it after the Model was destroyed. 0.1 to 0.35 MB
+        per Model with the sun's shadow passes on, independent of the mesh's size;
+        nothing but this call gives it back (20 rebuilds of the small bench plan:
+        34.6 MB per rebuild without it, 2.3 with it, one call per rebuild). The call
+        takes 2 to 10 ms on the GUI thread and the next frame as much again. WHEN
+        to call it is the caller's policy (``ui/view3d/workspace.py``).
+
+        Two things it does NOT do: it frees no mesh buffer of a destroyed Model —
+        Qt does that itself at the END OF A PRESENTED FRAME, and a readback
+        (``grab()``) is not one — and it does nothing for a window Qt does not draw.
+        """
+        self._open("release_cached_resources")
+        self._view.releaseResources()
+        self.cache_releases += 1
 
     # ── trouble in a live view (GUI thread; module docstring) ────────────────
 

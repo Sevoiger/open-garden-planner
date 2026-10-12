@@ -775,3 +775,80 @@ def test_shutdown_stops_everything(rig: Rig) -> None:
     rig.clock.set_date(date(2027, 3, 3))
     assert rig.settle() == []
     assert rig.controller.active is False
+
+
+# ── what a pass retired in the engine ────────────────────────────────────────
+
+
+def test_a_pass_says_how_many_items_lost_their_models(rig: Rig) -> None:
+    """``TickReport.retired``: the items whose engine Models this pass destroyed — a
+    removed item and one whose geometry was replaced. Qt keeps graphics state for
+    every Model it once drew until it is told to let go (ADR-057); the workspace
+    counts these to know when."""
+    bed = rig.bed()
+    other = rig.bed(1200.0, 900.0)
+    rig.controller.set_active(True)
+    rig.settle()
+    assert rig.reports[-1].retired == 0, "a first pass only adds"
+
+    rig.commands.execute(MoveItemsCommand([bed], QPointF(40.0, 0.0)))
+    rig.settle()
+    assert rig.reports[-1].retired == 0, "a move keeps the Model"
+    rig.commands.execute(recolour_fill(bed, QColor(10, 200, 30)))
+    rig.settle()
+    assert rig.reports[-1].retired == 0, "a recolour keeps the Model"
+
+    old, new = build_rect_resize(bed, 500.0, 120.0, keep_center=True)
+    rig.commands.execute(ResizeItemCommand(bed, old, new, apply_rect_like_geometry))
+    rig.settle()
+    assert rig.reports[-1].retired == 1, "new geometry is a new Model: the old one is destroyed"
+
+    rig.commands.execute(DeleteItemsCommand(rig.scene, [bed, other]))
+    rig.settle()
+    assert rig.reports[-1].retired == 2
+
+    rig.clock.set_time_of_day(time(9, 0))
+    rig.settle()
+    assert rig.reports[-1].snapshot is False and rig.reports[-1].retired == 0
+
+
+def test_a_reset_and_a_recovery_count_everything_they_destroyed(canvas: CanvasView, qtbot) -> None:
+    sink = FailingSink()
+    rig = Rig(canvas, qtbot, sink=sink)
+    bed = rig.bed()
+    rig.bed(1200.0, 900.0)
+    rig.bed(2200.0, 900.0)
+    rig.controller.set_active(True)
+    rig.settle()
+
+    rig.controller.reset()                 # the whole engine scene goes: three items
+    rig.settle()
+    assert rig.reports[-1].retired == 3
+
+    sink.fail_on, sink.failures_left = "update_transform", 1
+    rig.commands.execute(MoveItemsCommand([bed], QPointF(50.0, 0.0)))
+    rig.settle()
+    assert rig.reports[-1].recovered is True
+    assert rig.reports[-1].retired == 3, "the recovery cleared the sink: every Model was destroyed"
+
+    rig.commands.execute(MoveItemsCommand([bed], QPointF(5.0, 0.0)))
+    rig.settle()
+    assert rig.reports[-1].retired == 0, "counted once"
+
+
+def test_what_3d_remembers_of_a_plan_goes_with_the_plan_and_with_the_view(
+        rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plant builder's shape cache (and, from the contract story's next round,
+    the outline memories) are per plan: dropped on a document change AND when the 3D
+    view closes — a closed view must not keep a plan's worth of memory alive."""
+    cleared: list[str] = []
+    monkeypatch.setattr(plants, "clear_shape_cache", lambda: cleared.append("shapes"))
+    rig.bed()
+    rig.controller.set_active(True)
+    rig.settle()
+    assert cleared == [], "an edit session drops nothing"
+    rig.controller.document_changed()
+    assert cleared == ["shapes"]
+    rig.settle()
+    rig.controller.shutdown()
+    assert cleared == ["shapes", "shapes"]

@@ -346,7 +346,9 @@ def test_the_workflow_plan_split_edit_pause_clock_new_open_close(
         commands.execute(MoveItemsCommand([bed], QPointF(5.0 + step, 0.0)))
     assert _calls(engines, qtbot) == [] and controller.snapshot_count == snapshots
     window._tab_widget.setCurrentIndex(0)
-    assert controller.active is True
+    # a pass is owed: it starts once its notice was painted, not inside the tab switch
+    assert controller.active is False and workspace.status_text() != ""
+    qtbot.waitUntil(lambda: controller.active, timeout=3000)
     assert _calls(engines, qtbot) == [BEGIN, ("update_transform", bed_id), COMMIT]
     assert controller.snapshot_count == snapshots + 1
     # … and so does Plan mode

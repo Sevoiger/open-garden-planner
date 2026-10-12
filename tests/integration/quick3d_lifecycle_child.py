@@ -91,6 +91,7 @@ def _register_calls() -> None:
         "engine_parts": lambda host, _part: host.engine_parts(),
         "scene_property": lambda host, _part: host.scene_property("sunUp"),
         "install_event_filter": lambda host, _part: host.install_event_filter(_input_watcher()),
+        "release_cached_resources": lambda host, _part: host.release_cached_resources(),
         # the three releases: legal on a closed host, and they do nothing there
         "destroy_part": lambda host, part: host.destroy_part(part),
         "clear": lambda host, _part: host.clear(),

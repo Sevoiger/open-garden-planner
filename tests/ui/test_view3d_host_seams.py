@@ -1,9 +1,11 @@
-"""The two things the workspace story added to the engine host (Phase 17 L1.3, ADR-057).
+"""The three things the workspace story added to the engine host (Phase 17 L1.3, ADR-057).
 
-``Quick3DHost(prefer_software=True)`` — the compatibility mode's switch — and
-``install_event_filter`` — how the orbit camera hears the native window's input.
-Offscreen, in process: no pixels here (which adapter a window REALLY renders on is
-read from Qt's own log in the render tier, ``test_view3d_workspace_render.py``).
+``Quick3DHost(prefer_software=True)`` — the compatibility mode's switch —,
+``install_event_filter`` — how the orbit camera hears the native window's input —
+and ``release_cached_resources`` — how the graphics state Qt keeps for destroyed
+Models is given back. Offscreen, in process: no pixels here (which adapter a window
+REALLY renders on, and what a release frees, are read on a real device in the
+render tier, ``test_view3d_workspace_render.py``).
 """
 
 from __future__ import annotations
@@ -78,3 +80,31 @@ def test_a_closed_host_takes_no_filter(make_host) -> None:
     host.close()
     with pytest.raises(HostStateError, match="closed"):
         host.install_event_filter(_Watcher())
+
+
+def test_releasing_the_cached_graphics_state_is_qts_own_call_for_this_window(
+        make_host, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``release_cached_resources`` is ``QQuickWindow.releaseResources()`` and nothing
+    else: no Model is touched, the host's books stay as they are. (What it frees is
+    measured on a real device: the memory soak of ``test_view3d_workspace_render.py``.)"""
+    host = make_host()
+    asked: list[int] = []
+    monkeypatch.setattr(host._view, "releaseResources", lambda: asked.append(1))
+    assert host.cache_releases == 0
+    host.release_cached_resources()
+    assert asked == [1] and host.cache_releases == 1
+    assert host.part_count() == 0 and host.state.value == "new"
+
+
+def test_releasing_on_a_host_that_never_showed_a_frame_is_harmless(make_host) -> None:
+    host = make_host()
+    host.release_cached_resources()      # the real call: nothing is cached yet
+    host.release_cached_resources()
+    assert host.state.value == "new" and host.health().scene_graph_error is None
+
+
+def test_a_closed_host_has_nothing_to_release(make_host) -> None:
+    host = make_host()
+    host.close()
+    with pytest.raises(HostStateError, match="closed"):
+        host.release_cached_resources()
