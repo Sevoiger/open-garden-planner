@@ -138,7 +138,6 @@ def test_a_drag_never_selects_also_when_it_returns_to_where_it_began(bench: Benc
     bench.release(100.0, 100.0)
     assert bench.picked == [] and bench.host.asked == []
     assert bench.camera.goal == START, "30 px there and 30 px back: where it was"
-    assert bench.camera.moving is False or bench.camera.goal == START
 
 
 def test_inside_the_slop_the_camera_rests_and_beyond_it_the_whole_way_is_applied(bench: Bench) -> None:
