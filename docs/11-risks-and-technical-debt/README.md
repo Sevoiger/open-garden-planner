@@ -2180,9 +2180,10 @@ window presented nothing (the display asleep), the last later the same day, when
 *Reading:* the growth follows "no frame is presented", not our object lifetimes and not the
 backend as such — Direct3D destroys released resources when a frame is presented or the context
 is flushed, and with the display asleep a window on the hardware adapter presents one frame and
-no more (`grab()` renders without presenting). The last row is the same adapter and the same ground code once its window
-presented frames. (Between the two the host's fourth review round was merged; its `grab()` still
-is `grabWindow()`, so the difference is read as the session's, not the host's — an inference.)
+no more (`grab()` renders without presenting). The last row is the same adapter once its window presented frames — with the same host
+and tile code in both states: after the host's fourth review round was merged the tier ran three
+times; twice the window presented 38 and 39 frames (+0.04 and +0.03 MB), and the third time none
+again (+16.0 MB). It is the session, not a revision.
 *What follows:* (1) the leak gate reads object counts
 on every backend and memory on a software rasteriser, and reports the non-presenting hardware
 window as an expected failure with its numbers; (2) the same must hold for every other upload —
