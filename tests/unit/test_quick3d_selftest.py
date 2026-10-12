@@ -576,6 +576,16 @@ _SUPERVISED = textwrap.dedent("""
                                    "1", "-", "what:not ours"])
         print("HELPER", helper.wait(timeout=30), flush=True)
         time.sleep(2.0)
+    elif mode == "no-event":
+        # Our own child, the right pid, the right creation time — and no release event of
+        # that name: not a block it can find. It must not wait on the process alone (it
+        # would end us 1 s from now), and it must not say that it supervised.
+        k32 = runlog._kernel32()
+        created = runlog._created(k32, k32.GetCurrentProcess())
+        helper = subprocess.Popen([*runlog.self_command(), str(os.getpid()), str(created),
+                                   "fedcba9876543210fedcba9876543210", "1", "-", "what:no such block"])
+        print("HELPER", helper.wait(timeout=30), flush=True)
+        time.sleep(3.0)   # past the deadline it was given
     print("returned", flush=True)
 """)
 
@@ -690,6 +700,21 @@ def test_the_supervisor_never_ends_another_process_that_got_the_pid(tmp_path: Pa
     proc, _text = _supervised("wrong-creation-time", tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr[-2000:]
     assert "HELPER 4" in proc.stdout and "returned" in proc.stdout
+
+
+@windows_only
+def test_a_supervisor_that_finds_no_release_event_leaves_and_says_it_never_supervised(
+        tmp_path: Path) -> None:
+    """The process is the one named, and there is no release event of the block's name:
+    not a block the supervisor can find (or one that ended more than 15 s ago). It leaves
+    at once — waiting on the process alone would end, at the deadline, a process that
+    finished its block and simply lives on — and its exit code is 4, not 0: it never
+    supervised (review round 4, P2-1; a mutant that answered 0 here survived the first
+    version of these tests)."""
+    proc, text = _supervised("no-event", tmp_path)
+    assert proc.returncode == 0 and "returned" in proc.stdout, proc.stdout + proc.stderr[-2000:]
+    assert "HELPER 4" in proc.stdout, proc.stdout
+    assert "[supervisor]" not in text, "nobody was terminated"
 
 
 def test_a_watchdog_whose_arming_fails_is_not_left_armed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

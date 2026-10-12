@@ -791,8 +791,8 @@ class Quick3DHost:
                   window=f"{facts.width}x{facts.height}")
         raise HostStateError(
             f"{call}(): {found}: the render target has not caught up with the window's size "
-            "(Qt resizes it when it next draws the window — and draws nothing while no part "
-            "of the view is on a screen). Not now; wait_ready() says when a frame can be had")
+            "(Qt resizes it when it next draws the window — which it may not do while the "
+            "view is not on a screen). Not now; wait_ready() says when a frame can be had")
 
     def device_pixel_ratio(self) -> float:
         self._open("device_pixel_ratio")

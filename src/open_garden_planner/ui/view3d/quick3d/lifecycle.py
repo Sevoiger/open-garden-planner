@@ -16,9 +16,10 @@ The contract — three sentences
 
 THE WITNESS IS A FRAME, not a message of the operating system. Whether a frame
 can be had is not something the host can know from what Qt reports: Qt resizes
-the render target when it next draws the window, and Windows asks for no drawing
-of a window that is not on a screen. So the host does not keep a fact "the
-frame is right". It takes a frame and looks at its size — ``grab()`` for its
+the render target when it next draws the window, and nothing obliges a platform
+to ask for that. (Measured: Windows asks for none of a pane that grew beyond the
+screen's edge while the display sleeps — and for one, through an update request,
+while it is awake.) So the host does not keep a fact "the frame is right". It takes a frame and looks at its size — ``grab()`` for its
 caller, ``wait_ready()`` as a probe, ``pick()`` and ``project()`` once after
 each resize — and a frame of another size is a refusal, never an answer.
 
@@ -35,6 +36,14 @@ What "within" and "promptly" mean, exactly
   the GUI thread when a view is opened. It runs the event loop: **never call it
   from a timer slot, a sync tick, a paint or a resize handler.** A click handler
   does not call it either: ``try: host.pick(x, y)`` / ``except HostStateError``.
+- The FIRST show of a process is the slow one — its first expose creates the
+  graphics device. Measured with the default timeout, GPU and WARP: True after
+  0.70 to 0.92 s for a top-level host, and after 1.52 to 1.73 s for an embedded
+  one (the expose of its own window was running when the second was up: the one
+  thing that cannot be cut short). On a machine where that takes longer, the
+  answer is False while the host IS on its way. A caller that needs that first
+  frame passes a longer timeout — it costs nothing when nothing comes: the next
+  bullet bounds that — or asks again; the test drivers pass 10 s.
 - "A sign of progress" is an event for the view that can change what a frame is
   (resize, expose, update request, show, hide, window state, platform surface)
   or a change of any fact below. While such signs keep coming the host waits, up
@@ -42,8 +51,9 @@ What "within" and "promptly" mean, exactly
   "waits for something that never comes" for every cause at once: a view that
   is not on any screen, a session that paints nothing, a window that never gets
   its first expose.
-- False does not mean "never": the host comes up when the cause goes (the pane
-  is moved back onto a screen) — ask again, or simply try the frame.
+- False does not mean "never": the time was up, or nothing was on its way — and
+  then the host comes up when the cause goes (the pane is moved back onto a
+  screen). Ask again, or simply try the frame.
 
 The facts
 ---------

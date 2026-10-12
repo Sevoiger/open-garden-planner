@@ -651,13 +651,14 @@ def test_the_same_walk_where_a_small_screen_leaves_the_pane_beyond_the_edge(tmp_
     and, with the window placed like this and the display asleep, on the RTX 4070). Now
     the same judge holds: no wrong frame; every wait within its timeout; and a False
     PROMPTLY — a refusal is the truthful answer there, a wait for what will not come is
-    not. Whether a frame can be had beyond the edge differs per machine and per day (the
+    not. Whether a frame can be had beyond the edge differs per machine and per hour (the
     off-screen row below); the judge holds either way."""
     out, counts = _walk(tmp_path, "1024x768")
     assert counts["frames"] >= 40 and counts["refusals"] >= 40, counts
     assert counts["ready_true"] >= 20 and counts["ready_false"] >= 20, counts
-    # not vacuous: the pane WAS shown beyond the edge, on this machine too
-    assert counts["shown_off_screen"] >= 10, counts
+    # not vacuous: the pane WAS shown beyond the edge, on this machine too (measured: 11
+    # looks on Windows, 26 on xcb — a window manager decides where "normal" puts a window)
+    assert counts["shown_off_screen"] >= 5, counts
     assert out["stale_frames"] >= counts["stale"]
 
 

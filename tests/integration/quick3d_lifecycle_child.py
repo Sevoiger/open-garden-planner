@@ -387,8 +387,8 @@ def _available() -> Any:
 def _splitter_window() -> tuple[Any, Any]:
     """A main window with a splitter — put ON the screen on purpose (round 4: where the
     window system would have put it is not something a test may depend on; on a 1024 px
-    wide runner a pane ended up beyond the screen's edge, and Windows asks for no drawing
-    there)."""
+    wide runner a pane ended up beyond the screen's edge, where Windows may ask for no
+    drawing)."""
     from PyQt6.QtWidgets import QMainWindow, QSplitter, QWidget
 
     window = QMainWindow()
@@ -518,9 +518,9 @@ def pane_without_paint(app: Any, _qml: Path | None = None) -> dict[str, Any]:
     platform asks: an expose, an update request. A view gets neither while no part of it
     is on a screen AND no frame is due (a runner without a display, a display asleep) —
     that is where the walk stuck on CI. Whether a given machine is in that condition
-    changes from day to day (measured: the same pane beyond the same screen's edge kept
-    its old render target while the display slept, and got the new one through an update
-    request when it was awake). So this order does not wait for the platform to be in
+    changes within a day (measured: the same pane beyond the same screen's edge kept its
+    old render target while the display slept, and got the new one through an update
+    request while it was awake). So this order does not wait for the platform to be in
     it: an event filter eats the view's expose, update-request and paint events — the
     view is on the screen, shown, exposed, and nothing draws it.
 
