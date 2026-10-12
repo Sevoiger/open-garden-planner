@@ -68,9 +68,15 @@ class TileTexture(QQuick3DTextureData):
     #: Uploads made in this process — the instrument behind "an edit uploads only the
     #: tiles it re-baked" (tests read it around each edit).
     uploads: ClassVar[int] = 0
+    #: Texture objects that EXIST on the C++ side right now (counted down by Qt's own
+    #: ``destroyed`` signal, not by Python's bookkeeping) — the keep-alive rule as a
+    #: number: never more than two generations of the tiles a scene shows.
+    alive: ClassVar[int] = 0
 
     def __init__(self, tile: TilePlacement, parent: QQuick3DObject | None = None) -> None:
         super().__init__(parent)
+        TileTexture.alive += 1
+        self.destroyed.connect(_texture_destroyed)
         self.pixels = tile.pixels  # what it shows — to tell an unchanged tile by
         self.setSize(QSize(tile.width_px, tile.height_px))
         self.setFormat(QQuick3DTextureData.Format.RGBA8)
@@ -79,6 +85,10 @@ class TileTexture(QQuick3DTextureData):
         # QQuick3DObject.update() exists at runtime; PyQt6 6.11's stubs do not declare it
         self.update()  # type: ignore[attr-defined]
         TileTexture.uploads += 1
+
+
+def _texture_destroyed() -> None:
+    TileTexture.alive -= 1
 
 
 class _Shown:

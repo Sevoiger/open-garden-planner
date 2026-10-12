@@ -1,0 +1,474 @@
+"""The ground bake's half of the 3D render tier (Phase 17 L1.5, #385) — not a test module.
+
+``quick3d_render_driver.py`` with the ground's scenarios added: the same process
+rules (a real QPA, no Python Qt message handler, ``result.json`` after every
+scenario, a watchdog), the same division of labour — this file only DOES engine
+things (bake, upload, grab, count), and ``test_scene3d_ground_render.py`` JUDGES
+the frames with a projection of its own::
+
+    python tests/integration/ground_bake_render_driver.py --out <dir> --scenarios ground_plan,…
+
+The scene definitions below are plain, engine-free functions both halves import.
+Every frame is taken with ``host.grab()`` — a FINISHED frame; nothing here waits
+for a swap signal.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import statistics
+import sys
+import time
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+REPO = Path(__file__).resolve().parents[2]
+if __name__ == "__main__":  # run as a script: make this checkout's code importable
+    for entry in (str(REPO / "src"), str(REPO)):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+
+from open_garden_planner.core.scene3d import (  # noqa: E402
+    BuilderRegistry,
+    GroundSpec,
+    Material,
+    Paint,
+    Params,
+    Record,
+    SceneSync,
+    SunState,
+    Transform,
+)
+from open_garden_planner.ui.view3d.quick3d.shots import PerspectiveShot, TopDownShot  # noqa: E402
+from tests.integration import quick3d_render_driver as base  # noqa: E402
+
+# ── scene definitions (engine-free; the tests import them) ───────────────────
+
+HIGH_SUN = SunState(elevation_deg=60.0, azimuth_deg=180.0)
+PLAN_VIEW = (640, 400)                  # the real plan's frames
+SEAM_VIEW = (480, 360)
+
+#: A plan of 1100 x 700 cm: 3 x 2 tiles at 1 px/cm, with tile borders at east 512
+#: and 1024 and at north 512.
+SEAM_PLAN = GroundSpec(width_cm=1100.0, depth_cm=700.0)
+BORDERS_EAST = (512.0, 1024.0)
+BORDER_NORTH = 512.0
+LAWN = (90, 160, 70, 255)
+BAND = (40, 90, 40, 255)
+#: the whole plan, a little minified (a mip level below the tiles' own)
+SEAM_TOP = TopDownShot(center=(550.0, 350.0), px_per_cm=0.4)
+#: 120 x 90 cm around the point where four tiles meet, each texel four pixels wide
+SEAM_ZOOM = TopDownShot(center=(512.0, 512.0), px_per_cm=4.0)
+#: … and around the second border, where the last column is a 76-px tile
+SEAM_ZOOM_EAST = TopDownShot(center=(1024.0, 300.0), px_per_cm=4.0)
+#: low over the lawn, looking along the border at east 512: minification by distance
+SEAM_OBLIQUE = PerspectiveShot(eye=(380.0, 40.0, 70.0), target=(512.0, 520.0, 0.0))
+SEAM_SHOTS = {"top": SEAM_TOP, "zoom": SEAM_ZOOM, "zoom_east": SEAM_ZOOM_EAST,
+              "oblique": SEAM_OBLIQUE}
+
+KEEPALIVE_PLAN = GroundSpec(width_cm=2048.0, depth_cm=2048.0)   # 16 tiles, 16 MB of RGBA8
+KEEPALIVE_CYCLES = 20
+KEEPALIVE_TOP = TopDownShot(center=(1024.0, 1024.0), px_per_cm=0.1)
+
+
+def surface(item_id: str, east0: float, north0: float, east1: float, north1: float,
+            rgba: tuple[int, int, int, int]) -> Record:
+    """A flat rectangle of one colour, no outline: a record the bake paints."""
+    half_w, half_d = (east1 - east0) / 2.0, (north1 - north0) / 2.0
+    ring = ((-half_w, -half_d), (half_w, -half_d), (half_w, half_d), (-half_w, half_d))
+    return Record(item_id=item_id, kind="LAWN", shape="rectangle", footprints=(ring,),
+                  transform=Transform(east_cm=(east0 + east1) / 2.0, north_cm=(north0 + north1) / 2.0),
+                  material=Material("LAWN", fill_rgba=rgba, paint=Paint(stroke_style="NoPen")),
+                  params=Params({"seed": item_id}))
+
+
+def uniform_records() -> dict[str, Record]:
+    """G7: one lawn of one colour over the whole plan (and a little beyond)."""
+    return {"lawn": surface("lawn", -20.0, -20.0, 1120.0, 720.0, LAWN)}
+
+
+def banded_records() -> dict[str, Record]:
+    """The lawn, and darker bands that STRADDLE every tile border: across a border
+    the ground is one colour, while the tile's OPPOSITE edge has the other one. A
+    texture that repeats instead of clamping blends that opposite edge into the
+    border — a line the uniform lawn cannot show."""
+    return {**uniform_records(),
+            "band_east": surface("band_east", 384.0, -20.0, 640.0, 720.0, BAND),
+            "band_far": surface("band_far", 896.0, -20.0, 1120.0, 720.0, BAND),
+            "band_north": surface("band_north", -20.0, 384.0, 1120.0, 640.0, BAND)}
+
+
+def keepalive_records(cycle: int) -> dict[str, Record]:
+    """One lawn over the whole plan in a colour of its cycle: every tile re-bakes."""
+    shade = 60 + (cycle * 7) % 120
+    return {"lawn": surface("lawn", -20.0, -20.0, 2068.0, 2068.0, (shade, 200 - shade, 70, 255))}
+
+
+def plan_top(ground: GroundSpec) -> TopDownShot:
+    """The whole plan in a ``PLAN_VIEW`` frame, north up."""
+    scale = min(PLAN_VIEW[0] / ground.width_cm, PLAN_VIEW[1] / ground.depth_cm) * 0.95
+    return TopDownShot(center=(ground.width_cm / 2.0, ground.depth_cm / 2.0), px_per_cm=scale)
+
+
+def tail_slope(curve: list[float]) -> float:
+    """MB per cycle over the second half of a memory curve (Theil-Sen: the median of
+    all pairwise slopes, so one noisy reading can neither make nor hide a trend). A
+    leak keeps climbing at its per-cycle size; an allocator settles after a few
+    cycles, so the first half is not a trend."""
+    tail = curve[len(curve) // 2:]
+    slopes = [(tail[j] - tail[i]) / (j - i) for i in range(len(tail)) for j in range(i + 1, len(tail))]
+    return float(statistics.median(slopes))
+
+
+# ── the engine side ──────────────────────────────────────────────────────────
+
+_WIN_QUERY: Any = None
+
+
+def process_mb() -> float:
+    """The memory a leak shows up in, in MiB: private bytes on Windows (the working
+    set is trimmed and regrown by the OS), resident set size elsewhere. Neither sees
+    dedicated GPU memory."""
+    global _WIN_QUERY
+    if sys.platform != "win32":
+        import os
+
+        with open("/proc/self/statm", encoding="ascii") as handle:
+            return int(handle.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**20
+    import ctypes
+    from ctypes import wintypes
+
+    if _WIN_QUERY is None:  # declared once: a new ctypes type per call would itself grow the process
+        class _Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+                        ("PrivateUsage", ctypes.c_size_t)]
+
+        windll = ctypes.windll  # type: ignore[attr-defined]
+        windll.kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        query = windll.psapi.GetProcessMemoryInfo
+        query.argtypes = [wintypes.HANDLE, ctypes.POINTER(_Counters), wintypes.DWORD]
+        query.restype = wintypes.BOOL
+        _WIN_QUERY = (_Counters, query, windll.kernel32.GetCurrentProcess)
+    struct, query, current = _WIN_QUERY
+    counters = struct()
+    counters.cb = ctypes.sizeof(struct)
+    if not query(current(), ctypes.byref(counters), counters.cb):
+        raise RuntimeError("GetProcessMemoryInfo failed: the leak gate has no instrument")
+    return float(counters.PrivateUsage) / 2**20
+
+
+def _tile_uploads() -> int:
+    from open_garden_planner.ui.view3d.quick3d.ground_tiles import TileTexture
+
+    return int(TileTexture.uploads)
+
+
+def _textures_alive() -> int:
+    """Tile texture objects that exist on the C++ side (Qt's ``destroyed`` counts down)."""
+    from open_garden_planner.ui.view3d.quick3d.ground_tiles import TileTexture
+
+    return int(TileTexture.alive)
+
+
+class _Rig:
+    """The product's wiring on a shown host: SceneSync → GroundBaker + Quick3DSink."""
+
+    def __init__(self, host: Any, registry: BuilderRegistry | None = None, *, baked: bool = True) -> None:
+        from open_garden_planner.ui.view3d.ground_bake import GroundBaker
+        from open_garden_planner.ui.view3d.quick3d.adapter import Quick3DSink
+
+        self.host = host
+        self.baker = GroundBaker() if baked else None
+        self.sink = Quick3DSink(host)
+        self.sync = SceneSync(self.sink, registry, ground_baker=self.baker)
+        self.bake_ms: list[float] = []
+        if self.baker is not None:
+            real = self.baker.bake
+
+            def timed(*args: Any) -> Any:
+                started = time.perf_counter()
+                try:
+                    return real(*args)
+                finally:
+                    self.bake_ms.append((time.perf_counter() - started) * 1000.0)
+
+            self.baker.bake = timed  # type: ignore[method-assign]
+
+    def facts(self) -> dict[str, Any]:
+        """What the engine holds for the ground, read back from the scene."""
+        rows = self.host.ground.readback()
+        grid = self.baker.grid if self.baker is not None else None
+        return {
+            "tiles_in_scene": len(rows), "tiles_visible": sum(1 for row in rows if row["visible"]),
+            "tiles_textured": sum(1 for row in rows if row["textured"]),
+            "ground_tiled": bool(self.host.scene_property("groundTiled")),
+            "textures_held": self.host.ground.textures_held(),
+            "grid": None if grid is None else {
+                "px_per_cm": grid.px_per_cm, "columns": grid.columns, "rows": grid.rows,
+                "width_px": grid.width_px, "height_px": grid.height_px},
+            "painted": 0 if self.baker is None else len(self.baker.painted_ids()),
+            "capped": 0 if self.baker is None else len(self.baker.capped),
+            "bake_failures": 0 if self.baker is None else len(self.baker.failures),
+            "ground_failure": self.sync.ground_failure,
+            "state_equals_expected": self.sink.state() == self.sync.expected_state(),
+        }
+
+    def digest(self) -> str:
+        """One hash over every tile's pixels, in grid order."""
+        assert self.baker is not None
+        sha = hashlib.sha256()
+        for tile in self.baker.tiles():
+            sha.update(tile.pixels)
+        return sha.hexdigest()
+
+
+def _flat_item(scene: Any, painted: set[str]) -> Any:
+    """The largest painted item of the plan that is no longer than 3 m."""
+    best: tuple[float, str, Any] | None = None
+    for item in scene.items():
+        item_id = str(getattr(item, "item_id", ""))
+        if item_id not in painted:
+            continue
+        rect = item.sceneBoundingRect()
+        if max(rect.width(), rect.height()) > 300.0:
+            continue
+        key = (rect.width() * rect.height(), item_id, item)
+        if best is None or key[:2] > best[:2]:
+            best = key
+    if best is None:
+        raise RuntimeError("the plan has no painted item of up to 3 m to move")
+    return best[2]
+
+
+def scenario_ground_plan(ctx: base.Context) -> dict[str, Any]:
+    """§8.10 on a real renderer, and gate G2's engine half: bench_small.ogp → snapshot →
+    SceneSync → GroundBaker + Quick3DSink → frames; one small edit and its undo."""
+    from PyQt6.QtCore import QPointF
+
+    from open_garden_planner.core.commands import MoveItemsCommand
+    from open_garden_planner.core.scene3d.builders import production_registry
+    from open_garden_planner.ui.view3d.snapshot import snapshot_records
+
+    scene, view, _manager = base._load_bench()
+    commands = view.command_manager
+    at = date(2026, 6, 21)
+    ground = GroundSpec(float(scene.width_cm), float(scene.height_cm))
+    top = plan_top(ground)
+    overview = PerspectiveShot(eye=(ground.width_cm / 2.0, -1400.0, 1500.0),
+                               target=(ground.width_cm / 2.0, ground.depth_cm / 2.0, 0.0))
+    host = ctx.shown_host(PLAN_VIEW)
+    out: dict[str, Any] = {"plan": base.PLAN.name, "ground": [ground.width_cm, ground.depth_cm],
+                           "top": {"center": list(top.center), "px_per_cm": top.px_per_cm}}
+    try:
+        rig = _Rig(host, production_registry())
+        records = snapshot_records(scene, at)
+        uploads = _tile_uploads()
+        started = time.perf_counter()
+        rig.sync.apply(records, sun=HIGH_SUN, ground=ground)
+        applied = time.perf_counter()
+        host.set_shot(overview)
+        frame = ctx.save("ground_plan_overview", host.grab("ground_plan_overview"))
+        shown = time.perf_counter()
+        out["open"] = {"frame": frame, "records": len(records), "uploads": _tile_uploads() - uploads,
+                       "bake_ms": round(rig.bake_ms[-1], 2),
+                       "apply_ms": round((applied - started) * 1000.0, 2),
+                       "to_finished_frame_ms": round((shown - started) * 1000.0, 2),
+                       "parts": len(host.engine_parts()), **rig.facts()}
+        host.set_shot(top)
+        out["open"]["top"] = ctx.save("ground_plan_top", host.grab("ground_plan_top"))
+        first_digest = rig.digest()
+
+        # one small edit, twenty times: an item of up to 3 m moved there and back
+        item = _flat_item(scene, set(rig.baker.painted_ids()))  # type: ignore[union-attr]
+        item_id = str(item.item_id)
+        before = records[item_id].transform
+        steps: list[dict[str, Any]] = []
+        for index in range(20):
+            delta = QPointF(40.0, -30.0) if index % 2 == 0 else QPointF(-40.0, 30.0)
+            commands.execute(MoveItemsCommand([item], delta))
+            uploads = _tile_uploads()
+            t0 = time.perf_counter()
+            records = snapshot_records(scene, at)
+            t1 = time.perf_counter()
+            changes = rig.sync.apply(records)
+            t2 = time.perf_counter()
+            image = host.grab("ground_plan_edit")
+            t3 = time.perf_counter()
+            steps.append({
+                "transform": len(changes.transform), "uploads": _tile_uploads() - uploads,
+                "repainted": len(rig.baker.last_repainted),  # type: ignore[union-attr]
+                "changed": len(rig.baker.last_changed),  # type: ignore[union-attr]
+                "textures_held": host.ground.textures_held(),
+                "snapshot_ms": (t1 - t0) * 1000.0, "bake_ms": rig.bake_ms[-1],
+                "apply_ms": (t2 - t1) * 1000.0, "grab_ms": (t3 - t2) * 1000.0})
+            if index == 0:
+                after = records[item_id].transform
+                out["moved"] = {"id": item_id, "kind": records[item_id].kind,
+                                "from": [before.east_cm, before.north_cm],
+                                "to": [after.east_cm, after.north_cm],
+                                "frame": ctx.save("ground_plan_moved", image)}
+        out["edits"] = {
+            "steps": [{k: (round(v, 3) if isinstance(v, float) else v) for k, v in row.items()}
+                      for row in steps],
+            "median_bake_ms": round(statistics.median(row["bake_ms"] for row in steps), 3),
+            "median_apply_ms": round(statistics.median(row["apply_ms"] for row in steps), 3),
+            "median_grab_ms": round(statistics.median(row["grab_ms"] for row in steps), 3),
+            **rig.facts()}
+        # twenty moves there and back: the ground is the first one again, bit for bit
+        out["after_edits_digest_equals_first"] = rig.digest() == first_digest
+        out["back"] = ctx.save("ground_plan_back", host.grab("ground_plan_back"))
+
+        # G2: the ground alone — the painted records, no solid above them — seen from
+        # straight above, next to the bake itself
+        painted = set(rig.baker.painted_ids())  # type: ignore[union-attr]
+        uploads = _tile_uploads()
+        rig.sync.apply({key: record for key, record in records.items() if key in painted})
+        out["ground_only"] = {
+            "frame": ctx.save("ground_only_top", host.grab("ground_only_top")),
+            "bake": ctx.save("ground_only_bake", rig.baker.image()),  # type: ignore[union-attr]
+            "uploads": _tile_uploads() - uploads, "parts": len(host.engine_parts()),
+            "digest_equals_first": rig.digest() == first_digest, **rig.facts()}
+        rig.sync.reset()
+        out["cleared"] = {"tiles_in_scene": len(host.ground.readback()),
+                          "textures_held": host.ground.textures_held(),
+                          "ground_tiled": bool(host.scene_property("groundTiled")),
+                          "ground_visible": bool(host.scene_property("groundVisible"))}
+        health = host.health()
+        out["health"] = {"ok": health.ok, "qml_warnings": list(health.qml_warnings),
+                         "scene_graph_error": health.scene_graph_error}
+        out["graphics_api"] = host.graphics_api()
+        return out
+    finally:
+        host.close()
+        base._pump()
+
+
+def _seam_frames(ctx: base.Context, host: Any, name: str) -> dict[str, Any]:
+    frames: dict[str, Any] = {}
+    for key, shot in SEAM_SHOTS.items():
+        host.set_shot(shot)
+        frames[key] = ctx.save(f"{name}_{key}", host.grab(f"{name}_{key}"))
+    return frames
+
+
+def _seams(ctx: base.Context, prefix: str) -> dict[str, Any]:
+    host = ctx.shown_host(SEAM_VIEW)
+    out: dict[str, Any] = {}
+    try:
+        # the bare plan rectangle first: a sync WITHOUT a baker (L1.2's ground)
+        bare = _Rig(host, baked=False)
+        bare.sync.apply({}, sun=HIGH_SUN, ground=SEAM_PLAN)
+        host.set_shot(SEAM_TOP)
+        out["bare_rectangle"] = {"frame": ctx.save(f"{prefix}_bare_rectangle",
+                                                   host.grab(f"{prefix}_bare_rectangle")),
+                                 **bare.facts()}
+        bare.sync.reset()
+        rig = _Rig(host)
+        rig.sync.apply({}, sun=HIGH_SUN, ground=SEAM_PLAN)
+        out["bare_tiles"] = {"frame": ctx.save(f"{prefix}_bare_tiles", host.grab(f"{prefix}_bare_tiles")),
+                             **rig.facts()}
+        for name, records in (("uniform", uniform_records()), ("banded", banded_records())):
+            rig.sync.apply(records)
+            out[name] = {"frames": _seam_frames(ctx, host, f"{prefix}_{name}"),
+                         "bake": ctx.save(f"{prefix}_{name}_bake", rig.baker.image()),  # type: ignore[union-attr]
+                         **rig.facts()}
+        return out
+    finally:
+        host.close()
+        base._pump()
+
+
+def scenario_ground_seams(ctx: base.Context) -> dict[str, Any]:
+    """G7: a uniform lawn, and a lawn with bands, across every tile border — from above,
+    magnified, and low along a border."""
+    return _seams(ctx, "seams")
+
+
+def scenario_ground_seams_gap(ctx: base.Context) -> dict[str, Any]:
+    """G7's positive control: the same lawns with the quads laid 1 cm SHORT of their
+    tiles on every side — a 2 cm line of meadow between them, which the gate must see."""
+    from open_garden_planner.ui.view3d.quick3d import ground_tiles
+
+    kept = ground_tiles.SEAM_OVERLAP_CM
+    ground_tiles.SEAM_OVERLAP_CM = -1.0  # type: ignore[misc]
+    try:
+        return _seams(ctx, "gap")
+    finally:
+        ground_tiles.SEAM_OVERLAP_CM = kept  # type: ignore[misc]
+
+
+def _keepalive(ctx: base.Context, name: str, *, leak: bool) -> dict[str, Any]:
+    host = ctx.shown_host((320, 240))
+    try:
+        kept: list[Any] = []
+        if leak:
+            # THE control: the L0 spike's append-only keep-alive list — a replaced
+            # texture is never let go
+            host.ground._retire = kept.append  # noqa: SLF001
+        rig = _Rig(host)
+        host.set_shot(KEEPALIVE_TOP)
+        curve: list[float] = []
+        held: list[int] = []
+        alive: list[int] = []
+        uploads: list[int] = []
+        tiles: list[int] = []
+        alive_before, presented_before = _textures_alive(), host.frames_presented
+        for cycle in range(KEEPALIVE_CYCLES):
+            before = _tile_uploads()
+            rig.sync.apply(keepalive_records(cycle), sun=HIGH_SUN, ground=KEEPALIVE_PLAN)
+            image = host.grab(f"{name}_{cycle}")  # a finished frame: the new tiles were shown
+            base._pump(20)                        # … and what was destroyed is deleted
+            curve.append(round(process_mb(), 2))
+            held.append(host.ground.textures_held() + len(kept))
+            alive.append(_textures_alive() - alive_before)
+            uploads.append(_tile_uploads() - before)
+            tiles.append(len(host.ground.readback()))
+        out = {**rig.facts(), "cycles": KEEPALIVE_CYCLES, "curve_mb": curve,
+               "held_per_cycle": held, "alive_per_cycle": alive, "uploads_per_cycle": uploads,
+               "tiles_per_cycle": tiles, "leak": leak,
+               "frames_presented": host.frames_presented - presented_before,
+               "graphics_api": host.graphics_api(),
+               "last_frame": ctx.save(f"{name}_last", image),
+               "bytes_per_generation": sum(len(tile.pixels) for tile in rig.baker.tiles()),  # type: ignore[union-attr]
+               "metric": "private_bytes" if sys.platform == "win32" else "rss"}
+        rig.sync.reset()
+        kept.clear()
+        base._pump(20)
+        out["alive_after_clear"] = _textures_alive() - alive_before
+        out["mb_after_clear"] = round(process_mb(), 2)
+        return out
+    finally:
+        host.close()
+        base._pump()
+
+
+def scenario_ground_keepalive(ctx: base.Context) -> dict[str, Any]:
+    """G6: twenty full re-bakes of a 16-tile ground in one shown host — the memory
+    curve, the textures held and the uploads of every cycle."""
+    return _keepalive(ctx, "keepalive", leak=False)
+
+
+def scenario_ground_keepalive_leak(ctx: base.Context) -> dict[str, Any]:
+    """G6's positive control: the same twenty re-bakes with replaced textures kept
+    forever — the gate's instrument must see it, on the machine it judges."""
+    return _keepalive(ctx, "keepalive_leak", leak=True)
+
+
+base.SCENARIOS.update({
+    "ground_plan": scenario_ground_plan,
+    "ground_seams": scenario_ground_seams,
+    "ground_seams_gap": scenario_ground_seams_gap,
+    "ground_keepalive": scenario_ground_keepalive,
+    "ground_keepalive_leak": scenario_ground_keepalive_leak,
+})
+
+
+if __name__ == "__main__":
+    sys.exit(base.main(sys.argv[1:]))

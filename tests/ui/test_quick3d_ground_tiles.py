@@ -108,14 +108,20 @@ class TestTilesInTheScene:
     def test_twenty_re_bakes_without_a_frame_hold_two_generations_at_most(self, host: Any) -> None:
         """With the display asleep a window presents one frame and no more: the
         replaced textures must not wait for a frame that never comes."""
+        from open_garden_planner.ui.view3d.quick3d.ground_tiles import TileTexture
+
         sink = Quick3DSink(host)
-        most = 0
+        before = TileTexture.alive  # counted down by Qt's own destroyed signal
+        most = most_alive = 0
         for generation in range(20):
             _show(sink, GroundSpec(1024.0, 1024.0, tiles=tuple(
                 _tile(c, r, shade=10 + generation) for c in range(2) for r in range(2))))
             most = max(most, host.ground.textures_held())
-        assert most == 8 and host.ground.textures_retired() == 4
+            most_alive = max(most_alive, TileTexture.alive - before)
+        assert most == 8 == most_alive and host.ground.textures_retired() == 4
         assert len(host.ground.readback()) == 4
+        sink.clear()
+        assert TileTexture.alive == before  # not one of the eighty is left
 
     def test_a_tile_that_is_no_longer_named_is_destroyed(self, host: Any) -> None:
         sink = Quick3DSink(host)
