@@ -1316,7 +1316,44 @@ a container with the CI job's packages.
   against orders nobody wrote down: the hand-written matrix had no full-screen row, the
   seeded random walk that joined it (250 operations) has found nothing since. Pinned by
   `test_after_wait_ready_the_frame_has_the_windows_new_size` and
-  `test_a_seeded_random_order_never_yields_a_wrong_frame`.
+  `test_a_seeded_random_order_never_yields_a_wrong_frame`. *Corrected in review round 4:
+  the fix itself — a fact that an expose switches on — was the next defect, and "has found
+  nothing since" lasted until the walk ran on a small screen. The entry below.*
+- **(Round 4) A fact that only an OS paint message can set is a fact you may wait for for
+  ever — the frame is the witness.** *Symptom:* CI red on `windows-latest` only: the seeded
+  walk, 7 problems in 252 looks — three looks where Qt showed the pane and the host never
+  came up, and `wait_ready()` taking its whole 5 s three times in a row on a 2 × 60 px
+  pane. Green on the dev box, on the GPU and on WARP. *Wrong theory (round 3's fix, the
+  entry above):* "a grab has the wrong size exactly between a `Resize` event and the next
+  `Expose` — so wait for that expose". *Measured:* Windows sends NO expose to a pane that
+  grows where no screen is, and none to one that is shown there. The walk asked for 1203
+  and 1500 px wide windows on whatever screen it found; on the runner's 1024 px the pane
+  lay beyond the edge. With the window placed like that, the dev box showed the same
+  indices — while its display slept. With the display awake, the same pane beyond the same
+  edge got an `UpdateRequest` (still no expose), Qt drew, and the frame was right; asleep
+  again (the session idle for 25 min), stale again — and on WARP, in those same minutes,
+  right. Whether a frame can be had there is not a fact of the platform: it changes with
+  the adapter, and within a day on one machine. *Root cause:* the host had made a MESSAGE its evidence for something
+  it can simply look at. Each round had added a fact to the state (three, then nine, then
+  ten), and each new fact was a new way to be wrong about the one thing that matters: is
+  the frame right? *Fix:* the frame answers that. `grab()`, `pick()`, `project()` and
+  `wait_ready()` take a frame and compare its size with the window's, to the device pixel;
+  another size is a refusal, never an answer, and nothing is remembered about it. The
+  state is what Qt reports when asked, no more. `wait_ready()` is bounded by its timeout
+  INCLUDING the delivery of events (a zero timeout runs none), defaults to 1 s, and says
+  False 0.5 s after the last sign of progress whatever the timeout — for every cause at
+  once: no screen, no display, no painting. *Two things found on the way:* a pick right
+  after a resize, with no frame in between, MISSES (the engine picks with the viewport of
+  the frame it rendered last) — so `pick()` and `project()` take a frame of their own
+  then; and the size check had a tolerance of two pixels, through which a 447 px frame
+  passed for a 448 px window. *Lesson:* do not infer what you can observe; and a test must
+  not let the window system decide where its windows are — the matrix places every window
+  on the screen on purpose now, runs its walk once as on 1024 × 768, and reproduces "nothing
+  draws the view" with an event filter instead of hoping for a machine in that condition.
+  Pinned by `test_a_view_that_nothing_draws_is_refused_promptly_and_answers_when_painting_resumes`,
+  `test_the_same_walk_where_a_small_screen_leaves_the_pane_beyond_the_edge`,
+  `test_a_pane_beyond_the_screens_edge_gets_a_frame_or_a_prompt_refusal_and_answers_when_it_is_back`
+  and, without a window, `tests/ui/test_quick3d_host.py::TestWaitReady`.
 - **(Round 3) A contract written down in nine places is wrong in three.** The host's state
   table stood in `lifecycle.py`, `host.py`, §8.26.2, ADR-048, this section, the glossary, the
   building-block view and both copies of the `ogp-3d-renderer` skill; after round 2 three of
@@ -1427,6 +1464,19 @@ a container with the CI job's packages.
   `test_a_finished_blocks_supervisor_cannot_end_the_block_after_it`,
   `test_the_supervisor_only_acts_for_the_process_that_started_it` and
   `test_without_its_supervisor_the_selftest_fails_on_windows`.
+- **(Round 4) "It left with exit code 0" is not "it did its job".** A supervising process
+  that could not find its block — a creation time that was not the process's — left 1.5 s
+  into a 20 s block with exit code 0, the same code as one that was released; the block
+  called itself supervised and the self-test logged `ok=True detail=started, released,
+  left` for a run without a safety net. *Fix:* 0 only for a supervisor that held the
+  block's release event; 4 for one that found nothing to wait for. And so that "came up
+  late" is not mistaken for "lost": the block signals its event and KEEPS it until the
+  supervisor has left (at most 15 s — the only start bound there is), so a late one finds
+  it, signalled, and leaves as released. Also: everything that arms a watchdog is inside
+  its `try` — a failure while arming had left the process "armed" (every later watchdog
+  refused) with a live supervisor that would have ended it at the deadline. Pinned by
+  `test_a_supervisor_that_never_supervised_says_so_in_its_exit_code` and
+  `test_a_watchdog_that_cannot_be_armed_leaves_nothing_armed_and_no_supervisor`.
 - **(Round 2) Without a slot on `sceneGraphError`, a graphics device that cannot be created
   takes the whole app down.** Forced with `QT_D3D_ADAPTER_INDEX=9`. With a slot connected, Qt
   emits `(ContextNotAvailable, "Failed to initialize graphics backend for D3D11.")` and goes

@@ -169,6 +169,20 @@ def test_the_bounds_of_wait_ready_are_stated_once() -> None:
     assert "never call it" in text and "timer slot" in text
 
 
+def test_what_raises_what_is_complete() -> None:
+    """Review round 4, P2-3: the contract's "What raises what" left out the ONE offscreen
+    frame that comes back in another size — an ``EngineError`` (the host is spent by
+    then: there is no "later" a ``HostStateError`` could promise). Both errors a frame
+    can end in are named, each with its case. (That the host raises them so:
+    ``tests/ui/test_quick3d_host.py::TestStateMachine``.)"""
+    text = lifecycle.__doc__ or ""
+    raises = text[text.index("What raises what"):text.index("Why these facts and no fewer")]
+    state_error, engine_error = raises.split("``EngineError``:")
+    assert "``HostStateError``:" in state_error and "has another size than the window" in state_error
+    assert "the ONE offscreen frame" in engine_error and "another size than the window" in engine_error
+    assert "the host is spent by then" in engine_error
+
+
 def test_without_a_scene_graph_no_state_gives_a_frame_but_new() -> None:
     """THE killer: a grab of a window that has a platform window and no scene graph."""
     for row in ALL:
@@ -177,8 +191,11 @@ def test_without_a_scene_graph_no_state_gives_a_frame_but_new() -> None:
 
 
 def test_starting_means_on_its_way() -> None:
-    """``wait_ready()`` waits while the host is starting — so nothing that will not come
-    by itself may read as starting: not hidden, not minimised, not collapsed."""
+    """``wait_ready()`` waits while the host is starting — so nothing that is KNOWN not to
+    come by itself may read as starting: not hidden, not minimised, not collapsed. (What
+    cannot be known from Qt's facts — a pane no screen shows, a session that paints nothing
+    — is bounded in ``wait_ready()`` itself since round 4: it gives a starting host up
+    ``STALL_S`` after the last sign of progress; ``tests/ui/test_quick3d_host.py``.)"""
     for row in ALL:
         if state_of(row) is HostState.STARTING:
             assert row.visible and not row.minimised and row.has_area, row

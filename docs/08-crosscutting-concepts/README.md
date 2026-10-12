@@ -733,9 +733,24 @@ written (a collapsed pane; `showFullScreen()`). So its last test is not: a seede
 — 250 operations a parent can do to an embedded host (collapse the pane, squeeze it to one
 pixel, resize, maximise, full screen, minimise, hide and show the pane, the host, the
 window), each followed by a look at once, after `wait_ready()`, or after the event loop ran.
-Its judge knows only what QT said about the window at that look: the answer is the scene at
-that size or a refusal, `wait_ready()` True is followed by a frame, and a window Qt shows is
-never stuck. The seed is fixed — a failure must be the same failure twice.
+Its judge knows only what QT said about the window at that look — its size, and how much of
+it is on a screen: the answer is the scene at that size or a refusal; `wait_ready()` True is
+followed by a frame; every `wait_ready(t)` is back within `t` (plus the one Qt handler that
+was running) and a False within half a second of the last sign of progress; and where ALL
+of the pane is on a screen, a window Qt shows comes up. The seed is fixed — a failure must be
+the same failure twice.
+
+**The matrix must not depend on the screen it runs on** (review round 4: it did — the walk
+asked for 1203 and 1500 px wide windows on whatever it found, and on a 1024 px CI runner the
+pane lay beyond the edge, where Windows sends no expose; the local tiers were green "only
+because every window fits on this screen"). So: every window of the matrix is PLACED on the
+screen on purpose (`_splitter_window`); the walk runs twice — once with every size capped by
+`availableGeometry()` (asserted: the pane is on the screen whenever it shows), once with the
+window where a 1024 × 768 screen leaves it (asserted: the pane WAS shown beyond the edge);
+and the condition that broke CI is not waited for, it is made: `pane_without_paint` puts an
+event filter on the view that eats `Expose`, `UpdateRequest` and `Paint` — the view is on
+the screen and nothing draws it — because whether a machine withholds those by itself was
+measured to change within a day (display asleep, display awake; §11.4.9).
 
 **Running it** (it opens windows on the desktop):
 
@@ -762,13 +777,15 @@ call order and several attempts per control, is about two minutes of it. After r
 3 (100 tests: two window-state orders, the random walk and the control of its judge joined):
 99 passed and one control reported, not asserted, in 321 s on the RTX 4070, and 97 passed, the
 two hardware-only budgets skipped and the one control reported, in 244 s on WARP; the walk
-alone took 105 s on the GPU.
+alone took 105 s on the GPU. After review round 4 (104 tests: the second walk and three rows
+joined): 103 passed and one control reported, not asserted, in 458 s on the RTX 4070 and 101 passed, the two hardware-only budgets skipped and the control reported, in 355 s on WARP.
 
 **Linux without a Linux machine.** The CI job's stack — Ubuntu 24.04, xvfb, xcb, OpenGL on
 Mesa llvmpipe, Python 3.11, the repository's lock — fits in a container, and Docker on the
 developer's machine runs the tier there in minutes. That is how the round-2 tree was measured
 on xcb before it was pushed, after the round-1 tree had met xcb for the first time in a red
-CI job: 88 passed and 8 skipped in under two minutes (round 3: 92 passed and 8 skipped in 184 s). A container is
+CI job: 88 passed and 8 skipped in under two minutes (round 3: 92 passed and 8 skipped in 184 s;
+round 4: 96 passed and 8 skipped in 241 s). A container is
 not GitHub's runner; say which one a number came from.
 
 **The tier below it.** Not everything about the engine needs pixels. Under the offscreen
@@ -3178,12 +3195,24 @@ wrong (review round 3); `tests/unit/test_quick3d_packaging.py` now fails a secon
 state table. Read it there before calling the host. What this section adds is how to live
 with it:
 
-- **After `show()` and after ANY change of size or visibility — yours or the parent's — call
-  `wait_ready()` and act on its answer** before a `grab()`, a `pick()` or a `project()`. Do
-  not reason about passes of the event loop: Qt delivers some resizes inside the call that
-  caused them and others later (§11.4.9), and the main window the workspace is embedded in
-  is put into full screen by `application.py`. `wait_ready()` runs the event loop, so call
-  it where re-entrancy is acceptable; `grab()` never does.
+- **When you NEED a frame — the view was just opened, an export is about to read it — call
+  `wait_ready()` after `show()` or after the change of size or visibility, and act on its
+  answer.** Do not reason about passes of the event loop: Qt delivers some resizes inside
+  the call that caused them and others later (§11.4.9), and the main window the workspace
+  is embedded in is put into full screen by `application.py`. It is bounded — its timeout,
+  1 s by default, the delivery of events included — and it answers False promptly when
+  nothing is on its way; False is not "never", the cause may go. The first show of a
+  process is the slow one (its first expose creates the graphics device): with the default,
+  True came after 0.70 to 0.92 s for a top-level host and after 1.52 to 1.73 s for an
+  embedded one — the one Qt handler that was running when the second was up cannot be cut
+  short. Where that takes longer the answer is False while the host is on its way: pass a
+  longer timeout when the first frame is needed (it costs nothing when nothing comes), or
+  ask again.
+- **`wait_ready()` runs the event loop: never call it from a timer slot, a sync tick, a
+  paint or a resize handler — and not from a click handler either.** There, just call:
+  `try: host.pick(x, y)` / `except HostStateError` — the host takes the frame it needs
+  itself, and a refusal costs a few milliseconds. `grab()`, `pick()` and `project()` never
+  run the event loop.
 - **A refusal is an answer.** `HostStateError` says "not now", names the fact that is missing
   and what to do; a caller that draws on a timer skips that tick. `EngineError` says the
   engine failed.
@@ -3327,9 +3356,11 @@ parent (in the frozen build: running the same image); the block by a random nonc
 of its release event — a name per process let a finished block's late supervisor terminate
 the block after it (§11.4.9); and arguments it may not act on end it with exit code 2 and one
 line, before anything is opened. The safety net is checked like the subsystems it guards: on
-Windows the self-test FAILS when that process did not start, refused, or did not leave after
-its release (`[selftest_supervisor]` in the log). It also fails when a Qt message of the
-render arrived on another thread than the one that rendered.
+Windows the self-test FAILS when that process did not start, refused, never found this block
+(exit code 4 — it used to leave with 0, like one that did its job), or did not leave within
+15 s of its release (`[selftest_supervisor]` in the log; its line on stdout is `FAIL
+self-test supervisor -> …`, so it cannot be mistaken for a render failure). It also fails
+when a Qt message of the render arrived on another thread than the one that rendered.
 
 **What is not here.** No input handling and no orbit camera (L1.3); no look presets, sky, fog,
 night rig or wind animation (L1.4) — `windTime` exists and stands still, and at 0 the wind

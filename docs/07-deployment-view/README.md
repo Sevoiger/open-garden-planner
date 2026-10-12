@@ -305,7 +305,7 @@ machine, 4.0–6.5 s on a busy one.
 | (none) | everybody | the application |
 | `--selftest` | the release gate; a developer before a merge | the three blocks above; the exit code is the verdict |
 | `--spike-q3d …` | nobody any more | the dormant L0 spike (ADR-048); it retires in L1.10 |
-| `--selftest-supervisor` and six arguments | **internal** — only the self-test's own watchdog passes it | the process that ends a hung self-test from outside (below). Started by hand, or with arguments that do not name a running block of its own parent process, it refuses: one line, exit code 2, nothing opened, nothing terminated. (0: it had nothing to do, or it did its job; 3: it failed itself) |
+| `--selftest-supervisor` and six arguments | **internal** — only the self-test's own watchdog passes it | the process that ends a hung self-test from outside (below). Started by hand, or with arguments that do not name a running block of its own parent process, it refuses: one line, exit code 2, nothing opened, nothing terminated. (0: it held its block's release event — it was released, or it ended a hang; 4: it found no block to wait for and never supervised; 3: it failed itself) |
 
 **It cannot hang a job.** Inside the exe ONE watchdog bounds the whole self-test — all three
 blocks, not only the render: after 300 s it writes the reason in words and every thread's stack
@@ -317,8 +317,10 @@ for this run's release event, the deadline and the log), and that process termin
 first with exit code 1 — and says so in the log — when it is still alive at 310 s. It ends
 with the self-test and can only ever touch the process that started it, for the one run it
 was started for. **On Windows the self-test FAILS when that process did not start, refused,
-or did not leave after its release** — the log's `[selftest_supervisor]` line says which; a
-missing safety net used to pass unnoticed. On other platforms there is none: the in-process
+never found the run it was started for, or did not leave within 15 s of its release** — the
+log's `[selftest_supervisor]` line and the `FAIL self-test supervisor -> …` line say which; a
+missing safety net used to pass unnoticed. There is no start timeout while the self-test
+runs: those 15 s at its end are the bound, and they include the supervisor's own start. On other platforms there is none: the in-process
 exit was measured to end the deadlock on Linux, and beyond that the bound is the caller's own
 time limit — in CI the step's — which the log's `[watchdog]` line says in so many words.
 Around it, the workflow steps that run the self-test have a limit of 10 minutes; the release
