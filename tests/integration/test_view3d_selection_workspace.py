@@ -1,0 +1,781 @@
+"""Selection, the info card and walk mode in the workspace, on a stand-in engine (L1.8).
+
+``Workspace`` around a real canvas, the engine replaced at its seam by a
+``RecordingSink`` and a host that records what it is told and answers a ``pick``
+from a script. Gates G2 (a 3D click → the canvas selection), G3 (the canvas
+selection → the ring, through ONE sink call), G6 (the info card says the record's
+numbers) and G7 (walk mode borrows the camera and gives it back) — everything about
+them that is not a pixel. The same paths on the real engine:
+``test_view3d_selection_render.py``.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import date
+from typing import Any
+
+import pytest
+from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtGui import QKeyEvent, QMouseEvent
+
+from open_garden_planner.core.commands import (
+    CreateItemCommand,
+    DeleteItemsCommand,
+    GroupCommand,
+    MoveItemsCommand,
+)
+from open_garden_planner.core.measurements import format_length
+from open_garden_planner.core.object_height import METADATA_KEY
+from open_garden_planner.core.object_types import ObjectType
+from open_garden_planner.core.scene3d import RecordingSink
+from open_garden_planner.core.scene3d.camera import FOV_DEG
+from open_garden_planner.core.scene3d.selection import EMPTY_SELECTION, selection_of
+from open_garden_planner.core.scene3d.walk import (
+    EYE_HEIGHTS_CM,
+    WALK_FOV_DEG,
+    WALK_SPEED_CM_S,
+    WALKER_RADIUS_CM,
+)
+from open_garden_planner.models.layer import Layer
+from open_garden_planner.ui.canvas.canvas_view import CanvasView
+from open_garden_planner.ui.canvas.items.group_item import GroupItem
+from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
+from open_garden_planner.ui.view3d.quick3d.lifecycle import HostStateError
+from open_garden_planner.ui.view3d.workspace import WorkspaceMode
+from tests.integration.test_scene3d_plants import drop
+from tests.integration.test_view3d_workspace_widget import Bench, FakeHost
+
+PLAN, VIEW3D, SPLIT = WorkspaceMode.PLAN, WorkspaceMode.VIEW3D, WorkspaceMode.SPLIT
+BEGIN, COMMIT, SELECT = ("begin", None), ("commit", None), ("set_selection", None)
+MODEL_CALLS = {"add", "remove", "replace_geometry", "update_transform", "update_material"}
+LEFT, NONE = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+PLAIN, CTRL, SHIFT = (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ControlModifier,
+                      Qt.KeyboardModifier.ShiftModifier)
+HOSTILE = '<b>x</b><img src="file:///C:/Windows/win.ini">'
+
+
+@dataclass
+class Hit:
+    item_id: str
+    behind: tuple[Any, ...] = ()
+
+
+class PickHost(FakeHost):
+    """``FakeHost`` whose ``pick`` answers from a script (and still records the call)."""
+
+    def __init__(self, prefer_software: bool) -> None:
+        super().__init__(prefer_software)
+        self.answer: Any = None
+        self.error: BaseException | None = None
+
+    def pick(self, _x: float, _y: float) -> Any:
+        self.frames_taken.append("pick")
+        if self.error is not None:
+            raise self.error
+        return self.answer
+
+
+class SelectionBench(Bench):
+    def _factory(self, prefer_software: bool) -> tuple[PickHost, RecordingSink]:
+        self.factory_calls.append(prefer_software)
+        host, sink = PickHost(prefer_software), RecordingSink()
+        self.hosts.append(host)
+        self.sinks.append(sink)
+        return host, sink
+
+    # ── the 3D view's events, through the filters in the order Qt calls them ──
+
+    def send(self, event: QEvent) -> bool:
+        return any(watcher.eventFilter(None, event) for watcher in reversed(self.host.filters))
+
+    def mouse(self, kind: QEvent.Type, x: float, y: float, button=LEFT, buttons=LEFT,
+              modifiers=PLAIN) -> bool:
+        return self.send(QMouseEvent(kind, QPointF(x, y), QPointF(x, y), button, buttons, modifiers))
+
+    def click(self, *ray: Any, modifiers=PLAIN, at: tuple[float, float] = (200.0, 150.0)) -> None:
+        """A click whose ray meets the items ``ray`` (nearest first); none: the ground."""
+        ids = [str(item.item_id) for item in ray]
+        self.host.answer = Hit(ids[0], tuple(Hit(i) for i in ids[1:])) if ids else None
+        self.mouse(QEvent.Type.MouseButtonPress, *at)
+        self.mouse(QEvent.Type.MouseButtonRelease, *at, buttons=NONE, modifiers=modifiers)
+
+    def key(self, key: Qt.Key, down: bool = True) -> bool:
+        kind = QEvent.Type.KeyPress if down else QEvent.Type.KeyRelease
+        return self.send(QKeyEvent(kind, key, PLAIN))
+
+    def selected(self) -> list[Any]:
+        return list(self.scene.selectedItems())
+
+    def calls(self, ms: int = 60) -> list[tuple[str, str | None]]:
+        self.settle(ms)
+        calls = self.sink.ops()
+        self.sink.clear_calls()
+        return calls
+
+    def ring_ids(self) -> tuple[str, ...]:
+        return self.sink.selection.ids
+
+    def item(self, x: float, y: float, kind: ObjectType = ObjectType.RAISED_BED, *,
+             layer: Layer | None = None, name: str = "") -> RectangleItem:
+        made = RectangleItem(x, y, 300.0, 200.0, object_type=kind, name=name,
+                             layer_id=(layer or self.scene.active_layer).id)
+        self.commands.execute(CreateItemCommand(self.scene, made, "item"))
+        made.setSelected(False)
+        return made
+
+    def open3d(self, mode: WorkspaceMode = SPLIT) -> None:
+        """3D shown and the plan's first pass in the engine (it waits for its notice to
+        be painted: a fixed pause would race it)."""
+        self.scene.clearSelection()
+        self.workspace.set_mode(mode)
+        controller = self.workspace.controller
+        self.qtbot.waitUntil(lambda: controller.apply_count >= 1 and not controller.dirty,
+                             timeout=5000)
+        self.settle(30)
+        self.sink.clear_calls()
+
+
+@pytest.fixture()
+def bench(canvas: CanvasView, qtbot, tmp_path) -> SelectionBench:
+    return SelectionBench(canvas, qtbot, tmp_path)
+
+
+def ids(*items: Any) -> tuple[str, ...]:
+    return tuple(sorted(str(item.item_id) for item in items))
+
+
+# ── gate G2: a click in 3D → the canvas selection ────────────────────────────
+
+
+def test_a_plain_click_selects_only_that_item_on_the_canvas(bench: SelectionBench) -> None:
+    a, b = bench.item(400.0, 300.0), bench.item(1500.0, 300.0)
+    bench.open3d()
+    b.setSelected(True)
+    bench.calls()
+    bench.click(a)
+    assert bench.selected() == [a]
+    assert bench.host.frames_taken == ["pick"], "one click, one pick"
+    assert bench.calls() == [BEGIN, SELECT, COMMIT] and bench.ring_ids() == ids(a)
+    bench.click(a)
+    assert bench.selected() == [a] and bench.calls() == [], "the same click again: nothing to tell"
+
+
+def test_ctrl_and_shift_toggle_and_a_click_on_nothing_clears(bench: SelectionBench) -> None:
+    a, b = bench.item(400.0, 300.0), bench.item(1500.0, 300.0)
+    bench.open3d()
+    bench.click(a)
+    bench.click(b, modifiers=CTRL)
+    assert set(bench.selected()) == {a, b}
+    bench.settle()
+    assert bench.ring_ids() == ids(a, b)
+    bench.click(a, modifiers=SHIFT)
+    assert bench.selected() == [b]
+    bench.click()                                    # the ground, the sky
+    assert bench.selected() == []
+    bench.click(a)
+    bench.click(modifiers=CTRL)                      # the canvas clears here too (measured)
+    assert bench.selected() == []
+    bench.settle()
+    assert bench.ring_ids() == ()
+
+
+def test_a_drag_selects_nothing_and_takes_no_frame(bench: SelectionBench) -> None:
+    """Gate G2: more than ``CLICK_SLOP_PX`` — an orbit or pan gesture — never selects."""
+    a, b = bench.item(400.0, 300.0), bench.item(1500.0, 300.0)
+    bench.open3d()
+    b.setSelected(True)
+    bench.host.answer = Hit(str(a.item_id))
+    bench.mouse(QEvent.Type.MouseButtonPress, 200.0, 150.0)
+    bench.mouse(QEvent.Type.MouseMove, 205.0, 150.0, button=NONE)
+    bench.mouse(QEvent.Type.MouseMove, 260.0, 190.0, button=NONE)
+    bench.mouse(QEvent.Type.MouseButtonRelease, 260.0, 190.0, buttons=NONE)
+    assert bench.selected() == [b] and bench.host.frames_taken == []
+    assert bench.workspace.camera.goal != bench.workspace.camera.pose or bench.workspace.camera.moving, (
+        "it was a pan of the orbit camera")
+
+
+def test_an_item_on_a_locked_layer_is_not_selectable_from_3d(bench: SelectionBench) -> None:
+    """Gate G2, the locked layer — the rule measured on the canvas
+    (``test_view3d_selection_bridge.py``): the click falls through it to what is
+    behind, and to nothing when nothing is."""
+    locked = Layer(name="locked")
+    bench.scene.add_layer(locked)
+    wall, behind, free = (bench.item(400.0, 300.0, layer=locked), bench.item(400.0, 900.0),
+                          bench.item(2000.0, 300.0))
+    bench.scene.update_layer_lock(locked.id, True)
+    bench.open3d()
+    assert str(wall.item_id) in bench.sink.item_ids(), "a locked layer is SHOWN in 3D"
+    free.setSelected(True)
+    bench.click(wall)                                # nothing behind it along the ray
+    assert bench.selected() == [], "as a click on nothing"
+    free.setSelected(True)
+    bench.click(wall, behind)                        # the ray goes on to a selectable item
+    assert bench.selected() == [behind]
+    bench.click(wall, behind, modifiers=CTRL)
+    assert bench.selected() == []
+    bench.scene.update_layer_lock(locked.id, False)
+    bench.click(wall, behind)
+    assert bench.selected() == [wall], "unlocked, it is the nearest and it is selected"
+
+
+def test_an_item_on_a_hidden_layer_has_no_record_and_cannot_be_hit(bench: SelectionBench) -> None:
+    hidden = Layer(name="hidden")
+    bench.scene.add_layer(hidden)
+    ghost, real = bench.item(400.0, 300.0, layer=hidden), bench.item(1500.0, 300.0)
+    bench.scene.update_layer_visibility(hidden.id, False)
+    bench.open3d()
+    assert bench.sink.item_ids() == (str(real.item_id),), "no record: nothing in 3D to click"
+    real.setSelected(True)
+    bench.click(ghost)                               # a stale id, if one ever came
+    assert bench.selected() == []
+
+
+def test_a_member_of_a_group_selects_the_group_and_every_member_gets_the_ring(
+        bench: SelectionBench) -> None:
+    a, b, c = bench.item(400.0, 300.0), bench.item(900.0, 300.0), bench.item(2000.0, 300.0)
+    bench.commands.execute(GroupCommand(bench.scene, [a, b]))
+    group = next(item for item in bench.scene.items() if isinstance(item, GroupItem))
+    bench.open3d()
+    bench.click(b)
+    assert bench.selected() == [group]
+    bench.settle()
+    assert bench.ring_ids() == ids(a, b)
+    bench.click(c, modifiers=CTRL)
+    bench.settle()
+    assert set(bench.selected()) == {group, c} and bench.ring_ids() == ids(a, b, c)
+
+
+def test_a_click_while_the_host_cannot_answer_does_nothing_and_says_nothing(
+        bench: SelectionBench, caplog: pytest.LogCaptureFixture) -> None:
+    """Gate G2: ``HostStateError`` → no change of the selection, no message — neither in
+    the pane nor in the log."""
+    a, b = bench.item(400.0, 300.0), bench.item(1500.0, 300.0)
+    bench.open3d()
+    b.setSelected(True)
+    bench.calls()
+    bench.host.error = HostStateError("pick(): the render target has not caught up")
+    with caplog.at_level(logging.INFO, logger="open_garden_planner"):
+        bench.click(a)
+    assert bench.selected() == [b], "not cleared either: 'could not look' is not 'nothing there'"
+    assert bench.workspace.status_text() == "" and bench.workspace.message_text() == ""
+    assert caplog.records == [] and bench.calls() == []
+    assert bench.host.frames_taken == ["pick"]
+    bench.host.error = None
+    bench.click(a)
+    assert bench.selected() == [a]
+
+
+def test_a_click_does_not_scroll_the_plan_and_changes_no_plan_data(bench: SelectionBench) -> None:
+    a = bench.item(4000.0, 2500.0)
+    bench.open3d()
+    canvas = bench.view
+    canvas.centerOn(QPointF(500.0, 500.0))
+    centre = canvas.mapToScene(canvas.viewport().rect().center())
+    stack = len(bench.commands._undo_stack)  # noqa: SLF001 - "nothing was pushed"
+    bench.click(a)
+    assert bench.selected() == [a]
+    assert canvas.mapToScene(canvas.viewport().rect().center()) == centre
+    assert len(bench.commands._undo_stack) == stack  # noqa: SLF001
+
+
+# ── gate G3: the canvas selection → the ring ─────────────────────────────────
+
+
+def test_the_ring_follows_the_canvas_selection_through_every_kind_of_change(
+        bench: SelectionBench) -> None:
+    """Gate G3: after select, add, remove, clear, delete-selected, undo and a plan
+    change the set handed to the engine IS the canvas selection — and each of them
+    reached the engine as ONE call that touches no model."""
+    a, b, c = bench.item(400.0, 300.0), bench.item(1500.0, 300.0), bench.item(2600.0, 300.0)
+    bench.open3d()
+    records = bench.workspace.controller.sync.records
+
+    def step(expected: tuple[str, ...]) -> list[tuple[str, str | None]]:
+        calls = bench.calls()
+        assert bench.ring_ids() == expected
+        assert bench.sink.selection == selection_of(bench.workspace.controller.sync.records, expected)
+        assert bench.sink.state() == bench.workspace.controller.sync.expected_state()
+        return calls
+
+    a.setSelected(True)                                                   # select
+    assert step(ids(a)) == [BEGIN, SELECT, COMMIT]
+    b.setSelected(True)                                                   # add
+    assert step(ids(a, b)) == [BEGIN, SELECT, COMMIT]
+    a.setSelected(False)                                                  # remove
+    assert step(ids(b)) == [BEGIN, SELECT, COMMIT]
+    bench.scene.clearSelection()                                          # clear
+    assert step(()) == [BEGIN, SELECT, COMMIT]
+    b.setSelected(True)
+    c.setSelected(True)
+    assert not {op for op, _id in step(ids(b, c))} & MODEL_CALLS
+    bench.commands.execute(DeleteItemsCommand(bench.scene, [b]))          # delete-selected
+    calls = step(ids(c))
+    assert calls == [BEGIN, ("remove", str(b.item_id)), SELECT, COMMIT], "one transaction"
+    bench.commands.undo()                                                 # undo
+    calls = step(tuple(sorted(str(i.item_id) for i in bench.scene.selectedItems())))
+    assert ("add", str(b.item_id)) in calls
+    assert len(records) == 3 or len(bench.workspace.controller.sync.records) == 3
+    bench.scene.clear()                                                   # a plan change
+    fresh = bench.item(700.0, 700.0)
+    bench.workspace.document_changed()
+    bench.settle(200)
+    assert bench.ring_ids() == () and bench.sink.selection == EMPTY_SELECTION
+    bench.sink.clear_calls()
+    fresh.setSelected(True)
+    assert step(ids(fresh)) == [BEGIN, SELECT, COMMIT]
+
+
+def test_a_selected_item_that_moves_takes_its_ring_along_in_the_same_transaction(
+        bench: SelectionBench) -> None:
+    a, b = bench.item(400.0, 300.0), bench.item(1500.0, 300.0)
+    bench.open3d()
+    a.setSelected(True)
+    bench.calls()
+    bench.commands.execute(MoveItemsCommand([a], QPointF(120.0, 40.0)))
+    assert bench.calls() == [BEGIN, ("update_transform", str(a.item_id)), SELECT, COMMIT]
+    assert bench.sink.selection == selection_of(bench.workspace.controller.sync.records, ids(a))
+    bench.commands.execute(MoveItemsCommand([b], QPointF(-30.0, 0.0)))
+    assert bench.calls() == [BEGIN, ("update_transform", str(b.item_id)), COMMIT], (
+        "an edit of something else does not resend the ring")
+
+
+def test_selection_while_the_3d_pane_is_hidden_costs_nothing_and_is_caught_up(
+        bench: SelectionBench) -> None:
+    """Gate G3: hidden = zero engine calls, zero snapshots, and no "building" notice
+    for a selection — then ONE catch-up call when the pane shows."""
+    a, b = bench.item(400.0, 300.0), bench.item(1500.0, 300.0)
+    bench.open3d()
+    controller = bench.workspace.controller
+    bench.workspace.set_mode(PLAN)
+    snapshots = controller.snapshot_count
+    for item in (a, b, a, b):
+        bench.scene.clearSelection()
+        item.setSelected(True)
+    a.setSelected(True)
+    assert bench.calls(100) == [] and controller.snapshot_count == snapshots
+    bench.workspace.set_mode(SPLIT)
+    bench.qtbot.waitUntil(lambda: bench.ring_ids() == ids(a, b), timeout=5000)
+    assert bench.calls(60) == [BEGIN, SELECT, COMMIT], "ONE transaction, and no model in it"
+    bench.workspace.set_mode(PLAN)
+    bench.workspace.set_mode(SPLIT)
+    assert bench.calls(200) == [], "nothing changed while hidden: nothing is sent"
+
+
+def test_the_selection_at_the_first_open_is_in_the_first_transaction(bench: SelectionBench) -> None:
+    a = bench.item(400.0, 300.0)
+    bench.item(1500.0, 300.0)
+    a.setSelected(True)
+    bench.workspace.set_mode(SPLIT)
+    calls = bench.calls(120)
+    assert calls[0] == BEGIN and calls[-2:] == [SELECT, COMMIT] and calls.count(BEGIN) == 1
+    assert bench.ring_ids() == ids(a)
+
+
+def test_a_selected_item_without_a_record_gets_no_ring_and_harms_nothing(bench: SelectionBench) -> None:
+    a = bench.item(400.0, 300.0)
+    broken = bench.item(1500.0, 300.0)
+    broken.metadata[METADATA_KEY] = float("inf")     # refused by the record layer
+    bench.open3d()
+    broken.setSelected(True)
+    assert bench.calls() == [], "nothing to draw: nothing is sent"
+    a.setSelected(True)
+    assert bench.calls() == [BEGIN, SELECT, COMMIT] and bench.ring_ids() == ids(a)
+
+
+def test_closing_the_engine_lets_the_canvas_go(bench: SelectionBench) -> None:
+    a = bench.item(400.0, 300.0)
+    bench.open3d()
+    workspace = bench.workspace
+    workspace.shutdown()
+    a.setSelected(True)                               # the signal still fires: nobody listens
+    bench.scene.clearSelection()
+    assert workspace.controller is None and workspace.walking is False
+    assert workspace.walk_action.isEnabled() is False
+
+
+# ── gate G6: the info card ───────────────────────────────────────────────────
+
+
+def test_the_card_is_shown_for_exactly_one_selected_item_while_3d_is_visible(
+        bench: SelectionBench) -> None:
+    a, b = bench.item(400.0, 300.0, name="North bed"), bench.item(1500.0, 300.0)
+    a.setSelected(True)
+    assert bench.workspace.info_card is None, "no pane yet: no card, nothing imported"
+    bench.workspace.set_mode(SPLIT)
+    bench.settle()
+    card = bench.workspace.info_card
+    assert card is not None and card.isVisible() and card.title() == "North bed"
+    assert card.parentWidget() is bench.workspace.pane, "in the pane's layout — never over the view"
+    engine = bench.workspace.pane.engine_widget
+    assert card.geometry().top() >= engine.mapTo(bench.workspace.pane, engine.rect().bottomLeft()).y(), (
+        "BELOW the native view")
+    b.setSelected(True)
+    assert not card.isVisible(), "two selected: no card"
+    a.setSelected(False)
+    assert card.isVisible() and card.item_id == str(b.item_id)
+    bench.scene.clearSelection()
+    assert not card.isVisible() and card.item_id == ""
+    a.setSelected(True)
+    bench.workspace.set_mode(PLAN)
+    assert not card.isVisible()
+    bench.scene.clearSelection()
+    b.setSelected(True)                               # while hidden: nothing is computed
+    assert card.item_id == str(a.item_id), "the hidden card was not touched"
+    bench.workspace.set_mode(VIEW3D)
+    assert card.isVisible() and card.item_id == str(b.item_id), "refreshed when it shows"
+    bench.workspace.set_chrome_visible(False)         # fullscreen preview hides the controls
+    assert not card.isVisible()
+    bench.workspace.set_chrome_visible(True)
+    assert card.isVisible()
+
+
+def test_the_card_shows_the_records_height_at_two_plan_dates(bench: SelectionBench) -> None:
+    """Gate G6: a dated tree grows with the plan date; the card's height is the applied
+    record's ``height_cm`` — the model's top — at each date, and the canopy its
+    ``radius_cm``, never a second computation."""
+    apple = drop(bench.view, "TREE:species=apple tree", QPointF(2500.0, 1500.0))
+    apple.metadata["plant_instance"] = {
+        "planting_date": "2024-04-01", "current_height_cm": 180.0, "current_spread_cm": 120.0}
+    bench.open3d()
+    apple.setSelected(True)
+    card = bench.workspace.info_card
+    seen = []
+    for day in (date(2026, 6, 21), date(2029, 6, 21)):
+        bench.clock.set_date(day)
+        bench.settle(120)
+        record = bench.workspace.controller.sync.records[str(apple.item_id)]
+        assert record.height_cm is not None
+        assert card.value("Height:") == format_length(record.height_cm)
+        assert card.value("Canopy diameter:") == format_length(2.0 * float(record.params["radius_cm"]))
+        assert str(day.year)[-2:] in (card.value("Sizes on:") or "")
+        seen.append(record.height_cm)
+    assert seen[1] > seen[0] + 10.0, "the tree really grew between the two dates"
+    assert card.value("Type:") == "Tree" and card.note() == ""
+
+
+def test_a_plant_without_a_known_height_says_so_on_the_card(bench: SelectionBench) -> None:
+    herb = drop(bench.view, "PERENNIAL:category=PERENNIAL", QPointF(1200.0, 900.0))
+    herb.metadata.pop(METADATA_KEY, None)
+    bench.open3d()
+    herb.setSelected(True)
+    bench.settle()
+    record = bench.workspace.controller.sync.records[str(herb.item_id)]
+    card = bench.workspace.info_card
+    assert record.height_cm is None and card.value("Height:") == "not known"
+    assert card.note() == "", "it HAS a model: the neutral placeholder dome"
+
+
+def test_an_item_without_a_3d_model_shows_its_reason_in_the_lists_own_words(
+        bench: SelectionBench) -> None:
+    good = bench.item(400.0, 300.0)
+    bad = bench.item(1500.0, 1500.0, name="North bed")
+    bad.metadata[METADATA_KEY] = float("inf")
+    lawn = bench.item(2600.0, 300.0, ObjectType.LAWN, name="Lawn")
+    bench.open3d()
+    card = bench.workspace.info_card
+    bad.setSelected(True)
+    reason = "one of its sizes is outside what the 3D view can show"
+    assert card.note() == f"Not shown in 3D: {reason}."
+    bench.workspace.show_problems()
+    assert reason in bench.workspace.problems_dialog.row_text(0), "the SAME words as the list"
+    bench.scene.clearSelection()
+    lawn.setSelected(True)
+    assert card.note() == "Drawn on the ground in 3D: the plan gives it no height."
+    bench.scene.clearSelection()
+    good.setSelected(True)
+    assert card.note() == "" and card.value("Height:") is not None
+    bad.metadata[METADATA_KEY] = 80.0                 # fixed: the note goes with the next pass
+    bench.scene.clearSelection()
+    bad.setSelected(True)
+    bench.commands.stack_changed.emit()
+    bench.settle()
+    assert card.note() == "" and card.value("Height:") == "80.0 cm"
+
+
+def test_a_plant_on_a_bed_names_its_bed(bench: SelectionBench) -> None:
+    bed = bench.item(400.0, 300.0, name=HOSTILE)
+    herb = drop(bench.view, "PERENNIAL:category=PERENNIAL", QPointF(550.0, 400.0))
+    assert herb.parent_bed_id == bed.item_id, "the drop linked it to the bed under it"
+    bench.open3d()
+    herb.setSelected(True)
+    bench.settle()
+    card = bench.workspace.info_card
+    assert card.value("Bed:") == HOSTILE, "the bed's name, as its characters"
+
+
+def test_a_name_that_is_markup_is_shown_as_its_characters_on_the_card(bench: SelectionBench) -> None:
+    """The story's security add-on, through the real workspace."""
+    bed = bench.item(400.0, 300.0, name=HOSTILE)
+    bench.open3d()
+    bed.setSelected(True)
+    card = bench.workspace.info_card
+    assert card.title() == HOSTILE
+    assert all(label.textFormat() == Qt.TextFormat.PlainText for label in card.labels())
+    assert all(label.toolTip() == "" for label in card.labels())
+
+
+def test_show_in_plan_centres_the_plan_and_leaves_3d_only_mode_for_split(bench: SelectionBench) -> None:
+    far = bench.item(4300.0, 2600.0)
+    bench.open3d(VIEW3D)
+    bench.view.set_zoom(bench.view.zoom_factor * 6.0)
+    far.setSelected(True)
+    card = bench.workspace.info_card
+    assert bench.workspace.mode is VIEW3D and not bench.view.isVisible()
+    card._button.click()  # noqa: SLF001
+    assert bench.workspace.mode is SPLIT and bench.view.isVisible()
+    bench.settle()
+    centre = bench.view.mapToScene(bench.view.viewport().rect().center())
+    target = far.sceneBoundingRect().center()
+    assert abs(centre.x() - target.x()) < 60.0 and abs(centre.y() - target.y()) < 60.0
+    assert bench.selected() == [far], "the selection is not touched"
+    bench.view.centerOn(QPointF(300.0, 300.0))
+    bench.workspace.show_in_plan(str(far.item_id))    # in Split it only centres
+    assert bench.workspace.mode is SPLIT
+    centre = bench.view.mapToScene(bench.view.viewport().rect().center())
+    assert abs(centre.x() - target.x()) < 60.0
+    bench.workspace.show_in_plan("no such id")        # nothing to centre on: nothing happens
+
+
+def test_the_problems_list_still_selects_through_the_same_path(bench: SelectionBench) -> None:
+    """``Workspace.select_item`` is ONE path for the list and the click: a group's
+    member selects the group; a locked item cannot be selected — and is still shown."""
+    locked = Layer(name="locked")
+    bench.scene.add_layer(locked)
+    a, b, wall = bench.item(400.0, 300.0), bench.item(900.0, 300.0), bench.item(3000.0, 2000.0, layer=locked)
+    bench.commands.execute(GroupCommand(bench.scene, [a, b]))
+    group = next(item for item in bench.scene.items() if isinstance(item, GroupItem))
+    bench.scene.update_layer_lock(locked.id, True)
+    bench.open3d()
+    bench.workspace.select_item(str(b.item_id))
+    assert bench.selected() == [group]
+    bench.workspace.select_item(str(wall.item_id))
+    assert bench.selected() == []
+    bench.workspace.select_item("no such id")
+    bench.workspace.select_item(str(a.item_id), toggle=True, center=False)
+    assert bench.selected() == [group]
+
+
+# ── gate G7: walk mode in the workspace ──────────────────────────────────────
+
+
+def walk_ready(bench: SelectionBench) -> Any:
+    bench.item(400.0, 300.0)
+    bench.open3d()
+    camera = bench.workspace.camera
+    camera.orbit(47.0, 11.0)
+    camera.zoom(0.6)
+    camera.pan(350.0, -120.0)
+    camera.snap()
+    bench.workspace._apply_camera()  # noqa: SLF001 - the user has looked around
+    return camera
+
+
+def test_enter_walk_and_leave_restores_the_orbit_pose_exactly(bench: SelectionBench) -> None:
+    """Gate G7: the walk borrows the camera; the orbit pose is never touched and is
+    what the engine is shown again — the same object, the same numbers."""
+    camera = walk_ready(bench)
+    workspace, host = bench.workspace, bench.host
+    pose, goal = camera.pose, camera.goal
+    orbit_call = host.cameras[-1]
+    assert orbit_call == (pose.eye, pose.target_scene, FOV_DEG)
+    stack = len(bench.commands._undo_stack)  # noqa: SLF001
+    assert workspace.walk is None and len(host.filters) == 1, "nothing of walk mode exists yet"
+
+    workspace.walk_action.trigger()
+    assert workspace.walking and workspace.walk_action.isChecked() and len(host.filters) == 2
+    eye, target, fov = host.cameras[-1]
+    assert fov == WALK_FOV_DEG and eye[2] == EYE_HEIGHTS_CM[0] == target[2]
+    start = workspace.walk.state
+    assert (start.east, start.north) == pytest.approx(pose.target), "where the orbit camera looked"
+    assert start.yaw_deg == pytest.approx(pose.yaw_deg % 360.0), "facing the way it looked"
+    assert workspace._eye_combo.isVisible()  # noqa: SLF001
+
+    bench.key(Qt.Key.Key_W)                           # walk for a while
+    bench.qtbot.waitUntil(lambda: workspace.walk.state.shown != start.shown, timeout=3000)
+    bench.settle(120)
+    bench.key(Qt.Key.Key_W, down=False)
+    bench.mouse(QEvent.Type.MouseButtonPress, 100.0, 100.0)
+    bench.mouse(QEvent.Type.MouseMove, 180.0, 140.0, button=NONE)      # look around
+    bench.mouse(QEvent.Type.MouseButtonRelease, 180.0, 140.0, buttons=NONE)
+    moved = workspace.walk.state
+    assert moved.shown != start.shown and moved.yaw_deg != start.yaw_deg
+    assert host.cameras[-1][0][:2] == moved.shown, "the engine sees through the walker's eyes"
+    assert camera.pose is pose and camera.goal is goal and not camera.moving
+
+    assert bench.key(Qt.Key.Key_Escape) is True       # Esc leaves
+    assert not workspace.walking and not workspace.walk_action.isChecked()
+    assert host.cameras[-1] == orbit_call, "the orbit pose, to the last digit"
+    assert camera.pose is pose and camera.goal is goal
+    assert not workspace._eye_combo.isVisible()  # noqa: SLF001
+    assert len(bench.commands._undo_stack) == stack, "walking never touches the plan"  # noqa: SLF001
+    assert host.frames_taken == [], "and takes no frame"
+    assert bench.key(Qt.Key.Key_Escape) is False, "not walking: Escape is the application's again"
+
+
+def test_the_toggle_leaves_too_and_walk_mode_can_be_entered_again(bench: SelectionBench) -> None:
+    camera = walk_ready(bench)
+    workspace = bench.workspace
+    pose = camera.pose
+    assert workspace.set_walking(True) is True
+    first = workspace.walk
+    workspace.walk_action.trigger()                   # the toggle, off
+    assert not workspace.walking and bench.host.cameras[-1] == (pose.eye, pose.target_scene, FOV_DEG)
+    assert workspace.set_walking(True) is True and workspace.walk is first
+    assert len(bench.host.filters) == 2, "the filter is installed once"
+    assert workspace.set_walking(True) is True, "asked twice: still walking, nothing restarted"
+    assert workspace.set_walking(False) is False and workspace.set_walking(False) is False
+
+
+def test_hiding_and_showing_the_pane_while_walking_keeps_the_walker(bench: SelectionBench) -> None:
+    """Gate G7: Plan mode and back — the walker is where it was, looking where it
+    looked, and the engine is shown its view again; a key held when the pane went
+    does not walk on."""
+    walk_ready(bench)
+    workspace, host = bench.workspace, bench.host
+    workspace.set_walking(True)
+    bench.mouse(QEvent.Type.MouseButtonPress, 100.0, 100.0)
+    bench.mouse(QEvent.Type.MouseMove, 150.0, 100.0, button=NONE)
+    bench.mouse(QEvent.Type.MouseButtonRelease, 150.0, 100.0, buttons=NONE)
+    bench.key(Qt.Key.Key_W)
+    bench.settle(60)
+    workspace.set_mode(PLAN)
+    state = workspace.walk.state
+    assert workspace.walking and workspace.walk.moving is False, "every key was let go"
+    bench.settle(150)
+    assert workspace.walk.state == state
+    sent = len(host.cameras)
+    workspace.set_mode(SPLIT)
+    bench.settle(60)
+    assert workspace.walking and workspace.walk.state == state
+    assert len(host.cameras) > sent and host.cameras[-1][2] == WALK_FOV_DEG
+    assert host.cameras[-1][0][:2] == state.shown
+    bench.settle(150)
+    assert workspace.walk.state == state, "W was held when the pane went: it does not walk on"
+
+
+def test_the_eye_height_presets_move_the_eye_and_are_kept(bench: SelectionBench) -> None:
+    walk_ready(bench)
+    workspace, host = bench.workspace, bench.host
+    combo = workspace._eye_combo  # noqa: SLF001
+    assert [combo.itemData(i) for i in range(combo.count())] == list(EYE_HEIGHTS_CM)
+    assert combo.itemText(0) == "Adult – 1.65 m" and combo.itemText(2) == "Child – 1.10 m"
+    combo.setCurrentIndex(2)                           # chosen BEFORE walking
+    workspace.set_walking(True)
+    assert host.cameras[-1][0][2] == 110.0
+    combo.setCurrentIndex(1)
+    assert host.cameras[-1][0][2] == 150.0 == host.cameras[-1][1][2]
+    workspace.set_walking(False)
+    workspace.set_walking(True)
+    assert host.cameras[-1][0][2] == 150.0, "kept for the session"
+
+
+def test_a_walk_starts_on_free_ground_and_stops_at_what_is_drawn(bench: SelectionBench) -> None:
+    """The walker's world is made of the records the engine was sent, with the meshes
+    the registry builds: a raised bed blocks at its planks."""
+    bed = bench.item(2000.0, 1500.0)                   # 300 x 200 at (2000..2300, 1500..1700)
+    bench.open3d()
+    workspace = bench.workspace
+    camera = workspace.camera
+    camera.pan(2150.0 - camera.goal.target[0], 0.0)
+    camera.snap()
+    centre = bed.sceneBoundingRect().center()
+    workspace._camera._pose = type(camera.pose)(  # noqa: SLF001 - look at the middle of the bed
+        (centre.x(), centre.y()), camera.pose.distance_cm, 0.0, camera.pose.pitch_deg)
+    assert workspace.set_walking(True) is True
+    world, state = workspace.walk.world, workspace.walk.state
+    assert world.solid_ids == (str(bed.item_id),)
+    from open_garden_planner.core.scene3d.walk import is_free
+
+    assert is_free(world, *state.shown), "moved off the bed to the nearest free ground"
+    rect = bed.sceneBoundingRect()
+    outside = (state.shown[0] < rect.left() or state.shown[0] > rect.right()
+               or state.shown[1] < rect.top() or state.shown[1] > rect.bottom())
+    assert outside
+
+
+def test_an_edit_while_walking_rebuilds_the_walkers_world(bench: SelectionBench) -> None:
+    walk_ready(bench)
+    workspace = bench.workspace
+    workspace.set_walking(True)
+    before = workspace.walk.world
+    spot = workspace.walk.state.shown
+    wall = bench.item(spot[0] - 150.0, spot[1] - 100.0)        # dropped right onto the walker
+    bench.settle(120)
+    after = workspace.walk.world
+    assert after is not before and str(wall.item_id) in after.solid_ids
+    from open_garden_planner.core.scene3d.walk import is_free
+
+    assert workspace.walking and is_free(after, *workspace.walk.state.shown)
+    assert workspace.walk.state.shown != spot, "it was moved off the new solid"
+    wall.setSelected(True)                                     # a selection is no edit
+    bench.settle(80)
+    assert workspace.walk.world is after
+
+
+def test_reset_view_and_a_new_document_leave_walk_mode(bench: SelectionBench) -> None:
+    walk_ready(bench)
+    workspace = bench.workspace
+    workspace.set_walking(True)
+    workspace.reset_view()
+    assert not workspace.walking and not workspace.walk_action.isChecked()
+    bench.qtbot.waitUntil(lambda: not workspace.camera.moving, timeout=5000)
+    assert bench.host.cameras[-1][2] == FOV_DEG
+    workspace.set_walking(True)
+    bench.scene.clear()
+    bench.item(700.0, 700.0)
+    workspace.document_changed()
+    assert not workspace.walking
+    bench.settle(200)
+    assert bench.host.cameras[-1][2] == FOV_DEG, "the new document is framed by the orbit camera"
+
+
+def test_a_click_still_selects_while_walking(bench: SelectionBench) -> None:
+    walk_ready(bench)
+    a = next(item for item in bench.scene.items() if isinstance(item, RectangleItem))
+    workspace = bench.workspace
+    workspace.set_walking(True)
+    state = workspace.walk.state
+    bench.click(a)
+    assert bench.selected() == [a] and bench.host.frames_taken == ["pick"]
+    assert workspace.walking and workspace.walk.state == state, "a click is not a look"
+    bench.click()
+    assert bench.selected() == []
+
+
+def test_walk_mode_needs_a_running_view_and_free_ground(bench: SelectionBench) -> None:
+    workspace = bench.workspace
+    assert workspace.walk_action.isEnabled() is False, "no 3D yet: nothing to walk in"
+    assert workspace.set_walking(True) is False and workspace.walk is None
+    slab = RectangleItem(-500.0, -500.0, 6000.0, 4000.0, object_type=ObjectType.RAISED_BED,
+                         layer_id=bench.scene.active_layer.id)
+    bench.commands.execute(CreateItemCommand(bench.scene, slab, "slab"))   # covers the whole plan
+    bench.open3d()
+    assert workspace.walk_action.isEnabled() is True
+    workspace.walk_action.trigger()
+    assert not workspace.walking and not workspace.walk_action.isChecked()
+    assert workspace.status_text() == "There is no free ground to walk on."
+    assert bench.host.cameras[-1][2] == FOV_DEG
+
+
+def test_the_walker_walks_at_walking_pace_on_the_workspaces_timer(bench: SelectionBench) -> None:
+    """End to end through Qt's timer: W held for about half a second moves the walker
+    about 70 cm ahead (the timer's own jitter is the tolerance)."""
+    import time as stopwatch
+
+    walk_ready(bench)
+    workspace = bench.workspace
+    camera = workspace.camera
+    workspace._camera._pose = type(camera.pose)((2500.0, 1500.0), 2000.0, 0.0, 45.0)  # noqa: SLF001
+    workspace.set_walking(True)
+    start = workspace.walk.state.shown
+    began = stopwatch.perf_counter()
+    bench.key(Qt.Key.Key_W)
+    bench.settle(500)
+    bench.key(Qt.Key.Key_W, down=False)
+    held = stopwatch.perf_counter() - began
+    walked = workspace.walk.state.shown[1] - start[1]
+    assert walked == pytest.approx(WALK_SPEED_CM_S * held, abs=WALK_SPEED_CM_S * 0.12)
+    assert workspace.walk.state.shown[0] == pytest.approx(start[0], abs=1e-6)
+    assert WALKER_RADIUS_CM < walked < 200.0
