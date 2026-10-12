@@ -42,18 +42,21 @@ an RTX 4070 and on WARP; xcb + OpenGL on llvmpipe):
   comes back in the OLD size, because ``grabWindow()`` on a shown window renders
   into the swap chain as it is, and Qt resizes that when it next draws the
   window (20 of 20).
-- Qt draws the window when the platform asks for it — and Windows asks for
-  nothing while no part of the window is on a screen: a pane that GROWS beyond
-  the screen's edge gets its resize event and no expose, and its swap chain
-  keeps the old size for as long as it stays there (a raw grab: 49 x 500 px for
-  a 136 x 500 window). Round 3 waited for that expose; it never came. So the
-  host keeps no fact "the render target has caught up": it takes a frame and
-  looks at its size (``_frame``).
+- Qt draws the window when the platform asks for it — and nothing obliges a
+  platform to ask: a pane that GROWS beyond the screen's edge gets its resize
+  event and no expose, and with the display asleep its swap chain keeps the old
+  size for as long as it stays there (a raw grab: 49 x 500 px for a 136 x 500
+  window). Round 3 waited for that expose; it never came. So the host keeps no
+  fact "the render target has caught up": it takes a frame and looks at its
+  size (``_frame``) — against Qt's own rounding, half a device pixel
+  (``_other_size``).
 - A pick right after a resize, with no frame in between, MISSES the box under
   the cursor (the engine picks with the viewport of the frame it rendered last);
   after one frame — even one of the old size — it hits. Hence ``pick`` and
-  ``project`` take a frame themselves when the host has none since the last
-  resize.
+  ``project`` take a frame themselves when the host knows of none for the
+  window's size: one after a resize, none in the steady state, and ONE per
+  refusal — not one per call — while the render target stays behind
+  (``_require_frame``).
 - Under the SOFTWARE scene graph (``QT_QPA_PLATFORM=offscreen``) Qt Quick 3D
   draws nothing. ``renders_3d()`` is False there, and ``grab`` / ``pick`` /
   ``project`` raise ``EngineError``: a frame without the garden must not pass
@@ -91,7 +94,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 import numpy as np
 from PyQt6 import sip
@@ -128,6 +131,7 @@ from open_garden_planner.core.scene3d import (
 from .adapter import GroundPlacement, PartSpec
 from .geometry import BufferGeometry
 from .lifecycle import (
+    REPROBE_S,
     STALL_S,
     WAIT_READY_DEFAULT_S,
     HostState,
@@ -151,6 +155,17 @@ _LIGHT_FORWARD: Final = (0.0, 0.0, -1.0)  # a DirectionalLight shines down its l
 _LOG: Final = logging.getLogger(__name__)
 _KEEP_WARNINGS: Final = 50  # QML warnings kept for health() and logged; the rest are only counted
 _WAIT_STEP_MS: Final = 5    # wait_ready(): how long one pass of its event loop may block
+#: A pass of ``wait_ready()``'s event loop that took this much longer than its step was
+#: BUSY — a handler of something else ran in it — and is not counted as silence. (An idle
+#: 5 ms pass takes 5 to 16 ms on Windows.)
+_BUSY_PASS_S: Final = 0.05
+#: The longest timeout ``wait_ready()`` takes, seconds: a day. Qt's ``processEvents``
+#: takes milliseconds in a C int; ``inf`` and 3e6 s overflowed it.
+_LONGEST_WAIT_S: Final = 86_400.0
+#: Qt sizes a render target as ``qRound(logical × ratio)`` per side: the RIGHT frame is
+#: at most half a device pixel off ``logical × ratio``. The rest is the float error of
+#: that product (3000 × 1.1 is not exact; a neighbour's frame is at least 0.1 px further).
+_HALF_PIXEL: Final = 0.5 + 1e-6
 
 _API: Final = QSGRendererInterface.GraphicsApi
 #: Our names for Qt's graphics APIs — keyed by the enum MEMBER, never by its
@@ -328,6 +343,22 @@ def _get(target: QObject, name: str) -> Any:
     return target.property(name)
 
 
+class _Behind(NamedTuple):
+    """A frame that was refused for its size: what the host saw then (module docstring of
+    ``lifecycle.py``, ``REPROBE_S``)."""
+
+    facts: WindowFacts
+    signs: int      # ``_WindowWatch.signs`` at that moment
+    at: float       # ``time.perf_counter()``
+    found: str      # what Qt rendered instead
+
+
+def _behind_text(call: str, found: str) -> str:
+    return (f"{call}(): {found}: the render target has not caught up with the window's size "
+            "(Qt resizes it when it next draws the window — which it may not do while the "
+            "view is not on a screen). Not now; wait_ready() says when a frame can be had")
+
+
 class Quick3DHost:
     """The garden's Qt Quick 3D view (module docstring). GUI thread only.
 
@@ -365,6 +396,9 @@ class Quick3DHost:
         self.longest_quiet_s = 0.0
         #: (width, height, resize events) of the last frame that had the window's size.
         self._frame_at: tuple[int, int, int] | None = None
+        #: The last frame that was REFUSED for its size, and what the host saw then — so
+        #: that ``pick()`` / ``project()`` do not take a frame per call while nothing changes.
+        self._behind: _Behind | None = None
         started = time.perf_counter()
         self._view = QQuickView()
         self._watch = _WindowWatch(self._view)
@@ -597,66 +631,79 @@ class Quick3DHost:
 
     def wait_ready(self, timeout_s: float = WAIT_READY_DEFAULT_S) -> bool:
         """True: a frame of the window's size was just taken — a ``grab()`` issued right
-        after this answers. Returns within ``timeout_s``, and False promptly when nothing
-        is on its way. The contract, with its exact bounds, is ``lifecycle.py``'s
-        docstring.
+        after this answers. It starts no pass of the event loop once ``timeout_s`` is up,
+        and says False after ``STALL_S`` of silence, whatever the timeout. The contract,
+        with its exact bounds, is ``lifecycle.py``'s docstring.
 
-        It RUNS THE EVENT LOOP (not at all for ``timeout_s <= 0``): never call it from a
-        timer slot, a sync tick, a paint or a resize handler. A click handler does not
-        call it: ``try: host.pick(x, y)`` / ``except HostStateError``.
+        It is a NESTED EVENT LOOP (not for ``timeout_s <= 0``) and takes user input: the
+        workspace needs it nowhere on the GUI thread. Never call it from a timer slot, a
+        sync tick, a paint or a resize handler; a click handler calls
+        ``try: host.pick(x, y)`` / ``except HostStateError`` instead. What is queued on
+        the event loop is delivered in whole passes: it returns within ``timeout_s`` PLUS
+        whatever was queued when its last pass began.
+
+        ``timeout_s`` is clamped to a day; a negative one, or one that is not a number, is 0.
         """
         self._open("wait_ready")
         started = time.perf_counter()
-        timeout_s = max(float(timeout_s), 0.0)
+        timeout_s = float(timeout_s)
+        timeout_s = min(timeout_s, _LONGEST_WAIT_S) if timeout_s > 0.0 else 0.0  # nan: 0
         if timeout_s > 0.0 and self.is_visible():
             # What is queued already — the resize a parent's layout is about to hand this
             # window, the expose after one — ONCE, and inside the time: a host that reads
             # live at its old size would otherwise answer for that size.
             QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents,
                                            max(1, int(timeout_s * 1000.0)))
-        ready = self._await_frame(started, started + timeout_s, timeout_s)
+        ready = self._await_frame(started + timeout_s, timeout_s)
         self._log("ready", ok=ready, state=self.state.value,
                   ms=round((time.perf_counter() - started) * 1000.0, 1))
         return ready
 
-    def _await_frame(self, started: float, deadline: float, timeout_s: float) -> bool:
+    def _await_frame(self, deadline: float, timeout_s: float) -> bool:
         """Look; on a live host take a frame; wait for a sign of progress; again.
 
         Ends with True when a frame has the window's size. Ends with False when the host
         is not on its way (hidden, new, spent, closed, no graphics device), when the time
-        is up, when nothing happened for ``STALL_S``, or when no event loop can run.
+        is up, after ``STALL_S`` of SILENCE, or when no event loop can run.
         A frame is taken only when something happened since the last one: two frames of
         another size with nothing in between is how "nothing is on its way" looks.
+
+        Silence is time the event loop was IDLE with no sign of progress — counted pass
+        by pass, never as wall time: a pass that overran its step was busy with a handler
+        of something else (a plan load, a repaint), and the repaint this host waits for
+        may be queued right behind it. (Counted as wall time, a GUI thread busy for 0.7 s
+        inside the wait made ``wait_ready(5)`` say False after 0.75 s — and True when
+        asked again.)
         """
         seen: object = None  # what the last look saw: (state, facts, signs)
-        progress_at = started
-        quiet = 0.0
+        silence = longest = 0.0
         probed_at_sign: int | None = None
         passes_left = int(timeout_s * 1000.0 / _WAIT_STEP_MS) + 2
         while True:
             facts = self._facts()
             state = state_of(facts, closed=self._closed, spent=self._spent)
-            now = time.perf_counter()
             look = (state, facts, self._watch.signs)
             if look != seen:
-                seen, progress_at = look, now
-            quiet = max(quiet, now - progress_at)
+                seen, longest, silence = look, max(longest, silence), 0.0
             if state is HostState.LIVE and facts is not None:
                 if probed_at_sign != self._watch.signs:
                     probed_at_sign = self._watch.signs
                     if self._frame_fits(facts):
-                        self.longest_quiet_s = max(self.longest_quiet_s, quiet)
+                        self.longest_quiet_s = max(self.longest_quiet_s, longest)
                         return True
-                    progress_at = now = time.perf_counter()  # the frame's own time is no silence
             elif state is not HostState.STARTING or self._scene_graph_error is not None:
                 return False
-            until = min(deadline, progress_at + STALL_S)
-            if now >= until or passes_left <= 0:
+            now = time.perf_counter()
+            left = min(deadline - now, STALL_S - silence)
+            if left <= 0.0 or passes_left <= 0:
                 return False  # the time is up, or nothing is on its way
             passes_left -= 1
-            step = max(1, min(_WAIT_STEP_MS, int((until - now) * 1000.0)))
+            step = max(1, min(_WAIT_STEP_MS, int(left * 1000.0)))
             if not self._run_events(step):
                 return False  # the application is quitting: no event loop will run
+            took = time.perf_counter() - now
+            if took <= step / 1000.0 + _BUSY_PASS_S:
+                silence += took  # an idle pass; a longer one was busy: that is not silence
 
     def _frame_fits(self, facts: WindowFacts) -> bool:
         """THE witness, taken as a probe: a frame of this live host has the window's size.
@@ -763,14 +810,18 @@ class Quick3DHost:
 
     @staticmethod
     def _other_size(image: QImage, facts: WindowFacts) -> str | None:
-        """None when the image has the window's size (at the image's own pixel ratio),
-        else what Qt rendered instead. EXACTLY the window's size: less than one device
-        pixel off, which is what rounding at a fractional ratio can do. (The check
-        allowed two pixels until review round 4 — and a frame of the size the pane had
-        before a one-pixel move passed for the current one.)"""
+        """None when the image is the frame of a window of this size (at the image's own
+        pixel ratio), else what Qt rendered instead.
+
+        Qt sizes a render target as ``QSize(logical) * ratio`` — ``qRound`` per side — so
+        the right frame is at most HALF a device pixel off ``logical × ratio``; and at a
+        ratio of 1 or more the frame of a window one logical pixel smaller or larger is
+        further off than that. (The check allowed two pixels until review round 4, and
+        "less than one" until round 5: at 125 % a pane grown from 442 to 443 px got its
+        old frame back — 553 px, 0.75 px off 553.75; its own is 554.)"""
         ratio = float(image.devicePixelRatio())
-        if (abs(image.width() - facts.width * ratio) < 1.0
-                and abs(image.height() - facts.height * ratio) < 1.0):
+        if (abs(image.width() - facts.width * ratio) <= _HALF_PIXEL
+                and abs(image.height() - facts.height * ratio) <= _HALF_PIXEL):
             return None
         return (f"Qt rendered a {image.width()} x {image.height()} px image for a "
                 f"{facts.width} x {facts.height} window at ratio {ratio:g}")
@@ -778,21 +829,21 @@ class Quick3DHost:
     def _frame(self, call: str, label: str, facts: WindowFacts) -> QImage:
         """One frame of a LIVE host, checked — THE witness (``lifecycle.py``). It has the
         window's size, and the host knows that for this size until the next resize; or
-        ``HostStateError``: the render target is behind the window. Nothing is latched:
-        the next call takes a frame again."""
+        ``HostStateError``: the render target is behind the window. ``grab()`` and
+        ``wait_ready()`` take a frame again whenever they are asked; ``pick()`` and
+        ``project()`` let the refusal stand for a moment (``_require_frame``)."""
         image = self._render(call, label, HostState.LIVE)
         found = self._other_size(image, facts)
         if found is None:
             self._frame_at = (facts.width, facts.height, self._watch.resizes)
+            self._behind = None
             return image
         self._frame_at = None
+        self._behind = _Behind(facts, self._watch.signs, time.perf_counter(), found)
         self.stale_frames += 1
         self._log("stale_frame", call=call, label=label, px=f"{image.width()}x{image.height()}",
                   window=f"{facts.width}x{facts.height}")
-        raise HostStateError(
-            f"{call}(): {found}: the render target has not caught up with the window's size "
-            "(Qt resizes it when it next draws the window — which it may not do while the "
-            "view is not on a screen). Not now; wait_ready() says when a frame can be had")
+        raise HostStateError(_behind_text(call, found))
 
     def device_pixel_ratio(self) -> float:
         self._open("device_pixel_ratio")
@@ -968,14 +1019,26 @@ class Quick3DHost:
         """``pick`` / ``project`` answer for a frame of the window's size. The host knows
         of one when it took it since the last resize; if not, it takes one now — measured:
         without a frame after a resize the engine picks with the OLD viewport and misses
-        (module docstring). ``HostStateError`` when that frame has another size."""
+        (module docstring). ``HostStateError`` when that frame has another size.
+
+        ONE frame per refusal, not per call: while the host sees what it saw when a frame
+        was refused — the same facts, no sign of progress counted — and ``REPROBE_S`` has
+        not passed, the call is refused on the evidence of that frame. (Review round 5:
+        200 ``project()`` calls of one tick took 200 frames, all refused.) The time bound
+        is for a host that recovered without a sign the watch counts: it is refused for
+        ``REPROBE_S`` at most."""
         state, facts = self._look(call)
         self._require_3d(call)
         if state is not HostState.LIVE:
             raise HostStateError(f"{call}(): {self._why(state, facts)}")
-        if self._frame_at != (facts.width, facts.height, self._watch.resizes):
-            self.probes += 1
-            self._frame(call, "its own frame", facts)
+        if self._frame_at == (facts.width, facts.height, self._watch.resizes):
+            return
+        behind = self._behind
+        if (behind is not None and behind.facts == facts and behind.signs == self._watch.signs
+                and time.perf_counter() - behind.at < REPROBE_S):
+            raise HostStateError(_behind_text(call, behind.found))
+        self.probes += 1
+        self._frame(call, "its own frame", facts)
 
     def _destroy(self, part: _Part) -> None:
         """Destroy one Model in the engine. The part leaves the host's books ONLY when the

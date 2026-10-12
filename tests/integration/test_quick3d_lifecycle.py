@@ -55,6 +55,7 @@ deadlock is 5 of 5 on both.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -215,6 +216,15 @@ def observed(order: str, tmp_path: Path, *arguments: str, **environment: str) ->
 # ── the judge's own idea of a correct frame ──────────────────────────────────
 
 
+def qt_round(value: float) -> int:
+    """Qt's ``qRound`` for a positive value: half a pixel rounds UP. Qt sizes a render
+    target as ``QSize(logical) * ratio`` — this, per side. Written out HERE, and not
+    borrowed from the host: a judge that reuses the host's rule is blind exactly where the
+    host is wrong (review round 5: both said "less than one device pixel off", and at
+    125 % both took the frame of a 442 px pane for a 443 px one)."""
+    return int(math.floor(value + 0.5))
+
+
 def frame_problem(frame: Any, window: list[float] | None = None) -> str | None:
     """None when ``frame`` shows the probe where it must be — else what is wrong with it.
 
@@ -226,9 +236,12 @@ def frame_problem(frame: Any, window: list[float] | None = None) -> str | None:
     if not (isinstance(frame, dict) and "red" in frame):
         return f"not a frame: {frame!r}"
     width, height, ratio = frame["w"], frame["h"], frame["dpr"]
-    # exactly the window's size: less than one device pixel off (a fractional ratio rounds)
-    if window is not None and (abs(width - window[0] * ratio) >= 1 or abs(height - window[1] * ratio) >= 1):
-        return f"a {width} x {height} px frame for a {window[0]:g} x {window[1]:g} window"
+    # exactly the frame Qt makes for a window of this size: its own rounding, per side
+    if window is not None:
+        own = (qt_round(window[0] * ratio), qt_round(window[1] * ratio))
+        if (width, height) != own:
+            return (f"a {width} x {height} px frame for a {window[0]:g} x {window[1]:g} window "
+                    f"(its own at ratio {ratio:g}: {own[0]} x {own[1]} px)")
     if frame["box"] is None:
         return "no red pixel: the box is not in the frame"
     side = child.BOX_SIDE_PX * ratio
@@ -294,7 +307,8 @@ def test_the_truth_table_covers_every_guarded_order() -> None:
     """An order the table does not know would run unjudged (``special``: the orders with
     a test of their own below)."""
     special = {"grab_show", "close_anything", "parent_destroyed_anything", "wait_while_it_goes",
-               "sink_clear_orders", "random_walk", "pane_off_screen", "pane_without_paint"}
+               "sink_clear_orders", "random_walk", "pane_off_screen", "pane_without_paint",
+               "pane_one_pixel_wider"}
     guarded = {name for name in child.ORDERS
                if not name.startswith(("unguarded_", "deadlock_"))}
     assert guarded == set(TRUTH) | special
@@ -306,8 +320,16 @@ def test_the_judge_knows_a_wrong_frame_when_it_sees_one() -> None:
     size, a box in the wrong place, a box of the wrong size — each must be named."""
     good = {"w": 447, "h": 500, "dpr": 1.0, "red": 2550, "box": [198, 225, 249, 275]}
     assert frame_problem(good, [447.0, 500.0]) is None
-    assert frame_problem({**good, "w": 670, "h": 750, "dpr": 1.5, "red": 5625,
-                          "box": [297, 337, 373, 413]}, [447.0, 500.0]) is None
+    scaled = {**good, "w": 671, "h": 750, "dpr": 1.5, "red": 5625, "box": [298, 337, 373, 413]}
+    assert frame_problem(scaled, [447.0, 500.0]) is None       # 447 x 1.5 = 670.5: Qt gives 671
+    assert "its own at ratio 1.5: 671 x 750" in str(frame_problem({**scaled, "w": 670}, [447, 500]))
+    # review round 5, measured at 125 %: the frame of a 442 px pane (553 px) is no frame of a
+    # 443 px pane (554 px) — and the judge said yes to it, with the host's own "< 1 px"
+    at_125 = {"w": 553, "h": 625, "dpr": 1.25, "red": 3906, "box": [245, 281, 308, 344]}
+    assert frame_problem(at_125, [442, 500]) is None
+    assert "its own at ratio 1.25: 554 x 625" in str(frame_problem(at_125, [443, 500]))
+    assert frame_problem({**at_125, "w": 554}, [443, 500]) is None
+    assert [qt_round(x) for x in (552.5, 553.75, 670.5, 2.4, 2.5, 0.49)] == [553, 554, 671, 2, 3, 0]
     assert "no red pixel" in str(frame_problem({**good, "red": 0, "box": None}))
     assert "window" in str(frame_problem(good, [0.0, 500.0]))            # the collapsed pane's lie
     assert "predicted" in str(frame_problem({**good, "box": [100, 225, 151, 275]}))
@@ -437,19 +459,25 @@ def test_after_wait_ready_the_frame_has_the_windows_new_size(tmp_path: Path, ord
                 assert is_refusal(at_once[call]) and STALE in at_once[call], (step, call)
             # …and wait_ready(0) says so without delivering the expose that would mend it
             assert out[f"ready0_{step.removesuffix('_at_once')}"] is False, step
-        assert out["stale_frames"] >= 8, "two transitions: three calls and one probe each"
+        # two transitions; in each, grab() takes the frame that is refused, pick() and
+        # project() refuse on its evidence WITHOUT another (review round 5: they took one
+        # per call), and wait_ready(0) takes its own probe: 4 frames, not 8
+        assert 4 <= out["stale_frames"] < 8, out["stale_frames"]
 
 
-#: What a ``wait_ready()`` may take beyond its timeout: the ONE thing it cannot cut short — a
-#: Qt event handler that is running when the time is up, or its probe frame. Measured on the
-#: dev box, whose display sleeps: 1.0 to 1.4 s for one expose; milliseconds elsewhere.
-ONE_HANDLER_S = 2.0
+#: What a ``wait_ready()`` may take beyond its timeout in THIS matrix. The contract's bound is
+#: "whatever was queued on the event loop when its last pass began" — one pass delivers the
+#: whole queue, not one event (review round 5: 0.2 s asked, 1.80 s taken behind six handlers
+#: of 0.3 s). Nothing of ours is queued here, so what is left is Qt's own handling of the
+#: window's events: measured 1.0 to 1.4 s for one expose with the display asleep (1.22 s in
+#: the walks), milliseconds elsewhere.
+QUEUED_S = 2.0
 #: ``wait_ready(0)`` delivers no event and waits for nothing: all it may take is ONE probe
 #: frame (1 to 4 ms; about 0.3 s behind a frame Qt is presenting while the display sleeps).
 ONE_FRAME_S = 0.75
 #: "Promptly": how soon a wait that will not succeed must answer False, whatever its timeout —
 #: ``STALL_S`` after the last sign of progress (``lifecycle.py``, sentence 3).
-PROMPT_S = STALL_S + ONE_HANDLER_S
+PROMPT_S = STALL_S + QUEUED_S
 STALE = "render target has not caught up"
 
 
@@ -457,7 +485,7 @@ def wait_problem(ready: Any, took: float, timeout: float) -> str | None:
     """Sentences 2 and 3 of the contract, for ONE ``wait_ready(timeout)`` call."""
     if ready is not True and ready is not False:
         return f"wait_ready({timeout:g}) answered {str(ready)[:120]!r}"
-    if took > timeout + (ONE_HANDLER_S if timeout > 0 else ONE_FRAME_S):
+    if took > timeout + (QUEUED_S if timeout > 0 else ONE_FRAME_S):
         return f"wait_ready({timeout:g}) took {took} s: not within its timeout"
     if ready is False and took > PROMPT_S:
         return (f"wait_ready({timeout:g}) said False only after {took} s: it waited for what was "
@@ -618,7 +646,7 @@ def test_a_seeded_random_order_never_yields_a_wrong_frame(tmp_path: Path) -> Non
       with the probe at the predicted pixels — or a ``HostStateError``;
     - a pick that answers hits the probe, a projection that answers is the centre;
     - ``wait_ready()`` True is followed by a frame; every ``wait_ready(t)`` is back within
-      ``t`` plus ONE Qt event handler (``ONE_HANDLER_S``), and a False within ``PROMPT_S``
+      ``t`` plus what Qt had queued for the window (``QUEUED_S``), and a False within ``PROMPT_S``
       whatever ``t`` was;
     - where ALL of the pane is on a screen, a window Qt shows comes up once the event loop
       ran. (Round 3 said "never stuck" without that condition — and on a 1024 px runner the
@@ -770,7 +798,51 @@ def test_a_view_that_nothing_draws_is_refused_promptly_and_answers_when_painting
     assert out["wait_zero_s"] <= ONE_FRAME_S, "wait_ready(0) waits for nothing: at most one frame"
     for key in ("grown", "shrunk", "default", "long"):  # STALL_S for a sign of progress, no longer
         assert STALL_S - 0.1 <= out[f"wait_{key}_s"] <= STALL_S + 1.0, (key, out[f"wait_{key}_s"])
-    assert out["stale_frames"] >= 15 and out["probes"] >= 5
+    # five looks of three calls each and five waits: ONE frame per look — grab()'s; pick()
+    # and project() refuse on its evidence (review round 5: they took one each, 21 in all)
+    # — and one probe per wait
+    assert 8 <= out["stale_frames"] <= 13 and out["probes"] >= 5, (out["stale_frames"], out["probes"])
+
+
+def test_at_125_percent_a_pane_one_pixel_wider_does_not_get_its_old_frame(tmp_path: Path) -> None:
+    """Review round 5, P1-1 — sentence 1 of the contract on a real window at a fractional
+    pixel ratio (``QT_SCALE_FACTOR=1.25``; Direct3D 11 on the GPU and on WARP, xcb).
+
+    The pane is made ONE logical pixel wider while nothing draws the view. Qt's render
+    target is still the narrower pane's — a RAW grab says so, asserted first: without
+    that this row would prove nothing — and that frame is less than one device pixel
+    off the wider pane's size: 553 px for a 443 px pane at 1.25, whose own frame is 554.
+    Round 4's host handed it out and picked with the old viewport. Now the host refuses,
+    on the evidence of the frame, and answers again when Qt has drawn."""
+    out = observed("pane_one_pixel_wider", tmp_path, QT_SCALE_FACTOR="1.25")
+    assert out["ready"] is True and out["dpr"] == 1.25, out["dpr"]
+    judge_step("pane_one_pixel_wider", "open", out["open"], FRAME)
+    assert len(out["pairs"]) == len(child.HALF_PIXEL_WIDTHS)
+    said: list[str] = []
+    for width, pair in zip(child.HALF_PIXEL_WIDTHS, out["pairs"], strict=True):
+        before, wider, raw = pair["before"], pair["wider"], pair["raw"]
+        assert pair["ready"] is True and before["window"][0] == width, (width, before["window"])
+        judge_step("pane_one_pixel_wider", f"{width} px", before, FRAME)
+        assert wider["window"] == [width + 1, before["window"][1]], wider["window"]
+        old, own = qt_round(width * 1.25), qt_round((width + 1) * 1.25)
+        # NOT vacuous: Qt's render target IS behind — and by less than one device pixel
+        assert raw[0] == before["grab"]["w"] == old and old != own, (raw, old, own)
+        assert abs(raw[0] - (width + 1) * 1.25) < 1.0, "the pair round 4's rule let through"
+        assert wider["state"] == "live", "every fact Qt reports is in place"
+        for call in ("grab", "pick", "project"):
+            assert is_refusal(wider[call]) and STALE in wider[call], (
+                f"{width} -> {width + 1} px at 125 %: {call}() answered {str(wider[call])[:160]!r} "
+                f"while Qt's frame is {raw[0]} px wide and the pane's own is {own} px")
+        said.append(f"{width} -> {width + 1} px: Qt's frame {raw[0]} px, the pane's own {own} px, refused")
+    assert out["ready_painting"] is True, "painting resumed: the host must come up again"
+    judge_step("pane_one_pixel_wider", "painting", out["painting"], FRAME)
+    assert out["health"]["ok"] is True
+    artifacts = os.environ.get("OGP_RENDER3D_ARTIFACTS")
+    if artifacts:
+        Path(artifacts).mkdir(parents=True, exist_ok=True)
+        (Path(artifacts) / "pane-one-pixel-wider.txt").write_text(
+            f"{sys.platform}: ratio {out['dpr']:g}; " + "; ".join(said)
+            + f"; frames refused for their size {out['stale_frames']}\n", encoding="utf-8")
 
 
 def test_wait_ready_comes_back_when_the_window_goes_during_the_wait(tmp_path: Path) -> None:
