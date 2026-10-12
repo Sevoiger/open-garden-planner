@@ -40,10 +40,20 @@ an RTX 4070 and on WARP; xcb + OpenGL on llvmpipe):
   only when the event loop delivered the resize event. SYNCHRONOUSLY
   (``showFullScreen()``): window and root item agree at once — and a grab still
   comes back in the OLD size, because ``grabWindow()`` on a shown window renders
-  into the swap chain as it is, and Qt resizes that with the next expose
-  (20 of 20). In every measured case the stale spell is exactly the time between
-  a resize event and the next expose event of the exposed window — which is the
-  fact the host tracks (``_WindowWatch``).
+  into the swap chain as it is, and Qt resizes that when it next draws the
+  window (20 of 20).
+- Qt draws the window when the platform asks for it — and Windows asks for
+  nothing while no part of the window is on a screen: a pane that GROWS beyond
+  the screen's edge gets its resize event and no expose, and its swap chain
+  keeps the old size for as long as it stays there (a raw grab: 49 x 500 px for
+  a 136 x 500 window). Round 3 waited for that expose; it never came. So the
+  host keeps no fact "the render target has caught up": it takes a frame and
+  looks at its size (``_frame``).
+- A pick right after a resize, with no frame in between, MISSES the box under
+  the cursor (the engine picks with the viewport of the frame it rendered last);
+  after one frame — even one of the old size — it hits. Hence ``pick`` and
+  ``project`` take a frame themselves when the host has none since the last
+  resize.
 - Under the SOFTWARE scene graph (``QT_QPA_PLATFORM=offscreen``) Qt Quick 3D
   draws nothing. ``renders_3d()`` is False there, and ``grab`` / ``pick`` /
   ``project`` raise ``EngineError``: a frame without the garden must not pass
@@ -118,7 +128,14 @@ from open_garden_planner.core.scene3d import (
 from .adapter import GroundPlacement, PartSpec
 from .geometry import BufferGeometry
 from .ground_tiles import GroundTileError, GroundTiles
-from .lifecycle import HostState, WindowFacts, state_of, why_no_frame
+from .lifecycle import (
+    STALL_S,
+    WAIT_READY_DEFAULT_S,
+    HostState,
+    WindowFacts,
+    state_of,
+    why_no_frame,
+)
 from .look import NEUTRAL_DAY, Look
 from .materials import PART_COMPONENTS, tint_uniform
 from .shots import PerspectiveShot, Shot, TopDownShot
@@ -236,35 +253,46 @@ class _Part:
         self.geometry = None
 
 
+#: The events of a view that can change what a frame of it is.
+_SIGNS: Final = frozenset({
+    QEvent.Type.Resize, QEvent.Type.Expose, QEvent.Type.UpdateRequest, QEvent.Type.Show,
+    QEvent.Type.Hide, QEvent.Type.WindowStateChange, QEvent.Type.PlatformSurface})
+
+
 class _WindowWatch(QObject):
-    """Two facts only events can tell, latched from the view's own event stream (an
-    event filter runs on the GUI thread, before the window handles the event).
+    """What only the view's own event stream can tell (an event filter runs on the GUI
+    thread, before the window handles the event).
 
     ``created``: a platform window was created at some point (Qt's
     ``PlatformSurface`` event). ``QWindow.handle()`` is the same fact and PyQt6
     does not bind it; ``winId()`` would CREATE the window.
 
-    ``target_synced``: the render target has the window's size. A resize event
-    clears it; the next expose event of the EXPOSED window sets it — that expose
-    is what makes Qt resize the swap chain (``lifecycle.py``, fact T). Never
-    derived from ``frameSwapped``: that signal is queued from the render thread,
-    and one that was emitted before a resize can arrive after it.
+    Two COUNTERS, and nothing an event could switch on:
+
+    - ``resizes``: resize events so far. A frame taken before the last one says
+      nothing about a frame now (``Quick3DHost._frame_at``).
+    - ``signs``: events so far that can change what a frame is (``_SIGNS``).
+      ``wait_ready()`` reads it as "something happened since I looked".
+
+    No event here ever says "a frame can be had": only a frame says that. Round 3
+    latched "an expose arrived after the last resize" into the state — and Windows
+    sends none to a window that is not on a screen (``lifecycle.py``).
     """
 
     def __init__(self, parent: QWindow) -> None:
         super().__init__(parent)
         self.created = False
-        self.target_synced = False
+        self.resizes = 0
+        self.signs = 0
 
-    def eventFilter(self, watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802 - Qt's name
+    def eventFilter(self, _watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802 - Qt's name
         if event is None:
             return False
         kind = event.type()
+        if kind in _SIGNS:
+            self.signs += 1
         if kind == QEvent.Type.Resize:
-            self.target_synced = False
-        elif kind == QEvent.Type.Expose:
-            if isinstance(watched, QWindow) and watched.isExposed():
-                self.target_synced = True
+            self.resizes += 1
         elif (isinstance(event, QPlatformSurfaceEvent) and event.surfaceEventType()
                 == QPlatformSurfaceEvent.SurfaceEventType.SurfaceCreated):
             self.created = True
@@ -325,10 +353,19 @@ class Quick3DHost:
         self.slot_calls_off_the_gui_thread = 0
         self.frames_presented = 0
         self.grabs = 0
-        #: Grabs of a live host that came back in another size than the window's (the
-        #: render target was stale although the event stream said otherwise). Each was
-        #: refused with ``HostStateError``. Expected: 0 — the render tier requires it.
+        #: Frames of a live host that came back in another size than the window's and
+        #: were refused (``grab``, ``pick``, ``project``, ``wait_ready()``'s probe). Not
+        #: an error count: this is HOW the host learns that the render target is behind —
+        #: right after a resize Qt delivered inside the call, or while no part of the
+        #: view is on a screen.
         self.stale_frames = 0
+        #: Frames the host took for itself, to know (``wait_ready``, ``pick``, ``project``).
+        self.probes = 0
+        #: The longest ``wait_ready()`` waited without a sign of progress before the host
+        #: came up, seconds — what ``STALL_S`` has to stay clear of (a diagnostic).
+        self.longest_quiet_s = 0.0
+        #: (width, height, resize events) of the last frame that had the window's size.
+        self._frame_at: tuple[int, int, int] | None = None
         started = time.perf_counter()
         self._view = QQuickView()
         self._watch = _WindowWatch(self._view)
@@ -381,8 +418,7 @@ class Quick3DHost:
             surface_created=self._watch.created, visible=bool(view.isVisible()),
             minimised=bool(minimised), width=int(view.width()), height=int(view.height()),
             scene_graph=bool(view.isSceneGraphInitialized()), exposed=bool(view.isExposed()),
-            root_width=float(self._root.width()), root_height=float(self._root.height()),
-            target_synced=self._watch.target_synced)
+            root_width=float(self._root.width()), root_height=float(self._root.height()))
 
     @property
     def state(self) -> HostState:
@@ -568,33 +604,81 @@ class Quick3DHost:
         else:
             self._view.hide()
 
-    def wait_ready(self, timeout_s: float = 10.0) -> bool:
-        """Deliver what is pending, then wait while the host is ``STARTING``. True means
-        ``LIVE``: the next ``grab()`` / ``pick()`` / ``project()`` answers. The contract
-        — when it waits, when it answers False at once — is ``lifecycle.py``'s docstring.
+    def wait_ready(self, timeout_s: float = WAIT_READY_DEFAULT_S) -> bool:
+        """True: a frame of the window's size was just taken — a ``grab()`` issued right
+        after this answers. Returns within ``timeout_s``, and False promptly when nothing
+        is on its way. The contract, with its exact bounds, is ``lifecycle.py``'s
+        docstring.
 
-        It runs the event loop; call it where re-entrancy is acceptable. Bounded in
-        every case: ``timeout_s``, a pass that blocks for events (``_WAIT_STEP_MS``)
-        instead of spinning, and no pass at all once the application is quitting.
+        It RUNS THE EVENT LOOP (not at all for ``timeout_s <= 0``): never call it from a
+        timer slot, a sync tick, a paint or a resize handler. A click handler does not
+        call it: ``try: host.pick(x, y)`` / ``except HostStateError``.
         """
         self._open("wait_ready")
         started = time.perf_counter()
-        deadline = started + timeout_s
-        if self.is_visible():
-            # ONCE, without waiting, for ANY visible host — also one that reads live: the
-            # resize a parent's layout is about to hand this window, and the expose that
-            # resizes the render target after a synchronous resize, are still in the queue
-            QCoreApplication.processEvents()
-        passes_left = int(max(timeout_s, 0.0) * 1000.0 / _WAIT_STEP_MS) + 2
-        while (self.state is HostState.STARTING and self._scene_graph_error is None
-               and time.perf_counter() < deadline and passes_left > 0):
-            passes_left -= 1
-            if not self._run_events(_WAIT_STEP_MS):
-                break  # the application is quitting: no event loop will run, nothing can arrive
-        ready = self.state is HostState.LIVE
+        timeout_s = max(float(timeout_s), 0.0)
+        if timeout_s > 0.0 and self.is_visible():
+            # What is queued already — the resize a parent's layout is about to hand this
+            # window, the expose after one — ONCE, and inside the time: a host that reads
+            # live at its old size would otherwise answer for that size.
+            QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents,
+                                           max(1, int(timeout_s * 1000.0)))
+        ready = self._await_frame(started, started + timeout_s, timeout_s)
         self._log("ready", ok=ready, state=self.state.value,
                   ms=round((time.perf_counter() - started) * 1000.0, 1))
         return ready
+
+    def _await_frame(self, started: float, deadline: float, timeout_s: float) -> bool:
+        """Look; on a live host take a frame; wait for a sign of progress; again.
+
+        Ends with True when a frame has the window's size. Ends with False when the host
+        is not on its way (hidden, new, spent, closed, no graphics device), when the time
+        is up, when nothing happened for ``STALL_S``, or when no event loop can run.
+        A frame is taken only when something happened since the last one: two frames of
+        another size with nothing in between is how "nothing is on its way" looks.
+        """
+        seen: object = None  # what the last look saw: (state, facts, signs)
+        progress_at = started
+        quiet = 0.0
+        probed_at_sign: int | None = None
+        passes_left = int(timeout_s * 1000.0 / _WAIT_STEP_MS) + 2
+        while True:
+            facts = self._facts()
+            state = state_of(facts, closed=self._closed, spent=self._spent)
+            now = time.perf_counter()
+            look = (state, facts, self._watch.signs)
+            if look != seen:
+                seen, progress_at = look, now
+            quiet = max(quiet, now - progress_at)
+            if state is HostState.LIVE and facts is not None:
+                if probed_at_sign != self._watch.signs:
+                    probed_at_sign = self._watch.signs
+                    if self._frame_fits(facts):
+                        self.longest_quiet_s = max(self.longest_quiet_s, quiet)
+                        return True
+                    progress_at = now = time.perf_counter()  # the frame's own time is no silence
+            elif state is not HostState.STARTING or self._scene_graph_error is not None:
+                return False
+            until = min(deadline, progress_at + STALL_S)
+            if now >= until or passes_left <= 0:
+                return False  # the time is up, or nothing is on its way
+            passes_left -= 1
+            step = max(1, min(_WAIT_STEP_MS, int((until - now) * 1000.0)))
+            if not self._run_events(step):
+                return False  # the application is quitting: no event loop will run
+
+    def _frame_fits(self, facts: WindowFacts) -> bool:
+        """THE witness, taken as a probe: a frame of this live host has the window's size.
+        (On a backend that draws no 3D there is no frame to ask: ``grab`` raises
+        ``EngineError`` there whatever the state, and the state alone answers.)"""
+        if self.graphics_api() not in RENDERING_APIS:
+            return True
+        self.probes += 1
+        try:
+            self._frame("wait_ready", "probe", facts)
+        except HostStateError:
+            return False
+        return True
 
     def close(self) -> None:
         """Destroy every Model, then the view (and its container). The host is dead after.
@@ -656,42 +740,70 @@ class Quick3DHost:
         (the offscreen frame; the host is ``SPENT`` after). ``EngineError`` when
         this backend cannot render 3D at all, or no image comes back.
 
-        The image's size is checked against the window's whatever the state said:
-        on a live host a mismatch means the render target was stale after all —
-        the host notes it (it reads ``STARTING`` until the next expose) and raises
-        ``HostStateError``; it never hands out a frame of another size.
+        The image's size is checked against the window's, always: that check — not
+        the state — is what sentence 1 of the contract rests on. On a live host a
+        frame of another size raises ``HostStateError`` (the render target is behind
+        the window); it is never handed out.
         """
         state, facts = self._look("grab")
         self._require_3d("grab")
         if state is HostState.NEW and self._container is None:
             self._spent = True  # before the grab: whatever happens, never a second one
             self._view.create()
+            image = self._render("grab", label, state)
+            found = self._other_size(image, facts)
+            if found is not None:  # the one offscreen frame: there is no "later" for it
+                raise EngineError(f"grab({label!r}): {found} — not the scene at this size")
         elif state is not HostState.LIVE:
             raise HostStateError(f"grab(): {self._why(state, facts)}")
+        else:
+            image = self._frame("grab", label, facts)
+        self.grabs += 1
+        return image
+
+    def _render(self, call: str, label: str, state: HostState) -> QImage:
+        """Render now and read back; ``EngineError`` when Qt hands back no image."""
         started = time.perf_counter()
         image = self._view.grabWindow()
         elapsed = (time.perf_counter() - started) * 1000.0
-        self._log("grab", label=label, ms=round(elapsed, 1), state=state.value,
+        self._log("grab", call=call, label=label, ms=round(elapsed, 1), state=state.value,
                   px=f"{image.width()}x{image.height()}")
         if image.isNull() or image.width() == 0 or image.height() == 0:
-            raise EngineError(f"grab({label!r}) returned no image")
-        ratio = float(image.devicePixelRatio())
-        if (abs(image.width() - facts.width * ratio) > 2.0
-                or abs(image.height() - facts.height * ratio) > 2.0):
-            found = (f"Qt rendered a {image.width()} x {image.height()} px image for a "
-                     f"{facts.width} x {facts.height} window at ratio {ratio:g}")
-            if state is not HostState.LIVE:  # the one offscreen frame: there is no "later"
-                raise EngineError(f"grab({label!r}): {found} — not the scene at this size")
-            # A state fact, not an engine failure: the render target has not caught up.
-            self._watch.target_synced = False
-            self.stale_frames += 1
-            self._log("stale_frame", label=label, px=f"{image.width()}x{image.height()}",
-                      window=f"{facts.width}x{facts.height}")
-            raise HostStateError(
-                f"grab(): {found}: the render target has not caught up with the window's size "
-                "(Qt resizes it with the next expose). Call wait_ready() first")
-        self.grabs += 1
+            raise EngineError(f"{call}({label!r}) returned no image")
         return image
+
+    @staticmethod
+    def _other_size(image: QImage, facts: WindowFacts) -> str | None:
+        """None when the image has the window's size (at the image's own pixel ratio),
+        else what Qt rendered instead. EXACTLY the window's size: less than one device
+        pixel off, which is what rounding at a fractional ratio can do. (The check
+        allowed two pixels until review round 4 — and a frame of the size the pane had
+        before a one-pixel move passed for the current one.)"""
+        ratio = float(image.devicePixelRatio())
+        if (abs(image.width() - facts.width * ratio) < 1.0
+                and abs(image.height() - facts.height * ratio) < 1.0):
+            return None
+        return (f"Qt rendered a {image.width()} x {image.height()} px image for a "
+                f"{facts.width} x {facts.height} window at ratio {ratio:g}")
+
+    def _frame(self, call: str, label: str, facts: WindowFacts) -> QImage:
+        """One frame of a LIVE host, checked — THE witness (``lifecycle.py``). It has the
+        window's size, and the host knows that for this size until the next resize; or
+        ``HostStateError``: the render target is behind the window. Nothing is latched:
+        the next call takes a frame again."""
+        image = self._render(call, label, HostState.LIVE)
+        found = self._other_size(image, facts)
+        if found is None:
+            self._frame_at = (facts.width, facts.height, self._watch.resizes)
+            return image
+        self._frame_at = None
+        self.stale_frames += 1
+        self._log("stale_frame", call=call, label=label, px=f"{image.width()}x{image.height()}",
+                  window=f"{facts.width}x{facts.height}")
+        raise HostStateError(
+            f"{call}(): {found}: the render target has not caught up with the window's size "
+            "(Qt resizes it when it next draws the window — which it may not do while the "
+            "view is not on a screen). Not now; wait_ready() says when a frame can be had")
 
     def device_pixel_ratio(self) -> float:
         self._open("device_pixel_ratio")
@@ -750,7 +862,7 @@ class Quick3DHost:
         that renders no 3D, or a scene whose pick function failed,
         ``EngineError``): "no hit" must never mean "could not look".
         """
-        self._require_live("pick")
+        self._require_frame("pick")
         result = self._call("pickAt", float(x), float(y))
         if not result.get("hit"):
             return None
@@ -762,7 +874,7 @@ class Quick3DHost:
     def project(self, east_cm: float, north_cm: float, up_cm: float) -> tuple[float, float]:
         """Scene point → view position in LOGICAL pixels (the space ``pick`` takes),
         by the ENGINE's projection of the frame rendered last. ``LIVE`` hosts only."""
-        self._require_live("project")
+        self._require_frame("project")
         engine = _engine_vector((east_cm, north_cm, up_cm))
         result = self._call("projectToView", engine.x(), engine.y(), engine.z())
         return float(result["x"]), float(result["y"])
@@ -864,11 +976,18 @@ class Quick3DHost:
         return why_no_frame(state, facts, embedded=self._container is not None,
                             graphics_error=self._scene_graph_error)
 
-    def _require_live(self, call: str) -> None:
+    def _require_frame(self, call: str) -> None:
+        """``pick`` / ``project`` answer for a frame of the window's size. The host knows
+        of one when it took it since the last resize; if not, it takes one now — measured:
+        without a frame after a resize the engine picks with the OLD viewport and misses
+        (module docstring). ``HostStateError`` when that frame has another size."""
         state, facts = self._look(call)
         self._require_3d(call)
         if state is not HostState.LIVE:
             raise HostStateError(f"{call}(): {self._why(state, facts)}")
+        if self._frame_at != (facts.width, facts.height, self._watch.resizes):
+            self.probes += 1
+            self._frame(call, "its own frame", facts)
 
     def _destroy(self, part: _Part) -> None:
         """Destroy one Model in the engine. The part leaves the host's books ONLY when the

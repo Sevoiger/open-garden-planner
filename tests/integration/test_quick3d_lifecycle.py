@@ -1,4 +1,4 @@
-"""The host's lifecycle as a matrix of call orders (Phase 17 L1.2, review rounds 1 and 2).
+"""The host's lifecycle as a matrix of call orders (Phase 17 L1.2, review rounds 1 to 4).
 
 Render tier (``OGP_RENDER3D=1``). Each test starts ``quick3d_lifecycle_child.py``
 with ONE order in a process of its own and judges what the process reported —
@@ -26,6 +26,12 @@ reported for it — and was therefore blind to a host that reported the wrong st
               pinned on Windows (``ON_WINDOWS``).
 - ``ANY``     the same without a pin: Qt delivers some resizes synchronously and
               some with the next pass of the event loop, per transition.
+
+A host that says it is LIVE may still refuse — for one reason only: the frame Qt
+rendered has another size than the window (the render target is behind). That is
+the contract since round 4 (``lifecycle.py``): the frame is the witness. Under
+``EITHER`` / ``ANY`` the judge accepts such a refusal; where ``TRUTH`` says
+``REFUSED`` outright, nothing shows and a host must not call itself live.
 
 The pixels are predicted here: the box is 100 x 100 cm, the view is centred on it
 at 0.5 px per cm, so it is a 50 px square in the middle of the frame, whatever the
@@ -58,6 +64,7 @@ from typing import Any
 
 import pytest
 
+from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
 from tests.integration import quick3d_lifecycle_child as child
 from tests.integration.quick3d_render_support import (
     QML_SOURCE,
@@ -101,6 +108,12 @@ TRUTH: dict[str, dict[str, str]] = {
         "reopened_at_once": EITHER, "reopened": FRAME,
         "one_pixel_at_once": EITHER, "one_pixel": REFUSED,
         "narrow_at_once": EITHER, "narrow": FRAME, "narrow_later": FRAME},
+    # review round 4: the smallest pane that shows 3D, 2 px by 60 px, hidden and shown again
+    # by the host and with its window — on the screen, it must come up every time
+    "tiny_pane": {
+        "open": FRAME, "tiny_at_once": ANY, "tiny": FRAME, "host_hidden": REFUSED,
+        "host_reshown_at_once": ANY, "host_reshown": FRAME, "window_hidden": REFUSED,
+        "window_reshown_at_once": ANY, "window_reshown": FRAME, "later": FRAME},
     "minimised_window": {"open": FRAME, "minimised": REFUSED, "restored": FRAME,
                          "alone_minimised": REFUSED, "alone_restored": FRAME},
     "embedded_never_shown_grab": {"before_parent": REFUSED, "parent_shown_at_once": EITHER,
@@ -131,6 +144,7 @@ READY: dict[str, dict[str, bool]] = {
     "embedded_splitter": {"ready": True, "ready_again": True, "ready_window": True},
     "collapsed_pane": {"ready": True, "wait_collapsed": False, "ready_reopened": True,
                        "ready_one_pixel": False, "ready_narrow": True},
+    "tiny_pane": {"ready": True, "ready_tiny": True, "ready_host": True, "ready_window": True},
     "minimised_window": {"ready": True, "wait_minimised": False, "ready_restored": True,
                          "alone_ready": True, "alone_ready_restored": True},
     "embedded_never_shown_grab": {"wait_before_parent": False, "ready": True},
@@ -212,7 +226,8 @@ def frame_problem(frame: Any, window: list[float] | None = None) -> str | None:
     if not (isinstance(frame, dict) and "red" in frame):
         return f"not a frame: {frame!r}"
     width, height, ratio = frame["w"], frame["h"], frame["dpr"]
-    if window is not None and (abs(width - window[0] * ratio) > 2 or abs(height - window[1] * ratio) > 2):
+    # exactly the window's size: less than one device pixel off (a fractional ratio rounds)
+    if window is not None and (abs(width - window[0] * ratio) >= 1 or abs(height - window[1] * ratio) >= 1):
         return f"a {width} x {height} px frame for a {window[0]:g} x {window[1]:g} window"
     if frame["box"] is None:
         return "no red pixel: the box is not in the frame"
@@ -238,8 +253,10 @@ def judge_step(order: str, step: str, look: dict[str, Any], expected: str) -> No
     grab, pick, project, window = look["grab"], look["pick"], look["project"], look["window"]
     if expected == EITHER and WINDOWS:
         expected = ON_WINDOWS
+    may_be_live = False
     if expected in (EITHER, ANY):  # whichever it is, it must be a truthful one
         expected = REFUSED if is_refusal(grab) else FRAME
+        may_be_live = True
     if expected == FRAME:
         assert isinstance(window, list), f"{where}: Qt gave no size for the window"
         problem = frame_problem(grab, window)
@@ -253,7 +270,14 @@ def judge_step(order: str, step: str, look: dict[str, Any], expected: str) -> No
         for name, answer in (("grab", grab), ("pick", pick), ("project", project)):
             assert is_refusal(answer), (
                 f"{where}: {name}() must raise HostStateError, got {str(answer)[:160]!r}")
-        assert look["state"] != "live", f"{where}: a host that refuses must not say it is live"
+        if look["state"] == "live":
+            # live AND refusing: only on the evidence of a frame, and only where the table
+            # allows either answer — where it says REFUSED, nothing shows at all
+            assert may_be_live, f"{where}: nothing shows there: a host must not say it is live"
+            for name, answer in (("grab", grab), ("pick", pick), ("project", project)):
+                assert "render target has not caught up" in answer, (
+                    f"{where}: a live host may only refuse because the frame has another "
+                    f"size; {name}() said {answer[:160]!r}")
 
 
 def judge(order: str, out: dict[str, Any]) -> None:
@@ -270,7 +294,7 @@ def test_the_truth_table_covers_every_guarded_order() -> None:
     """An order the table does not know would run unjudged (``special``: the orders with
     a test of their own below)."""
     special = {"grab_show", "close_anything", "parent_destroyed_anything", "wait_while_it_goes",
-               "sink_clear_orders", "random_walk"}
+               "sink_clear_orders", "random_walk", "pane_off_screen", "pane_without_paint"}
     guarded = {name for name in child.ORDERS
                if not name.startswith(("unguarded_", "deadlock_"))}
     assert guarded == set(TRUTH) | special
@@ -291,6 +315,10 @@ def test_the_judge_knows_a_wrong_frame_when_it_sees_one() -> None:
     assert "not a frame" in str(frame_problem("HostStateError: no"))
     # the frame the F11 path handed out (review round 3): right picture, the OLD size
     assert "for a 2557 x 1440 window" in str(frame_problem(good, [2557, 1440]))
+    # ONE pixel is another size (round 4: the check allowed two, and a frame of the size the
+    # pane had before a 1 px move passed for the current one)
+    assert "for a 448 x 500 window" in str(frame_problem(good, [448, 500]))
+    assert "for a 447 x 501 window" in str(frame_problem(good, [447, 501]))
     # a pane narrower than the box: the box fills the frame's width, and is clipped by it
     narrow = {"w": 24, "h": 500, "dpr": 1.0, "red": 1200, "box": [0, 225, 24, 275]}
     assert frame_problem(narrow, [24, 500]) is None
@@ -302,7 +330,7 @@ def test_the_judge_knows_a_wrong_frame_when_it_sees_one() -> None:
 
 PORTABLE = ["show_grab", "show_wait_grab", "hide_grab", "show_hide_show_grab",
             "show_hide_before_expose_grab", "grab_twice_hidden", "embedded_splitter",
-            "collapsed_pane", "embedded_never_shown_grab", "embed_after_show"]
+            "collapsed_pane", "tiny_pane", "embedded_never_shown_grab", "embed_after_show"]
 
 
 @pytest.mark.parametrize("order", PORTABLE)
@@ -315,12 +343,18 @@ def test_a_call_order_is_answered_truthfully(tmp_path: Path, order: str) -> None
     — the xcb killer, the red CI job of review round 2; ``embedded_splitter`` — L1.3's
     first open, with the PARENT hiding and showing the container and the window;
     ``collapsed_pane`` — the pane dragged shut, reopened, squeezed to one pixel and
-    opened again (review round 2, P1-B); ``embedded_never_shown_grab`` — an embedded
-    host has no offscreen frame; ``embed_after_show`` — only a spent host cannot be
-    embedded.
+    opened again (review round 2, P1-B); ``tiny_pane`` — 2 px by 60 px, hidden and
+    shown again (review round 4: on a small runner screen this pane lay beyond the edge
+    and ``wait_ready()`` took its whole timeout three times in a row);
+    ``embedded_never_shown_grab`` — an embedded host has no offscreen frame;
+    ``embed_after_show`` — only a spent host cannot be embedded.
     """
     out = observed(order, tmp_path)
     judge(order, out)
+    if order == "tiny_pane":
+        assert out["tiny"]["window"] == [2, 60] and out["tiny"]["on_screen"] == "all", out["tiny"]
+        for key in ("tiny", "host", "window"):
+            assert wait_problem(out[f"ready_{key}"], out[f"wait_{key}_s"], 5.0) is None, key
     if order == "grab_twice_hidden":
         assert frame_problem(out["first"], [float(child.SIZE[0]), float(child.SIZE[1])]) is None
 
@@ -371,41 +405,81 @@ def test_after_wait_ready_the_frame_has_the_windows_new_size(tmp_path: Path, ord
 
     Qt delivers THAT resize synchronously: window and scene agree at once, and
     ``wait_ready()`` said True in 0 ms — while a grab still came back in the size the
-    window had before, because Qt resizes the render target with the next expose
-    (20 of 20; the host then raised ``EngineError``). Now: at once the host answers
-    truthfully or refuses (``ANY``), and after ``wait_ready()`` said yes the frame
-    has the size QT gives for the window — full screen, normal, maximised, full
-    screen from maximised and back — with the probe where it belongs.
+    window had before, because Qt resizes the render target when it next draws the
+    window (20 of 20; the host then raised ``EngineError``). Now: at once the host
+    answers truthfully or refuses (``ANY``), and after ``wait_ready()`` said yes —
+    it took a frame to know — the frame has the size QT gives for the window: full
+    screen, normal, maximised, full screen from maximised and back, with the probe
+    where it belongs.
 
     Under xvfb there is no window manager and the window keeps its size; the same
     table holds (a frame at the window's size), it just proves less."""
     out = observed(order, tmp_path)
     judge(order, out)
-    assert out["stale_frames"] == 0, "the host handed Qt a grab that came back in another size"
     for step in WINDOW_STATES:
-        assert out[f"wait_{step}_s"] < 6.0, (step, out[f"wait_{step}_s"])
+        assert wait_problem(out[f"ready_{step}"], out[f"wait_{step}_s"], 10.0) is None, step
+        # a zero timeout delivers no event: it answers what a frame says, at once
+        assert wait_problem(out[f"ready0_{step}"], out[f"wait0_{step}_s"], 0.0) is None, step
+        if out[f"ready0_{step}"] is False:
+            assert not isinstance(out[f"{step}_at_once"]["grab"], dict), step
     if WINDOWS:
         small, full = out["open"]["window"], out["fullscreen"]["window"]
         assert full[0] > small[0] and full[1] > small[1], "the window did not go full screen"
         assert out["maximised"]["window"][0] > small[0]
         assert out["normal"]["window"] == small and out["normal_again"]["window"] == small
         # the very moment of the finding, pinned: Qt has resized window AND scene, the
-        # render target is the old one — a truthful host refuses, and says which fact
+        # render target is the old one — the host takes the frame, sees its size, refuses
         for step in ("fullscreen_at_once", "fullscreen_from_maximised_at_once"):
             at_once = out[step]
             assert at_once["window"] == full and at_once["view"] == [float(full[0]), float(full[1])]
-            assert is_refusal(at_once["grab"]) and "render target has not caught up" in at_once["grab"]
+            assert at_once["state"] == "live"
+            for call in ("grab", "pick", "project"):
+                assert is_refusal(at_once[call]) and STALE in at_once[call], (step, call)
+            # …and wait_ready(0) says so without delivering the expose that would mend it
+            assert out[f"ready0_{step.removesuffix('_at_once')}"] is False, step
+        assert out["stale_frames"] >= 8, "two transitions: three calls and one probe each"
+
+
+#: What a ``wait_ready()`` may take beyond its timeout: the ONE thing it cannot cut short — a
+#: Qt event handler that is running when the time is up, or its probe frame. Measured on the
+#: dev box, whose display sleeps: 1.0 to 1.4 s for one expose; milliseconds elsewhere.
+ONE_HANDLER_S = 2.0
+#: ``wait_ready(0)`` delivers no event and waits for nothing: all it may take is ONE probe
+#: frame (1 to 4 ms; about 0.3 s behind a frame Qt is presenting while the display sleeps).
+ONE_FRAME_S = 0.75
+#: "Promptly": how soon a wait that will not succeed must answer False, whatever its timeout —
+#: ``STALL_S`` after the last sign of progress (``lifecycle.py``, sentence 3).
+PROMPT_S = STALL_S + ONE_HANDLER_S
+STALE = "render target has not caught up"
+
+
+def wait_problem(ready: Any, took: float, timeout: float) -> str | None:
+    """Sentences 2 and 3 of the contract, for ONE ``wait_ready(timeout)`` call."""
+    if ready is not True and ready is not False:
+        return f"wait_ready({timeout:g}) answered {str(ready)[:120]!r}"
+    if took > timeout + (ONE_HANDLER_S if timeout > 0 else ONE_FRAME_S):
+        return f"wait_ready({timeout:g}) took {took} s: not within its timeout"
+    if ready is False and took > PROMPT_S:
+        return (f"wait_ready({timeout:g}) said False only after {took} s: it waited for what was "
+                "not on its way")
+    return None
 
 
 def _walk_problems(out: dict[str, Any]) -> tuple[list[str], dict[str, int]]:
     """Judge a random walk's records — every answer against what QT said about the window
-    at that moment, never against the state the host reported."""
+    at that moment (its size, and how much of it is on a screen), never against the state
+    the host reported."""
     problems: list[str] = []
-    counts = {"frames": 0, "refusals": 0, "ready_true": 0, "ready_false": 0}
+    counts = {"frames": 0, "refusals": 0, "ready_true": 0, "ready_false": 0, "stale": 0,
+              "shown_off_screen": 0, "shown_not_all_on_screen": 0}
     for index, record in enumerate(out["records"]):
         said, look, mode = record["qt"], record["look"], record["mode"]
-        where = f"[{index}] {record['what']} / {mode} window={said['window']} state={look['state']}"
+        where = (f"[{index}] {record['what']} / {mode} window={said['window']} "
+                 f"on_screen={said.get('on_screen')} state={look['state']}")
         grab, pick, project = look["grab"], look["pick"], look["project"]
+        shows = said["visible"] and not said["minimised"] and min(said["window"]) >= 2
+        counts["shown_off_screen"] += bool(shows and said.get("on_screen") == "none")
+        counts["shown_not_all_on_screen"] += bool(shows and said.get("on_screen") != "all")
         if isinstance(grab, dict):
             counts["frames"] += 1
             problem = frame_problem(grab, said["window"])
@@ -415,6 +489,10 @@ def _walk_problems(out: dict[str, Any]) -> tuple[list[str], dict[str, int]]:
                 problems.append(f"{where}: a frame from a window Qt calls invisible or minimised")
         elif is_refusal(grab):
             counts["refusals"] += 1
+            counts["stale"] += STALE in grab
+            # a host that says it is live may refuse for ONE reason: the frame said no
+            if look["state"] == "live" and STALE not in grab:
+                problems.append(f"{where}: live, and grab refused with {grab[:140]!r}")
         else:
             problems.append(f"{where}: grab answered {str(grab)[:140]!r}")
         if isinstance(pick, dict):
@@ -429,89 +507,270 @@ def _walk_problems(out: dict[str, Any]) -> tuple[list[str], dict[str, int]]:
         elif not is_refusal(project):
             problems.append(f"{where}: project answered {str(project)[:140]!r}")
         if "ready" in record:
-            counts["ready_true" if record["ready"] else "ready_false"] += 1
-            if record["ready"] and not isinstance(grab, dict):
+            counts["ready_true" if record["ready"] is True else "ready_false"] += 1
+            if record["ready"] is True and not isinstance(grab, dict):
                 problems.append(f"{where}: wait_ready() said True and grab said {str(grab)[:120]!r}")
-            if record["took"] > 4.5:
-                problems.append(f"{where}: wait_ready() took {record['took']} s")
-        if record.get("settles") is False:
-            problems.append(f"{where}: STUCK — Qt shows the window and the host does not come up: "
-                            f"{record.get('stuck')}")
+            problem = wait_problem(record["ready"], record["took"], record["timeout"])
+            if problem is not None:
+                problems.append(f"{where}: {problem}")
+        if "settles" in record:
+            problem = wait_problem(record["settles"], record["settle_took"], 3.0)
+            if problem is not None:
+                problems.append(f"{where}: afterwards, {problem}")
+            # LIVENESS, where it can be demanded: ALL of the pane is on a screen, Qt shows it
+            # and calls it exposed, the event loop has run — it must come up.
+            if record["settles"] is not True and record["settle_on_screen"] == "all":
+                problems.append(f"{where}: STUCK — all of the pane is on a screen and the host "
+                                f"does not come up: {record.get('stuck')}")
     return problems, counts
 
 
 def test_the_walk_judge_sees_what_it_is_for() -> None:
     """The control for the judge below, no engine involved: a frame of another size, a
     blank frame, ``wait_ready()`` True followed by a refusal, an engine error where a
-    refusal belongs, a bogus pick, a stuck host — each must be named."""
+    refusal belongs, a bogus pick, a host that is stuck where it must come up, a wait
+    beyond its timeout, a False that came at the deadline — each must be named; and what
+    is truthful must not be."""
     good = {"w": 447, "h": 500, "dpr": 1.0, "red": 2550, "box": [198, 225, 249, 275]}
-    said = {"window": [447, 500], "visible": True, "exposed": True, "minimised": False}
+    said = {"window": [447, 500], "visible": True, "exposed": True, "minimised": False,
+            "on_screen": "all"}
     hit = {"hit": "w", "point": [0.0, 0.0, 20.0]}
-    no = "HostStateError: grab(): not now"
+    no = "HostStateError: grab(): the host is not visible"
+    stale = f"HostStateError: grab(): Qt rendered a 49 x 500 px image: the {STALE} with the window's size"
 
     def record(**changes: Any) -> dict[str, Any]:
         look = {"state": "live", "window": [447, 500], "grab": good, "pick": hit, "project": [223.5, 250.0]}
         look.update(changes.pop("look", {}))
         return {"what": "x", "mode": "wait", "qt": {**said, **changes.pop("qt", {})}, "look": look,
-                "ready": True, "took": 0.1, **changes}
+                "ready": True, "took": 0.1, "timeout": 5.0, **changes}
 
-    assert _walk_problems({"records": [record(), record(look={"grab": no, "pick": no, "project": no},
-                                                        ready=False)]}) == (
-        [], {"frames": 1, "refusals": 1, "ready_true": 1, "ready_false": 1})
+    refuses = {"grab": no, "pick": no, "project": no, "state": "hidden"}
+    behind = {"grab": stale, "pick": stale, "project": stale}  # live, and the frame said no
+    truthful = [
+        record(),
+        record(look=refuses, ready=False),
+        record(look=behind, qt={"on_screen": "none"}, ready=False, took=0.51),
+        # beyond the screen's edge the host may stay down — if it says so promptly
+        record(look=behind, qt={"on_screen": "none"}, ready=False, took=0.5,
+               settles=False, settle_took=0.5, settle_on_screen="none"),
+        record(settles=True, settle_took=1.2, settle_on_screen="all"),
+        record(took=6.4),                 # one long Qt handler beyond a 5 s timeout
+        record(ready=False, look=refuses, took=0.0, timeout=0.0),
+    ]
+    assert _walk_problems({"records": truthful}) == (
+        [], {"frames": 3, "refusals": 4, "ready_true": 3, "ready_false": 4, "stale": 2,
+             "shown_off_screen": 2, "shown_not_all_on_screen": 2})
     for wrong, word in (
             (record(qt={"window": [2557, 1440]}), "for a 2557 x 1440 window"),
             (record(look={"grab": {**good, "red": 0, "box": None}}), "no red pixel"),
-            (record(look={"grab": no, "pick": no, "project": no}), "wait_ready() said True"),
+            (record(look=refuses), "wait_ready() said True"),
             (record(look={"grab": "EngineError: grab() returned a 447 x 500 px image"}), "grab answered"),
+            (record(look={"grab": no}, ready=False), "live, and grab refused"),
             (record(look={"pick": {"hit": "w", "point": [40.0, 0.0, 20.0]}}), "pick"),
             (record(look={"pick": None}), "pick answered"),
             (record(look={"project": [0.0, 0.0]}), "project"),
             (record(qt={"minimised": True}), "invisible or minimised"),
-            (record(took=5.0), "took"),
-            (record(settles=False, stuck="starting"), "STUCK")):
+            (record(took=7.1), "not within its timeout"),
+            (record(took=1.5, timeout=0.0, ready=False, look=refuses), "took 1.5 s"),
+            (record(ready=False, look=refuses, took=5.0), "not on its way"),
+            (record(ready="HostStateError: wait_ready(): closed", look=refuses), "answered"),
+            (record(settles=False, settle_took=0.5, settle_on_screen="all", stuck="live"), "STUCK"),
+            (record(settles=False, settle_took=3.0, settle_on_screen="none"), "not on its way")):
         problems, _counts = _walk_problems({"records": [wrong]})
-        assert len(problems) >= 1 and word in problems[0], (word, problems)
+        assert len(problems) >= 1 and any(word in line for line in problems), (word, problems)
 
 
 #: The seed and length of the random walk. Fixed: a failure must be the same failure twice.
 WALK_SEED, WALK_STEPS = 20261011, 250
 
 
+def _walk(tmp_path: Path, screen: str) -> tuple[dict[str, Any], dict[str, int]]:
+    proc = run_order("random_walk", tmp_path, str(WALK_SEED), str(WALK_STEPS), screen, timeout=560.0)
+    assert survived(proc), f"the random walk did not survive\n{report(proc)}"
+    out = json.loads(next(line for line in proc.stdout.splitlines()
+                          if line.startswith("RESULT "))[len("RESULT "):])
+    assert out["screen"] == screen and out["ready"] is True and out["final_ready"] is True
+    problems, counts = _walk_problems(out)
+    assert not problems, f"{len(problems)} problem(s) in {len(out['records'])} looks:\n" + "\n".join(problems[:25])
+    assert len(out["records"]) == WALK_STEPS + 2
+    assert out["health"]["ok"] is True and out["health"]["slots_off_gui_thread"] == 0
+    waits = [record["took"] - record["timeout"] for record in out["records"] if "ready" in record]
+    artifacts = os.environ.get("OGP_RENDER3D_ARTIFACTS")
+    if artifacts:
+        Path(artifacts).mkdir(parents=True, exist_ok=True)
+        (Path(artifacts) / f"random-walk-{screen}.txt").write_text(
+            f"{sys.platform}: seed {WALK_SEED}, {WALK_STEPS} steps, screen {screen}, api {out['api']}, "
+            f"{counts}, frames refused for their size {out['stale_frames']}, frames the host took "
+            f"for itself {out['probes']}, longest wait beyond a timeout {max(waits):.3f} s, longest "
+            f"quiet spell before a host came up {out['longest_quiet_s']} s (STALL_S {STALL_S})\n",
+            encoding="utf-8")
+    return out, counts
+
+
 def test_a_seeded_random_order_never_yields_a_wrong_frame(tmp_path: Path) -> None:
-    """Review round 3 — the invariant of the whole state machine, under an order nobody
-    chose: 250 operations a parent can do to an embedded host (splitter to nothing, to
-    one pixel, wide; resize; maximise; full screen; minimise; hide and show the pane,
-    the host, the window), each followed by a look at once, after ``wait_ready()``, or
-    after the event loop ran.
+    """Reviews 3 and 4 — the invariants of the host, under an order nobody chose: 250
+    operations a parent can do to an embedded host (splitter to nothing, to one pixel,
+    wide; resize; maximise; full screen; minimise; hide and show the pane, the host, the
+    window), each followed by a look at once, after ``wait_ready()`` (5 s, 0.3 s or no
+    timeout), or after the event loop ran.
 
     - every ``grab()`` is the scene at the size QT gave for the window at that moment,
       with the probe at the predicted pixels — or a ``HostStateError``;
     - a pick that answers hits the probe, a projection that answers is the centre;
-    - ``wait_ready()`` True is followed by a frame;
-    - a window Qt shows, with an area, comes up once the event loop ran (never stuck).
+    - ``wait_ready()`` True is followed by a frame; every ``wait_ready(t)`` is back within
+      ``t`` plus ONE Qt event handler (``ONE_HANDLER_S``), and a False within ``PROMPT_S``
+      whatever ``t`` was;
+    - where ALL of the pane is on a screen, a window Qt shows comes up once the event loop
+      ran. (Round 3 said "never stuck" without that condition — and on a 1024 px runner the
+      walk's 1203 and 1500 px wide windows had the pane beyond the edge, where Windows asks
+      for no drawing.)
 
-    The same seed on Direct3D 11 (GPU and WARP) and on xcb + OpenGL."""
-    proc = run_order("random_walk", tmp_path, str(WALK_SEED), str(WALK_STEPS), timeout=560.0)
-    assert survived(proc), f"the random walk did not survive\n{report(proc)}"
-    out = json.loads(next(line for line in proc.stdout.splitlines()
-                          if line.startswith("RESULT "))[len("RESULT "):])
-    assert out["ready"] is True and out["final_ready"] is True
-    problems, counts = _walk_problems(out)
-    assert not problems, f"{len(problems)} problem(s) in {len(out['records'])} looks:\n" + "\n".join(problems[:25])
-    assert len(out["records"]) == WALK_STEPS + 2
+    THIS run fits the screen it finds: every size is capped by the screen's available
+    area, so the pane is on the screen whenever it shows — asserted, not assumed. The
+    same seed on Direct3D 11 (GPU and WARP) and on xcb + OpenGL."""
+    out, counts = _walk(tmp_path, "fit")
     # not vacuous: the walk must have seen frames AND refusals, and waits that said yes and no
     assert counts["frames"] >= 40 and counts["refusals"] >= 40, counts
     assert counts["ready_true"] >= 20 and counts["ready_false"] >= 20, counts
-    assert out["stale_frames"] == 0, (
-        f"{out['stale_frames']} grab(s) came back in another size than the window's and were "
-        "refused: the event stream said 'caught up' and was wrong")
-    assert out["health"]["ok"] is True and out["health"]["slots_off_gui_thread"] == 0
+    assert counts["shown_not_all_on_screen"] == 0, (
+        f"{counts['shown_not_all_on_screen']} look(s) with the pane shown and not entirely on "
+        "a screen: this walk no longer fits the screen it runs on")
+    settled = [record for record in out["records"] if "settles" in record]
+    assert len(settled) >= 40 and all(record["settles"] is True for record in settled)
+
+
+def test_the_same_walk_where_a_small_screen_leaves_the_pane_beyond_the_edge(tmp_path: Path) -> None:
+    """Review round 4 — the red CI job, on every machine. The same order of operations
+    with the main window where a 1024 x 768 screen leaves it (sizes as asked, capped as
+    Windows caps them there; this screen's right and bottom edges where that screen's
+    would be): for parts of the walk the 3D pane lies beyond the edge.
+
+    Windows sends no expose to a pane that GROWS there, and none to one that is SHOWN
+    there. Round 3's host waited for it: three looks stuck for ever and three
+    ``wait_ready()`` calls in a row burned their whole 5 s (the same indices on the runner
+    and, with the window placed like this and the display asleep, on the RTX 4070). Now
+    the same judge holds: no wrong frame; every wait within its timeout; and a False
+    PROMPTLY — a refusal is the truthful answer there, a wait for what will not come is
+    not. Whether a frame can be had beyond the edge differs per machine and per hour (the
+    off-screen row below); the judge holds either way."""
+    out, counts = _walk(tmp_path, "1024x768")
+    assert counts["frames"] >= 40 and counts["refusals"] >= 40, counts
+    assert counts["ready_true"] >= 20 and counts["ready_false"] >= 20, counts
+    # not vacuous: the pane WAS shown beyond the edge, on this machine too (measured: 11
+    # looks on Windows, 26 on xcb — a window manager decides where "normal" puts a window)
+    assert counts["shown_off_screen"] >= 5, counts
+    assert out["stale_frames"] >= counts["stale"]
+
+
+OFF_SCREEN_LOOKS = ("moved", "shrunk_at_once", "shrunk", "grown_at_once", "grown",
+                    "grown_more_at_once", "grown_more", "reshown_at_once", "reshown")
+OFF_SCREEN_WAITS = {"shrunk": 5.0, "grown": 5.0, "grown_more": 5.0, "reshown": 5.0, "back": 5.0,
+                    "zero": 0.0, "default": 1.0}
+
+
+def test_a_pane_beyond_the_screens_edge_gets_a_frame_or_a_prompt_refusal_and_answers_when_it_is_back(
+        tmp_path: Path) -> None:
+    """Review round 4, a row of its own — where CI found the defect: the pane placed
+    beyond the right edge of every screen ON PURPOSE, then made smaller, larger, hidden
+    and shown there, and moved back.
+
+    What a platform does there is not one fact, so nothing about it is pinned (measured on
+    one Windows machine: with the display asleep a pane that grows there keeps its old
+    render target for as long as it stays; with the display awake an update request
+    arrives and the frame is right; a pane SHOWN there was not exposed on either day —
+    the artifact says what THIS run saw). What is asserted holds everywhere:
+
+    - where all of the pane is on a screen the host answers — before, and after it is back;
+    - beyond the edge every answer is a frame of the window's size or a refusal;
+    - ``wait_ready()`` True is followed by a frame; every wait is back within its timeout,
+      a False promptly, ``wait_ready(0)`` without waiting at all.
+
+    The stuck condition itself is made on purpose in the test below."""
+    out = observed("pane_off_screen", tmp_path)
+    assert out["ready"] is True
+    for step in ("open", "back", "later"):
+        assert out[step]["on_screen"] == "all", (step, out[step]["on_screen"])
+        judge_step("pane_off_screen", step, out[step], FRAME)
+    assert out["ready_back"] is True, "back on the screen, the host must come up again"
+    for step in OFF_SCREEN_LOOKS:
+        judge_step("pane_off_screen", step, out[step], ANY)
+    for key, timeout in OFF_SCREEN_WAITS.items():
+        ready, took = out[f"ready_{key}"], out[f"wait_{key}_s"]
+        assert wait_problem(ready, took, timeout) is None, (key, wait_problem(ready, took, timeout))
+        if ready is True and key in out:
+            assert isinstance(out[key]["grab"], dict), f"{key}: True, and then {out[key]['grab']!r}"
+    assert out["health"]["ok"] is True
+    if WINDOWS:  # the screens Qt knows are all there is: the pane WAS beyond them
+        assert {out[step]["on_screen"] for step in OFF_SCREEN_LOOKS} == {"none"}
+    artifacts = os.environ.get("OGP_RENDER3D_ARTIFACTS")
+    if artifacts:  # what THIS platform did beyond the edge, on THIS day
+        Path(artifacts).mkdir(parents=True, exist_ok=True)
+        (Path(artifacts) / "pane-off-screen.txt").write_text(f"{sys.platform}: " + "; ".join(
+            f"{step} {out[step]['on_screen']}/{out[step]['state']}/"
+            f"{'frame' if isinstance(out[step]['grab'], dict) else 'refused'}" for step in OFF_SCREEN_LOOKS)
+            + "; " + ", ".join(f"wait_ready({timeout:g}) after {key}: {out[f'ready_{key}']} in "
+                               f"{out[f'wait_{key}_s']} s" for key, timeout in OFF_SCREEN_WAITS.items())
+            + f"; frames refused for their size {out['stale_frames']}\n", encoding="utf-8")
+
+
+NO_PAINT_LOOKS = ("grown_at_once", "grown", "shrunk_at_once", "shrunk", "without_paint")
+NO_PAINT_WAITS = {"grown": 5.0, "shrunk": 5.0, "zero": 0.0, "default": 1.0, "long": 60.0}
+
+
+def test_a_view_that_nothing_draws_is_refused_promptly_and_answers_when_painting_resumes(
+        tmp_path: Path) -> None:
+    """Review round 4 — THE stuck class, made on purpose: the view is on the screen, shown
+    and exposed, and an event filter eats what makes Qt draw it (expose, update request,
+    paint) — what a pane beyond the screen's edge gets none of on a runner without a
+    display. Then the pane is resized.
+
+    Round 3's host read "starting" there — it waited for an expose — and every
+    ``wait_ready()`` took its whole timeout: 5 s, 10 s, for ever in a loop. Now, on every
+    platform: each answer is a frame of the window's size or a refusal; each wait is back
+    within its timeout and a False promptly — also ``wait_ready(60)``; and when painting
+    resumes the host answers again.
+
+    Pinned on Windows, where it was measured (GPU and WARP): the frame Qt renders there
+    keeps the OLD size; the host says it is live — every fact Qt reports is in place —
+    and refuses on the evidence of the frame; ``wait_ready()`` says False ``STALL_S``
+    after it looked, whatever the timeout, and at once for a timeout of zero."""
+    out = observed("pane_without_paint", tmp_path)
+    assert out["ready"] is True and out["eaten"] >= 2, "the filter must have eaten paint events"
+    for step in ("open", "painting", "later"):
+        judge_step("pane_without_paint", step, out[step], FRAME)
+    assert out["ready_painting"] is True, "painting resumed: the host must come up again"
+    assert wait_problem(out["ready_painting"], out["wait_painting_s"], 5.0) is None
+    for step in NO_PAINT_LOOKS:
+        assert out[step]["on_screen"] == "all", "the pane is ON the screen in this order"
+        judge_step("pane_without_paint", step, out[step], ANY)
+    for key, timeout in NO_PAINT_WAITS.items():
+        ready, took = out[f"ready_{key}"], out[f"wait_{key}_s"]
+        assert wait_problem(ready, took, timeout) is None, (key, wait_problem(ready, took, timeout))
+        if ready is True and key in out:
+            assert isinstance(out[key]["grab"], dict), f"{key}: True, and then {out[key]['grab']!r}"
+    assert out["health"]["ok"] is True
     artifacts = os.environ.get("OGP_RENDER3D_ARTIFACTS")
     if artifacts:
         Path(artifacts).mkdir(parents=True, exist_ok=True)
-        (Path(artifacts) / "random-walk.txt").write_text(
-            f"{sys.platform}: seed {WALK_SEED}, {WALK_STEPS} steps, api {out['api']}, {counts}\n",
-            encoding="utf-8")
+        (Path(artifacts) / "pane-without-paint.txt").write_text(f"{sys.platform}: " + "; ".join(
+            f"{step} {out[step]['state']}/{'frame' if isinstance(out[step]['grab'], dict) else 'refused'}"
+            for step in NO_PAINT_LOOKS) + "; " + ", ".join(
+            f"wait_ready({timeout:g}) after {key}: {out[f'ready_{key}']} in {out[f'wait_{key}_s']} s"
+            for key, timeout in NO_PAINT_WAITS.items())
+            + f"; frames refused for their size {out['stale_frames']}\n", encoding="utf-8")
+    if not WINDOWS:
+        return
+    for step in NO_PAINT_LOOKS:
+        look = out[step]
+        assert look["state"] == "live", (step, look["state"])
+        for call in ("grab", "pick", "project"):
+            assert is_refusal(look[call]) and STALE in look[call], (step, call, look[call])
+    for key in NO_PAINT_WAITS:
+        assert out[f"ready_{key}"] is False, key
+    assert out["wait_zero_s"] <= ONE_FRAME_S, "wait_ready(0) waits for nothing: at most one frame"
+    for key in ("grown", "shrunk", "default", "long"):  # STALL_S for a sign of progress, no longer
+        assert STALL_S - 0.1 <= out[f"wait_{key}_s"] <= STALL_S + 1.0, (key, out[f"wait_{key}_s"])
+    assert out["stale_frames"] >= 15 and out["probes"] >= 5
 
 
 def test_wait_ready_comes_back_when_the_window_goes_during_the_wait(tmp_path: Path) -> None:

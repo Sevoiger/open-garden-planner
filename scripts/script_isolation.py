@@ -9,7 +9,8 @@ through the real serializer, or a probe that loads one, writes into the user's
 Recent Files unless something stops it. (Found on 2026-10-11: scripts run that
 way had replaced a developer's whole list with fixture paths.)
 
-Two calls, both explicit, both safe to repeat:
+Three things are moved, each by the only route that reaches it — all explicit,
+all safe to repeat:
 
 - ``isolate_profile()`` — BEFORE the first ``open_garden_planner`` import. Points
   ``USERPROFILE``, ``HOME``, ``APPDATA``, ``LOCALAPPDATA`` and the three ``XDG_*``
@@ -23,6 +24,16 @@ Two calls, both explicit, both safe to repeat:
   exit. Stores are built lazily and bind their names when they are constructed,
   so the first line of ``main()`` is early enough. Child processes do NOT
   inherit it: a child must isolate itself (pytest does, in ``tests/conftest.py``).
+- ``redirect_qt_locations(root)`` — what the app asks ``QStandardPaths`` for. On
+  Windows the profile variables move only some of it: ``AppDataLocation`` and
+  ``DocumentsLocation`` follow them, ``AppLocalDataLocation`` and
+  ``CacheLocation`` (the companion, climate and thumbnail caches) do not — Qt
+  asks the shell (measured in the review of fix round 3). So the Python-level
+  function is replaced for the five locations the app writes through. THE one
+  stand-in: ``tests/conftest.py`` installs this same function for the suite.
+  Child processes do not inherit it.
+
+``isolate()`` does all three.
 
 How a script uses it::
 
@@ -34,7 +45,7 @@ How a script uses it::
     from open_garden_planner... import ...
 
     def main() -> int:
-        script_isolation.isolate()     # both — the first line
+        script_isolation.isolate()     # all three — the first line
 
 Deliberately NOT at the import of this module, and not at the import of a script
 either: tests import the fixture generators into the pytest process, whose stores
@@ -51,6 +62,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Any
 
 #: The variables a user's profile is found through — Windows, Linux and (``HOME``) macOS.
 PROFILE_VARIABLES: tuple[str, ...] = (
@@ -59,6 +71,13 @@ PROFILE_VARIABLES: tuple[str, ...] = (
 )
 #: The organisation the test suite's own stores live under (``tests/conftest.py``).
 SCRIPT_ORGANIZATION = "cofade_test"
+#: The ``QStandardPaths`` locations the app writes through: ``crash.log`` and
+#: ``app.log`` (AppDataLocation), the companion, climate and thumbnail caches
+#: (AppLocalDataLocation, CacheLocation), the default project folder (Documents).
+QT_LOCATIONS: tuple[str, ...] = (
+    "AppDataLocation", "AppLocalDataLocation", "AppConfigLocation", "CacheLocation",
+    "DocumentsLocation",
+)
 
 _state: dict[str, object] = {}
 
@@ -93,9 +112,34 @@ def isolate_settings() -> tuple[str, str]:
     return found[0], found[1]
 
 
+def redirect_qt_locations(root: Path) -> frozenset[Any]:
+    """Make ``QStandardPaths.writableLocation`` name a folder under ``root`` for
+    ``QT_LOCATIONS`` — the path only, forward slashes, as Qt answers: Qt does not
+    create the folder it names and neither does this, so a writer that forgets
+    its ``mkdir`` fails as it would on a user's first run. Every other location
+    is Qt's own answer. Returns the locations that are redirected; a second call
+    changes nothing (the first ``root`` stays)."""
+    from PyQt6.QtCore import QStandardPaths
+
+    locations = _state.get("qt")
+    if not isinstance(locations, frozenset):
+        locations = frozenset(getattr(QStandardPaths.StandardLocation, name) for name in QT_LOCATIONS)
+        _state["qt"] = locations
+        qt_answer = QStandardPaths.writableLocation
+
+        def writable_location(location: Any) -> str:
+            if location in locations:
+                return (root / "qt" / location.name).as_posix()
+            return str(qt_answer(location))
+
+        QStandardPaths.writableLocation = writable_location  # type: ignore[method-assign]
+    return locations
+
+
 def isolate() -> None:
-    """Both: the profile and the settings. The first line of a script's ``main()``."""
-    isolate_profile()
+    """All three: the profile, the settings, Qt's locations. The first line of a
+    script's ``main()``."""
+    redirect_qt_locations(isolate_profile())
     isolate_settings()
 
 

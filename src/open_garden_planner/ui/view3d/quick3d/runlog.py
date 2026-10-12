@@ -27,13 +27,26 @@ ONE process, and it is built so that it cannot act for anything else:
 - its process is identified by pid AND creation time, must be the supervisor's
   own PARENT, and in the frozen build must run the supervisor's own image;
 - its block is identified by a random nonce in the name of the release event.
-  The block signals that event and destroys it when it ends. A supervisor that
-  comes up late finds no event and leaves: a missing event means "released" —
-  and because the name is per block, the event of a LATER block of the same
-  process is never mistaken for it (it was, once: a finished block's late
-  supervisor terminated the healthy block after it, 4.1 s in);
+  The block signals that event when it ends, and keeps it until its supervisor
+  has left (at most ``SUPERVISOR_EXIT_WAIT_S``). A supervisor that comes up
+  late finds the event signalled and leaves: released. Because the name is per
+  block, the event of a LATER block of the same process is never mistaken for
+  it (it was, once: a finished block's late supervisor terminated the healthy
+  block after it, 4.1 s in);
 - one watchdog is armed per process at a time; a second one is refused
   (``WatchdogError``) — ``faulthandler`` has a single timer anyway;
+- it says what it did in its exit code: 0 only when it held the block's event —
+  it was released, the process ended while it watched, or it ended it. A
+  supervisor that found NOTHING to wait for (the process gone or not the one
+  named, the block's event not there) leaves with ``SUPERVISOR_IDLE`` (4): it
+  never supervised. It used to exit 0 like one that did its job — also when it
+  left at once while its block still ran (measured: 1.5 s into a 20 s block);
+- there is NO start timeout DURING the block: the block does not wait for its
+  supervisor to be up (to end a hang it only has to be up before the deadline).
+  The bound is at the block's END: the block waits ``SUPERVISOR_EXIT_WAIT_S``
+  (15 s) for its supervisor to have come up, seen the release and left. One
+  that needs longer counts as not having left. (Measured: it is up 0.1 s after
+  the block began from source, 0.2 to 1.1 s in the frozen build);
 - its arguments are validated before anything is opened (``supervisor_main``):
   a deadline that is not a finite number of seconds within
   ``MIN_SUPERVISED_S`` … ``MAX_SUPERVISED_S``, a malformed pid or nonce, a log
@@ -76,12 +89,28 @@ GRACE_S: Final = 10.0
 #: for 49 days, ``nan`` and ``inf`` are not deadlines.
 MIN_SUPERVISED_S: Final = 0.5
 MAX_SUPERVISED_S: Final = 86_400.0
-#: How long a released supervisor may take to leave (it may still be starting).
+#: How long a released supervisor may take to leave — which includes coming up, if the
+#: block was over before it had: there is no other start timeout (module docstring).
 SUPERVISOR_EXIT_WAIT_S: Final = 15.0
 #: The supervising process's exit codes.
-SUPERVISOR_DONE: Final = 0      # the process ended, the block was released, or it was terminated
+SUPERVISOR_DONE: Final = 0      # it held the block's event: released, the process ended, or it ended it
 SUPERVISOR_REFUSED: Final = 2   # its arguments were not ones it may act on; nothing was touched
 SUPERVISOR_FAILED: Final = 3    # it failed itself; nothing was terminated
+SUPERVISOR_IDLE: Final = 4      # it found nothing to wait for and left: it never supervised
+#: What an exit code other than ``SUPERVISOR_DONE`` means — in words, for the log and
+#: for a caller that must not pass without a supervisor (``Armed.gap``).
+_EXIT_MEANS: Final = {
+    None: f"had not left {SUPERVISOR_EXIT_WAIT_S:g} s after its release",
+    SUPERVISOR_REFUSED: "refused: this block was not one it may act for (exit code 2)",
+    SUPERVISOR_FAILED: "failed itself (exit code 3)",
+    SUPERVISOR_IDLE: ("left without having supervised: it found no block to wait for — the "
+                      "process or the block's release event was not the one it was told "
+                      "(exit code 4)"),
+}
+
+
+def _exit_means(code: int | None) -> str:
+    return _EXIT_MEANS.get(code, f"ended with exit code {code}")
 #: What stands in the log where no supervisor exists — and what bounds a deadlock there.
 NOT_NEEDED_HERE: Final = ("none (not on this platform: _exit ends the process — measured on Linux; "
                           "beyond that the caller's own time limit is the bound, in CI the step's)")
@@ -164,9 +193,21 @@ class Armed:
 
     @property
     def supervised(self) -> bool:
-        """A supervising process was started, and — if the block is over — it did not
-        refuse or fail."""
+        """A supervising process was started, and — if the block is over — it had held
+        the block's event (it did not refuse, fail, or leave without having supervised)."""
         return self.supervisor is not None and self.supervisor_exit in (None, SUPERVISOR_DONE)
+
+    @property
+    def gap(self) -> str:
+        """After the block: "" when it was supervised from outside to its end — else, in
+        words, why not. For a caller that must not pass without a supervisor (the
+        self-test): no process started, or it refused, failed, never supervised, or did
+        not leave."""
+        if self.supervisor is None:
+            return self.unsupervised_because
+        if self.supervisor_exit == SUPERVISOR_DONE:
+            return ""
+        return f"its supervising process {_exit_means(self.supervisor_exit)}"
 
 
 _ARMED: list[Armed] = []  # the ONE armed watchdog of this process, if any
@@ -210,30 +251,6 @@ def watchdog(seconds: float, log: RenderLog, what: str = "the run", *,
             f"a watchdog is already armed in this process ({_ARMED[0].what!r}): one at a time — "
             f"{what!r} was not armed")
     armed = Armed(seconds, what)
-    target = log.crash_file()
-    nowhere = None
-    if target is None or not _has_descriptor(target):  # faulthandler writes to a descriptor
-        nowhere = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - closed in the finally
-        target = nowhere
-    if supervised:
-        if sys.platform != "win32":
-            armed.unsupervised_because = NOT_NEEDED_HERE
-        else:
-            try:
-                armed.supervisor = start_supervisor(seconds + GRACE_S, log.path, what)
-            except Exception as error:  # noqa: BLE001 - no supervisor is a degraded run, not a crash
-                armed.unsupervised_because = (f"none (it could not be started: "
-                                              f"{type(error).__name__}: {error})")
-            else:
-                if armed.supervisor is None:
-                    armed.unsupervised_because = "none (it could not be started)"
-    log("watchdog", armed=True, seconds=seconds, what=what,
-        supervisor=(armed.supervisor.describe() if armed.supervisor is not None
-                    else ("none" if not supervised else armed.unsupervised_because)),
-        note=f"if {what} is not done by then: 'Timeout' and every thread's stack follow "
-             "here, and the process exits with code 1"
-             + (" (no log file and no stderr: the stacks are lost, the exit is not)"
-                if nowhere is not None else ""))
 
     def announce() -> None:
         with contextlib.suppress(Exception):  # a closed log must not turn into a second failure
@@ -243,20 +260,54 @@ def watchdog(seconds: float, log: RenderLog, what: str = "the run", *,
 
     helper = threading.Timer(max(seconds - 1.0, seconds * 0.8), announce)
     helper.daemon = True
-    _ARMED.append(armed)
-    faulthandler.dump_traceback_later(seconds, exit=True, file=target)
-    helper.start()
+    nowhere = None
+    # EVERYTHING that arms is inside the try: if any step of it raises — the log is
+    # closed, the timer cannot be set — the finally disarms what was armed so far. (It
+    # used to start the supervisor and mark the process armed BEFORE the try: a failure
+    # after that left every later watchdog refused, and a live supervisor that ended the
+    # process at the deadline.)
     try:
+        _ARMED.append(armed)
+        target = log.crash_file()
+        if target is None or not _has_descriptor(target):  # faulthandler writes to a descriptor
+            nowhere = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - closed in the finally
+            target = nowhere
+        if supervised:
+            if sys.platform != "win32":
+                armed.unsupervised_because = NOT_NEEDED_HERE
+            else:
+                try:
+                    armed.supervisor = start_supervisor(seconds + GRACE_S, log.path, what)
+                except Exception as error:  # noqa: BLE001 - no supervisor is a degraded run, not a crash
+                    armed.unsupervised_because = (f"none (it could not be started: "
+                                                  f"{type(error).__name__}: {error})")
+                else:
+                    if armed.supervisor is None:
+                        armed.unsupervised_because = "none (it could not be started)"
+        log("watchdog", armed=True, seconds=seconds, what=what,
+            supervisor=(armed.supervisor.describe() if armed.supervisor is not None
+                        else ("none" if not supervised else armed.unsupervised_because)),
+            note=f"if {what} is not done by then: 'Timeout' and every thread's stack follow "
+                 "here, and the process exits with code 1"
+                 + (" (no log file and no stderr: the stacks are lost, the exit is not)"
+                    if nowhere is not None else ""))
+        faulthandler.dump_traceback_later(seconds, exit=True, file=target)
+        helper.start()
         yield armed
     finally:
         faulthandler.cancel_dump_traceback_later()
         helper.cancel()
-        _ARMED.remove(armed)
+        if armed in _ARMED:
+            _ARMED.remove(armed)
         if armed.supervisor is not None:
             armed.supervisor.release()
             armed.supervisor_exit = armed.supervisor.wait(SUPERVISOR_EXIT_WAIT_S)
             with contextlib.suppress(Exception):
-                log("watchdog", released=True, what=what, supervisor_exit=armed.supervisor_exit)
+                if armed.supervisor_exit == SUPERVISOR_DONE:
+                    log("watchdog", released=True, what=what, supervisor_exit=armed.supervisor_exit)
+                else:
+                    log("watchdog", released=True, what=what, supervisor_exit=armed.supervisor_exit,
+                        note=f"the supervising process {_exit_means(armed.supervisor_exit)}")
         if nowhere is not None:
             nowhere.close()
 
@@ -276,16 +327,22 @@ class Supervisor:
         return f"process {self.process.pid}, ends this one {self._seconds:g} s from now"
 
     def release(self) -> None:
-        """The supervised block is over: tell the supervisor to go, at once."""
-        _signal_and_close(self._event)
-        self._event = 0
+        """The supervised block is over: tell the supervisor to go, at once. The event is
+        SIGNALLED and kept — a supervisor that is still coming up must find it, signalled,
+        or it could not tell "released" from "there never was such a block". ``wait()``
+        destroys it."""
+        _signal(self._event)
 
     def wait(self, timeout_s: float) -> int | None:
-        """The supervising process's exit code — None when it has not left in time."""
+        """The supervising process's exit code — None when it has not left in time. The
+        release event goes with this call, whatever the answer."""
         try:
             return self.process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             return None
+        finally:
+            _close(self._event)
+            self._event = 0
 
 
 def self_command() -> list[str]:
@@ -364,10 +421,12 @@ def _say(line: str) -> None:
 
 
 def supervisor_main(arguments: list[str]) -> int:
-    """The supervising process (module docstring). Exit codes: ``SUPERVISOR_DONE`` — the
-    process ended by itself, the block was released, or it was terminated;
-    ``SUPERVISOR_REFUSED`` — the arguments are not ones it may act on (one line, nothing
-    opened, nothing terminated); ``SUPERVISOR_FAILED`` — it failed itself."""
+    """The supervising process (module docstring). Exit codes: ``SUPERVISOR_DONE`` — it
+    waited: the block released it, the process ended while it watched, or it terminated
+    it; ``SUPERVISOR_IDLE`` — there was nothing to wait for when it looked (the process
+    gone, the block's event not there): it never supervised; ``SUPERVISOR_REFUSED`` — the
+    arguments are not ones it may act on (one line, nothing opened, nothing terminated);
+    ``SUPERVISOR_FAILED`` — it failed itself."""
     try:
         order = parse_supervisor_arguments(arguments)
     except ValueError as error:
@@ -432,11 +491,13 @@ if sys.platform == "win32":
         """One event per supervised BLOCK: the nonce is the block's."""
         return f"Local\\ogp-supervised-{pid}-{created}-{nonce}"
 
-    def _signal_and_close(event: int) -> None:
+    def _signal(event: int) -> None:
         if event:
-            k32 = _kernel32()
-            k32.SetEvent(wintypes.HANDLE(event))
-            k32.CloseHandle(wintypes.HANDLE(event))
+            _kernel32().SetEvent(wintypes.HANDLE(event))
+
+    def _close(event: int) -> None:
+        if event:
+            _kernel32().CloseHandle(wintypes.HANDLE(event))
 
     def start_supervisor(seconds: float, log_path: Path | None, what: str) -> Supervisor | None:
         """Start the process that ends this one ``seconds`` from now unless ``release()`` is
@@ -472,10 +533,10 @@ if sys.platform == "win32":
         process = k32.OpenProcess(
             _SYNCHRONIZE | _PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION, False, order.pid)
         if not process:
-            return SUPERVISOR_DONE  # it is gone already
+            return SUPERVISOR_IDLE  # it is gone already (or may not be opened): nothing to watch
         try:
             if _created(k32, process) != order.created:
-                return SUPERVISOR_DONE  # another process has that pid now: not ours to touch
+                return SUPERVISOR_IDLE  # another process has that pid now: not ours to touch
             if getattr(sys, "frozen", False):
                 # the same question asked of both processes, so that both answers have one form
                 own, theirs = _image(k32, k32.GetCurrentProcess()), _image(k32, process)
@@ -485,11 +546,12 @@ if sys.platform == "win32":
             event = k32.OpenEventW(_SYNCHRONIZE | _EVENT_MODIFY_STATE, False,
                                    _event_name(order.pid, order.created, order.nonce))
             if not event:
-                # The block created its event before it started us, and destroys it when it
-                # ends. No event: the block is over already (a fast block beats our start).
-                # Waiting on the process alone here would END A PROCESS THAT FINISHED ITS
-                # BLOCK and simply lives on — a test runner, a tool.
-                return SUPERVISOR_DONE
+                # The block created its event before it started us and keeps it, signalled,
+                # until we have left. No event: this is not a block we can find — or we
+                # came up more than SUPERVISOR_EXIT_WAIT_S after it ended. Waiting on the
+                # process alone here would END A PROCESS THAT FINISHED ITS BLOCK and
+                # simply lives on — a test runner, a tool. We never supervised: say so.
+                return SUPERVISOR_IDLE
             try:
                 handles = (wintypes.HANDLE * 2)(process, event)
                 outcome = k32.WaitForMultipleObjects(2, handles, False, int(order.seconds * 1000))
@@ -513,7 +575,10 @@ if sys.platform == "win32":
 
 else:
 
-    def _signal_and_close(event: int) -> None:  # noqa: ARG001 - the Windows twin's signature
+    def _signal(event: int) -> None:  # noqa: ARG001 - the Windows twin's signature
+        return None
+
+    def _close(event: int) -> None:  # noqa: ARG001 - the Windows twin's signature
         return None
 
     def start_supervisor(seconds: float, log_path: Path | None, what: str) -> Supervisor | None:  # noqa: ARG001

@@ -178,7 +178,7 @@ def inside():
     started = time.perf_counter()
     out["a_pass_while_running"] = Quick3DHost._run_events(5)
     out["a_pass_while_running_s"] = time.perf_counter() - started
-    starting = WindowFacts(True, True, False, 64, 48, False, False, 64.0, 48.0, False)
+    starting = WindowFacts(True, True, False, 64, 48, False, False, 64.0, 48.0)
     looks = [0]
     def facts():
         looks[0] += 1
@@ -561,7 +561,7 @@ def _facts(**changes: Any) -> Any:
     width, height = changes.pop("size", (320, 240))
     base = {"surface_created": True, "visible": True, "minimised": False, "width": width,
             "height": height, "scene_graph": True, "exposed": True, "root_width": 320.0,
-            "root_height": 240.0, "target_synced": True}
+            "root_height": 240.0}
     return WindowFacts(**{**base, **changes})
 
 
@@ -581,20 +581,58 @@ class _Later(QObject):
         return super().event(event)
 
 
+def _frames(host: Any, *sizes: tuple[int, int]) -> list[tuple[int, int]]:
+    """Decide what Qt "renders" from now on: frames of ``sizes``, in that order, the last
+    one for ever. Returns the list of frames taken so far (it grows). The offscreen
+    platform draws no 3D and has no render target that could lag — what the host does
+    WITH a frame of the right or the wrong size is what can be tested here; that Qt hands
+    out such frames, and when, is the render tier's."""
+    from PyQt6.QtGui import QImage
+
+    taken: list[tuple[int, int]] = []
+
+    def grab_window() -> QImage:
+        size = sizes[min(len(taken), len(sizes) - 1)]
+        taken.append(size)
+        return QImage(size[0], size[1], QImage.Format.Format_RGB32)
+
+    host._view.grabWindow = grab_window  # noqa: SLF001
+    host._frames_stubbed = True  # noqa: SLF001
+    return taken
+
+
 def _force(host: Any, *, spent: bool = False, renders_3d: bool = True, **changes: Any) -> None:
     """Put Qt's facts where a real window system would (the offscreen platform cannot:
     it renders no 3D, and nothing collapses or minimises there). The state is a pure
     function of them (``lifecycle.state_of``; its whole truth table is in
     ``tests/unit/test_quick3d_lifecycle_states.py``) — which is what makes the host
     testable here; that Qt's facts DO take these values, and what happens then, is the
-    render tier's (``test_quick3d_lifecycle.py``)."""
+    render tier's (``test_quick3d_lifecycle.py``).
+
+    With ``renders_3d`` the host believes it can render, so a live one TAKES frames: unless
+    a test decided otherwise (``_frames``), Qt then "renders" frames of the forced
+    window's size — nothing here reaches the real ``grabWindow()`` by accident."""
     forced = _facts(**changes)
     host._facts = lambda: forced  # noqa: SLF001
     host._spent = spent  # noqa: SLF001
     if renders_3d:
         host.graphics_api = lambda: "Direct3D11"
+        if not getattr(host, "_frames_stubbed", False):
+            _frames(host, (forced.width, forced.height))
+            host._frames_stubbed = False  # noqa: SLF001 - a default: the next _force renews it
 
 
+def _sign(host: Any, kind: str = "expose") -> None:
+    """Hand the host's watch an event of its view, as Qt would."""
+    from PyQt6.QtCore import QSize
+    from PyQt6.QtGui import QExposeEvent, QRegion, QResizeEvent
+
+    event = (QResizeEvent(QSize(320, 240), QSize(320, 240)) if kind == "resize"
+             else QExposeEvent(QRegion(0, 0, 320, 240)))
+    host._watch.eventFilter(host._view, event)  # noqa: SLF001
+
+
+STALE = "render target has not caught up"
 #: Facts → the state the host must report, and the words its refusal must contain.
 NO_FRAME = [
     ({"scene_graph": False, "exposed": False}, "starting", r"would kill the process.*wait_ready\(\)"),
@@ -602,9 +640,6 @@ NO_FRAME = [
     ({"exposed": False}, "starting", r"shown again but not exposed yet.*wait_ready\(\)"),
     ({"root_width": 0.0}, "starting", r"has not caught up.*scene 0 x 240.*wait_ready\(\)"),
     ({"size": (200, 240)}, "starting", r"has not caught up.*window 200 x 240, scene 320 x 240"),
-    # review round 3, P1-1: everything agrees but the render target (showFullScreen())
-    ({"target_synced": False}, "starting",
-     r"render target has not caught up.*window 320 x 240.*wait_ready\(\)"),
     ({"visible": False}, "hidden", "not visible"),
     ({"visible": False, "exposed": False}, "hidden", "not visible"),
     ({"minimised": True}, "hidden", "minimised"),
@@ -615,9 +650,10 @@ NO_FRAME = [
 
 
 class TestStateMachine:
-    """Review rounds 1 and 2. The state is derived from Qt on every call; no Python flag
+    """Review rounds 1 to 4. The state is derived from Qt on every call; no Python flag
     says "shown" (the parent of an embedded container shows, hides, resizes and
-    collapses it without asking)."""
+    collapses it without asking) — and none says "a frame will have the right size":
+    only a frame says that."""
 
     def test_the_host_reads_its_facts_from_qt(self, host) -> None:
         """What the real window says here, under the offscreen platform — the plumbing
@@ -625,7 +661,6 @@ class TestStateMachine:
         changed.)"""
         born = host._facts()  # noqa: SLF001
         assert (born.surface_created, born.visible, born.minimised) == (False, False, False)
-        assert born.target_synced is False, "nothing was exposed yet"
         assert (born.width, born.height, born.root_width, born.root_height) == (320, 240, 320.0, 240.0)
         assert host.state.value == "new" and host.is_visible() is False
         host.show()
@@ -633,14 +668,14 @@ class TestStateMachine:
         assert host.wait_ready(5.0) and host.state.value == "live"
         shown = host._facts()  # noqa: SLF001
         assert (shown.visible, shown.scene_graph, shown.exposed) == (True, True, True)
-        assert shown.target_synced is True, "the first expose arrived"
         assert host.is_visible() is True
+        resizes, signs = host._watch.resizes, host._watch.signs  # noqa: SLF001
         host._view.resize(200, 100)  # noqa: SLF001
         assert host.wait_ready(5.0)
         resized = host._facts()  # noqa: SLF001
         assert (resized.width, resized.height, resized.root_width, resized.root_height) == (
             200, 100, 200.0, 100.0)
-        assert resized.target_synced is True, "the resize was followed by an expose"
+        assert host._watch.resizes == resizes + 1 and host._watch.signs > signs  # noqa: SLF001
         host.hide()
         assert host._facts().visible is False and host.state.value == "hidden"  # noqa: SLF001
 
@@ -686,14 +721,20 @@ class TestStateMachine:
         expose: a good image and a dead process. A collapsed pane (review round 2,
         P1-B): Qt calls the window visible and exposed, the grab is blank, the pick
         bogus, the projection (0, 0). One pixel wide: no 3D is drawn. Resized a moment
-        ago: the scene still has the old size."""
+        ago: the scene still has the old size. Qt is NOT asked for a frame in any of
+        them — asking is what kills."""
         from open_garden_planner.ui.view3d.quick3d.host import HostStateError
 
+        taken = _frames(host, (320, 240))
         _force(host, **changes)
         for call in (lambda: host.grab("no"), lambda: host.pick(1.0, 1.0),
-                     lambda: host.project(0.0, 0.0, 0.0)):
+                     lambda: host.project(0.0, 0.0, 0.0), lambda: host.wait_ready(0.0)):
+            if call.__code__.co_names[-1] == "wait_ready":
+                assert call() is False
+                continue
             with pytest.raises(HostStateError, match=words):
                 call()
+        assert taken == [], "a host that is not live must not ask Qt for a frame"
         assert host.grabs == 0 and host._spent is False, "a refusal must not spend the host"  # noqa: SLF001
 
     def test_a_spent_host_refuses_everything_that_would_kill_it(self, host) -> None:
@@ -724,89 +765,116 @@ class TestStateMachine:
             host.grab("embedded")
         assert host.state.value == "new", "the refusal must not spend the host"
 
-    def test_the_render_target_fact_follows_qts_resize_and_expose_events(self, host) -> None:
-        """Fact T (review round 3, P1-1). A resize event says "the target is behind", the
-        next expose event of the EXPOSED window says "it caught up" — that expose is what
-        makes Qt resize the swap chain. ``showFullScreen()`` delivers its resize inside
-        the call: window and scene agreed at once, the host read live, ``wait_ready()``
-        said True and the grab raised (20 of 20)."""
-        from PyQt6.QtCore import QSize
-        from PyQt6.QtGui import QExposeEvent, QRegion, QResizeEvent, QWindow
-
-        from open_garden_planner.ui.view3d.quick3d.host import HostStateError
+    def test_the_watch_counts_events_and_decides_nothing(self, host) -> None:
+        """Review round 4, the ruling. Round 3's watch switched a fact ON when an expose
+        arrived after a resize — "the render target has caught up" — and the state waited
+        for it. Windows sends no expose to a pane that grows where no screen is: the host
+        read "starting" for ever. The watch now COUNTS (resize events; events that can
+        change what a frame is) and no event makes anything true."""
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
 
         watch, view = host._watch, host._view  # noqa: SLF001
-        resize = QResizeEvent(QSize(320, 240), QSize(320, 240))
-        expose = QExposeEvent(QRegion(0, 0, 320, 240))
-        assert watch.target_synced is False
-        host.show()
-        assert host.wait_ready(5.0) and watch.target_synced is True
-        host.graphics_api = lambda: "Direct3D11"  # past the "no 3D here" check, to the state's
+        assert not hasattr(watch, "target_synced") and (watch.resizes, watch.signs) == (0, 0)
+        _force(host)
+        assert host.state.value == "live"
+        _sign(host, "resize")
+        assert (watch.resizes, watch.signs) == (1, 1)
+        assert host.state.value == "live", "an event changes no state: only Qt's facts do"
+        _sign(host, "expose")
+        assert (watch.resizes, watch.signs) == (1, 2) and host.state.value == "live"
+        move = QMouseEvent(QEvent.Type.MouseMove, QPointF(1.0, 1.0), QPointF(1.0, 1.0),
+                           Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                           Qt.KeyboardModifier.NoModifier)
+        assert watch.eventFilter(view, move) is False, "the watch never eats an event"
+        assert watch.eventFilter(view, None) is False
+        assert (watch.resizes, watch.signs) == (1, 2), "a mouse move is no sign of anything"
 
-        assert watch.eventFilter(view, resize) is False, "the watch never eats an event"
-        assert watch.target_synced is False and host.state.value == "starting"
-        for call in (lambda: host.grab("stale"), lambda: host.pick(1.0, 1.0),
-                     lambda: host.project(0.0, 0.0, 0.0)):
-            with pytest.raises(HostStateError, match="render target has not caught up"):
-                call()
-        # an expose event that does not belong to an exposed window releases nothing
-        never_shown = QWindow()
-        assert watch.eventFilter(never_shown, expose) is False and watch.target_synced is False
-        assert watch.eventFilter(QObject(), expose) is False and watch.target_synced is False
-        assert watch.eventFilter(view, None) is False and watch.target_synced is False
-        # the expose of the window itself does
-        assert view.isExposed() and watch.eventFilter(view, expose) is False
-        assert watch.target_synced is True and host.state.value == "live"
-        # and a second resize takes it away again: the latest event counts
-        watch.eventFilter(view, resize)
-        assert host.state.value == "starting"
-        never_shown.deleteLater()
-
-    def test_a_frame_that_is_not_the_windows_size_is_refused_as_a_state(self, host) -> None:
-        """The last line of defence behind the state (review round 3, P1-1). An image that
-        does not have the window's size means the render target has not caught up: a
-        STATE, refused like every other "not now" (``HostStateError``) — it used to be an
-        ``EngineError``, raised after ``wait_ready()`` had answered True. The host notes
-        it, reads ``starting`` until Qt's next expose, and does not ask Qt again."""
-        from PyQt6.QtGui import QExposeEvent, QRegion
-
+    def test_the_frame_is_the_witness(self, host) -> None:
+        """Sentence 1 of the contract, and what it rests on. A live host is ASKED for a
+        frame; the frame's size decides. Of the window's size: the answer. Of another
+        size — the render target is behind, after ``showFullScreen()`` or beyond the
+        screen's edge —: ``HostStateError``, counted, and nothing remembered: the host
+        still says it is live and asks Qt again the next time."""
         from open_garden_planner.ui.view3d.quick3d.host import HostStateError
 
-        host.show()
-        assert host.wait_ready(5.0)
-        _force(host)  # live, 320 x 240 — and "renders 3D", so that grab() gets as far as Qt
-        assert host.grab("right size").width() == round(320 * host.device_pixel_ratio())
-        assert host.grabs == 1 and host.stale_frames == 0
-        _force(host, size=(100, 80), root_width=100.0, root_height=80.0)  # Qt's window is 320 x 240
-        with pytest.raises(HostStateError, match=r"px image for a 100 x 80 window.*"
-                           r"render target has not caught up.*wait_ready\(\)"):
-            host.grab("wrong size")
-        assert host.grabs == 1 and host.stale_frames == 1
-        del host._facts  # noqa: SLF001 - Qt's own facts again: all in place but the target
-        assert host._watch.target_synced is False and host.state.value == "starting"  # noqa: SLF001
-        grabbed = []
-        real_grab = host._view.grabWindow  # noqa: SLF001
-        host._view.grabWindow = lambda: grabbed.append(1) or real_grab()  # noqa: SLF001
-        with pytest.raises(HostStateError, match="render target has not caught up"):
-            host.grab("still stale")
-        assert grabbed == [] and host.stale_frames == 1, "refused by the state: Qt is not asked"
-        host._watch.eventFilter(host._view, QExposeEvent(QRegion(0, 0, 320, 240)))  # noqa: SLF001
-        assert host.state.value == "live"
-        assert host.grab("caught up").width() == round(320 * host.device_pixel_ratio())
-        assert grabbed == [1] and host.grabs == 2 and host.stale_frames == 1
+        taken = _frames(host, (320, 240), (49, 240), (49, 240), (320, 240))
+        _force(host)
+        assert host.grab("fits").width() == 320
+        assert (host.grabs, host.stale_frames, taken) == (1, 0, [(320, 240)])
+        for _ in range(2):
+            with pytest.raises(HostStateError, match=r"49 x 240 px image for a 320 x 240 window.*"
+                               + STALE + r".*wait_ready\(\)"):
+                host.grab("the old size")
+            assert host.state.value == "live", "nothing is latched: the state is Qt's facts"
+        assert (host.grabs, host.stale_frames, len(taken)) == (1, 2, 3)
+        assert host.grab("caught up").width() == 320, "the next call asks Qt again"
+        assert (host.grabs, host.stale_frames, len(taken)) == (2, 2, 4)
+
+    @pytest.mark.parametrize(("image", "ratio", "window", "fits"), [
+        ((320, 240), 1.0, (320, 240), True),
+        ((319, 240), 1.0, (320, 240), False), ((321, 240), 1.0, (320, 240), False),
+        ((320, 239), 1.0, (320, 240), False), ((320, 242), 1.0, (320, 240), False),
+        ((640, 480), 2.0, (320, 240), True), ((638, 480), 2.0, (320, 240), False),
+        # a fractional ratio rounds: 447 x 1.5 = 670.5 is 670 or 671 device pixels
+        ((670, 750), 1.5, (447, 500), True), ((671, 750), 1.5, (447, 500), True),
+        ((669, 750), 1.5, (447, 500), False), ((672, 750), 1.5, (447, 500), False),
+    ])
+    def test_the_size_check_is_exact_to_the_device_pixel(
+            self, image: tuple[int, int], ratio: float, window: tuple[int, int], fits: bool) -> None:
+        """What sentence 1 of the contract rests on. The check allowed TWO pixels until
+        review round 4: a pane moved by one pixel, and the frame of the size it had before
+        passed for the current one (measured: a 447 x 500 frame for a 448 x 500 window,
+        handed out). One pixel is another size."""
+        from PyQt6.QtGui import QImage
+
+        from open_garden_planner.ui.view3d.quick3d.host import Quick3DHost
+
+        frame = QImage(image[0], image[1], QImage.Format.Format_RGB32)
+        frame.setDevicePixelRatio(ratio)
+        found = Quick3DHost._other_size(frame, _facts(size=window))  # noqa: SLF001
+        assert (found is None) is fits, found
+        if not fits:
+            assert f"{image[0]} x {image[1]} px image for a {window[0]} x {window[1]} window" in found
+
+    def test_pick_and_project_answer_for_a_frame_of_the_windows_size(self, host) -> None:
+        """Measured on Direct3D 11: right after a resize, with no frame in between, a pick
+        MISSES the box under the cursor — the engine picks with the viewport of the frame
+        it rendered last. So ``pick`` and ``project`` take a frame themselves when the
+        host has none since the last resize — ONE, not one per call — and refuse when
+        that frame has another size, without asking the scene."""
+        from open_garden_planner.ui.view3d.quick3d.host import HostStateError
+
+        asked: list[str] = []
+        host._call = lambda name, *_a: asked.append(name) or {"hit": False, "x": 7.0, "y": 9.0}  # noqa: SLF001
+        taken = _frames(host, (320, 240), (320, 240), (320, 240), (49, 240))
+        _force(host)
+        assert host.pick(1.0, 1.0) is None and host.project(0.0, 0.0, 0.0) == (7.0, 9.0)
+        assert host.pick(2.0, 2.0) is None
+        assert (len(taken), host.probes) == (1, 1), "one frame for this size, not one per call"
+        assert asked == ["pickAt", "projectToView", "pickAt"]
+        _sign(host, "resize")  # Qt resized the window (to the same size: the count is what matters)
+        assert host.project(0.0, 0.0, 0.0) == (7.0, 9.0) and (len(taken), host.probes) == (2, 2)
+        _sign(host, "resize")
+        host.grab("a caller's own frame counts as well")
+        assert host.pick(3.0, 3.0) is None and (len(taken), host.probes) == (3, 2)
+        _sign(host, "resize")
+        asked.clear()
+        for call in (lambda: host.pick(1.0, 1.0), lambda: host.project(0.0, 0.0, 0.0)):
+            with pytest.raises(HostStateError, match=STALE):
+                call()
+        assert asked == [], "refused on the evidence of the frame: the scene is not asked"
+        assert host.stale_frames == 2 and host.state.value == "live"
 
     def test_the_one_offscreen_frame_in_another_size_is_an_engine_error(self, host) -> None:
         """There is no "later" for the offscreen frame — the host is spent by it — so a
         wrong size there is nothing a caller could wait out."""
-        from PyQt6.QtGui import QImage
-
         from open_garden_planner.ui.view3d.quick3d.host import EngineError
 
-        _force(host, surface_created=False, visible=False, exposed=False, scene_graph=False,
-               target_synced=False)
+        _force(host, surface_created=False, visible=False, exposed=False, scene_graph=False)
         assert host.state.value == "new"
         host._view.create = lambda: None  # noqa: SLF001 - Qt is not asked: its answer is given
-        host._view.grabWindow = lambda: QImage(50, 40, QImage.Format.Format_RGB32)  # noqa: SLF001
+        _frames(host, (50, 40))
         with pytest.raises(EngineError, match="50 x 40 px image for a 320 x 240 window.*"
                            "not the scene at this size"):
             host.grab("offscreen")
@@ -843,71 +911,168 @@ class TestStateMachine:
 
 
 class TestWaitReady:
-    """``wait_ready()`` is True only when a ``grab()`` right after it answers; it delivers
-    what is pending first, waits only for a host that is on its way, looks again in every
-    pass, blocks for events instead of spinning, and comes back at once when no event
-    loop can run (review round 2, P2-5; round 3, P1-1 and P2-1). The contract is
-    ``lifecycle.py``'s docstring."""
+    """The contract's sentences 2 and 3 (``lifecycle.py``): ``wait_ready(timeout_s)`` is
+    back within ``timeout_s``, event delivery included; True means a frame of the
+    window's size was just taken; and when nothing is on its way it says False promptly —
+    ``STALL_S`` after the last sign of progress — never at the deadline."""
 
-    def test_it_delivers_what_is_pending_before_it_answers(self, host) -> None:
-        """Review round 3, P1-1. A host can READ live while the event that ends it is
-        still in Qt's queue — the parent's layout has a new size for it, or the expose
-        that resizes the render target has not been delivered. It answered True without
-        a look at the queue."""
+    def test_the_default_timeout_is_safe_for_one_call_on_the_gui_thread(self) -> None:
+        import inspect
+
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+        from open_garden_planner.ui.view3d.quick3d import lifecycle
+
+        default = inspect.signature(host_module.Quick3DHost.wait_ready).parameters["timeout_s"].default
+        assert default == lifecycle.WAIT_READY_DEFAULT_S == 1.0, "10 s was not safe"
+        text = host_module.Quick3DHost.wait_ready.__doc__ or ""
+        assert "never call it from a" in text and "timer slot" in text and "except HostStateError" in text
+
+    def test_true_means_a_frame_of_the_windows_size_was_just_taken(self, host) -> None:
+        taken = _frames(host, (320, 240))
+        _force(host)
+        started = time.perf_counter()
+        assert host.wait_ready(5.0) is True
+        assert time.perf_counter() - started < 0.4, "nothing to wait for"
+        assert (taken, host.probes, host.stale_frames) == ([(320, 240)], 1, 0)
+        assert host.grab("right after it").width() == 320
+
+    def test_a_live_host_whose_frame_has_another_size_is_refused_promptly(self, host) -> None:
+        """Review round 4 — THE finding, as far as it can be put here: Qt reports every
+        fact, and the frame has the old size (a pane that grew beyond the screen's edge).
+        Nothing is on its way. Round 3 waited for an expose until its deadline; now:
+        ONE frame, a wait of ``STALL_S`` for a sign of progress, and False — whatever
+        the timeout."""
+        from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
+
+        taken = _frames(host, (49, 240))
+        _force(host)
+        for timeout in (5.0, 60.0):
+            before = len(taken)
+            started = time.perf_counter()
+            assert host.wait_ready(timeout) is False
+            elapsed = time.perf_counter() - started
+            assert STALL_S - 0.05 <= elapsed < STALL_S + 0.8, f"{elapsed:.2f} s of {timeout:g} s"
+            assert len(taken) == before + 1, "no second frame while nothing has happened"
+        assert host.state.value == "live" and host.stale_frames == 2
+
+    def test_a_sign_of_progress_makes_it_take_another_frame(self, host) -> None:
+        """The other half: the pane is moved back onto the screen, Qt draws it — an event
+        arrives — and the next frame fits."""
         from PyQt6.QtCore import QTimer
 
+        taken = _frames(host, (49, 240), (320, 240))
+        _force(host)
+        QTimer.singleShot(60, lambda: _sign(host, "expose"))
+        started = time.perf_counter()
+        assert host.wait_ready(5.0) is True
+        assert 0.05 <= time.perf_counter() - started < 1.5
+        assert taken == [(49, 240), (320, 240)] and host.stale_frames == 1
+
+    def test_signs_that_keep_coming_do_not_keep_it_beyond_its_timeout(self, host) -> None:
+        """Sentence 2 wins over sentence 3: while something keeps happening the host goes
+        on looking — up to ``timeout_s``, not a moment longer."""
+        from PyQt6.QtCore import QTimer
+
+        taken = _frames(host, (49, 240))
+        _force(host)
+        ticker = QTimer()
+        ticker.timeout.connect(lambda: _sign(host, "expose"))
+        ticker.start(20)
+        try:
+            started = time.perf_counter()
+            assert host.wait_ready(0.4) is False
+            elapsed = time.perf_counter() - started
+        finally:
+            ticker.stop()
+        assert 0.38 <= elapsed < 1.2, f"{elapsed:.2f} s for a 0.4 s timeout"
+        assert 3 <= len(taken) <= 40, f"{len(taken)} frames: one per sign, never a spin"
+
+    @pytest.mark.parametrize(("changes", "frame", "answer", "frames"), [
+        ({}, (320, 240), True, 1), ({}, (49, 240), False, 1),
+        ({"exposed": False}, (320, 240), False, 0), ({"visible": False}, (320, 240), False, 0),
+    ], ids=["live, the frame fits", "live, the frame does not", "starting", "hidden"])
+    def test_a_timeout_of_zero_delivers_nothing_and_waits_for_nothing(
+            self, host, monkeypatch: pytest.MonkeyPatch, changes: dict[str, Any],
+            frame: tuple[int, int], answer: bool, frames: int) -> None:
+        """Review round 4: ``wait_ready(0.0)`` took 1.0 to 1.4 s — it delivered pending
+        events (one expose handler) before it looked at its deadline. Now a zero timeout
+        runs no event at all: it looks, takes at most one frame, and answers."""
+        from open_garden_planner.ui.view3d.quick3d import host as host_module
+
+        ran: list[str] = []
+
+        class Spy:
+            @staticmethod
+            def processEvents(*_arguments: Any) -> None:  # noqa: N802 - Qt's name
+                ran.append("processEvents")
+
+        monkeypatch.setattr(host_module, "QCoreApplication", Spy)
+        host._run_events = lambda _ms: ran.append("a pass") or True  # noqa: SLF001
+        delivered: list[int] = []
+        pending = _Later(lambda: delivered.append(1))
+        taken = _frames(host, frame)
+        _force(host, **changes)
+        started = time.perf_counter()
+        for timeout in (0.0, -3.0):
+            assert host.wait_ready(timeout) is answer
+        assert time.perf_counter() - started < 0.2
+        assert ran == [] and delivered == [], "a zero timeout runs no event loop"
+        assert len(taken) == 2 * frames
+        del pending
+
+    def test_it_delivers_what_is_pending_before_it_answers(self, host) -> None:
+        """Review round 3, P1-1. A host can READ live while the event that changes that
+        is still in Qt's queue — the parent hid the pane, or its layout has a new size
+        for it. It answered True without a look at the queue."""
         _force(host)
         assert host.state.value == "live"
         pending = _Later(lambda: _force(host, visible=False))  # e.g. the parent hid the pane
         assert host.wait_ready(5.0) is False and host.state.value == "hidden"
 
+        host._frames_stubbed = False  # noqa: SLF001
         _force(host)
-        pending = _Later(lambda: _force(host, target_synced=False))  # the resize; its expose
-        QTimer.singleShot(40, lambda: _force(host))                  # comes 40 ms later
-        started = time.perf_counter()
-        assert host.wait_ready(5.0) is True and host.state.value == "live"
-        assert 0.03 <= time.perf_counter() - started < 1.5, "it waited for the expose"
+        # the parent's layout has a new size for the view: the resize is in the queue
+        pending = _Later(lambda: _force(host, size=(200, 240), root_width=200.0))
+        assert host.wait_ready(5.0) is True
+        assert host._frame_at is not None and host._frame_at[:2] == (200, 240), (  # noqa: SLF001
+            "the frame it took was one of the size the window had AFTER the pending resize")
         del pending
 
-    @pytest.mark.parametrize(("changes", "passes"), [
-        ({}, 1), ({"target_synced": False}, 1), ({"minimised": True}, 1), ({"size": (0, 240)}, 1),
-        ({"visible": False}, 0), ({"surface_created": False, "visible": False}, 0),
-    ], ids=["live", "starting", "minimised", "collapsed", "not visible", "new"])
-    def test_it_delivers_pending_events_once_and_only_for_a_host_qt_calls_visible(
-            self, host, monkeypatch: pytest.MonkeyPatch, changes: dict[str, Any],
-            passes: int) -> None:
-        """ONE pass, without waiting, before the first look — also for a host that reads
-        live. None for a host that is not visible: its parent shows it synchronously, so
-        nothing in the queue can make it ready."""
+    @pytest.mark.parametrize(("changes", "timeout", "expected"), [
+        ({}, 5.0, [5000]), ({}, 0.25, [250]), ({"exposed": False}, 0.3, [300]),
+        ({"minimised": True}, 5.0, [5000]), ({"size": (0, 240)}, 5.0, [5000]),
+        ({"visible": False}, 5.0, []), ({"surface_created": False, "visible": False}, 5.0, []),
+        ({}, 0.0, []),
+    ], ids=["live", "live, 0.25 s", "starting", "minimised", "collapsed", "not visible", "new",
+            "no timeout"])
+    def test_it_delivers_pending_events_once_and_inside_its_time(
+            self, host, monkeypatch: pytest.MonkeyPatch, changes: dict[str, Any], timeout: float,
+            expected: list[int]) -> None:
+        """ONE delivery of what is queued, before the first look — also for a host that
+        reads live — and INSIDE the timeout: Qt is told how long it may take (review
+        round 4: the delivery used to sit outside the deadline). None for a host that is
+        not visible: its parent shows it synchronously, nothing queued can make it ready."""
+        from PyQt6.QtCore import QEventLoop
+
         from open_garden_planner.ui.view3d.quick3d import host as host_module
 
-        delivered, waited = [0], [0]
-        real = host_module.QCoreApplication.processEvents
+        limits: list[int] = []
 
         class Spy:
             @staticmethod
-            def processEvents(*arguments: Any) -> None:  # noqa: N802 - Qt's name
-                delivered[0] += 1
-                real(*arguments)
-
-        def run_events(_milliseconds: int) -> bool:
-            waited[0] += 1
-            _force(host)  # whatever was awaited arrives in the first waiting pass
-            return True
+            def processEvents(flags: Any, limit_ms: int) -> None:  # noqa: N802 - Qt's name
+                assert flags == QEventLoop.ProcessEventsFlag.AllEvents
+                limits.append(limit_ms)
 
         monkeypatch.setattr(host_module, "QCoreApplication", Spy)
         _force(host, **changes)
-        host._run_events = run_events  # noqa: SLF001
-        answer = host.wait_ready(5.0)
-        assert delivered[0] == passes
-        starting = changes == {"target_synced": False}
-        assert waited[0] == (1 if starting else 0), "it waits only while the host is starting"
-        assert answer is (changes == {} or starting)
+        host.wait_ready(timeout)
+        assert limits == expected
 
     def test_it_comes_back_at_once_when_no_event_loop_can_run(self, host) -> None:
         """Review round 3, P2-1. Once the application is quitting ``QEventLoop.exec()``
         returns at once (``_run_events`` then says False): 158,574 looks at Qt in 3.0 s."""
-        forced, looks = _facts(scene_graph=False, exposed=False, target_synced=False), [0]
+        forced, looks = _facts(scene_graph=False, exposed=False), [0]
 
         def facts() -> Any:
             looks[0] += 1
@@ -923,7 +1088,7 @@ class TestWaitReady:
     def test_a_loop_that_does_not_block_is_asked_a_bounded_number_of_times(self, host) -> None:
         """No busy loop anywhere: even if a pass came back at once for a reason nobody
         thought of, the number of passes is bounded by the timeout."""
-        forced, looks = _facts(scene_graph=False, exposed=False, target_synced=False), [0]
+        forced, looks = _facts(scene_graph=False, exposed=False), [0]
 
         def facts() -> Any:
             looks[0] += 1
@@ -972,9 +1137,10 @@ class TestWaitReady:
         assert time.perf_counter() - started < 1.0
 
     def test_it_times_out_without_spinning(self, host) -> None:
-        """A window that never starts: False when the time is up — after a few dozen
-        looks at Qt, not after the tens of thousands a busy loop takes."""
-        forced, looks = _facts(scene_graph=False, exposed=False, target_synced=False), [0]
+        """A window that never starts, and a timeout shorter than the stall bound: False
+        when the time is up — after a few dozen looks at Qt, not after the tens of
+        thousands a busy loop takes."""
+        forced, looks = _facts(scene_graph=False, exposed=False), [0]
 
         def facts() -> Any:
             looks[0] += 1
@@ -987,28 +1153,58 @@ class TestWaitReady:
         assert 0.28 <= elapsed < 2.0
         assert looks[0] < 200, f"{looks[0]} looks at Qt in {elapsed:.2f} s: a busy loop"
 
+    @pytest.mark.parametrize("changes", [
+        {"scene_graph": False, "exposed": False}, {"exposed": False}, {"root_width": 0.0},
+    ], ids=["never exposed", "shown again, never exposed", "the scene never catches up"])
+    def test_a_starting_host_that_makes_no_progress_is_given_up_promptly(
+            self, host, changes: dict[str, Any]) -> None:
+        """Review round 4: "starting" used to mean "on its way", and ``wait_ready()``
+        waited for it to its deadline — 5 s, 10 s. A pane SHOWN where no screen is never
+        gets its expose; a session that paints nothing never does either. Whatever the
+        cause: no sign of progress for ``STALL_S``, and the answer is False."""
+        from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
+
+        _force(host, **changes)
+        started = time.perf_counter()
+        assert host.wait_ready(30.0) is False and host.state.value == "starting"
+        elapsed = time.perf_counter() - started
+        assert STALL_S - 0.05 <= elapsed < STALL_S + 0.8, f"{elapsed:.2f} s of 30 s"
+
+    def test_progress_keeps_a_starting_host_waited_for(self, host) -> None:
+        """…and a host that IS on its way is not given up: every change of a fact, every
+        event of the view, starts the stall bound again."""
+        from PyQt6.QtCore import QTimer
+
+        from open_garden_planner.ui.view3d.quick3d.lifecycle import STALL_S
+
+        _force(host, scene_graph=False, exposed=False)
+        steps = [lambda: _sign(host, "resize"), lambda: _force(host, scene_graph=True, exposed=False),
+                 lambda: _sign(host, "expose"), lambda: _force(host)]
+        for index, step in enumerate(steps):
+            QTimer.singleShot(int((index + 1) * (STALL_S * 0.7) * 1000), step)
+        started = time.perf_counter()
+        assert host.wait_ready(10.0) is True
+        elapsed = time.perf_counter() - started
+        assert 4 * STALL_S * 0.7 - 0.05 <= elapsed < 4 * STALL_S * 0.7 + 1.0, elapsed
+        assert host.longest_quiet_s >= STALL_S * 0.6, "the diagnostic saw the quiet spells"
+
     @pytest.mark.parametrize(("later", "expected"), [
         ({}, True),                              # the first expose arrived: live
-        ({"target_synced": False}, None),        # the scene is up, its target is not: go on waiting
         ({"visible": False}, False),             # hidden during the wait
         ({"minimised": True}, False),
         ({"size": (0, 240)}, False),             # the pane was collapsed during the wait
-    ], ids=["becomes live", "target still behind", "hidden meanwhile", "minimised meanwhile",
-            "collapsed meanwhile"])
+    ], ids=["becomes live", "hidden meanwhile", "minimised meanwhile", "collapsed meanwhile"])
     def test_it_looks_again_in_every_pass(self, host, later: dict[str, Any],
-                                          expected: bool | None) -> None:
+                                          expected: bool) -> None:
         """It looked at visibility once and then span to its timeout (3.0 of 3.0 s)."""
         from PyQt6.QtCore import QTimer
 
+        _frames(host, (320, 240))
         _force(host, scene_graph=False, exposed=False)
         QTimer.singleShot(40, lambda: _force(host, **later))
         started = time.perf_counter()
-        if expected is None:  # still starting: only the timeout ends the wait
-            assert host.wait_ready(0.4) is False and host.state.value == "starting"
-            assert 0.38 <= time.perf_counter() - started < 2.0
-            return
         assert host.wait_ready(5.0) is expected
-        assert time.perf_counter() - started < 1.5
+        assert time.perf_counter() - started < 0.45, "at the change, not at a bound"
 
     def test_it_comes_back_when_the_host_is_closed_or_destroyed_during_the_wait(
             self, qtbot) -> None:  # noqa: ARG002
@@ -1023,7 +1219,7 @@ class TestWaitReady:
             QTimer.singleShot(40, lambda made=made, kill=kill: kill(made))
             started = time.perf_counter()
             assert made.wait_ready(5.0) is False
-            assert time.perf_counter() - started < 1.5 and made.is_closed
+            assert time.perf_counter() - started < 0.45 and made.is_closed
             made.close()
 
     def test_it_gives_up_as_soon_as_qt_reports_no_graphics_device(self, host) -> None:
@@ -1039,7 +1235,7 @@ class TestWaitReady:
             QQuickWindow.SceneGraphError.ContextNotAvailable, "no device today"))
         started = time.perf_counter()
         assert host.wait_ready(5.0) is False
-        assert time.perf_counter() - started < 1.5
+        assert time.perf_counter() - started < 0.45
         assert host.health().scene_graph_error == "no device today"
         # review round 3, P2-6: the refusal said "Call wait_ready() first" — which answers
         # False for this host, for ever. It names the failure and where to read it.
@@ -1050,7 +1246,9 @@ class TestWaitReady:
                                r"no device today.*health\(\)\.scene_graph_error") as caught:
                 call()
             assert "Call wait_ready() first" not in str(caught.value)
-        assert host.wait_ready(5.0) is False, "and it goes on answering False, at once"
+        started = time.perf_counter()
+        assert host.wait_ready(5.0) is False, "and it goes on answering False"
+        assert time.perf_counter() - started < 0.2, "at once"
 
 
 class TestABackendWithout3d:

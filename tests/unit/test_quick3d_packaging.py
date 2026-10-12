@@ -614,7 +614,9 @@ def test_the_state_contract_is_written_down_in_one_place() -> None:
     home = CONTRACT_HOME.read_text(encoding="utf-8")
     rows = {match.group(1).upper() for match in STATE_ROW.finditer(home)}
     assert rows == set(_STATES.split("|")), f"the contract's own state table is gone: {sorted(rows)}"
-    assert "G and E and R and T" in home and "What raises what" in home
+    # round 4: no tenth fact — LIVE is what Qt reports when asked, and the frame is the witness
+    assert "``LIVE``      else: G and E and R\n" in home and "What raises what" in home
+    assert "The contract — three sentences" in home and "THE WITNESS IS A FRAME" in home
     assert "Which call is legal in which state" in home and "``wait_ready``" in home
     for path in CONTRACT_LINKERS:
         text = path.read_text(encoding="utf-8")

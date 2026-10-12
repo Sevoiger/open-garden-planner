@@ -59,6 +59,9 @@ from tests.integration.ground_bake_support import (
     difference,
     ncc,
 )
+from tests.integration.test_scene3d_snapshot import (
+    work_done,  # noqa: F401 - the contract story's counters of what an idle tick must not do
+)
 
 REPO = Path(__file__).resolve().parents[2]
 PLANS = REPO / "tests" / "fixtures" / "plans"
@@ -854,6 +857,40 @@ class TestFlatItemsTheSolidPathRefuses:
         assert bake.step() == SceneDiff(transform=(str(item.item_id),))  # still a move
         assert bake.baker.last_examined == 1
         assert difference(bake.image(), canvas_render(scene, bake.grid)) == (0.0, 0)
+
+    def test_an_idle_tick_asks_nothing_again_about_a_refused_flat_item(
+            self, qtbot: Any, work_done: dict[str, int]) -> None:  # noqa: F811 - the fixture
+        """The contract's rule (L1.1, fix round 4), held on the flat path too: a refusal
+        is remembered while the item lives. A 3,000-point path and a 5,000-vertex lawn
+        — kept for the ground, refused for cutting — cost the FIRST snapshot the
+        pricing of their refusal, and an idle tick nothing: no cut, no stroke
+        inflated, no outline resolved, and the same records again."""
+        from open_garden_planner.ui.view3d import snapshot
+
+        scene = CanvasScene(width_cm=3000.0, height_cm=1100.0)
+        path, lawn = _long_path(3000), _traced_lawn(5000)
+        scene.addItem(path)
+        scene.addItem(lawn)
+        bake = Bake(scene, registry=production_registry())
+        bake.step()
+        assert bake.skipped == [] and set(bake.records) == {str(path.item_id), str(lawn.item_id)}
+        assert all(record.footprints == () for record in bake.records.values())
+        first, first_work = dict(bake.records), dict(work_done)
+        assert first_work["cuts"] == 0  # nothing was ever cut: there are no regions
+        strokes, outlines = (snapshot._polyline_regions.cache_info(),
+                             snapshot._polygon_regions.cache_info())
+        painted = bake.baker.records_painted
+        for _tick in range(3):
+            work_done.update(cuts=0, strokes=0, outlines=0)
+            assert bake.step().is_empty and bake.records == first
+            assert work_done == {"cuts": 0, "strokes": 0, "outlines": 0}
+        assert bake.baker.records_painted == painted  # … and the ground paints nothing either
+        # the refusals were ASKED for on every tick (they stay live), and answered from memory
+        assert snapshot._polyline_regions.cache_info().misses == strokes.misses
+        assert snapshot._polygon_regions.cache_info().misses == outlines.misses
+        assert snapshot._polyline_regions.cache_info().hits == strokes.hits + 3
+        assert snapshot._polygon_regions.cache_info().hits == outlines.hits + 3
+        print(f"\nrefused flat items: first snapshot {first_work}, three idle ticks {work_done}")
 
     def test_with_a_height_such_an_item_is_left_out_and_reported_as_before(self, qtbot: Any) -> None:
         scene = CanvasScene(width_cm=1100.0, height_cm=800.0)
