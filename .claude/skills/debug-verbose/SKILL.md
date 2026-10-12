@@ -1826,6 +1826,65 @@ The point moved by 1.8 cm in x AND y. Nothing about the plant's geometry had cha
 
 **Follow-up: imported polygon centres.** Review then exercised the real save/load/picker path, not only badge refresh. A temporary regression printed `[GUILD-CENTRE] loaded_type PolygonItem eligible_index 1`; Insert refused with `PolygonItem object has no attribute rect`. An initial probe omitted a layer and correctly found no eligible centre; the decisive probe persisted a valid visible/unlocked layer. `guild_plant_bounds()` now supplies base-shape bounds to existing-centre placement, whole-layout preflight, preview and badges. Polygon/path bounds exclude painted shadows and cosmetic children. Round-trip insertion and exact undo restoration are pinned at 0?, 45? and 215?, including the centre-relative mature-spacing layout. All probe prints were removed.
 
+## Case study: sun self-shadow and old-document heatmaps (#314/#428, 2026-10-12)
+
+**Symptom.** Both reference tomatoes read zero hours, and a heatmap worker finishing after New/Open/recovery repainted the replacement plan.
+**Wrong theories.** The centre-lookup acceptance assumption was rejected by the measured self-shadow probe. No alternative solar formula, date owner or per-caller reset was adopted. Date-only clearing and `is_running` checks do not establish document ownership.
+**Key evidence.** The planning probe recorded `north=0 h south=0 h` with all casters and `north=0 h south=16.5 h` excluding each receiver only. Six deterministic controlled-worker regressions failed on `assert not heatmap.heatmap_visible()` with actual True before the reset fix; malformed-load preservation already passed. Queued timing waits for run() to return without delivering success to the GUI, proving thread completion is not queued-signal completion.
+**Root cause.** A solid plant shadows its own ground centre. The old controller lacked the canonical document-reset subscription and result-generation/signature ownership checks.
+**Fix/lesson.** Retain the displayed grid policy; accumulate sparse owner-aware receiver sun in the same explicit worker. Reset on `CanvasScene.document_replaced` before teardown, reject stale result ownership and retain the worker until finished. Test missing/stale values as unavailable, not zero/pass; compare against the independent point reference and measured constants. General Diagnostics needs one publisher for all cached producers. No debug instrumentation remains in committed application code.
+
+
+## Case study: sun badge footprint, malformed species and collected observers (F3, 2026-10-12)
+
+**Symptom.** Review found an L-shaped imported plant's badge outside its footprint and a selected legacy tree raising in the refresh timer. The complete suite also caught an exception during delayed QObject destruction.
+**Wrong theories.** None adopted before reproducing the exact shape, accepted metadata, and captured teardown traceback.
+**Evidence.** The imported/grouped regression failed `path.contains(QRectF(1189, 1319, 22, 22))`; accepted string/list species metadata failed at `species.get` with AttributeError. The suite traceback identified `disconnect -> Channel.disconnect: ValueError("listener is not connected")`. All regressions pass after correction.
+**Root cause.** Bounding rectangles contain empty space in concave footprints. Evaluation and canopy paths normalized species differently. A weak observer can be pruned during cyclic collection before Qt emits destroyed.
+**Fix.** Fit the complete badge rectangle inside the undecorated QPainterPath, normalize species once for both consumers, and make destruction cleanup idempotent for an already-removed subscription. Preserve navigation and item geometry across grouped save/load.
+**Lesson.** Test actual containment rather than rectangle placement, exercise accepted legacy metadata, and allow both Python collection and Qt destruction to own cleanup without raising.
+
+## Case study: every plant in a raised bed had "too little sun" — the sample point was inside the bed (US-F3 x base stacking, found 2026-10-12 while merging v1.30.1 into Phase 17 L1)
+
+**Symptom**: none reported — the feature had shipped the same day with its reference plan
+green (a tree and two tomatoes: 0 h north, 16.5 h south). The merge brought it together with
+the rule "a plant in a raised bed stands on the bed's soil", and the coordinator asked one
+question before any code was touched: does a raised bed shade the tomato standing on it?
+
+**Wrong theories**: none were needed; one was avoided. "The base rule will fix it" — lifting
+the plant's own solid by 38 cm changes nothing for the plant: its own solid is left out of its
+estimate anyway.
+
+**Key evidence** (a probe test on an export of `origin/master`, the real window, the real
+worker, Berlin, 21 June 2026, nothing else on the plan):
+
+```
+PROBE | open ground                  | hours=16.5 | record=None                    | badge=False
+PROBE | on the 40 cm bed             | hours=0.0  | record=sun_mismatch:too_little | badge=True
+PROBE | on the 5 cm bed              | hours=0.0  | record=sun_mismatch:too_little | badge=True
+PROBE | in a bed, not linked         | hours=0.0  | record=sun_mismatch:too_little | badge=True
+```
+
+**Root cause**: the estimate samples the GROUND cell under the plant's centre and leaves out
+the plant's own solid. A raised bed is a solid too, its footprint contains that cell, and a
+solid's shadow polygon includes its footprint — the point is "shaded" in every sample of the
+day. The reference plan has no bed on it.
+
+**Fix**: the receiver names the soil parent whose solid it stands in
+(`SunReceiver.stands_on` ← `ui/canvas/footprints.standing_parent`: linked, visible, a
+soil-capable solid, the centre inside — the membership half of the base rule the casters and
+the 3D records already used), and that caster is spared for this receiver like its own.
+After: 16.5 h on the bed; 10.5 h for a plant on the ground 10 cm north of the bed (the bed
+still shades what is beside it); a 3 m wall south of the bed takes exactly the hours it takes
+from the same plant with the bed removed. The first cut asked "is the plant LIFTED?" (base >
+0) and would have left a plant in a 2 cm edging at 0 hours: a solid can cover the point
+without lifting anything — the question is "is the plant in the parent's solid?".
+
+**Lesson**: **when a sample point is "under" an object, list everything else that is under
+the object.** And **try a feature first on the plan it is for** — a sun-requirement warning
+is for vegetable gardens, and a vegetable garden is raised beds; the reference plan was a
+tree. A merge is a second chance to ask the question the feature's own tests did not.
+
 ## Case study: a broken shader failed the render, and the run's own summary counted 0 Qt errors (Phase 17 L1.2, fixed 2026-10-11)
 
 **Symptom**: the positive control "a broken shader fails the render" did what it should: the
