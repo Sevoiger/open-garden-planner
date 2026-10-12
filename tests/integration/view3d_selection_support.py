@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -25,6 +26,7 @@ from open_garden_planner.core.scene3d.builders import production_registry
 from open_garden_planner.core.scene3d.pick_oracle import (
     PickScene,
     cast,
+    cast_all,
     perspective_ray,
     pick_scene,
     project,
@@ -32,6 +34,7 @@ from open_garden_planner.core.scene3d.pick_oracle import (
 from open_garden_planner.ui.view3d.quick3d.shots import PerspectiveShot, TopDownShot, top_down_pixel
 from tests.integration.quick3d_render_support import (
     DRIVER_TIMEOUT_S,
+    QML_SOURCE,
     REPO,
     driver_messages,
     keep_artifacts,
@@ -100,6 +103,43 @@ def robust_answer(scene: PickScene, shot: PerspectiveShot, view: tuple[float, fl
         if oracle_answer(scene, shot, view, x + dx, y + dy) != answer:
             return answer, False
     return answer, True
+
+
+def oracle_chain(scene: PickScene, shot: PerspectiveShot, view: tuple[float, float],
+                 x: float, y: float) -> tuple[str, ...]:
+    """EVERY item the ray at (x, y) meets, nearest first (``cast_all``)."""
+    ray = perspective_ray(shot.eye, shot.target, shot.fov_deg, view, x, y)
+    return tuple(hit.item_id for hit in cast_all(scene, ray))
+
+
+def robust_chain(scene: PickScene, shot: PerspectiveShot, view: tuple[float, float],
+                 x: float, y: float, margin: float = EDGE_MARGIN_PX,
+                 ) -> tuple[tuple[str, ...], bool]:
+    """``(the oracle's chain, whether it is the same all round the point)``."""
+    chain = oracle_chain(scene, shot, view, x, y)
+    for dx, dy in ((margin, margin), (-margin, margin), (margin, -margin), (-margin, -margin),
+                   (margin, 0.0), (-margin, 0.0), (0.0, margin), (0.0, -margin)):
+        if oracle_chain(scene, shot, view, x + dx, y + dy) != chain:
+            return chain, False
+    return chain, True
+
+
+def in_order(ids: Sequence[str]) -> tuple[str, ...]:
+    """``ids`` without repeats, each where it first stands (an item of several parts is
+    met several times by one ray)."""
+    return tuple(dict.fromkeys(ids))
+
+
+def broken_qml_copy(folder: Path, file: str, old: str, new: str) -> Path:
+    """A copy of the shipped QML directory with ``old`` replaced by ``new`` in ``file``
+    — for the controls that show a judge is not deaf."""
+    qml = folder / "qml"
+    shutil.copytree(QML_SOURCE, qml)
+    target = qml / file
+    text = target.read_text(encoding="utf-8")
+    assert text.count(old) >= 1, f"the control no longer finds {old!r} in {file}"
+    target.write_text(text.replace(old, new), encoding="utf-8")
+    return qml
 
 
 def ring_centre(ring: Sequence[Sequence[float]]) -> tuple[float, float]:
@@ -177,7 +217,28 @@ def named_pick_points(name: str, records: Mapping[str, Record], shot: Perspectiv
     return points
 
 
-# ── pixels of the ring ───────────────────────────────────────────────────────
+# ── pixels ───────────────────────────────────────────────────────────────────
+
+
+def image_rgb(image: Any) -> np.ndarray:
+    """A ``QImage`` as an (h, w, 3) int array (``quick3d_render_support.load_rgb`` for
+    an image that is not a file)."""
+    from PyQt6.QtGui import QImage
+
+    converted = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    bits = converted.constBits()
+    bits.setsize(converted.sizeInBytes())
+    rows = np.frombuffer(bytes(bits), np.uint8).reshape(
+        converted.height(), converted.bytesPerLine() // 4, 4)
+    return rows[:, :converted.width(), :3].astype(np.int64)
+
+
+def marker_mask(rgb: np.ndarray) -> np.ndarray:
+    """Pixels in the look-through marker's magenta: red AND blue well above green. The
+    walls are grey, the ground green or brown, the sky blue with no red above green."""
+    red, green, blue = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    return (red > green + 60) & (blue > green + 40) & (red > 90)
+
 
 
 def ring_mask(rgb: np.ndarray) -> np.ndarray:

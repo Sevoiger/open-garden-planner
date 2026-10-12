@@ -51,6 +51,7 @@ from open_garden_planner.core.scene3d.builders import production_registry  # noq
 from open_garden_planner.core.scene3d.camera import Bounds, CameraPose, frame_pose  # noqa: E402
 from open_garden_planner.ui.view3d.quick3d.shots import PerspectiveShot, TopDownShot  # noqa: E402
 from tests.integration.quick3d_render_driver import (  # noqa: E402
+    OPEN_TIMEOUT_S,
     QT_ERRORS_EXIT,
     Context,
     _clear_settings,
@@ -127,13 +128,14 @@ WALL_LENGTH, WALL_STROKE = 500.0, 5.0
 
 
 def wall_record(item_id: str = "wall", east: float = 0.0, north: float = 0.0,
-                length: float = WALL_LENGTH, height: float = 180.0) -> Record:
+                length: float = WALL_LENGTH, height: float = 180.0,
+                rotation: float = 0.0) -> Record:
     """A WALL as the snapshot gives it: a centre line, a stroke of 5 cm — and the
     built world makes 30 cm of masonry of it (``builders/walls.py``)."""
     half = length / 2.0
     return record(item_id, "WALL", east, north, rect(length, WALL_STROKE), height=height,
                   colour=GREY, shape="polyline", path=((-half, 0.0), (half, 0.0)),
-                  width=WALL_STROKE)
+                  width=WALL_STROKE, rotation=rotation)
 
 
 # ── picking (gate G1) ────────────────────────────────────────────────────────
@@ -188,6 +190,41 @@ def plan_records(scene: Any) -> dict[str, Record]:
 def plan_top(records: Mapping[str, Record]) -> float:
     return max((r.transform.base_cm + r.height_cm for r in records.values()
                 if r.height_cm is not None), default=0.0)
+
+
+# ── standing against a wall: the near plane ──────────────────────────────────
+
+LOOK_VIEW = (640, 480)
+LOOK_PLAN = (2000.0, 2000.0)
+MAGENTA = (235, 30, 200, 255)
+LOOK_NORTH_WALL, LOOK_EAST_WALL = 1200.0, 1300.0        # the two walls' centre lines
+LOOK_YAWS = tuple(float(yaw) for yaw in range(0, 360, 15))
+LOOK_PITCHES = (-35.0, 0.0, 35.0)
+LOOK_EYES = (165.0, 110.0)
+
+
+def look_records() -> dict[str, Record]:
+    """An inside corner of two walls 180 cm high and, behind each of them, a magenta
+    block 140 cm high. From anywhere inside the corner every line of sight to a block
+    crosses its wall within the wall's length and below its top (the eye is at most
+    165 cm, the block 140 cm): nothing magenta can be in a frame taken there unless
+    the camera looks THROUGH masonry."""
+    return {
+        "north_wall": wall_record("north_wall", 900.0, LOOK_NORTH_WALL, length=800.0),
+        "east_wall": wall_record("east_wall", LOOK_EAST_WALL, 800.0, length=800.0, rotation=90.0),
+        "behind_north": record("behind_north", "GARAGE_SHED", 900.0, 1360.0, rect(400.0, 120.0),
+                               height=140.0, colour=MAGENTA, shape="rectangle"),
+        "behind_east": record("behind_east", "GARAGE_SHED", 1460.0, 800.0, rect(120.0, 400.0),
+                              height=140.0, colour=MAGENTA, shape="rectangle"),
+    }
+
+
+# ── the real workspace on the real engine (gates G2 and G7, one row each) ────
+
+WORKSPACE_WINDOW = (1400, 820)
+WORKSPACE_CLICKS = 60
+WORKSPACE_SEED = 385_208
+WALK_HOLD_MS = 700
 
 
 # ── the engine side ──────────────────────────────────────────────────────────
@@ -312,7 +349,8 @@ def scenario_pick(ctx: Context) -> dict[str, Any]:
             for x, y in points:
                 hit = host.pick(x, y)
                 hits.append(None if hit is None else {
-                    "id": hit.item_id, "part": hit.part_index, "point": list(hit.point)})
+                    "id": hit.item_id, "part": hit.part_index, "point": list(hit.point),
+                    "behind": [later.item_id for later in hit.behind]})
             out[name] = {
                 "frame": frame, "points": [list(p) for p in points], "hits": hits,
                 "ms_per_pick": round((time.perf_counter() - started) * 1000.0 / len(points), 4),
@@ -336,10 +374,399 @@ def named_points(name: str, records: Mapping[str, Record],
     return [point for _label, point in named_pick_points(name, records, shot)]
 
 
+def scenario_lookthrough(ctx: Context) -> dict[str, Any]:
+    """Standing against a wall does not look through it. The walk core itself takes
+    the walker there — north until the wall stops it, then into the inside corner of
+    two — and from both places it looks all round, up and down, at two eye heights.
+    The driver counts magenta pixels per frame (the judge's mask) and keeps the level
+    adult frames every 45 degrees, every frame with magenta in it, and two controls:
+    the block seen from above, and an eye put INSIDE the near distance of the wall."""
+    from open_garden_planner.core.scene3d import walk
+    from tests.integration.view3d_selection_support import builder_parts, image_rgb, marker_mask
+
+    records = look_records()
+    world = walk.build_world(records, *LOOK_PLAN, parts_of=builder_parts)
+    state = walk.start_state(world, (900.0, 900.0), 0.0)
+    assert state is not None
+    for _ in range(1200):                                   # ten seconds to the north
+        state = walk.advance(state, walk.WalkCommand(forward=1.0), walk.TICK_S, world)
+    at_wall = state.shown
+    for _ in range(1200):                                   # ten more, to the north-east
+        state = walk.advance(state, walk.WalkCommand(forward=1.0, strafe=1.0), walk.TICK_S, world)
+    in_corner = state.shown
+    host = ctx.shown_host(LOOK_VIEW)
+    out: dict[str, Any] = {"at_wall": list(at_wall), "in_corner": list(in_corner), "looks": [],
+                           "segments": len(world.segments)}
+    try:
+        sync = SceneSync(_sink(host), production_registry())
+        sync.apply(records, sun=HIGH_SUN, ground=GroundSpec(*LOOK_PLAN))
+        out["view_size"] = list(host.view_size())
+
+        def look(name: str, spot: tuple[float, float], eye_cm: float, yaw: float, pitch: float,
+                 *, keep: bool = False) -> dict[str, Any]:
+            pose = walk.WalkState(spot[0], spot[1], yaw, pitch, 0.0, (spot[0], spot[1]))
+            host.set_camera(walk.eye_scene(pose, eye_cm), walk.look_target_scene(pose, eye_cm),
+                            walk.WALK_FOV_DEG)
+            image = host.grab(name)
+            row: dict[str, Any] = {"name": name, "at": [spot[0], spot[1]], "eye_cm": eye_cm,
+                                   "yaw": yaw, "pitch": pitch,
+                                   "magenta": int(marker_mask(image_rgb(image)).sum())}
+            if keep or row["magenta"]:
+                row.update(ctx.save(name, image))
+            return row
+
+        for place, spot in (("wall", at_wall), ("corner", in_corner)):
+            for eye_cm in LOOK_EYES:
+                for pitch in LOOK_PITCHES:
+                    for yaw in LOOK_YAWS:
+                        keep = eye_cm == LOOK_EYES[0] and pitch == 0.0 and yaw % 45.0 == 0.0
+                        out["looks"].append(look(
+                            f"look_{place}_{eye_cm:.0f}_{pitch:+.0f}_{yaw:03.0f}", spot, eye_cm,
+                            yaw, pitch, keep=keep))
+        # control 1: the block IS magenta in a frame — seen from its own side of the wall
+        host.set_camera((900.0, 1800.0, 165.0), (900.0, 1360.0, 70.0), walk.WALK_FOV_DEG)
+        image = host.grab("look_control_above")
+        out["control_above"] = {**ctx.save("look_control_above", image),
+                                "magenta": int(marker_mask(image_rgb(image)).sum())}
+        # control 2: an eye 2 cm in front of the masonry — nearer than the near plane
+        body_face = LOOK_NORTH_WALL - 15.0
+        out["control_too_close"] = look("look_control_too_close", (900.0, body_face - 2.0), 100.0,
+                                        0.0, 0.0, keep=True)
+        return out
+    finally:
+        host.close()
+        _pump()
+
+
+def _spin(turns: int = 20) -> None:
+    from PyQt6.QtCore import QCoreApplication
+
+    for _ in range(turns):
+        QCoreApplication.processEvents()
+
+
+def _spin_until(condition: Callable[[], bool], timeout_s: float = 10.0) -> bool:
+    from PyQt6.QtCore import QCoreApplication
+
+    end = time.perf_counter() + timeout_s
+    while time.perf_counter() < end:
+        if condition():
+            return True
+        QCoreApplication.processEvents()
+    return bool(condition())
+
+
+def _camera_facts(host: Any) -> dict[str, Any]:
+    """The camera the ENGINE holds (root properties of ``Garden.qml``, engine frame)."""
+    def vector(name: str) -> list[float]:
+        value = host.scene_property(name)
+        return [round(float(value.x()), 4), round(float(value.y()), 4), round(float(value.z()), 4)]
+
+    return {"pos": vector("camPos"), "target": vector("camTarget"),
+            "fov": float(host.scene_property("camFov")),
+            "top_down": bool(host.scene_property("topDown"))}
+
+
+def scenario_workspace(ctx: Context) -> dict[str, Any]:
+    """The real ``Workspace`` around a real canvas with ``bench_small.ogp``, on the real
+    engine (its own factory — nothing replaced). One row each of gates G2 and G7:
+
+    - real mouse clicks in the 3D window (``QTest.mouseClick`` on the ``QQuickView``)
+      at seeded positions → what the CANVAS has selected after each; Ctrl and Shift;
+    - the ring of a clicked item, in a frame (and the same frame with nothing selected);
+    - selection → the pass that hands the real engine its ring: timed with NO readback
+      in the loop (one frame is taken after it);
+    - walk mode with real key events: enter, hold W, look with a drag, leave — the
+      engine's camera before and after, and the frames; then hide and show while walking.
+    """
+    import random
+    from datetime import datetime
+    from datetime import time as clock_time
+
+    from PyQt6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QGraphicsItem, QVBoxLayout, QWidget
+
+    from open_garden_planner.core.scene3d.camera import FOV_DEG
+    from open_garden_planner.core.sim_clock import SimClock
+    from open_garden_planner.ui.canvas.items.group_item import GroupItem
+    from open_garden_planner.ui.view3d.init_guard import Init3DGuard
+    from open_garden_planner.ui.view3d.quick3d.geometry import BufferGeometry, ReloadableGeometry
+    from open_garden_planner.ui.view3d.workspace import Workspace, WorkspaceMode
+
+    left, none = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    plain, ctrl, shift = (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ControlModifier,
+                          Qt.KeyboardModifier.ShiftModifier)
+    scene, view, _manager = load_plan("bench_small")
+    commands = view.command_manager
+    window = QWidget()
+    window.resize(*WORKSPACE_WINDOW)
+    layout = QVBoxLayout(window)
+    layout.setContentsMargins(0, 0, 0, 0)
+    guard_dir = ctx.out / "guard"
+    guard_dir.mkdir(exist_ok=True)
+    workspace = Workspace(view, guard=Init3DGuard(guard_dir, is_running=lambda _pid: False))
+    workspace.connect_plan(scene, SimClock(datetime.combine(JUNE, clock_time(12, 0))),
+                           lambda: None, commands, None)
+    layout.addWidget(workspace)
+    window.show()
+    _pump(200)
+    out: dict[str, Any] = {}
+
+    def selected() -> list[str]:
+        return sorted(str(item.item_id) for item in scene.selectedItems())
+
+    try:
+        scene.clearSelection()
+        workspace.set_mode(WorkspaceMode.SPLIT)
+        if not _spin_until(lambda: workspace.host is not None and workspace.controller is not None, 30.0):
+            raise RuntimeError(f"the workspace did not start its engine: {workspace.state}")
+        host, controller = workspace.host, workspace.controller
+        assert host is not None and controller is not None
+        if not host.wait_ready(OPEN_TIMEOUT_S):
+            raise RuntimeError(f"the workspace's host is not live: {host.state.value}")
+        _spin_until(lambda: controller.apply_count >= 1 and not controller.dirty, 30.0)
+        _spin_until(lambda: not workspace.camera.moving, 10.0)
+        _pump(250)
+        quick_view = host._view  # noqa: SLF001 - the native window a user clicks in
+        records = dict(controller.sync.records)
+        pose = workspace.camera.pose
+        width, height = host.view_size()
+        on_canvas = [item for item in scene.items() if str(getattr(item, "item_id", "")) in records]
+        out.update({
+            "view_size": [width, height], "records": len(records), "models": host.part_count(),
+            "shot": {"eye": list(pose.eye), "target": list(pose.target_scene), "fov": FOV_DEG},
+            "camera": _camera_facts(host), "build_failures": sorted(controller.sync.failures),
+            "plan_facts": {
+                "groups": sum(isinstance(item, GroupItem) for item in scene.items()),
+                "locked_layers": sum(bool(layer.locked) for layer in scene.layers),
+                "hidden_layers": sum(not layer.visible for layer in scene.layers),
+                "not_selectable": sum(
+                    not item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                    for item in on_canvas)},
+        })
+
+        def click(x: int, y: int, modifiers: Any = plain) -> list[str]:
+            QTest.mouseClick(quick_view, left, modifiers, QPoint(x, y))
+            _spin(5)
+            return selected()
+
+        # ── G2: seeded clicks ────────────────────────────────────────────────
+        # (in the middle of the view, where the framed plan is: a click on the lawn
+        # around it proves little — the judge still gets some of those)
+        rng = random.Random(WORKSPACE_SEED)
+        clicks = []
+        for _ in range(WORKSPACE_CLICKS):
+            x = rng.randrange(int(0.10 * width), int(0.90 * width))
+            y = rng.randrange(int(0.25 * height), int(0.78 * height))
+            clicks.append({"at": [x, y], "selected": click(x, y), "view": list(host.view_size())})
+        out["clicks"] = clicks
+        def steady(x: int, y: int) -> bool:
+            """The ENGINE names one item two pixels all round (x, y): a place to click
+            twice — not on a silhouette edge."""
+            names = set()
+            for dx, dy in ((0, 0), (2, 0), (-2, 0), (0, 2), (0, -2), (2, 2), (-2, -2), (2, -2), (-2, 2)):
+                hit = host.pick(float(x + dx), float(y + dy))
+                names.add(hit.item_id if hit is not None else None)
+            return len(names) == 1
+
+        singles: dict[str, list[int]] = {}
+        for row in clicks:
+            if len(row["selected"]) == 1 and steady(*row["at"]):
+                singles.setdefault(row["selected"][0], row["at"])
+        nothing = next((row["at"] for row in clicks if not row["selected"]), None)
+        (id_a, at_a), (id_b, at_b) = list(singles.items())[:2]
+        steps = [{"name": "plain_a", "at": at_a, "selected": click(*at_a)},
+                 {"name": "ctrl_b", "at": at_b, "selected": click(*at_b, ctrl)},
+                 {"name": "ctrl_b_again", "at": at_b, "selected": click(*at_b, ctrl)},
+                 {"name": "shift_b", "at": at_b, "selected": click(*at_b, shift)},
+                 {"name": "plain_a_again", "at": at_a, "selected": click(*at_a)}]
+        out["modifiers"] = {"a": id_a, "b": id_b, "steps": steps}
+
+        # ── the ring of the clicked item, on screen ──────────────────────────
+        _spin_until(lambda: controller.sync.selection.ids == (id_a,), 5.0)
+        _pump(60)
+        out["ring"] = {"id": id_a, "sent": list(controller.sync.selection.ids),
+                       "selected": ctx.save("ws_selected", host.grab("ws_selected"))}
+        if nothing is not None:
+            out["ring"]["after_a_click_on_nothing"] = click(*nothing)
+        scene.clearSelection()
+        _spin_until(lambda: controller.sync.selection.ids == (), 5.0)
+        _pump(60)
+        out["ring"]["cleared"] = ctx.save("ws_cleared", host.grab("ws_cleared"))
+
+        # ── the card in the desktop's own font: does the fullest one fit its place? ──
+        card = workspace.info_card
+        assert card is not None
+        slot = card.parentWidget()
+        sizes = [list(host.view_size())]
+        fullest: dict[str, Any] = {}
+        for item in sorted(on_canvas, key=lambda item: str(item.item_id)):
+            record_ = records[str(item.item_id)]
+            if record_.kind not in ("TREE", "SHRUB", "PERENNIAL"):
+                continue
+            scene.clearSelection()
+            item.setSelected(True)
+            _spin(10)
+            body = card._body  # noqa: SLF001 - the paragraph's own geometry
+            facts = {"id": str(item.item_id), "rows": len(card.rows()), "text": card.text(),
+                     "needed_px": body.heightForWidth(body.width()), "has_px": body.height(),
+                     "line_px": body.fontMetrics().lineSpacing(), "width_px": body.width(),
+                     "slot_px": slot.height(), "visible": card.isVisible()}
+            if facts["rows"] > fullest.get("rows", 0) or (
+                    facts["rows"] == fullest.get("rows") and facts["needed_px"] > fullest["needed_px"]):
+                fullest = facts
+        sizes.append(list(host.view_size()))
+        scene.clearSelection()
+        _spin_until(lambda: controller.sync.selection.ids == (), 5.0)
+        sizes.append(list(host.view_size()))
+        out["card"] = {"fullest": fullest, "view_sizes": sizes, "font": card.font().family(),
+                       "hint": slot.hint()}
+
+        # ── selection → the engine has its ring: NO readback in this loop ────
+        targets = sorted(on_canvas, key=lambda item: str(item.item_id))
+        rng.shuffle(targets)
+        armed: dict[str, Any] = {}
+
+        def on_pass(_report: Any) -> None:
+            if "wanted" in armed and "done" not in armed and (
+                    controller.sync.selection.ids == armed["wanted"]):
+                armed["done"] = time.perf_counter()
+
+        controller.applied.connect(on_pass)
+        before = {"ring_loads": host.ring_loads, "ring_geometries": int(ReloadableGeometry.created),
+                  "model_uploads": int(BufferGeometry.uploads), "parts": host.part_count(),
+                  "frames": host.health().frames_presented}
+        latencies: list[float] = []
+        misses = 0
+        for index in range(120):
+            target = targets[index % len(targets)]
+            scene.clearSelection()
+            _spin(20)
+            armed.clear()
+            armed["wanted"] = (str(target.item_id),)
+            started = time.perf_counter()
+            target.setSelected(True)
+            _spin_until(lambda: "done" in armed, 2.0)
+            if "done" in armed:
+                latencies.append((armed["done"] - started) * 1000.0)
+            else:
+                misses += 1
+        controller.applied.disconnect(on_pass)
+        armed.clear()
+        ordered = sorted(latencies)
+        out["timing"] = {
+            "n": len(latencies), "misses": misses, "ms": [round(value, 3) for value in latencies],
+            "median_ms": round(statistics.median(latencies), 3),
+            "p95_ms": round(ordered[int(0.95 * (len(ordered) - 1))], 3),
+            "max_ms": round(ordered[-1], 3), "before": before,
+            "after": {"ring_loads": host.ring_loads,
+                      "ring_geometries": int(ReloadableGeometry.created),
+                      "model_uploads": int(BufferGeometry.uploads), "parts": host.part_count(),
+                      "frames": host.health().frames_presented},
+            "last": list(controller.sync.selection.ids),
+        }
+        _pump(60)
+        out["timing"]["frame_after"] = ctx.save("ws_after_timing", host.grab("ws_after_timing"))
+
+        # ── G7: walk mode with real key events ───────────────────────────────
+        scene.clearSelection()
+        _spin_until(lambda: controller.sync.selection.ids == (), 5.0)
+        _pump(80)
+        orbit = workspace.camera.pose
+
+        def books() -> dict[str, Any]:
+            return {"undo": len(commands._undo_stack), "can_undo": bool(commands.can_undo),  # noqa: SLF001
+                    "can_redo": bool(commands.can_redo)}
+
+        def mouse(kind: QEvent.Type, x: float, y: float, button: Any, buttons: Any) -> None:
+            QCoreApplication.sendEvent(quick_view, QMouseEvent(
+                kind, QPointF(x, y), QPointF(x, y), button, buttons, plain))
+
+        walk_out: dict[str, Any] = {"before": {
+            "camera": _camera_facts(host), "books": books(),
+            "frame": ctx.save("ws_orbit_before", host.grab("ws_orbit_before"))}}
+        workspace.walk_action.trigger()
+        _pump(80)
+        walker = workspace.walk
+        assert walker is not None and walker.state is not None
+        walk_out["entered"] = {
+            "walking": workspace.walking, "shown": list(walker.state.shown),
+            "yaw": walker.state.yaw_deg, "eye_cm": walker.eye_height_cm,
+            "orbit_target": list(orbit.target), "orbit_yaw": orbit.yaw_deg,
+            "camera": _camera_facts(host),
+            "frame": ctx.save("ws_walk_entered", host.grab("ws_walk_entered"))}
+        started = time.perf_counter()
+        QTest.keyPress(quick_view, Qt.Key.Key_W)
+        _pump(WALK_HOLD_MS)
+        moving = walker.moving
+        QTest.keyRelease(quick_view, Qt.Key.Key_W)
+        held = time.perf_counter() - started
+        _pump(60)
+        walk_out["walked"] = {
+            "shown": list(walker.state.shown), "held_s": round(held, 4), "moving_while_held": moving,
+            "moving_after": walker.moving, "camera": _camera_facts(host),
+            "frame": ctx.save("ws_walk_walked", host.grab("ws_walk_walked"))}
+        mouse(QEvent.Type.MouseButtonPress, 300.0, 200.0, left, left)
+        mouse(QEvent.Type.MouseMove, 360.0, 200.0, none, left)
+        mouse(QEvent.Type.MouseButtonRelease, 360.0, 200.0, left, none)
+        _pump(60)
+        walk_out["looked"] = {"yaw": walker.state.yaw_deg, "shown": list(walker.state.shown),
+                              "selected": selected(), "camera": _camera_facts(host)}
+        QTest.keyClick(quick_view, Qt.Key.Key_Escape)
+        _pump(100)
+        walk_out["left"] = {
+            "walking": workspace.walking, "action_checked": workspace.walk_action.isChecked(),
+            "pose_is_the_orbit_pose": workspace.camera.pose is orbit,
+            "camera": _camera_facts(host), "books": books(),
+            "frame": ctx.save("ws_orbit_after", host.grab("ws_orbit_after"))}
+        # hide and show while walking keeps the walker
+        workspace.walk_action.trigger()
+        _pump(80)
+        QTest.keyPress(quick_view, Qt.Key.Key_W)
+        _pump(200)
+        QTest.keyRelease(quick_view, Qt.Key.Key_W)
+        _pump(40)
+        there = list(walker.state.shown) if walker.state is not None else None
+        workspace.set_mode(WorkspaceMode.PLAN)
+        _pump(200)
+        hidden = {"walking": workspace.walking, "moving": walker.moving,
+                  "shown": list(walker.state.shown) if walker.state is not None else None}
+        workspace.set_mode(WorkspaceMode.SPLIT)
+        _pump(300)
+        again = workspace.host
+        assert again is not None
+        if not again.wait_ready(OPEN_TIMEOUT_S):
+            raise RuntimeError(f"the host shown again is not live: {again.state.value}")
+        _pump(100)
+        walk_out["hide_show"] = {
+            "there": there, "hidden": hidden, "same_host": again is host,
+            "shown_again": {"walking": workspace.walking,
+                            "shown": list(walker.state.shown) if walker.state is not None else None,
+                            "camera": _camera_facts(again)}}
+        workspace.set_walking(False)
+        _pump(60)
+        walk_out["hide_show"]["left"] = {"walking": workspace.walking,
+                                         "pose_is_the_orbit_pose": workspace.camera.pose is orbit,
+                                         "camera": _camera_facts(again), "books": books()}
+        out["walk"] = walk_out
+        health = again.health()
+        out["health"] = {"ok": health.ok, "frames_presented": health.frames_presented}
+        return out
+    finally:
+        workspace.shutdown()
+        window.close()
+        window.deleteLater()
+        _pump(150)
+
+
 SCENARIOS: dict[str, Callable[[Context], dict[str, Any]]] = {
     "ring": scenario_ring,
     "ring_depth": scenario_ring_depth,
     "pick": scenario_pick,
+    "lookthrough": scenario_lookthrough,
+    "workspace": scenario_workspace,
 }
 
 
@@ -406,9 +833,6 @@ def main(argv: list[str]) -> int:
         with contextlib.suppress(Exception):
             _clear_settings()
     return code
-
-
-_ = statistics  # used by scenarios added below
 
 
 if __name__ == "__main__":

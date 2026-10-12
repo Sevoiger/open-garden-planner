@@ -19,13 +19,16 @@ are next to each bound; ``-s`` prints them again.
 from __future__ import annotations
 
 import colorsys
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-from open_garden_planner.core.scene3d import point_in_ring, pose_ring
+from open_garden_planner.core.scene3d import point_in_ring, pose_ring, walk
+from open_garden_planner.core.scene3d.builders import walls
+from open_garden_planner.core.scene3d.camera import FOV_DEG
 from open_garden_planner.core.scene3d.selection import (
     MITRE_LIMIT,
     RING_LIFT_CM,
@@ -34,9 +37,18 @@ from open_garden_planner.core.scene3d.selection import (
 )
 from open_garden_planner.ui.view3d.quick3d.shots import PerspectiveShot
 from tests.integration import view3d_selection_driver as driver
-from tests.integration.quick3d_render_support import failure_report, load_rgb, render_tier
+from tests.integration.quick3d_render_support import (
+    failure_report,
+    load_rgb,
+    render_env,
+    render_tier,
+)
 from tests.integration.view3d_selection_support import (
+    broken_qml_copy,
+    builder_parts,
     distances_to,
+    in_order,
+    marker_mask,
     mask_pixels,
     named_pick_points,
     oracle_scene,
@@ -44,6 +56,7 @@ from tests.integration.view3d_selection_support import (
     perspective_outline,
     ring_mask,
     robust_answer,
+    robust_chain,
     run_selection_driver,
     top_down_outline,
 )
@@ -51,7 +64,13 @@ from tests.integration.view3d_selection_support import (
 pytestmark = render_tier
 
 Run = tuple[dict[str, Any], Path]
-SCENARIOS = "ring,ring_depth,pick"
+SCENARIOS = "ring,ring_depth,pick,lookthrough,workspace"
+SOFTWARE_ADAPTERS = ("Basic Render", "llvmpipe", "SwiftShader", "softpipe")
+
+
+def _software(run: Run) -> bool:
+    adapter = run[0].get("adapter")
+    return adapter is None or any(name in str(adapter) for name in SOFTWARE_ADAPTERS)
 
 
 @pytest.fixture(scope="module")
@@ -271,7 +290,9 @@ def _pick_case(run: Run, plan: str) -> dict[str, Any]:
     assert data["build_failures"] == [] and data["records"] == len(records)
     engine = {tuple(point): (hit["id"] if hit else None)
               for point, hit in zip(data["points"], data["hits"], strict=True)}
-    return {"records": records, "shot": shot, "view": view, "engine": engine,
+    chains = {tuple(point): (in_order([hit["id"], *hit["behind"]]) if hit else ())
+              for point, hit in zip(data["points"], data["hits"], strict=True)}
+    return {"records": records, "shot": shot, "view": view, "engine": engine, "chains": chains,
             "oracle": oracle_scene(records), "data": data}
 
 
@@ -351,3 +372,322 @@ def test_every_judgeable_seeded_position_agrees(pick_cases, plan: str) -> None:
           f"{case['oracle'].triangle_count} triangles, {case['data']['models']} Models")
     assert disagree == 0 and agree >= 300
     assert case["data"]["ms_per_pick"] < 5.0
+
+
+@pytest.mark.parametrize("plan", list(driver.PICK_PLANS))
+def test_what_lies_behind_a_hit_is_in_the_oracles_order(pick_cases, plan: str) -> None:
+    """``PickHit.behind`` is what a click that falls through a locked item meets next
+    (``View3D.pickAll``). At every seeded position where the oracle's whole chain does
+    not hang on a silhouette edge, the engine names the same items in the same order."""
+    case = pick_cases[plan]
+    agree = disagree = deep = 0
+    wrong = []
+    for point in driver.seeded_points():
+        chain, robust = robust_chain(case["oracle"], case["shot"], case["view"], *point)
+        if not robust:
+            continue
+        got = case["chains"][point]
+        deep += len(chain) >= 2
+        if got == chain:
+            agree += 1
+        else:
+            disagree += 1
+            wrong.append((point, chain, got))
+    longest = max(len(chain) for chain in case["chains"].values())
+    print(f"\n[pick chain {plan}] {agree}/{agree + disagree} whole chains agree; {deep} of them "
+          f"two items or more deep; the longest engine chain: {longest} items")
+    assert disagree == 0, wrong[:5]
+    # measured on the GPU: 349 of 349 (34 of them two or more deep) and 362 of 362 (1)
+    assert agree >= 300 and deep >= (25 if plan == "bench_small" else 1)
+
+
+# ── standing against a wall: the near plane ──────────────────────────────────
+
+
+def test_the_walk_core_stops_the_walker_a_radius_from_the_masonry(run: Run) -> None:
+    """Where the look-through frames were taken: the walk core walked there itself."""
+    look = run[0]["scenarios"]["lookthrough"]
+    wall = driver.look_records()["north_wall"]
+    masonry = walls.body_thickness_cm(wall) / 2.0 + walls.COPING_OVERSAIL_CM
+    reach = masonry + walk.WALKER_RADIUS_CM
+    assert masonry == 19.0 and (wall.path_width_cm or 0.0) == driver.WALL_STROKE == 5.0
+    assert look["at_wall"] == pytest.approx([900.0, driver.LOOK_NORTH_WALL - reach], abs=0.01)
+    assert look["in_corner"] == pytest.approx(
+        [driver.LOOK_EAST_WALL - reach, driver.LOOK_NORTH_WALL - reach], abs=0.01)
+    view = look["view_size"]
+    corner = walk.near_plane_reach_cm(view[0] / view[1])
+    print(f"\n[near plane] {walk.NEAR_PLANE_CM} cm; its farthest corner at {view[0]:.0f}x{view[1]:.0f} "
+          f"and {walk.WALK_FOV_DEG} deg: {corner:.2f} cm from the eye; the walker's radius "
+          f"{walk.WALKER_RADIUS_CM} cm")
+    assert corner < walk.WALKER_RADIUS_CM
+
+
+def test_standing_against_a_wall_never_looks_through_it(run: Run) -> None:
+    """The brief's wall. Pressed against a 180 cm wall, and into the inside corner of
+    two, the walker looks all round (every 15 degrees — at 75, 90 and 105 the wall is
+    grazed), level, 35 degrees up and down, at the adult's and the child's eye height:
+    in none of the 288 frames is a pixel of the magenta blocks behind the walls."""
+    look = run[0]["scenarios"]["lookthrough"]
+    rows = look["looks"]
+    assert len(rows) == 2 * len(driver.LOOK_EYES) * len(driver.LOOK_PITCHES) * len(driver.LOOK_YAWS)
+    seen = [(row["name"], row["magenta"]) for row in rows if row["magenta"]]
+    assert seen == [], f"{len(seen)} frames look through the wall"
+    kept = [row for row in rows if "file" in row]
+    assert len(kept) == 16, "the level adult frames every 45 degrees, at both places"
+    for row in kept:   # the driver counted with the judge's mask: count them again
+        rgb = load_rgb(run[1] / row["file"])
+        assert int(marker_mask(rgb).sum()) == 0
+        assert rgb.std() > 1.0, "a frame of something (not one flat colour)"
+    print(f"\n[look through] {len(rows)} frames, magenta pixels in none")
+
+
+def test_the_look_through_test_can_fail(run: Run) -> None:
+    """Its two controls. The blocks ARE magenta in a frame (seen from their own side
+    of the wall), and an eye put 2 cm in front of the masonry — nearer than the near
+    plane, where the collision radius never lets the walker be — DOES see them."""
+    look = run[0]["scenarios"]["lookthrough"]
+    above, close = look["control_above"], look["control_too_close"]
+    for control in (above, close):
+        assert int(marker_mask(load_rgb(run[1] / control["file"])).sum()) == control["magenta"]
+    print(f"\n[look through] controls: the block in the open {above['magenta']} px; through the "
+          f"wall from inside the near distance {close['magenta']} px")
+    assert above["magenta"] > 2000
+    assert close["magenta"] > 10_000
+
+
+# ── the real workspace on the real engine: gates G2 and G7, one row each ─────
+
+
+@pytest.fixture(scope="module")
+def ws(run: Run, qapp: Any) -> dict[str, Any]:  # noqa: ARG001 - Qt for the scene
+    data = run[0]["scenarios"]["workspace"]
+    scene, _view, _manager = driver.load_plan("bench_small")
+    records = driver.plan_records(scene)
+    shot = PerspectiveShot(tuple(data["shot"]["eye"]), tuple(data["shot"]["target"]),
+                           float(data["shot"]["fov"]))
+    assert data["records"] == len(records) == data["models"] and data["build_failures"] == []
+    return {"data": data, "records": records, "shot": shot, "oracle": oracle_scene(records),
+            "view": (float(data["view_size"][0]), float(data["view_size"][1])),
+            "size": (float(scene.width_cm), float(scene.height_cm))}
+
+
+def test_a_real_click_in_the_3d_window_selects_on_the_canvas_what_the_ray_meets(ws) -> None:
+    """Gate G2's render row. The real ``Workspace`` on the real engine, sixty seeded
+    ``QTest.mouseClick`` s on the ``QQuickView``: after each, the CANVAS has selected
+    exactly the item the oracle's ray meets first — or nothing where it meets none."""
+    data = ws["data"]
+    assert data["plan_facts"] == {"groups": 0, "locked_layers": 0, "hidden_layers": 0,
+                                  "not_selectable": 0}, "the oracle's first hit IS the 2D rule here"
+    assert data["shot"]["fov"] == FOV_DEG
+    agree = wrong = edge = nothing = 0
+    items: set[str] = set()
+    mistakes = []
+    for click in data["clicks"]:
+        assert click["view"] == data["view_size"], "the view kept its size through every selection"
+        x, y = click["at"]
+        answer, robust = robust_answer(ws["oracle"], ws["shot"], ws["view"], float(x), float(y))
+        if not robust:
+            edge += 1
+            continue
+        expected = [answer] if answer is not None else []
+        if click["selected"] == expected:
+            agree += 1
+            nothing += answer is None
+            items.update(expected)
+        else:
+            wrong += 1
+            mistakes.append((click["at"], expected, click["selected"]))
+    kinds = sorted({ws["records"][item_id].kind for item_id in items})
+    print(f"\n[3D click] {agree}/{agree + wrong} clicks select what the ray meets ({edge} on a "
+          f"silhouette edge not judged); {len(items)} different items of kinds {kinds}; "
+          f"{nothing} on nothing")
+    assert wrong == 0, mistakes
+    assert agree >= 45 and len(items) >= 10 and nothing >= 3 and len(kinds) >= 4
+
+
+def test_ctrl_and_shift_toggle_and_a_plain_click_replaces_in_the_real_window(ws) -> None:
+    """The sequence that FAILED on the real engine before the card had a place of
+    constant height (select A; Ctrl+click B cleared the selection, because the view had
+    been resized under the pointer)."""
+    mods = ws["data"]["modifiers"]
+    a, b = mods["a"], mods["b"]
+    for item_id, step in ((a, mods["steps"][0]), (b, mods["steps"][1])):
+        answer, robust = robust_answer(ws["oracle"], ws["shot"], ws["view"],
+                                       float(step["at"][0]), float(step["at"][1]))
+        assert (answer, robust) == (item_id, True)
+    assert a != b
+    assert [(step["name"], step["selected"]) for step in mods["steps"]] == [
+        ("plain_a", [a]), ("ctrl_b", sorted([a, b])), ("ctrl_b_again", [a]),
+        ("shift_b", sorted([a, b])), ("plain_a_again", [a])]
+
+
+def _diff_ring(run: Run, with_ring: dict[str, Any], without: dict[str, Any]) -> tuple[np.ndarray, float]:
+    """Pixels that are ring-coloured in one frame and not in the other (the plan has a
+    pond: blue alone is not the ring)."""
+    selected, dpr = _frame(run, with_ring)
+    cleared, _ = _frame(run, without)
+    assert selected.shape == cleared.shape
+    return mask_pixels(ring_mask(selected) & ~ring_mask(cleared)), dpr
+
+
+def test_the_ring_of_the_clicked_item_is_in_the_workspaces_frame(run: Run, ws) -> None:
+    ring_info = ws["data"]["ring"]
+    assert ring_info["sent"] == [ring_info["id"]]
+    record = ws["records"][ring_info["id"]]
+    ring, dpr = _diff_ring(run, ring_info["selected"], ring_info["cleared"])
+    outline = outline_pixels(perspective_outline(
+        record, ws["shot"], ws["view"], record.transform.base_cm + RING_LIFT_CM, dpr))
+    off = distances_to(ring, outline)
+    covered = float((distances_to(outline, ring) <= (RING_WIDTH_PX + 1.5) * dpr).mean())
+    print(f"\n[workspace ring] {record.kind}: {len(ring)} ring pixels, farthest from OUR outline "
+          f"{off.max():.2f} px (mean {off.mean():.2f}), outline covered {covered:.1%}")
+    assert len(ring) > 150
+    assert float(off.max()) <= (RING_WIDTH_PX * MITRE_LIMIT + 1.5) * dpr
+    assert covered >= 0.95
+
+
+def test_no_selection_and_no_walk_resizes_the_real_view(run: Run, ws) -> None:
+    """Every frame of the scenario — nothing selected, an item, the fullest card, 120
+    selection changes, walking, back in orbit — has ONE size."""
+    data = ws["data"]
+    walk_rows = data["walk"]
+    frames = [data["ring"]["selected"], data["ring"]["cleared"], data["timing"]["frame_after"],
+              walk_rows["before"]["frame"], walk_rows["entered"]["frame"],
+              walk_rows["walked"]["frame"], walk_rows["left"]["frame"]]
+    sizes = {tuple(frame["size"]) for frame in frames}
+    assert len(sizes) == 1, sizes
+    assert {tuple(size) for size in data["card"]["view_sizes"]} == {tuple(data["view_size"])}
+    width, height = next(iter(sizes))
+    assert (width, height) == (round(data["view_size"][0] * frames[0]["dpr"]),
+                               round(data["view_size"][1] * frames[0]["dpr"]))
+
+
+def test_the_fullest_card_fits_its_place_in_the_desktops_font(ws) -> None:
+    """The slot has three lines of facts. In the font the desktop really uses, at the
+    3D pane's width in Split mode of a 1400 px window, the card with the most facts
+    of any plant in the plan needs no more."""
+    card = ws["data"]["card"]
+    fullest = card["fullest"]
+    lines = fullest["needed_px"] / fullest["line_px"]
+    print(f"\n[card] font {card['font']!r}: {fullest['rows']} facts need {lines:.1f} lines at "
+          f"{fullest['width_px']} px; the place has {fullest['has_px'] / fullest['line_px']:.1f} "
+          f"({fullest['slot_px']} px in all)\n{fullest['text']}")
+    assert fullest["visible"] is True and fullest["rows"] >= 5
+    assert fullest["needed_px"] <= fullest["has_px"]
+    assert card["hint"] == "Click an object to see what the 3D view shows of it."
+
+
+def test_a_selection_reaches_the_real_engine_within_the_edit_budget(run: Run, ws) -> None:
+    """Gate G8 on the real engine, with NO readback in the measured loop: from the
+    canvas's ``setSelected`` to the end of the pass that handed the engine its ring
+    (the real upload included, which the default tier's recording sink has not).
+    120 changes; one frame is taken AFTER the loop, and the ring is in it."""
+    timing = ws["data"]["timing"]
+    before, after = timing["before"], timing["after"]
+    print(f"\n[selection to the real engine] {timing['n']} changes: median {timing['median_ms']} "
+          f"ms, p95 {timing['p95_ms']} ms, max {timing['max_ms']} ms; "
+          f"{after['frames'] - before['frames']} frames presented meanwhile")
+    assert timing["n"] == 120 and timing["misses"] == 0
+    assert timing["p95_ms"] <= 50.0 * (3.0 if _software(run) else 1.0)
+    # what 120 selection changes created and destroyed in the engine: nothing
+    assert after["ring_loads"] - before["ring_loads"] == 120
+    # (a count of the whole driver process: each host before this one made its one)
+    assert after["ring_geometries"] == before["ring_geometries"] >= 1
+    assert after["model_uploads"] == before["model_uploads"] and after["parts"] == before["parts"]
+    record = ws["records"][timing["last"][0]]
+    ring, dpr = _diff_ring(run, timing["frame_after"], ws["data"]["ring"]["cleared"])
+    outline = outline_pixels(perspective_outline(
+        record, ws["shot"], ws["view"], record.transform.base_cm + RING_LIFT_CM, dpr))
+    assert len(ring) > 20 and float(np.median(distances_to(ring, outline))) <= RING_WIDTH_PX * dpr
+
+
+def _engine(point: tuple[float, float, float]) -> list[float]:
+    """Scene (E, N, up) as the engine holds it: x = E, y = up, z = -N."""
+    return [point[0], point[2], -point[1]]
+
+
+def test_walk_mode_in_the_real_workspace_borrows_the_camera_and_gives_it_back(run: Run, ws) -> None:
+    """Gate G7's render row: real key events on the ``QQuickView``. Enter → the engine's
+    camera is at the walker's eye; hold W → it walks at walking pace, straight ahead;
+    a drag looks round and selects nothing; Escape → the engine's camera is the orbit
+    camera's again, to the last digit, and the frame is the frame from before."""
+    rows = ws["data"]["walk"]
+    before, entered, walked, looked, left = (rows[name] for name in (
+        "before", "entered", "walked", "looked", "left"))
+    world = walk.build_world(ws["records"], *ws["size"], parts_of=builder_parts)
+    start = tuple(entered["shown"])
+    assert entered["walking"] is True and walk.is_free(world, *start)
+    assert start == tuple(entered["orbit_target"]) and entered["yaw"] == entered["orbit_yaw"], (
+        "where the orbit camera looked, facing the way it looked")
+    yaw = math.radians(entered["yaw"])
+    ahead = (math.sin(yaw), math.cos(yaw))
+    eye = (start[0], start[1], entered["eye_cm"])
+    assert entered["eye_cm"] == walk.EYE_HEIGHTS_CM[0]
+    assert entered["camera"]["pos"] == pytest.approx(_engine(eye), abs=1e-3)
+    assert entered["camera"]["target"] == pytest.approx(_engine((
+        eye[0] + walk.LOOK_DISTANCE_CM * ahead[0], eye[1] + walk.LOOK_DISTANCE_CM * ahead[1],
+        eye[2])), abs=1e-3)
+    assert entered["camera"]["fov"] == walk.WALK_FOV_DEG and before["camera"]["fov"] == FOV_DEG
+    # W, held: at walking pace, straight ahead
+    moved = (walked["shown"][0] - start[0], walked["shown"][1] - start[1])
+    distance = math.hypot(*moved)
+    pace = distance / walked["held_s"]
+    print(f"\n[walk] W held {walked['held_s']:.3f} s: {distance:.1f} cm = {pace:.1f} cm/s "
+          f"(walking pace {walk.WALK_SPEED_CM_S}); yaw {entered['yaw']:.1f} deg")
+    assert walked["moving_while_held"] is True and walked["moving_after"] is False
+    assert 0.85 * walk.WALK_SPEED_CM_S <= pace <= 1.03 * walk.WALK_SPEED_CM_S
+    assert moved[0] * ahead[0] + moved[1] * ahead[1] == pytest.approx(distance, rel=1e-6)
+    assert walk.is_free(world, *walked["shown"])
+    assert walked["camera"]["pos"] == pytest.approx(
+        _engine((walked["shown"][0], walked["shown"][1], entered["eye_cm"])), abs=1e-3)
+    # the drag: 60 px to the right is 18 degrees to the right, and no selection
+    assert looked["yaw"] == pytest.approx(entered["yaw"] + 18.0)
+    assert looked["selected"] == [] and looked["shown"] == walked["shown"]
+    # Escape
+    assert left["walking"] is False and left["action_checked"] is False
+    assert left["pose_is_the_orbit_pose"] is True
+    assert left["camera"] == before["camera"], "the engine's camera, to the last digit"
+    assert left["books"] == before["books"] == {"undo": 0, "can_undo": False, "can_redo": False}
+    orbit, _ = _frame(run, before["frame"])
+    back, _ = _frame(run, left["frame"])
+    at_eye, _ = _frame(run, entered["frame"])
+    further, _ = _frame(run, walked["frame"])
+    same = float(np.abs(orbit - back).mean())
+    print(f"[walk] frames: orbit before vs after {same:.3f} mean abs difference; orbit vs the "
+          f"walker's view {np.abs(orbit - at_eye).mean():.1f}; before vs after the walk "
+          f"{np.abs(at_eye - further).mean():.1f}")
+    assert same <= 1.5, "the orbit view is back (a leaf may have moved)"
+    assert float(np.abs(orbit - at_eye).mean()) > 10.0, "walking is another view"
+    assert float(np.abs(at_eye - further).mean()) > 1.0, "the walk moved the picture"
+
+
+def test_hiding_and_showing_the_real_view_keeps_the_walker(ws) -> None:
+    rows = ws["data"]["walk"]
+    row, before = rows["hide_show"], rows["before"]
+    assert row["there"] is not None and row["same_host"] is True
+    assert row["hidden"] == {"walking": True, "moving": False, "shown": row["there"]}
+    again = row["shown_again"]
+    assert again["walking"] is True and again["shown"] == row["there"]
+    assert again["camera"]["pos"] == pytest.approx(
+        _engine((row["there"][0], row["there"][1], walk.EYE_HEIGHTS_CM[0])), abs=1e-3)
+    assert row["left"]["walking"] is False and row["left"]["pose_is_the_orbit_pose"] is True
+    assert row["left"]["camera"] == before["camera"] and row["left"]["books"] == before["books"]
+    assert ws["data"]["health"]["ok"] is True
+
+
+# ── the ring's shader: the judge is not deaf ─────────────────────────────────
+
+
+def test_a_broken_ring_shader_is_heard_by_the_judge(tmp_path: Path) -> None:
+    """Positive control for ``test_the_run_drew_with_no_qt_error…``. A shader that does
+    not compile is only a Qt message and the frame still renders (exit code 0): the
+    judge reads the driver's stderr and must find the error there, in the scenario
+    that selected something."""
+    qml = broken_qml_copy(tmp_path, "ring.vert", "POSITION.z *= uDepthScale;",
+                          "POSITION.z *= uDepthScaleMissing;")
+    out = tmp_path / "out"
+    proc, result = run_selection_driver(out, "ring_depth", qml_dir=qml, env=render_env(tmp_path))
+    assert proc.returncode == 0 and result["status"] == "ok", failure_report(proc, out)
+    heard = result["qt_messages"]
+    assert heard["by_scenario"]["ring_depth"]["error"] >= 1, heard
+    assert any("shader" in line.lower() for line in heard["errors"])
