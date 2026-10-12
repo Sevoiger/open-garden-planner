@@ -209,24 +209,33 @@ class GroundGrid:
         scale = self.px_per_cm
         return (x0 / scale, y0 / scale, width / scale, height / scale)
 
-    def tiles_touching(self, east0: float, north0: float, east1: float, north1: float
-                       ) -> Iterator[TileKey]:
-        """The tiles a scene-space box (cm) reaches into; nothing for a box that
-        misses the grid. A box that only touches a tile's edge from outside does
-        not reach into it."""
+    def tile_block(self, east0: float, north0: float, east1: float, north1: float
+                   ) -> tuple[int, int, int, int] | None:
+        """``(first column, first row, last column, last row)`` of the tiles a
+        scene-space box (cm) reaches into — four integers, however many tiles
+        that is; None for a box that misses the grid. A box that only touches a
+        tile's edge from outside does not reach into it."""
         if not (east0 <= east1 and north0 <= north1):  # also False for a NaN
-            return
+            return None
         scale, tile = self.px_per_cm, self.tile_px
         # clamped to the grid FIRST: what follows only ever sees numbers between 0 and
         # the grid's own size, whatever came in (an infinity too)
         x0, x1 = max(east0 * scale, 0.0), min(east1 * scale, float(self.width_px))
         y0, y1 = max(north0 * scale, 0.0), min(north1 * scale, float(self.height_px))
         if not (x0 < x1 and y0 < y1):
-            return  # beside the grid, or only touching its edge
-        last_column = min(self.columns - 1, math.ceil(x1 / tile) - 1)
-        last_row = min(self.rows - 1, math.ceil(y1 / tile) - 1)
-        for row in range(int(y0 // tile), last_row + 1):
-            for column in range(int(x0 // tile), last_column + 1):
+            return None  # beside the grid, or only touching its edge
+        return (int(x0 // tile), int(y0 // tile),
+                min(self.columns - 1, math.ceil(x1 / tile) - 1),
+                min(self.rows - 1, math.ceil(y1 / tile) - 1))
+
+    def tiles_touching(self, east0: float, north0: float, east1: float, north1: float
+                       ) -> Iterator[TileKey]:
+        """The tiles of ``tile_block``, one by one, row by row from the south-west."""
+        block = self.tile_block(east0, north0, east1, north1)
+        if block is None:
+            return
+        for row in range(block[1], block[3] + 1):
+            for column in range(block[0], block[2] + 1):
                 yield (column, row)
 
 

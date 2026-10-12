@@ -268,7 +268,21 @@ class TestParityPerShape:
         record = bake.records[str(item.item_id)]
         assert record.material.stroke_rgba == (20, 60, 160, 220)  # the LIVE pen's colour
         assert record.material.paint.stroke_width_cm == 7.5
-        assert mean <= (0.002 if angle else 0.0) and worst <= (2 if angle else 0), (mean, worst)
+        if stroke is StrokeStyle.SOLID:
+            assert mean <= (0.002 if angle else 0.0) and worst <= (2 if angle else 0), (mean, worst)
+        else:
+            # A dashed outline that crosses a tile border is cut to the tile and stroked
+            # run by run (TestHostilePlans): the dashes lie where the canvas has them, to
+            # one grey level at their edges. The ONE place that is not the canvas's: the
+            # corner where the outline's two ends meet — there their caps are two strokes
+            # and the pen-width square they share is blended twice.
+            assert mean <= 0.002 and worst <= 60, (mean, worst)
+            delta = np.abs(bake.image()[..., :3].astype(int)
+                           - canvas_render(scene, bake.grid)[..., :3].astype(int)).max(axis=2)
+            rows, columns = np.nonzero(delta > 2)
+            assert 0 < len(rows) <= 120  # of 770,000 pixels
+            # ... one place: the last dash before that corner, and the corner
+            assert rows.max() - rows.min() <= 40 and columns.max() - columns.min() <= 40
 
     def test_a_layer_at_half_opacity(self, qtbot: Any) -> None:
         scene = new_scene()
@@ -1158,11 +1172,17 @@ class TestHostilePlans:
         assert bake.baker.records_painted == 20 * TILE_RECORDS and bake.baker.capped_tiles == 20
         # what a workspace can show the user: WHERE the ground holds less than the plan
         assert bake.baker.capped == frozenset(bake.grid.tile_keys())
-        painted = bake.baker.records_painted
+        # The books: ONE entry a record (not one a record and tile: 40,020) and the ids
+        # a tile is painted with; the comparisons that found them: 257 a tile.
+        assert bake.baker.entries_held() == 2001 + 20 * TILE_RECORDS
+        assert bake.baker.admission_checks == 20 * (TILE_RECORDS + 1) == 5_140
+        painted, checks = bake.baker.records_painted, bake.baker.admission_checks
         MoveItemsCommand([pond], QPointF(35.0, -20.0)).execute()
         assert bake.step() == SceneDiff(transform=(str(pond.item_id),))
         assert 1 <= len(bake.baker.last_repainted) <= 4 and bake.baker.last_examined == 1
         assert bake.baker.records_painted - painted == len(bake.baker.last_repainted) * TILE_RECORDS
+        assert bake.baker.admission_checks - checks <= len(bake.baker.last_repainted) * (TILE_RECORDS + 2)
+        assert bake.baker.entries_held() == 2001 + 20 * TILE_RECORDS
         assert bake.sink.state().ground == bake.sync.expected_state().ground
 
     def test_a_tile_generates_no_more_than_its_share_of_elements(self, qtbot: Any) -> None:
@@ -1238,8 +1258,9 @@ class TestHostilePlans:
             self, qtbot: Any) -> None:
         """A styled path strokes its whole line, builds two offset lines and walks it
         — passes over EVERY vertex before one element is drawn. They are charged:
-        a styled record costs its vertices x 8, a dashed one x 16, and a tile paints
-        its topmost records only while the sum stays within ``TILE_VERTICES``."""
+        a styled record costs its vertices x 8, a dashed one x 3 (its points, its
+        path, its cut to the tile), and a tile paints its topmost records only
+        while the sum stays within ``TILE_VERTICES``."""
         from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
         from open_garden_planner.ui.view3d.ground_bake import TILE_VERTICES
 
@@ -1260,10 +1281,16 @@ class TestHostilePlans:
         assert baker.capped == frozenset({(0, 0)})
 
         dashed = {f"d{k}": line(f"d{k}", 16_384, paint=Paint(stroke_style="DashLine"))
-                  for k in range(3)}
+                  for k in range(8)}
         baker = GroundBaker()
         baker.bake(dashed, None, (), 512.0, 512.0)
-        assert baker.records_painted == 1  # the dearest record there is: exactly the bound
+        assert baker.records_painted == 5 == TILE_VERTICES // (16_384 * 3)  # of 8
+        assert baker.capped == frozenset({(0, 0)})
+
+        dearest = {f"g{k}": line(f"g{k}", 16_384, path_style="GRAVEL_PATH") for k in range(3)}
+        baker = GroundBaker()
+        baker.bake(dearest, None, (), 512.0, 512.0)
+        assert baker.records_painted == 2 == TILE_VERTICES // (16_384 * 8)  # exactly the bound
 
         plain = {f"p{k}": line(f"p{k}", 1024) for k in range(200)}
         baker = GroundBaker()
@@ -1281,11 +1308,12 @@ class TestHostilePlans:
         real = ground_bake._runs_inside
 
         def recording(points: Any, clip: Any) -> Any:
-            for start, run in real(points, clip):
-                length = sum(math.hypot(b.x() - a.x(), b.y() - a.y())
-                             for a, b in zip(run, run[1:], strict=False))
+            for start, length, run in real(points, clip):
+                assert length == pytest.approx(sum(
+                    math.hypot(b.x() - a.x(), b.y() - a.y())
+                    for a, b in zip(run, run[1:], strict=False)), rel=1e-9)
                 runs.append((start, length, len(run)))
-                yield start, run
+                yield start, length, run
 
         monkeypatch.setattr(ground_bake, "_runs_inside", recording)
         scene = _hostile_scene()
@@ -1300,6 +1328,9 @@ class TestHostilePlans:
         bake.step()
         assert len(runs) == 5 and all(points == 2 for _start, _length, points in runs)
         assert max(length for _start, length, _points in runs) <= 512.0 + 2 * (2.5 * 6.0 + 8.0 + 2.0) + 1.0
+        # ... and its dashes are charged to the tile: a run's length over three pen widths
+        assert bake.baker.dashes_charged == sum(int(length / 18.0) + 1 for _s, length, _p in runs)
+        assert 5 * 28 <= bake.baker.dashes_charged <= 5 * 33 and bake.baker.capped == frozenset()
         starts = sorted(start for start, _length, _points in runs)
         assert 949_900.0 < starts[0] < 950_000.0  # where the plan begins, along the line
         # The dashes lie where the WHOLE line's lie — judged by arithmetic, not by the
@@ -1335,6 +1366,210 @@ class TestHostilePlans:
         assert compare(scene, tile_px=2048)[:2] == (0.0, 0)  # one tile: one run, the canvas's stroke
         mean, _worst, _bake = compare(scene)
         assert mean <= 0.05, mean
+
+    def test_a_tile_strokes_no_more_dashes_than_its_share(self, qtbot: Any) -> None:
+        """A dotted line folded into one tile: its dots are as many as it is LONG,
+        whatever its vertex count. A line the tile can afford is dotted and charged;
+        one it cannot is stroked solid — nothing charged, and the tile says so."""
+        from open_garden_planner.ui.view3d.ground_bake import TILE_DASHES
+
+        assert TILE_DASHES == 32_768
+
+        def folded(folds: int) -> Bake:
+            scene = _hostile_scene()
+            points = [QPointF(20.0 + 480.0 * (k % 2), 20.0 + 470.0 * k / folds)
+                      for k in range(folds + 1)]
+            item = PolylineItem(points, object_type=ObjectType.PATH)
+            pen = item.pen()
+            pen.setWidthF(2.0)
+            pen.setStyle(StrokeStyle.DOTTED.to_qt_pen_style())
+            item.setPen(pen)
+            scene.addItem(item)
+            bake = Bake(scene, registry=production_registry())
+            bake.step()
+            assert bake.skipped == [] and bake.baker.records_painted == 1
+            return bake
+
+        affordable = folded(100)  # 480 m of dots 2 cm wide: one in 6 cm
+        assert affordable.baker.dashes_charged == 8_001 and affordable.baker.capped == frozenset()
+        beyond = folded(1500)  # 7.2 km of them in the same tile: 120,001
+        assert beyond.baker.dashes_charged == 0 and beyond.baker.capped == frozenset({(0, 0)})
+        # solid is a line all the same: the tile is not left bare
+        assert np.any(np.any(beyond.image()[-512:, :512, :3] != np.array(MEADOW_RGB), axis=2))
+
+    @pytest.mark.parametrize("shape", ["rectangle", "polygon", "ellipse"])
+    def test_a_dashed_outline_is_cut_to_the_tile_and_its_dashes_charged(
+            self, qtbot: Any, monkeypatch: pytest.MonkeyPatch, shape: str) -> None:
+        """A dashed outline that lies in ONE tile is the canvas's own call, its
+        dashes charged first. One that reaches beyond is cut to the tile, each run
+        starting in step: the dashes lie where the canvas has them (handed the whole
+        outline, Qt's dasher put them elsewhere in a tile: measured, up to 7,564
+        pixels of this plan). A tile without the dashes strokes solid, and says so."""
+        from open_garden_planner.ui.view3d import ground_bake
+
+        scene = new_scene()
+        if shape == "rectangle":
+            item: Any = RectangleItem(40.0, 30.0, 1000.0, 620.0, object_type=ObjectType.LAWN)
+        elif shape == "ellipse":
+            item = EllipseItem(40.0, 30.0, 1000.0, 620.0, object_type=ObjectType.GENERIC_ELLIPSE)
+        else:
+            item = PolygonItem([QPointF(40.0, 30.0), QPointF(1040.0, 60.0), QPointF(900.0, 650.0),
+                                QPointF(500.0, 420.0), QPointF(80.0, 640.0)],
+                               object_type=ObjectType.TERRACE_PATIO)
+        pen = item.pen()
+        pen.setWidthF(4.0)
+        pen.setStyle(StrokeStyle.DASHED.to_qt_pen_style())
+        item.setPen(pen)
+        scene.addItem(item)
+
+        mean, worst, one = compare(scene, tile_px=2048)
+        assert (mean, worst) == (0.0, 0)  # one tile: the canvas's call, bit for bit
+        whole = one.baker.dashes_charged
+        assert 200 <= whole <= 280  # a perimeter of 26 to 32 m, a dash in 12 cm
+
+        mean, worst, tiles = compare(scene)
+        # an ellipse is cut along chords a fiftieth of a pixel from the true curve; Qt's
+        # own is four Bezier arcs, up to an eighth of a pixel from it
+        assert mean <= (0.1 if shape == "ellipse" else 0.01), mean
+        assert whole <= tiles.baker.dashes_charged <= 1.4 * whole  # the runs and their margins
+        assert tiles.baker.capped == frozenset() and len(tiles.baker.last_repainted) == 6
+
+        monkeypatch.setattr(ground_bake, "TILE_DASHES", 20)  # fewer than a run across a tile
+        _mean, _worst, poor = compare(scene)
+        assert poor.baker.dashes_charged <= 6 * 20 and len(poor.baker.capped) >= 4
+        _mean, _worst, poor_one = compare(scene, tile_px=2048)
+        assert poor_one.baker.dashes_charged == 0 and poor_one.baker.capped == frozenset({(0, 0)})
+        # solid is an outline all the same
+        solid = canvas_render(scene, poor_one.grid)
+        assert difference(poor_one.image(), solid)[0] > 0.05
+
+    def test_the_books_hold_one_entry_a_record_whatever_it_covers(self, qtbot: Any) -> None:
+        """Fifty thousand rectangles, each over the whole plan (records by hand — the
+        2D scene needs minutes to hold that many). What the baker HOLDS is one entry
+        a record and the ids a tile is painted with; what it COMPARES to find them
+        is 257 a tile — for a full bake, and for an edit the tiles it touches."""
+        from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
+
+        def surface(item_id: str, half: tuple[float, float], at: tuple[float, float],
+                    fill: tuple[int, int, int, int] = (40, 120, 60, 40)) -> Record:
+            ring = ((-half[0], -half[1]), (half[0], -half[1]), (half[0], half[1]), (-half[0], half[1]))
+            return Record(item_id=item_id, kind="LAWN", shape="rectangle", footprints=(ring,),
+                          transform=Transform(*at),
+                          material=Material("LAWN", fill_rgba=fill, paint=Paint()),
+                          params=Params({"seed": item_id}))
+
+        count = 50_000
+        records = {f"r{k}": surface(f"r{k}", (1300.0, 900.0), (1200.0, 800.0)) for k in range(count)}
+        records["top"] = surface("top", (50.0, 50.0), (700.0, 700.0), (200, 30, 30, 255))
+        baker = GroundBaker()
+        baker.bake(records, None, (), 2400.0, 1600.0)
+        assert len(baker.painted_ids()) == count + 1 and baker.last_examined == count + 1
+        assert baker.entries_held() == count + 1 + 20 * TILE_RECORDS  # not 20 x 50,000
+        assert baker.admission_checks == 20 * (TILE_RECORDS + 1) == 5_140
+        assert baker.records_painted == 20 * TILE_RECORDS
+        assert baker.capped == frozenset(baker.grid.tile_keys())
+
+        # one small item moved: one record looked at, one tile's records found again
+        checks, painted = baker.admission_checks, baker.records_painted
+        moved = dict(records)
+        moved["top"] = surface("top", (50.0, 50.0), (735.0, 680.0), (200, 30, 30, 255))
+        baker.bake(moved, SceneDiff(transform=("top",)), (), 2400.0, 1600.0)
+        assert baker.last_examined == 1 and baker.last_repainted == ((1, 1),)
+        assert baker.admission_checks - checks == TILE_RECORDS + 1
+        assert baker.records_painted - painted == TILE_RECORDS
+        assert baker.entries_held() == count + 1 + 20 * TILE_RECORDS
+
+        # a record no tile shows (the lowest of 50,000) changes: every tile's records
+        # are found again - and are the same, so not one tile is painted
+        checks, painted_tiles = baker.admission_checks, baker.tiles_painted
+        recoloured = dict(moved)
+        recoloured["r0"] = surface("r0", (1300.0, 900.0), (1200.0, 800.0), (250, 250, 0, 255))
+        tiles = baker.bake(recoloured, SceneDiff(material=("r0",)), (), 2400.0, 1600.0)
+        assert baker.admission_checks - checks == 5_140
+        assert baker.last_repainted == () and baker.tiles_painted == painted_tiles
+        assert all(mine is theirs for mine, theirs in zip(tiles, baker.tiles(), strict=True))
+
+    def test_the_comparisons_of_a_full_bake_are_linear_in_the_records(self, qtbot: Any) -> None:
+        """The dearest plan for the walk that hands the tiles their records: records
+        over HALF the tiles, so that the other half stays open and every record is
+        asked about. One look-up per record and tile it reaches — never more."""
+        from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
+
+        ring = ((-505.0, -900.0), (505.0, -900.0), (505.0, 900.0), (-505.0, 900.0))
+        material = Material("LAWN", fill_rgba=(40, 120, 60, 40), paint=Paint())
+        count = 20_000
+        records = {f"w{k}": Record(item_id=f"w{k}", kind="LAWN", shape="rectangle",
+                                   footprints=(ring,), transform=Transform(500.0, 800.0),
+                                   material=material, params=Params({"seed": "w"}))
+                   for k in range(count)}
+        baker = GroundBaker()
+        baker.bake(records, None, (), 2400.0, 1600.0)  # 5 x 4 tiles: the west 2 columns
+        assert baker.capped == frozenset((c, r) for c in range(2) for r in range(4))
+        assert baker.records_painted == 8 * TILE_RECORDS
+        assert baker.admission_checks == count * 8  # each record: the 8 tiles it reaches
+        assert baker.entries_held() == count + 8 * TILE_RECORDS
+
+    def test_a_sprite_of_nine_kilometres_is_rendered_with_a_bounded_image(
+            self, qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A furniture item's sprite is rendered at the item's size — the PLAN's
+        number. Within the bound it is asked for exactly as the canvas asks; beyond,
+        with ``SPRITE_MAX_PIXELS`` at most, and stretched over every tile."""
+        from open_garden_planner.ui.view3d import ground_bake
+        from open_garden_planner.ui.view3d.ground_bake import SPRITE_MAX_PIXELS
+
+        assert SPRITE_MAX_PIXELS == 262_144
+        asked: list[tuple[float, float]] = []
+        real = ground_bake.render_furniture_pixmap
+
+        def recording(*, object_type: Any, width: float, height: float) -> Any:
+            asked.append((width, height))
+            pixmap = real(object_type=object_type, width=width, height=height)
+            assert pixmap is not None and pixmap.width() * pixmap.height() <= SPRITE_MAX_PIXELS
+            return pixmap
+
+        monkeypatch.setattr(ground_bake, "render_furniture_pixmap", recording)
+        scene = _hostile_scene()
+        scene.addItem(RectangleItem(100.0, 100.0, 300.0, 200.0, object_type=ObjectType.PERGOLA))
+        bake = Bake(scene, registry=production_registry())
+        bake.step()
+        assert set(asked) == {(300.0, 200.0)}  # control: the canvas's own size
+        asked.clear()
+
+        scene.addItem(RectangleItem(-450_000.0, -450_000.0, 900_000.0, 900_000.0,
+                                    object_type=ObjectType.PERGOLA))
+        scene.addItem(RectangleItem(-450_000.0, 700.0, 900_000.0, 0.5, object_type=ObjectType.PERGOLA))
+        painted = bake.baker.records_painted
+        bake.step()
+        assert bake.skipped == [] and bake.baker.failures == {}
+        assert bake.baker.records_painted - painted >= 20 + 5 + 1  # every tile, a row, the first
+        sizes = {(max(int(w), 4), max(int(h), 4)) for w, h in asked}
+        assert len(sizes) == 3 and {(300, 200), (65_536, 4)} < sizes
+        (square,) = sizes - {(300, 200), (65_536, 4)}
+        assert square[0] == square[1] and 510 <= square[0] <= 512  # not 900,000 a side
+        assert all(w * h <= SPRITE_MAX_PIXELS for w, h in sizes)
+        assert not np.any(np.all(bake.image()[..., :3] == np.array(MEADOW_RGB), axis=2))
+
+    def test_a_textured_surface_of_nine_kilometres_costs_its_tiles(self, qtbot: Any) -> None:
+        """A fill is a brush of one small texture, whatever it fills: the painter
+        clips it to the tile. Twenty tiles, one record each, and the cache of
+        textures is the pattern's and the colour's — nothing of the item's size."""
+        from open_garden_planner.core import fill_patterns
+
+        scene = _hostile_scene()
+        item = RectangleItem(-450_000.0, -450_000.0, 900_000.0, 900_000.0, object_type=ObjectType.LAWN)
+        style(item, FillPattern.GRASS, QColor(90, 160, 70))
+        scene.addItem(item)
+        before = len(fill_patterns._tinted_cache)
+        bake = Bake(scene, registry=production_registry())
+        bake.step()
+        assert bake.skipped == [] and bake.baker.failures == {} and bake.baker.capped == frozenset()
+        assert bake.baker.records_painted == 20 and bake.baker.tiles_painted == 20
+        assert len(fill_patterns._tinted_cache) - before <= 1
+        texture = create_pattern_brush(FillPattern.GRASS, QColor(90, 160, 70)).texture()
+        assert 0 < texture.width() <= 256 and 0 < texture.height() <= 256
+        assert not np.any(np.all(bake.image()[..., :3] == np.array(MEADOW_RGB), axis=2))
 
     def test_the_bytes_a_ground_holds(self, qtbot: Any) -> None:
         """Four bytes a pixel, once: the sink's tiles ARE the baker's, and every bare

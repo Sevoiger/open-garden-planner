@@ -130,6 +130,26 @@ class TestGroundGrid:
                                           expected: set[tuple[int, int]]) -> None:
         grid = GroundGrid.for_plan(2400.0, 1600.0)
         assert set(grid.tiles_touching(*box)) == expected
+        # ... and the same tiles as four integers, however many they are
+        block = grid.tile_block(*box)
+        if not expected:
+            assert block is None
+        else:
+            assert block is not None
+            first_column, first_row, last_column, last_row = block
+            assert {(column, row) for column in range(first_column, last_column + 1)
+                    for row in range(first_row, last_row + 1)} == expected
+
+    @pytest.mark.parametrize("box", [
+        (-1e300, -1e300, 1e300, 1e300), (float("-inf"), float("-inf"), float("inf"), float("inf")),
+        (-1e15, 0.0, 1e15, 1.0)])
+    def test_a_box_no_plan_holds_is_the_grids_own_block(
+            self, box: tuple[float, float, float, float]) -> None:
+        """Whatever comes in, what goes out are tile numbers of THIS grid."""
+        grid = GroundGrid.for_plan(2400.0, 1600.0)
+        block = grid.tile_block(*box)
+        assert block is not None and block[0] == 0 and block[2] == 4
+        assert 0 <= block[1] <= block[3] <= 3
 
     def test_an_item_of_three_metres_moved_a_little_touches_at_most_four_tiles(self) -> None:
         """The arithmetic behind gate G3, for every position: a box no longer than a

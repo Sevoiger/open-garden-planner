@@ -64,20 +64,26 @@ class WalkBudget:
     its paths together (module docstring).
 
     ``elements``: elements that may still be handed out. ``steps``: steps of the
-    exact, summing walk that may still be taken. Both only ever go down;
-    ``elements_spent`` / ``steps_spent`` count what was used, ``truncated`` says
-    that a walk had to stop for want of elements.
+    exact, summing walk that may still be taken. ``dashes``: dashes of dashed
+    pens that may still be stroked (the ground bake charges them; this module
+    draws none). All only ever go down; ``elements_spent`` / ``steps_spent`` /
+    ``dashes_spent`` count what was used, ``truncated`` says that a walk had to
+    stop for want of elements, or a dashed stroke for want of dashes.
     """
 
-    __slots__ = ("elements", "elements_spent", "steps", "steps_spent", "truncated")
+    __slots__ = ("dashes", "dashes_spent", "elements", "elements_spent", "steps", "steps_spent",
+                 "truncated")
 
-    def __init__(self, elements: int, steps: int) -> None:
-        if elements < 0 or steps < 0:
-            raise ValueError(f"a budget is not negative, got {elements} elements, {steps} steps")
+    def __init__(self, elements: int, steps: int, dashes: int = 0) -> None:
+        if elements < 0 or steps < 0 or dashes < 0:
+            raise ValueError(f"a budget is not negative, got {elements} elements, {steps} steps, "
+                             f"{dashes} dashes")
         self.elements = elements
         self.steps = steps
+        self.dashes = dashes
         self.elements_spent = 0
         self.steps_spent = 0
+        self.dashes_spent = 0
         self.truncated = False
 
     def take_element(self) -> bool:
@@ -96,6 +102,17 @@ class WalkBudget:
             return False
         self.steps -= count
         self.steps_spent += count
+        return True
+
+    def take_dashes(self, count: int) -> bool:
+        """Charge ``count`` dashes of one dashed stroke, all or none: False — nothing
+        charged, ``truncated`` set — when the budget does not cover them (the
+        stroke is then drawn solid)."""
+        if count > self.dashes:
+            self.truncated = True
+            return False
+        self.dashes -= count
+        self.dashes_spent += count
         return True
 
 Element = tuple[QPointF, float, float, float, float]

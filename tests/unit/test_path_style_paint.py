@@ -165,6 +165,20 @@ class TestTheClippedWalk:
         assert walked(PathStylePaint(ZIGZAG, pen(), clip=clip, budget=shared), 10.5) == []
         assert shared.truncated and shared.elements_spent == exactly
 
+    def test_dashes_are_charged_all_or_none_and_zero_is_a_budget(self) -> None:
+        """The dashes of dashed pens (the ground bake charges them): a stroke is
+        covered whole or not at all, and a budget without dashes covers none."""
+        budget = WalkBudget(10, 10, 100)
+        assert budget.take_dashes(60) and budget.dashes == 40 and not budget.truncated
+        assert not budget.take_dashes(41)  # not covered: nothing charged, and it says so
+        assert budget.dashes == 40 and budget.dashes_spent == 60 and budget.truncated
+        assert budget.take_dashes(40) and budget.dashes == 0
+        assert not budget.take_dashes(1)
+        none = WalkBudget(10, 10)  # as the walks' own callers make it
+        assert none.dashes == 0 and not none.take_dashes(1) and none.truncated
+        with pytest.raises(ValueError, match="not negative"):
+            WalkBudget(1, 1, -1)
+
     def test_a_clip_and_a_budget_come_together(self) -> None:
         with pytest.raises(ValueError, match="needs a budget"):
             PathStylePaint(ZIGZAG, pen(), clip=(0.0, 0.0, 1.0, 1.0))
