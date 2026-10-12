@@ -407,16 +407,21 @@ def test_the_card_is_shown_for_exactly_one_selected_item_while_3d_is_visible(
     bench.settle()
     card = bench.workspace.info_card
     assert card is not None and card.isVisible() and card.title() == "North bed"
-    assert card.parentWidget() is bench.workspace.pane, "in the pane's layout — never over the view"
-    engine = bench.workspace.pane.engine_widget
-    assert card.geometry().top() >= engine.mapTo(bench.workspace.pane, engine.rect().bottomLeft()).y(), (
+    slot = card.parentWidget()
+    pane = bench.workspace.pane
+    assert slot.parentWidget() is pane, "in the pane's layout — never over the view"
+    engine = pane.engine_widget
+    assert slot.geometry().top() >= engine.mapTo(pane, engine.rect().bottomLeft()).y(), (
         "BELOW the native view")
+    assert slot.hint() == ""
     b.setSelected(True)
     assert not card.isVisible(), "two selected: no card"
+    assert slot.hint() == "2 objects selected."
     a.setSelected(False)
-    assert card.isVisible() and card.item_id == str(b.item_id)
+    assert card.isVisible() and card.item_id == str(b.item_id) and slot.hint() == ""
     bench.scene.clearSelection()
     assert not card.isVisible() and card.item_id == ""
+    assert slot.hint() == "Click an object to see what the 3D view shows of it."
     a.setSelected(True)
     bench.workspace.set_mode(PLAN)
     assert not card.isVisible()
@@ -426,9 +431,61 @@ def test_the_card_is_shown_for_exactly_one_selected_item_while_3d_is_visible(
     bench.workspace.set_mode(VIEW3D)
     assert card.isVisible() and card.item_id == str(b.item_id), "refreshed when it shows"
     bench.workspace.set_chrome_visible(False)         # fullscreen preview hides the controls
-    assert not card.isVisible()
+    assert not card.isVisible() and not slot.isVisible()
     bench.workspace.set_chrome_visible(True)
-    assert card.isVisible()
+    assert card.isVisible() and slot.isVisible()
+
+
+def test_no_selection_change_and_no_walk_resizes_the_3d_view(bench: SelectionBench) -> None:
+    """THE layout rule of the card and of walk mode's controls. Measured on the real
+    engine before it held: a card that came with a selection took 152 px from the
+    view, the picture was re-scaled under the pointer, and the Ctrl+click on the
+    neighbour of the item just selected met the lawn and cleared the selection; the
+    eye-height box made the strip 4 px taller. A resize is also a new swapchain, and
+    a view between two sizes answers no click (``HostStateError``: "not now")."""
+    a, b = bench.item(400.0, 300.0, name="North bed"), bench.item(1500.0, 300.0)
+    herb = drop(bench.view, "PERENNIAL:species=lavender", QPointF(450.0, 350.0))
+    bench.open3d()
+    pane = bench.workspace.pane
+    engine, slot = pane.engine_widget, bench.workspace.info_card.parentWidget()
+    assert slot.isVisible() and bench.workspace.info_card.isHidden(), "its place is there at once"
+    seen = []
+
+    def look(what: str) -> None:
+        bench.settle(30)
+        seen.append((what, engine.geometry().getRect(), slot.geometry().getRect(),
+                     pane.strip.height()))
+
+    look("nothing selected")
+    a.setSelected(True)
+    look("a built item")
+    b.setSelected(True)
+    look("two")
+    bench.scene.clearSelection()
+    herb.setSelected(True)
+    look("a plant: the fullest card")
+    bench.scene.clearSelection()
+    look("nothing again")
+    bench.click(a)
+    look("a click in the 3D view")
+    bench.workspace.walk_action.trigger()
+    assert bench.workspace.walking and bench.workspace._eye_combo.isVisible()  # noqa: SLF001
+    look("walking")
+    bench.workspace.set_walking(False)
+    look("back in orbit")
+    assert {row[1:] for row in seen} == {seen[0][1:]}, [row for row in seen if row[1:] != seen[0][1:]]
+    assert engine.height() > 200 and slot.height() == bench.workspace.info_card.slot_height()
+
+
+def test_the_cards_place_goes_with_the_engine_view(bench: SelectionBench) -> None:
+    """No engine view: nothing to stand below, and no hint to click in a view that is
+    not there."""
+    bench.item(400.0, 300.0)
+    bench.open3d()
+    slot = bench.workspace.info_card.parentWidget()
+    assert slot.isVisible()
+    bench.workspace._stop_engine()  # noqa: SLF001 - what a failed pass and a close do
+    assert not slot.isVisible() and slot.hint() == "" and bench.workspace.info_card.isHidden()
 
 
 def test_the_card_shows_the_records_height_at_two_plan_dates(bench: SelectionBench) -> None:

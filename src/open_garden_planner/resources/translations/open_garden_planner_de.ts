@@ -12528,6 +12528,14 @@ Details: {error}</translation>
             <source>There is no free ground to walk on.</source>
             <translation>Es gibt keinen freien Boden zum Begehen.</translation>
         </message>
+        <message>
+            <source>Click an object to see what the 3D view shows of it.</source>
+            <translation>Ein Objekt anklicken, um zu sehen, was die 3D-Ansicht davon zeigt.</translation>
+        </message>
+        <message>
+            <source>{count} objects selected.</source>
+            <translation>{count} Objekte ausgewählt.</translation>
+        </message>
     </context>
     <context>
         <name>View3DProblemsDialog</name>

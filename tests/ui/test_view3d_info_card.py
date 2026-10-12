@@ -2,8 +2,10 @@
 
 ``ui/view3d/info_card.View3DInfoCard`` shows what the 3D view shows of the one
 selected item, from that item's applied ``Record`` — the numbers the model was built
-from. Two things are pinned hard here: the height on the card IS the record's
-height, and nothing a plan file can hold is ever rendered as markup.
+from. Three things are pinned hard here: the height on the card IS the record's
+height, nothing a plan file can hold is ever rendered as markup, and the card's
+place (``View3DCardSlot``) has ONE height whatever it shows — a card that comes and
+goes must never resize the 3D view above it.
 """
 
 from __future__ import annotations
@@ -19,7 +21,14 @@ from PyQt6.QtWidgets import QLabel
 from open_garden_planner.core.measurements import format_area, format_length
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.scene3d import Material, Params, Record, Transform
-from open_garden_planner.ui.view3d.info_card import CardSubject, View3DInfoCard
+from open_garden_planner.ui.view3d.info_card import (
+    BODY_LINES,
+    FACT_SEPARATOR,
+    CardSubject,
+    View3DCardSlot,
+    View3DInfoCard,
+)
+from open_garden_planner.ui.view3d.workspace import MIN_PANE_WIDTH
 
 HOSTILE = '<b>x</b><img src="file:///C:/Windows/win.ini">'
 
@@ -71,6 +80,9 @@ def test_a_built_item_shows_its_kind_its_height_and_its_footprint(card: View3DIn
     assert card.value("Height:") == format_length(built.height_cm) == "42.5 cm"
     assert card.value("Size:") == "3.00 m × 1.20 m", "the drawn size, not the turned bounding box"
     assert card.note() == "" and card.value("Species:") is None
+    # … and that is what the card SHOWS: one paragraph of facts
+    assert card.body() == FACT_SEPARATOR.join(
+        ("Type: Raised Bed", "Height: 42.5 cm", "Size: 3.00 m × 1.20 m"))
 
 
 def test_an_item_without_a_name_is_titled_by_its_kind(card: View3DInfoCard) -> None:
@@ -139,6 +151,7 @@ def test_an_item_the_3d_view_refused_shows_the_reason_in_words(card: View3DInfoC
           problem="its outline cannot be turned into a solid")
     assert card.note() == "Not shown in 3D: its outline cannot be turned into a solid."
     assert card.rows() == [("Type:", "Fence")], "no height of a model that does not exist"
+    assert card.body() == "Type: Fence\n" + card.note(), "the note on a line of its own"
 
 
 def test_a_flat_item_is_said_to_be_drawn_on_the_ground(card: View3DInfoCard) -> None:
@@ -171,6 +184,10 @@ def test_a_name_that_is_markup_is_shown_as_its_characters(card: View3DInfoCard) 
     assert card.title() == HOSTILE
     title = next(label for label in card.labels() if label.text() == HOSTILE)
     assert title.textFormat() == Qt.TextFormat.PlainText
+    shown(card, item=item("x", ObjectType.TREE, plant_species=HOSTILE), has_model=True,
+          record=record("TREE", shape="circle", params={"radius_cm": 9.0}))
+    body = next(label for label in card.labels() if label is not title)
+    assert f"Species: {HOSTILE}" in body.text() and body.textFormat() == Qt.TextFormat.PlainText
 
 
 def test_every_label_of_the_card_is_plain_text_whatever_it_shows(card: View3DInfoCard) -> None:
@@ -184,7 +201,7 @@ def test_every_label_of_the_card_is_plain_text_whatever_it_shows(card: View3DInf
     ):
         card.show_subject(subject)
         labels = card.labels()
-        assert len(labels) >= 3
+        assert len(labels) == 2, "the title and the paragraph: all the card ever shows text in"
         for label in labels:
             assert isinstance(label, QLabel) and label.textFormat() == Qt.TextFormat.PlainText
             assert label.toolTip() == "", "a tooltip has no format switch: none carries plan text"
@@ -224,14 +241,99 @@ def test_clear_hides_and_forgets(card: View3DInfoCard) -> None:
     assert card.isHidden() and card.item_id == "" and card.rows() == [] and card.text() == ""
 
 
-def test_asking_for_the_same_lines_again_keeps_the_labels(card: View3DInfoCard) -> None:
-    """Every pass of the pipeline refreshes the card while an item is selected: the same
-    lines must not rebuild ten widgets a tick."""
+def test_a_refresh_builds_no_widget_and_the_same_facts_set_no_text(card: View3DInfoCard,
+                                                                  monkeypatch) -> None:
+    """Every pass of the pipeline refreshes the card while an item is selected: it
+    must not rebuild widgets, and the same facts must not even repaint the label."""
     subject = CardSubject(item("bed"), record(), True)
     card.show_subject(subject)
     before = [id(label) for label in card.labels()]
+    written: list[str] = []
+    real = QLabel.setText
+    monkeypatch.setattr(QLabel, "setText", lambda label, text: (written.append(text),
+                                                                real(label, text))[1])
     card.show_subject(subject)
-    assert [id(label) for label in card.labels()] == before
+    assert [text for text in written if text.startswith("Type:")] == [], "the paragraph was kept"
     card.show_subject(CardSubject(item("bed"), record(height=55.0), True))
-    assert card.value("Height:") == "55.0 cm"
-    assert [id(label) for label in card.labels()] != before
+    assert card.value("Height:") == "55.0 cm" and "Height: 55.0 cm" in card.body()
+    assert [id(label) for label in card.labels()] == before, "the same two labels, for ever"
+
+
+# ── the card's place: one height, card or no card ────────────────────────────
+
+
+def plant_subject(species: str = "Lavandula angustifolia") -> CardSubject:
+    plant = record("PERENNIAL", shape="circle", height=60.0, params={"radius_cm": 30.0}, parent="b")
+    lavender = item("Lavender by the gate", ObjectType.PERENNIAL, metadata={"plant_species": {
+        "common_name": "Lavender", "scientific_name": species}})
+    return CardSubject(lavender, plant, True, "", "Kitchen bed", date(2026, 6, 21))
+
+
+@pytest.fixture()
+def slot(qtbot) -> View3DCardSlot:
+    widget = View3DCardSlot()
+    qtbot.addWidget(widget)
+    widget.resize(640, widget.height())
+    widget.show()
+    qtbot.waitExposed(widget)
+    return widget
+
+
+def test_the_slot_has_one_height_whatever_stands_in_it(slot: View3DCardSlot, qtbot) -> None:
+    """THE rule (measured on the real engine before the slot existed: a card that came
+    and went took 152 px from the 3D view each time, and a Ctrl+click aimed at the
+    neighbour of the item just selected met the lawn instead)."""
+    height = slot.height()
+    assert slot.minimumHeight() == slot.maximumHeight() == height == slot.card.slot_height()
+    seen = []
+    for step in (lambda: slot.show_hint("Click an object."),
+                 lambda: slot.show_subject(CardSubject(item("bed"), record(), True)),
+                 lambda: slot.show_subject(plant_subject()),
+                 lambda: slot.show_subject(CardSubject(item(HOSTILE * 9, ObjectType.FENCE), None,
+                                                       False, "a reason " * 40)),
+                 lambda: slot.show_hint("3 objects selected."),
+                 lambda: slot.show_hint("")):
+        step()
+        qtbot.wait(10)
+        seen.append((slot.height(), slot.minimumHeight(), slot.maximumHeight()))
+    assert set(seen) == {(height, height, height)}, "what it holds asks for more: it gets none"
+
+
+def test_no_text_of_a_plan_can_widen_the_pane(slot: View3DCardSlot, qtbot) -> None:
+    """A QLabel asks for the width of its text: a 120-character name without a space
+    would push the splitter. Every label of the slot ignores its own width."""
+    unbroken = "Supercalifragilisticexpialidocious" * 6
+    slot.show_subject(CardSubject(item(unbroken, ObjectType.TREE, plant_species=unbroken,
+                                       metadata={"plant_species": {"scientific_name": unbroken}}),
+                                  record("TREE", shape="circle", params={"radius_cm": 9.0}), True))
+    qtbot.wait(10)
+    assert slot.minimumSizeHint().width() <= MIN_PANE_WIDTH
+    assert slot.card.minimumSizeHint().width() <= MIN_PANE_WIDTH
+    assert slot.width() == 640, "and it did not grow"
+
+
+def test_a_plants_whole_card_fits_the_slot_at_a_usual_width(slot: View3DCardSlot, qtbot) -> None:
+    """Seven facts — the most a card has — in ``BODY_LINES`` lines. The width is said in
+    the font's own measure (the test platform's font is not the desktop's): a pane 110
+    average characters wide — about 700 px in the Windows UI font, half a 1400 px
+    window. (On the real desktop, measured by the render tier: see its card row.)"""
+    body = slot.card._body  # noqa: SLF001 - the paragraph's own geometry
+    slot.resize(110 * body.fontMetrics().averageCharWidth(), slot.height())
+    slot.show_subject(plant_subject())
+    qtbot.wait(10)
+    assert len(slot.card.rows()) == 7
+    needed, has = body.heightForWidth(body.width()), body.height()
+    lines = needed / body.fontMetrics().lineSpacing()
+    assert needed <= has, f"{lines:.1f} lines needed, {BODY_LINES} there ({body.width()} px wide)"
+    assert has >= BODY_LINES * body.fontMetrics().lineSpacing() - 1
+
+
+def test_the_hint_stands_where_the_card_would(slot: View3DCardSlot) -> None:
+    slot.show_hint("Click an object.")
+    assert slot.hint() == "Click an object." and slot.card.isHidden()
+    hint = slot._hint  # noqa: SLF001
+    assert hint.textFormat() == Qt.TextFormat.PlainText and hint.isVisible()
+    slot.show_subject(CardSubject(item("bed"), record(), True))
+    assert slot.hint() == "" and slot.card.isVisible() and hint.isHidden()
+    slot.show_hint("2 objects selected.")
+    assert slot.card.isHidden() and slot.card.item_id == "" and slot.hint() == "2 objects selected."

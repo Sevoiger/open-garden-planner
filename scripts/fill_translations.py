@@ -3270,6 +3270,9 @@ _L18_SELECTION_WALK_TRANSLATIONS: dict[str, dict[str, str]] = {
         "Child": "Kind",
         "{who} – {height}": "{who} – {height}",
         "There is no free ground to walk on.": "Es gibt keinen freien Boden zum Begehen.",
+        "Click an object to see what the 3D view shows of it.":
+            "Ein Objekt anklicken, um zu sehen, was die 3D-Ansicht davon zeigt.",
+        "{count} objects selected.": "{count} Objekte ausgewählt.",
     },
     "View3DInfoCard": {
         "Show in Plan": "Im Plan zeigen",

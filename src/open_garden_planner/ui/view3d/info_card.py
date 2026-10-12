@@ -18,6 +18,16 @@ view shows of that item:
 
 One action: "Show in Plan".
 
+THE CARD NEVER RESIZES THE 3D VIEW. It lives in ``View3DCardSlot``, a strip of ONE
+constant height below the view that is there whether or not a card is shown (a
+line of hint text stands in it otherwise). Measured before the slot existed, on
+the real engine: a card that came and went with the selection took 152 px from
+the view each time, the picture was re-scaled under the pointer, and a Ctrl+click
+aimed at the neighbour of the item just selected met the lawn and CLEARED the
+selection. So the card is compact — a title line and a paragraph of facts that
+wraps to the pane's width — and what does not fit in the slot is cut off, never
+given more room: no text of a plan can widen or heighten the pane.
+
 EVERY string here comes from the plan file or is a translated label, and a plan
 file is untrusted (``core/plain_text.py``, §8.11): every label is
 ``Qt.TextFormat.PlainText`` — a name that reads ``<b>x</b><img src="file:…">`` is
@@ -35,7 +45,6 @@ from typing import Any, Final
 
 from PyQt6.QtCore import QDate, QLocale, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -60,6 +69,12 @@ from open_garden_planner.core.scene3d import (
 
 #: A scientific name is clipped like any name, but may be a little longer.
 _SPECIES_MAX_CHARS: Final = 120
+#: Lines of facts the card has room for below its title (the slot's height).
+BODY_LINES: Final = 3
+#: Between two facts of the paragraph.
+FACT_SEPARATOR: Final = "  \u00b7  "
+_MARGINS: Final = (8, 6, 8, 6)
+_SPACING: Final = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,11 +116,12 @@ class View3DInfoCard(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        # Ignored, both ways: the card takes the room its slot has and asks for none
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self._item_id = ""
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 6, 8, 6)
-        outer.setSpacing(4)
+        outer.setContentsMargins(*_MARGINS)
+        outer.setSpacing(_SPACING)
         head = QHBoxLayout()
         head.setSpacing(8)
         self._title = self._label(bold=True)
@@ -117,14 +133,11 @@ class View3DInfoCard(QFrame):
         self._button.clicked.connect(self._on_show)
         head.addWidget(self._button)
         outer.addLayout(head)
-        self._form = QFormLayout()
-        self._form.setContentsMargins(0, 0, 0, 0)
-        self._form.setHorizontalSpacing(10)
-        self._form.setVerticalSpacing(2)
-        outer.addLayout(self._form)
-        self._note = self._label(wrap=True)
-        outer.addWidget(self._note)
+        self._body = self._label(wrap=True)
+        self._body.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        outer.addWidget(self._body, 1)
         self._rows: list[tuple[str, str]] = []
+        self._note_text = ""
         self.hide()
 
     def _label(self, text: str = "", *, bold: bool = False, wrap: bool = False) -> QLabel:
@@ -133,11 +146,22 @@ class View3DInfoCard(QFrame):
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         label.setWordWrap(wrap)
+        # a label asks for the width of its text: Ignored, or a long name widens the pane
+        label.setSizePolicy(QSizePolicy.Policy.Ignored,
+                            QSizePolicy.Policy.Ignored if wrap else QSizePolicy.Policy.Fixed)
+        label.setMinimumWidth(0)
         if bold:
             font = label.font()
             font.setBold(True)
             label.setFont(font)
         return label
+
+    def slot_height(self) -> int:
+        """The height of the card's place: the title line (the button is the taller of
+        the two), ``BODY_LINES`` lines of facts, the margins and the frame."""
+        title = max(self._title.fontMetrics().lineSpacing(), self._button.sizeHint().height())
+        body = BODY_LINES * self._body.fontMetrics().lineSpacing()
+        return title + body + _MARGINS[1] + _MARGINS[3] + _SPACING + 2 * self.frameWidth()
 
     # ── reads (the tests', and the workspace's) ──────────────────────────────
 
@@ -161,7 +185,11 @@ class View3DInfoCard(QFrame):
         return None
 
     def note(self) -> str:
-        return self._note.text()
+        return self._note_text
+
+    def body(self) -> str:
+        """The paragraph of facts as the card shows it."""
+        return self._body.text()
 
     def text(self) -> str:
         """Everything the card says, one line per line."""
@@ -179,9 +207,8 @@ class View3DInfoCard(QFrame):
     def clear(self) -> None:
         """Show nothing (and hide)."""
         self._item_id = ""
-        self._set_rows(())
+        self._set_body((), "")
         self._title.setText("")
-        self._note.setText("")
         self.hide()
 
     def show_subject(self, subject: CardSubject) -> None:
@@ -207,9 +234,7 @@ class View3DInfoCard(QFrame):
             day = subject.plan_date
             rows.append((self.tr("Sizes on:"), QLocale().toString(
                 QDate(day.year, day.month, day.day), QLocale.FormatType.ShortFormat)))
-        self._set_rows(rows)
-        self._note.setText(self._model_note(subject))
-        self._note.setVisible(bool(self._note.text()))
+        self._set_body(rows, self._model_note(subject))
         self.show()
 
     def _kind_text(self, item: Any, record: Record | None) -> str:
@@ -276,15 +301,53 @@ class View3DInfoCard(QFrame):
             return self.tr("Not shown in 3D: this kind of object has no 3D form.")
         return self.tr("Drawn on the ground in 3D: the plan gives it no height.")
 
-    def _set_rows(self, rows: Sequence[tuple[str, str]]) -> None:
-        if list(rows) == self._rows:
-            return  # every pass of the pipeline asks: the same lines keep their labels
-        while self._form.rowCount():
-            self._form.removeRow(0)
+    def _set_body(self, rows: Sequence[tuple[str, str]], note: str) -> None:
+        """The facts as ONE paragraph that wraps to the card's width, the note on a
+        line of its own below them."""
         self._rows = list(rows)
-        for label, value in rows:
-            self._form.addRow(self._label(label), self._label(value))
+        self._note_text = note
+        facts = FACT_SEPARATOR.join(f"{label} {value}" for label, value in rows)
+        text = "\n".join(part for part in (facts, note) if part)
+        if text != self._body.text():  # every pass of the pipeline asks: nothing repaints
+            self._body.setText(text)
 
     def _on_show(self) -> None:
         if self._item_id:
             self.show_in_plan.emit(self._item_id)
+
+
+class View3DCardSlot(QWidget):
+    """The card's place below the 3D view: ONE constant height, card or no card
+    (module docstring). While no card is shown, a line of hint text stands there."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.card = View3DInfoCard(self)
+        self._hint = QLabel("", self)
+        self._hint.setTextFormat(Qt.TextFormat.PlainText)
+        self._hint.setWordWrap(True)
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._hint.setContentsMargins(*_MARGINS)
+        self._hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self._hint.setEnabled(False)  # the palette's quiet text colour: it is no control
+        layout.addWidget(self.card, 1)
+        layout.addWidget(self._hint, 1)
+        self.setFixedHeight(self.card.slot_height())
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+    def hint(self) -> str:
+        """The hint as it is shown ("" while a card is)."""
+        return "" if self._hint.isHidden() else self._hint.text()
+
+    def show_subject(self, subject: CardSubject) -> None:
+        self._hint.hide()
+        self.card.show_subject(subject)
+
+    def show_hint(self, text: str) -> None:
+        """No card: ``text`` in its place (a translated sentence of the caller's)."""
+        self.card.clear()
+        self._hint.setText(text)
+        self._hint.show()

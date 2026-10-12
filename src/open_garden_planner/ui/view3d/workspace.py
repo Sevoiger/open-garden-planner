@@ -107,7 +107,7 @@ if TYPE_CHECKING:
     from open_garden_planner.core.scene3d.walk import WalkWorld
     from open_garden_planner.core.sim_clock import SimClock
 
-    from .info_card import CardSubject, View3DInfoCard
+    from .info_card import CardSubject, View3DCardSlot, View3DInfoCard
     from .orbit_input import OrbitInput
     from .problems_dialog import View3DProblemsDialog
     from .sync_controller import Scene3DController, TickReport
@@ -1047,6 +1047,7 @@ class Workspace(QWidget):
     def _init_selection_and_walk(self) -> None:
         self._walk: WalkMode | None = None
         self._card: View3DInfoCard | None = None
+        self._card_slot: View3DCardSlot | None = None
         self._selection_wired = False
         self._eye_height: float | None = None  # None: the walk's default (the first preset)
         self._walk_action = QAction(self.tr("&Walk"), self)
@@ -1095,19 +1096,28 @@ class Workspace(QWidget):
             self._eye_combo.addItem(self.tr("{who} – {height}").format(
                 who=who, height=format_length(height)), height)
         self._eye_combo.currentIndexChanged.connect(self._on_eye_height)
+        # its room is kept while it is hidden: entering walk mode must not make the
+        # strip taller and the 3D view smaller (measured: 4 px, and a resize each time)
+        policy = self._eye_combo.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self._eye_combo.setSizePolicy(policy)
         self._eye_combo.hide()
         strip.addWidget(self._eye_combo)
 
     def _build_card(self, pane: _Pane3D) -> None:
-        from .info_card import View3DInfoCard
+        from .info_card import View3DCardSlot
 
-        card = View3DInfoCard(pane)
-        card.show_in_plan.connect(self.show_in_plan)
+        # The card's PLACE, of one constant height: a card that came and went with the
+        # selection resized the 3D view under the pointer (info_card's docstring).
+        slot = View3DCardSlot(pane)
+        slot.card.show_in_plan.connect(self.show_in_plan)
+        slot.hide()  # until there is an engine view to stand below
         layout = pane.layout()
         if layout is not None:
-            layout.addWidget(card)  # BELOW the view: nothing is ever drawn over it
+            layout.addWidget(slot)  # BELOW the view: nothing is ever drawn over it
         pane.showing_changed.connect(self._on_showing_for_selection)
-        self._card = card
+        self._card_slot = slot
+        self._card = slot.card
 
     def _wire_selection(self, host: EngineHost, orbit: OrbitInput,
                         controller: Scene3DController) -> None:
@@ -1135,8 +1145,9 @@ class Workspace(QWidget):
                 _LOG.debug("3D workspace: the canvas selection was already disconnected")
         self._selection_wired = False
         self._walk_action.setEnabled(False)
-        if self._card is not None:
-            self._card.clear()
+        if self._card_slot is not None:
+            self._card_slot.show_hint("")
+            self._card_slot.hide()  # no engine view: nothing to stand below
 
     def _on_canvas_selection(self) -> None:
         """The canvas selection changed: the ring follows, and the card."""
@@ -1192,16 +1203,30 @@ class Workspace(QWidget):
             self._after_walk_change()
 
     def _refresh_card(self) -> None:
-        card = self._card
-        if card is None:
+        slot = self._card_slot
+        if slot is None:
             return
+        # the card's place is there with the view's other controls, card or no card:
+        # a selection never changes the size of the 3D view
+        slot.setVisible(self._chrome_visible and self._controller is not None)
         if not self._pane_is_showing():
             return  # hidden: nothing is computed; the card is refreshed when it shows
         subject = self._card_subject()
         if subject is None:
-            card.clear()
+            slot.show_hint(self._selection_hint())
         else:
-            card.show_subject(subject)
+            slot.show_subject(subject)
+
+    def _selection_hint(self) -> str:
+        """What stands in the card's place while it shows no item."""
+        scene = self._scene
+        try:
+            count = len(scene.selectedItems()) if scene is not None else 0
+        except RuntimeError:  # the scene is being torn down
+            count = 0
+        if count > 1:
+            return self.tr("{count} objects selected.").format(count=count)
+        return self.tr("Click an object to see what the 3D view shows of it.")
 
     def _card_subject(self) -> CardSubject | None:
         """What the card shows: the ONE selected item, with the record the engine was
