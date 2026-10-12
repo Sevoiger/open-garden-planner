@@ -831,6 +831,28 @@ def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | _Refused, bool]:
         return _TOO_LARGE, False
 
 
+def clear_outline_cache() -> None:
+    """Drop everything ``snapshot_records`` remembers about outlines — LIVE and
+    stale: the regions of every polygon and stroke, their cuts, areas and ring
+    facts (every ``core.scene3d.polygon.ring_keyed`` memory), and the rings and
+    verdicts of circles. The next snapshot is a first one: every outline is
+    judged and cut again.
+
+    What a snapshot asks for is never dropped while snapshots go on, so a plan
+    that is gone stays remembered until two more snapshots have run — and with
+    no 3D view open, none does (measured: 160 polygons of 1,000 vertices,
+    321,280 vertices held, about 30 MB). Call this when the document changes
+    (a plan is opened, a new one made) and when the 3D view closes. It is also
+    the way to snapshot a SECOND scene in one process without the first one's
+    answers in the way: the memories serve one snapshotting scene
+    (``core.scene3d.polygon.snapshot_generation``). Safe at any time, also
+    while nothing is held; the plant builder's ``clear_shape_cache`` is the
+    same call for plant shapes."""
+    clear_ring_memories()
+    for cache in (_circle_ring, _circle_regions, _convex_region):
+        cache.cache_clear()
+
+
 @lru_cache(maxsize=1024)
 def _material(key: str, fill: Rgba | None, stroke: Rgba | None, pattern: str | None) -> Material:
     return Material(key, fill, stroke, pattern)
@@ -1119,25 +1141,3 @@ def snapshot_records(
             continue
         records[item_id] = record
     return records
-
-
-def clear_outline_cache() -> None:
-    """Drop everything ``snapshot_records`` remembers about outlines — LIVE and
-    stale: the regions of every polygon and stroke, their cuts, areas and ring
-    facts (every ``core.scene3d.polygon.ring_keyed`` memory), and the rings and
-    verdicts of circles. The next snapshot is a first one: every outline is
-    judged and cut again.
-
-    What a snapshot asks for is never dropped while snapshots go on, so a plan
-    that is gone stays remembered until two more snapshots have run — and with
-    no 3D view open, none does (measured: 160 polygons of 1,000 vertices,
-    321,280 vertices held, about 30 MB). Call this when the document changes
-    (a plan is opened, a new one made) and when the 3D view closes. It is also
-    the way to snapshot a SECOND scene in one process without the first one's
-    answers in the way: the memories serve one snapshotting scene
-    (``core.scene3d.polygon.snapshot_generation``). Safe at any time, also
-    while nothing is held; the plant builder's ``clear_shape_cache`` is the
-    same call for plant shapes."""
-    clear_ring_memories()
-    for cache in (_circle_ring, _circle_regions, _convex_region):
-        cache.cache_clear()

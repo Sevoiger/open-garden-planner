@@ -2929,8 +2929,8 @@ find their answers (the one before counts); three in turn find them stale — me
 review of fix round 4, every scene's 160 polygons cut again on every tick. A snapshot that
 raises half-way leaves the next ones correct. And because what a snapshot asked for is dropped only by LATER snapshots, a plan
 that is gone stays held until two more have run — after `scene.clear()` with the 3D view
-closed, forever (measured: 321,280 vertices, about 30 MB). So there is one public call next
-to `snapshot_records`: **`ui.view3d.snapshot.clear_outline_cache()`** drops everything the
+closed, forever (measured: 321,280 vertices, about 30 MB). So there is one public call in
+`snapshot_records`' module: **`ui.view3d.snapshot.clear_outline_cache()`** drops everything the
 outline memories hold, live and stale — every `ring_keyed` memory and the circles' — and the
 next snapshot is a first one. The workspace calls it when the document changes (a plan is
 opened, a new one made) and when the 3D view closes; it is also how a second scene is
