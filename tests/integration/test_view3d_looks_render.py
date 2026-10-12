@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from scripts import board_probes as probes
 
 from open_garden_planner.core.scene3d import SunState
 from open_garden_planner.core.scene3d.look import (
@@ -44,7 +45,6 @@ from open_garden_planner.core.scene3d.look import (
     moon_travel_scene,
     sky_is_stale,
 )
-from scripts import board_probes as probes
 from tests.integration import view3d_looks_driver as driver
 from tests.integration.quick3d_render_support import (
     QML_SOURCE,
