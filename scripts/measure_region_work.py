@@ -6,7 +6,7 @@ work units out of ONE budget of ``MAX_REGION_WORK``, each step before it runs,
 and what the budget does not cover is refused (``core/scene3d/polygon.py``,
 ``ui/view3d/snapshot.py``). A unit is a count, so the verdict is the same on
 every machine; what a unit costs in TIME is a measurement, and this script is
-where the figures in the code's comments, ADR-054 and sections 8.11 and 8.26.1
+where the figures in the code's comments, ADR-056 and sections 8.11 and 8.27.1
 come from. Run it from the repo root:
 
     venv/Scripts/python.exe scripts/measure_region_work.py

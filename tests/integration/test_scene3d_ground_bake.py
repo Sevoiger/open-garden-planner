@@ -135,7 +135,7 @@ class TestParityPerPattern:
         assert len({tile.key for tile in changed_tiles((), bake.tiles)[0]}) == 6
         assert len(bake.baker.painted_ids()) == 1
         assert mean <= PARITY, (pattern.name, mean, worst)
-        # measured (docs §8.26.5): not turned, the two renders are the same picture;
+        # measured (docs §8.27.5): not turned, the two renders are the same picture;
         # turned, single values differ by one step of 255 (largest mean seen: 0.0002)
         assert mean <= (0.002 if angle else 0.0), (pattern.name, mean, worst)
         assert worst <= (2 if angle else 0), (pattern.name, mean, worst)
@@ -1032,7 +1032,7 @@ class TestHostilePlans:
                              ids=lambda s: s.name)
     def test_a_dashed_line_of_19_kilometres(self, qtbot: Any, stroke: StrokeStyle) -> None:
         """A dashed pen has no elements of ours to count: Qt's dasher makes the
-        dashes, and skips what lies outside the image (measured, docs §8.26.5: 19 km
+        dashes, and skips what lies outside the image (measured, docs §8.27.5: 19 km
         cost what 100 m cost). Pinned by its result — the bake finishes inside the
         suite's time limit and is the canvas's picture."""
         scene = _hostile_scene()

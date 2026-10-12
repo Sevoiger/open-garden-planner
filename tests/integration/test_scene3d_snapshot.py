@@ -1175,7 +1175,7 @@ class TestSelfCrossingPolygon:
 
     def test_a_pentagram_keeps_its_centre(self, canvas: CanvasView) -> None:
         """The non-zero rule, the 2D shadow's: the star is one ring of ten corners,
-        centre included (the canvas paints it odd-even, centre open — ADR-054)."""
+        centre included (the canvas paints it odd-even, centre open — ADR-056)."""
         star = PolygonItem([QPointF(500.0 + 300.0 * math.sin(4.0 * math.pi * k / 5.0),
                                     500.0 + 300.0 * math.cos(4.0 * math.pi * k / 5.0))
                             for k in range(5)], object_type=ObjectType.HOUSE)
