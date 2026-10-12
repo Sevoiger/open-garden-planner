@@ -465,17 +465,38 @@ developer's whole list had been replaced by fixture paths). `scripts/script_isol
 one place for it, and a script calls it in two steps: `isolate_profile()` under
 `if __name__ == "__main__":` **above the first import of the app** (the profile variables —
 `USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA`, the three `XDG_*` — to a temporary directory
-of the process), and `isolate()` as **the first statement of `main()`** (that, and the two
-settings names rebound to a key of the process, cleared at exit). Not at import: tests import
-the fixture generators into the pytest process, and a second redirection there would take its
-test key away. `scripts/make_scene3d_edge_plan.py` and `scripts/measure_region_work.py` do this;
-`scripts/mutation_check_scene3d.py` imports nothing of the app (its children are pytest).
-`tests/integration/test_script_isolation.py` runs each of them **as a script, in a child
-process**, and checks every settings store the child builds and that nothing — not a file, not a
-folder — appears in the profile it was started with; the child is handed a decoy pair in place
-of the production names, so a script that failed to isolate itself would write there and not
-into anybody's settings. A probe that is not committed has no such test: write it as a pytest
-test, or give it the same two calls.
+of the process), and `isolate()` as **the first statement of `main()`** (that; the two
+settings names rebound to a key of the process, cleared at exit; and the stand-in for
+`QStandardPaths.writableLocation` — on Windows the variables move `AppDataLocation` and
+`DocumentsLocation` but NOT `AppLocalDataLocation` or `CacheLocation`, where the companion,
+climate and thumbnail caches live: Qt asks the shell). That stand-in is ONE function,
+`script_isolation.redirect_qt_locations`: `tests/conftest.py` loads `script_isolation` and
+installs the same one for the suite. Not at import: tests import the fixture generators into
+the pytest process, and a second redirection there would take its test key away.
+
+**Every script is read, not a list of them kept.** `tests/integration/test_script_isolation.py`
+parses every file under `scripts/`: one that imports the app or builds a Qt application either
+calls `script_isolation.isolate()` — with `isolate_profile()` above its first app import and
+`isolate()` first in `main()` — or stands on the test's `NOT_ISOLATED` list **with the reason**
+(eight today: the isolation itself, a spike benchmark with a helper of its own, three developer
+tools that are meant to run in the real profile, three that build no store). A new script that
+reaches the app fails the test until it does one or the other. The three that isolate
+themselves — `make_bench_plans.py` (until this story it rebound the names to a standing key
+nothing cleared, and left the profile alone), `make_scene3d_edge_plan.py`,
+`measure_region_work.py` — are each run **as a script, in a child process**: every settings
+store the child builds, where its profile variables and Qt's five locations point when it ends,
+and that nothing — not a file, not a folder — appeared in the profile it was started with. The
+child is handed a decoy pair in place of the production names, so a script that failed to
+isolate itself would write there and not into anybody's settings.
+`scripts/mutation_check_scene3d.py` imports nothing of the app (its children are pytest). A
+probe that is not committed has no such test: write it as a pytest test, or give it the same
+two calls.
+
+**No test starts another tool.** `detect_clients()` probes a client CLI it finds on `PATH` by
+running it. `tests/unit/test_ai_client_onboarding.py` puts no CLI on `PATH` by default and makes
+the module's `subprocess.run` raise; a test that plays a CLI replaces it, and the one that only
+needs a CLI to be *found* stubs `cli_supported_flags` (it used to stub `which` to
+`/usr/local/bin/claude` for every client and let the probe run whatever was there).
 
 Pinned by `tests/integration/test_app_data_isolation.py`: the four variables are assigned at
 conftest module scope before the first import of the app (an AST check, the counterpart of
@@ -708,7 +729,7 @@ suite (ADR-056, "What the first version got wrong").
   turning" test turned the item *before* taking its baseline, one named for `reset()` never called
   it, one asserted a *lower* bound on an error. Read each new test once asking only "which line
   fails if the named behaviour breaks?"
-- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 149
+- **Break the rule and watch the test fail.** `scripts/mutation_check_scene3d.py` applies 167
   single-rule mutations to the pipeline, each against the tests that must notice; its first run
   found a comparison (`Record.same_geometry` on `holes`) no test pinned. It is not in the suite
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
@@ -3091,10 +3112,18 @@ The snapshot hands on only regions for which it holds, so for every record
 its own: each outer ring is a simple counter-clockwise polygon, each hole a simple clockwise one
 inside it, holes do not overlap, and a triangulation exists — `cut_region(outer, holes)` returns
 it (`(vertices, triangles)`, remembered). Rings may *touch* in a point; a region whose rings
-touch so that it cannot be cut never arrives. The predicate is asked of every region of every
-record — a circle's, an ellipse's and a rectangle's ring too (on the record grid a circle of
-radius 2e-7 cm is no polygon). **Regions can nest:** an island standing in a hole is a region of
-its own, inside another region's hole; a builder that fills "the hole" fills the island.
+touch so that it cannot be cut never arrives. Every region of every record is judged — a
+circle's, an ellipse's and a rectangle's ring too (on the record grid a circle of radius 2e-7 cm
+is no polygon) — but a ring that is convex BY CONSTRUCTION is judged without being cut: a
+circle of 1e-3 cm and more by its radius, an ellipse or a rectangle by arithmetic on its corners
+(`polygon.is_convex_ring`: every corner turns left, and the ring is no sliver for its reach),
+and only a ring that is not convex on the record grid is asked the cut. The arithmetic implies
+the predicate (0 exceptions among 78,874 such rings in a sweep of 120,000 shapes; 2,000 in the
+suite), so the promise above holds for them unasked. It is there for the date scrub: every dated
+plant has a new radius on every tick, and cutting each 24-gon made that snapshot 2.9 times
+slower (`bench_large`, 80 plants changing: 11.6 ms at the base, 33 ms cut, 12.7 ms now).
+**Regions can nest:** an island standing in a hole is a region of its own, inside another
+region's hole; a builder that fills "the hole" fills the island.
 
 **What an outline may cost — one budget, paid before the work.** An item's outline comes out of
 a plan file, anybody can write one, and the snapshot runs on the GUI thread on every edit tick.
@@ -3112,19 +3141,34 @@ Two rules hold for everything between the item and its record (§8.11 has them a
    | Step | What it is priced from |
    | ---- | ---------------------- |
    | counting the pairs of the path's segments (`polygon.touching_pairs`) | the points, squared; then every pair whose boxes meet — all of them before one is tested |
-   | the clipper inflating the path | the points; their **stack** (`polygon.stack_height`: a sweep line carries every edge it crosses — 4,000 teeth standing side by side took the clipper 1.6 s without one crossing, lying down 4 ms); the pairs that cross (800 points scribbled across a plan: 73,000, half a second, 53,000 rings) or lie within the stroke's reach of each other |
+   | the clipper inflating the path | the points; their **stack** (`polygon.stack_height`: a sweep line carries every edge it crosses — 4,000 teeth standing side by side took the clipper 1.6 s without one crossing, lying down 4 ms — except an exactly LEVEL one, which it walks along: a straight fence costs the same east–west as north–south); the pairs that cross (800 points scribbled across a plan: 73,000, half a second, 53,000 rings) or lie within the stroke's reach of each other |
    | reading what came back | every ring and every vertex, counted first |
    | sorting rings into regions (`group_rings`) | holes × outer rings, each question the outer ring's vertices (2,000 × 2,000 small rings took 3.8 s when nothing asked) |
    | each region's cut (`polygon.pay_for_region`) | the simplicity test (the edges squared, and the pairs it has to look at), a bridge per hole, the ears — cut out of what the ITEM has left, not out of a bound per region: a thousand regions that each fit do not fit together |
-   | resolving an outline that crosses or touches itself | each union and each band from the vertices, their stack and the **crossings** (the last reading of 800 scribbled vertices took ten seconds; a bound on the vertex count did not see it); each reading's rings before they are read; each comparison with the drawn outline on its lattice |
+   | resolving an outline that crosses or touches itself | each union and each band from the vertices, their stack and the **crossings** (the last reading of 800 scribbled vertices took ten seconds; a bound on the vertex count did not see it); each reading's rings before they are read; sorting the strict union's rings (`group_rings`, as above); each comparison with the drawn outline on its lattice |
 
    What the budget does not cover is refused — `polygon.RegionTooLargeError` inside, the
-   skip code `outline_too_large` outside — and the refusal is remembered like any other answer,
-   so an unchanged outline costs one lookup on the next tick. The counted work of one item is at
-   most the bound, to the unit; a refusal costs at most the bound and usually far less.
+   skip code `outline_too_large` outside — and the refusal is remembered like any other answer
+   for as long as the item is there. The counted work of one item is at most the bound, to the
+   unit; a refusal costs at most the bound and usually far less.
 
-Measured (`scripts/measure_region_work.py`, development box, 2026-10-11, beside other test runs:
-a unit took 0.7 to 2.3 ns; on the quiet machine 0.35 to 1.15 ns — the bound is 0.05 to 0.35 s):
+   *Never `StrictlySimple` together with a tree.* The strict union is asked for a flat list
+   (`Execute`) and `group_rings` says which hole is whose. As a tree (`Execute2`) the same union
+   costs by the rings it makes and the splits it tries, which no price can be read off
+   beforehand: one outline of 340 vertices, every vertex on one of two levels, held the GUI
+   thread for 3.6 s INSIDE the budget (pyclipper alone 4,382 ms as a tree, 19 ms as a list); it
+   is refused in 31 ms now.
+
+**In time the bound is a measurement.** A unit of the reference — a plain traced outline — took
+0.35 to 1.15 ns on the development box when it was quiet and 0.7 to 2.3 ns beside other test
+runs: 0.05 to 0.35 s for the bound. A unit charged for something else took 0.1 to 1.7 times the
+reference (`scripts/measure_region_work.py` prints that ratio, cost to price, for each of its 46
+rows): every outline built to hurt the clipper stayed at 0.6 or below, the accepted outlines of
+tables 1 and 2 between 0.75 and 1.45, and the dearest row was a path 100 cm wide with a point
+every 25 cm at 1.7. So "one item costs at most the bound" holds in units; in seconds it is
+0.05 to 0.35, and up to 0.6 where a busy machine meets the dearest family.
+
+Measured (`scripts/measure_region_work.py`, development box, 2026-10-11; the units are exact):
 
 | What fits, at most | | What it costs |
 | ---- | ---- | ---- |
@@ -3132,40 +3176,88 @@ a unit took 0.7 to 2.3 ns; on the quiet machine 0.35 to 1.15 ns — the bound is
 | … a comb (the ear clipper's worst case) | 1,648 vertices | 149.9 M |
 | … a spiral | 4,334 vertices | 149.9 M |
 | a whole outline: a closed fence along a traced outline, 10 cm | 1,321 points | 144.5 M |
-| … the same fence, every segment level with every other | 933 points | 148.9 M |
-| … a ladder drawn as one stroke | 164 rungs | 148.1 M |
-| … a square mesh drawn as one stroke | 15 × 15 openings | 146.8 M |
+| … the same fence, every segment nearly level with every other | 933 points | 148.9 M |
+| … a straight fence with a post every 2 m, east–west / north–south | 6,666 / 6,645 points | 150.0 M (the pairs of its posts) |
+| … the same at 30° (its outline keeps a vertex per post on the grid) | 4,514 points | 150.0 M |
+| … a path 100 cm wide with a point every 25 cm | 900 points, 225 m (the review's generator: 1,011) | 149.9 M |
+| … a path 60 cm wide with a point every 50 cm | 962 points, 481 m (the review's: 1,201) | 149.8 M |
+| … a ladder drawn as one stroke | 168 rungs | 145.1 M |
+| … a square mesh drawn as one stroke | 15 × 15 openings | 146.3 M |
 | … a wall 30 cm wide traced with a point every 2 cm | 919 points | 149.9 M |
+| … a regular polygon (what a DXF import makes of a circle) | 3,456 vertices | 150.0 M |
+| … a traced pond | 3,538 vertices (the review's freehand pond: 3,497) | 148.4 M |
 | … a drawn outline that crosses itself | 1,513 vertices | 149.5 M |
+| … a two-level zigzag (every tooth crosses the others) | 80 vertices | 146.2 M |
 | **what a large plan needs:** a closed fence along 400 traced points | | 24.3 M — 16 % of the bound |
-| … a line of 2 km (2 points) | | 31,340 units — 0.02 % |
-| … a line of 2 km with a point every 5 m | 401 points | 45.6 M — 30 % (its segments lie level) |
+| … a line of 2 km (2 points) | | 31,200 units — 0.02 % |
+| … a straight line of 2 km with a post every 5 m | 401 points | 1.5 M — 1 % |
+| … the same line with every post 2 cm off it | 401 points | 45.6 M — 30 % (its segments stack) |
 | … a traced outline of 400 vertices | | 6.2 M — 4 % |
-| … a rectangle | | 10,200 units |
+| … a rectangle drawn as a polygon | | 10,200 units |
+
+**What is refused that somebody could want.** These limits are low enough to meet: a garden
+path of more than about 900 points, a closed boundary fence traced with more than 1,321, a DXF
+circle of more than 3,456 segments, a traced pond of more than about 3,500 vertices (the fence
+was built up to about 2,600 points before the bound existed — in 1.9 s per edit). Such an item
+is ABSENT from the 3D view — no solid, no decal — while the 2D canvas draws it as always, and
+the direction a wobbly line runs in changes how many points fit (933 nearly level, 1,321 round
+a loop): the clipper's sweep is not symmetric, and its price follows it. So the user-visible
+message for `outline_too_large` is an **acceptance criterion of the workspace story (L1.3)**,
+not a hope: an item that silently is not there reads as a bug of the 3D view.
 
 | What is refused | What saying no took | What the clipper alone would have taken |
 | ---- | ---- | ---- |
-| a stroke scribbled over 800 / 1,600 points | 27 ms / 19 ms | 0.58 s / 2.4 s |
-| a stroke of 2,000 / 4,000 teeth standing side by side | 22 ms / 74 ms | 0.41 s / 1.8 s |
-| a stroke scribbled over 400 points | 111 ms — its inflation is inside the budget (the clipper is asked, once), what comes back is not | 0.12 s |
-| an outline scribbled over 400 / 800 / 1,600 vertices | 102 ms / 53 ms / 19 ms | 1.2 s for the last reading of 400 |
-| a plain outline of 10,000 vertices | 3 ms (two linear passes; its size is known from its length) | — |
+| a stroke scribbled over 800 / 1,600 points | 15 ms / 12 ms | 0.34 s / 1.7 s |
+| a stroke of 2,000 / 4,000 teeth standing side by side | 14 ms / 51 ms | 0.26 s / 1.1 s |
+| a stroke scribbled over 400 points | 65 ms — its inflation is inside the budget (the clipper is asked, once), what comes back is not | 0.07 s |
+| an outline scribbled over 400 / 800 / 1,600 vertices | 30 ms / 32 ms / 12 ms | 0.74 s for the last reading of 400 |
+| a two-level zigzag of 200 / 340 / 800 vertices | 43 ms / 27 ms / 34 ms | (as a tree: 1.1 s / 3.6 s) |
+| a plain outline of 10,000 vertices | 2 ms (two linear passes; its size is known from its length) | — |
 | an item of more than 16,384 vertices | one comparison; not one vertex is read | — |
 
-Not bounded, and stated: a **plan** is the sum of its items — a plan of ten thousand outlines
-at the bound costs ten thousand bounds on the first snapshot, as it costs the 2D canvas ten
-thousand paints. A budget across a plan would make a record depend on what else is on the plan.
-And the shipped Qt 3D collector (`collect_scene3d_records`, removed with L1.10) and the 2D
-shadow overlay inflate a polyline with no bound at all, as they always have.
+Not bounded, and stated — three things:
 
-**What is remembered is bounded by vertices, not by answers.** `polygon.ring_keyed` is the one
-memory for functions of rings (`ring_area`, the verdict-and-cut of a region, a record's ring
-facts, the regions of a polygon and of a stroke): each holds at most `HELD_VERTICES` = 262,144
-vertices, keys and answers together, and drops the least recently asked quarter beyond that; a
-ring of more than `MAX_ITEM_VERTICES` is never hashed and never a key. An `lru_cache` bounds the
-number of answers — 2,048 answers about an outline of 4,000 vertices that is being dragged were
-a gigabyte. `cut_region`, `is_buildable_region` and `is_region_too_large` share one memory (a
-refusal is remembered with its words); `is_simple_ring` is not remembered.
+- A **plan** is the sum of its items: there is no budget across a plan (it would make a record
+  depend on what else is on the plan). The FIRST snapshot of a plan costs what its items cost,
+  and so does every item again when it is edited: two hundred accepted outlines at the bound
+  are 30,000 M units — the review measured 33 to 40 s for such a plan — on the first tick, and
+  one bound on a tick that edits one of them.
+- An **idle tick is linear in the plan's vertices** even when everything is remembered: every
+  ring is read off its item, moved into its frame and looked up (0.25 s at 120,000 polygon
+  vertices, the same before this pipeline's bounds existed). Asking only the items that changed
+  is a later optimisation; nothing here prevents it.
+- The shipped Qt 3D collector (`collect_scene3d_records`, removed with L1.10) and the 2D
+  shadow overlay inflate a polyline with no bound at all, as they always have.
+
+**What is remembered: everything the plan asks for, and a bounded rest.** `polygon.ring_keyed`
+is the one memory for functions of rings (`ring_area`, the verdict-and-cut of a region, a
+record's ring facts, the regions of a polygon and of a stroke). A snapshot is one *generation*
+(`polygon.snapshot_generation`; `snapshot_records` runs in it): an answer asked for by the
+snapshot being taken or the one before is LIVE and is never dropped, so **an unchanged plan is
+answered from memory on every tick, whatever its size** — zero cuts, zero inflations. What is
+bounded is the STALE answers — the ring an outline had before its last edit, a builder's own
+rings, anything asked outside a snapshot: at most `HELD_VERTICES` = 262,144 vertices of them per
+memory, keys and answers together, the least recently asked dropped first, settled at the end
+of every snapshot. A ring of more than `MAX_ITEM_VERTICES` is never hashed and never a key.
+
+Two forms came before this one, and both were wrong in a way a green suite did not show. An
+`lru_cache` bounds the number of answers — 2,048 answers about an outline of 4,000 vertices
+that is being dragged were a gigabyte. A cap on the vertices held, dropping the least recently
+asked (fix round 3), bounded the memory and **recomputed the plan on every tick** once the plan
+was larger than the cap: a snapshot asks in the same order every time, so each answer was the
+oldest when its turn came — 160 polygons of 1,000 vertices re-cut all 160 regions per idle tick
+(4.6 to 5.3 s where 0.2 s had been), 110 closed fences took 14 s. *A cache must hold its
+working set; bound what is beyond it.* The live answers cost memory in proportion to the plan:
+an answer's rings are the records' own, and its key is the outline as drawn — the same ring
+when that turns counter-clockwise, one more copy of it (104 bytes a vertex) when it does not.
+The generation is the PROCESS's clock, not a scene's: the app snapshots one scene. Were
+several scenes snapshotted in turn, the answers of one would be stale by the time its turn
+came again, and bounded by the cap as before. One consequence
+worth knowing: the CUT of a region is asked for when it is made and when the solid is built,
+not on idle ticks, so in a plan above the cap it goes stale and may be dropped — a full rebuild
+(a new sync, `reset()`) then cuts those regions again, once. `cut_region`,
+`is_buildable_region` and `is_region_too_large` share one memory (a refusal is remembered with
+its words); `is_simple_ring` is not remembered.
 
 **A resolved outline says so.** A polygon that crosses or touches itself does not arrive as it
 was drawn: the snapshot resolves it by the non-zero rule — the rule the 2D shadow fills a
@@ -3205,7 +3297,8 @@ class name and message as strings, empty when nothing was raised. It does not ho
 equal. Each is also logged once per item and kind of failure (the exception's type), not once
 per edit — `record_failed` as an error with the traceback, the other codes as a warning with
 the message; after 2,048 different failures one line says that further ones are
-not logged, and none are. The wiring (L1.3) is expected to pass a list and show it — and
+not logged, and none are. The wiring (L1.3) must pass a list and show it (for
+`outline_too_large` that is an acceptance criterion, see above) — and
 `SceneSync.failures` — where a user can find them.
 
 Where the local frame hangs: the circle's centre; `rect().center()` of an ellipse or rectangle;
