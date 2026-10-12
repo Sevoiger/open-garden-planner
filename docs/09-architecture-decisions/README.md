@@ -4137,9 +4137,9 @@ and non-rectangular houses, ≤ 0.1 cm); `tests/perf/test_scene3d_built_world_bu
 
 ### ADR-056 addendum: ground bake — flat surfaces painted from records into ground tiles (Phase 17, L1.5)
 
-**Status**: Accepted (2026-10-12, #385 story L1.5). One gate is unmet under one stated condition
-(G6, memory, in a Direct3D 11 window on a hardware adapter that presents no frame) — see
-Consequences.
+**Status**: Accepted (2026-10-12, #385 story L1.5); amended the same day by the story's first
+review — "Review round 1" below changes decisions 3, 7, 8 and 9 and withdraws the statement that
+gate G6 is unmet.
 
 **Context.** Decision 9 gave every item with a height a solid; everything without one — lawns,
 terraces, driveways, paths, in-ground beds, flat furniture — had no place in the 3D scene. The L0
@@ -4161,7 +4161,8 @@ for every edit, and kept every texture it ever made alive.
    lies whatever flat item was drawn there, else meadow — the spike left that ground bare, and a
    house on a lawn stood in a hole.
 3. **The paint description is additive record data.** `Paint` (pen width, style, cap, join; the
-   item's opacity) lives in `Material` — a restyle is a material change; the anchor of the local
+   item's opacity; a circle's paint turn — review round 1) lives in `Material` — a restyle is a
+   material change; the anchor of the local
    frame in item coordinates is `params["paint_origin"]` — geometry; `Record.outline` holds a
    polygon as drawn where `footprints` cannot. The diff semantics of L1.1 hold unchanged: a move
    is a transform change, a recolour a material change. (A first design put the whole paint frame
@@ -4189,10 +4190,10 @@ for every edit, and kept every texture it ever made alive.
    dashes by one budget per tile, a sprite's image before the renderer is asked. The criterion
    is "the cost of what the file holds times a stated constant, no amplification, no bound behind
    its work" — not "nothing is ever slow".
-9. **In the engine: one quad and one texture per tile; a changed tile gets a NEW texture
-   object**, and the replaced one is held until the next presented frame — at the latest until
-   the next update. `flipV`, `ClampToEdge`, quads 0.02 cm oversized, the bare rectangle hidden
-   under tiles.
+9. **In the engine: one quad and one texture per tile; a changed tile gets a NEW Model with a
+   new texture object** (review round 1: not a new texture on the old Model), and the replaced
+   texture is held until the next presented frame — at the latest until the next update.
+   `flipV`, `ClampToEdge`, quads 0.02 cm oversized, the bare rectangle hidden under tiles.
 
 **Alternatives considered (rejected).**
 
@@ -4219,16 +4220,15 @@ for every edit, and kept every texture it ever made alive.
   rectangle keeps its saved `fill_color`; the rails of a bent boardwalk and the borders of a bent
   stone wall no longer fill the bend; the path-style walk refuses a spacing below 0.05 cm or
   above 100 km (a pen width that is no width).
-- Known limits: the texture and sprite of a ROTATED circle are painted unturned (a circle's
-  record does not turn); hairlines are rasterised per tile; the meeting corner of a cut dashed
-  outline is blended twice; coarse pixels on plans above 41 × 41 m; ground tiles are not
-  pickable (a click on the ground hits no item, as before).
-- **G6 is unmet in memory where a Direct3D 11 window on a hardware adapter presents no frame**
-  (the display asleep): +16.0 MB per full re-bake of a 16 MB ground until the view closes, with
-  every replaced texture object verifiably destroyed. It is met wherever frames are presented:
-  WARP (+0.03 MB), OpenGL (flat) and the same hardware adapter once its window presented
-  (+0.04 MB with 38 frames in twenty cycles). The remedy for the first case belongs to whoever
-  paces uploads (§11.4.14).
+- Known limits (§8.27.5 has the list with its measurements): arcs, Bézier curves and text have
+  no record and are not on the ground; lines up to a pixel wide are rasterised per tile; the
+  meeting corner of a cut dashed outline is blended twice; a dashed round outline cut by a tile
+  is stroked along chords; coarse pixels on plans above 41 × 41 m; ground tiles are not pickable
+  (a click on the ground hits no item, as before).
+- **G6 is met, unconditionally** (review round 1): twenty full re-bakes of a 16 MB ground do not
+  grow the process on the hardware adapter — whether its window presents frames or not — nor on
+  WARP. What the first version of this addendum reported as "unmet where no frame is presented"
+  was its own soak calling `grab()` after every re-bake (§11.4.14).
 
 **Validation.** Default tier — `tests/integration/test_scene3d_ground_bake.py`: G1 parity for the
 25 fill patterns × tinted/untinted × 0° / 33° × two tile-straddling positions (200 cases: not
@@ -4247,5 +4247,71 @@ clipped walk and its budget), `tests/ui/test_quick3d_ground_tiles.py` and
 through `render_records`; G2 in the engine (NCC 0.98 against 0.08 / −0.11 / −0.07); G7 (luma
 spread 0.0 to 0.7 across every border; controls 48 and 7.9); G6 in objects (≤ 32 of 16 tiles
 alive; control 320) and in memory on WARP (≤ 0.2 MB a cycle; control +32) and on the hardware
-adapter (+0.04 MB with frames presented; reported as an expected failure, with its numbers, when
-its window presents none).
+adapter (review round 1: −0.10 to +0.01 MB a cycle with 0 frames presented, no frame taken in
+the loop; the grabbing control +16.1 to +17.4).
+
+#### Review round 1 (2026-10-12): what the first review changed
+
+The story's independent review found no regression of the 2D canvas and no unbounded count, and
+five places where the bake did not keep its promise. What was DECIDED in answer — the findings
+themselves, with their measurements, are §11.4.14:
+
+- **Decision 3, amended — a circle's turn is paint.** A circle's record does not turn (decision 9
+  of the contract: footprint and solid are the same whatever its rotation). What the canvas
+  paints in its coordinates does, and the bake painted it unturned. `Paint.rotation_deg` carries
+  that turn (`LocalFrame.paint_turn_deg`; 0.0 for every other shape). **The diff matrix changes
+  in one cell:** a circle the canvas paints, turned about its centre, is now ONE material change
+  (`update_material`), where it was no change at all; geometry and transform are unchanged, no
+  builder runs, and a plant — never painted — still changes nothing. *Rejected:* making a
+  circle's transform rotatable (every turned round solid would be re-posed, and L1.1's "a
+  circle's footprint does not turn" would be false in the record); a param (params are
+  geometry: a turn would rebuild the mesh).
+- **Decision 7, amended — the `GroundBaking` seam knows about unfinished work, and the sync
+  remembers a failed bake.** A baker MAY stop early: `bake` hands a tile it has not re-painted
+  out as the object it was, `pending` says how many such tiles there are, and every later call —
+  whatever its diff — goes on. The promise is stated on the END: once `pending` is 0 the tiles
+  are those of one call on an empty baker, with a diff or without. `fresh()` is a baker without a
+  budget. `SceneSync` gains `ground_pending` and `continue_ground()` (one bake with an empty
+  diff, one transaction when a tile changed); every `apply` continues as well;
+  `expected_state()` is the FINISHED ground, so while work is pending the sink is behind it in
+  exactly the pending tiles and equal in everything else; `reset()` drops pending work; a sink
+  that raises in a continuation poisons the sync like any sink call; a baker that raises is
+  contained as before — and, new, is not asked again until a record, the set of solids or the
+  plan's rectangle changes (three idle ticks after a failing bake had been three bakes and three
+  tracebacks). *Rejected:* leaving the decision when to stop to the workspace — only the baker
+  can stop between two tiles; a worker thread — the brushes and sprites are `QPixmap`s (GUI
+  thread), and a second thread painting records the GUI thread replaces is a second story.
+- **Decision 8, amended — a time budget between tiles, and a stated loss.** The bounds stay
+  bounds on counts; what a count costs is Qt's and spans three orders of magnitude, so a `bake`
+  paints for `BAKE_BUDGET_S` (10 ms, an injectable clock), at least one tile, nearest to the last
+  edit first. And "the topmost 256 records of a tile" is replaced by a rule that says what is
+  lost: the walk ends at the first record that opaquely covers the tile, and below the cut a tile
+  keeps what covers it whole (four underlays, to the first opaque one) — a capped tile loses the
+  records below its topmost 256 that do not cover the whole tile. *Rejected:* dropping from the
+  top (the newest items vanish); a bound on scanline crossings to cap a comb polygon's time (a
+  fourth pass over every outline for a shape the 2D canvas cannot paint either — recorded as a
+  scan not acted on).
+- **Decision 9, amended — one texture per `Texture`, for life.** Found by the budget's first run
+  on a real engine, not by the review: a tile whose `Texture` element was pointed at a second
+  `QQuick3DTextureData` is drawn white once the first is destroyed. A re-baked tile is therefore
+  a new Model, as a changed geometry has always been a new geometry. *Rejected:* keeping the
+  replaced texture longer (it only moves the white frame); setting the property again after the
+  release (the L0 spike measured that a texture detached and attached again draws white).
+- **One writer for an item's look (2D).** The record's fill comes from the item's attributes, the
+  canvas paints its brush, and three shipped tools and the loader set only one of the two.
+  `core/item_style.py` is the one place that sets both; the 2D suite walks every operation that
+  makes an item from an item. This is a change to the 2D app made by a 3D story, on purpose: the
+  alternative — reading the brush back in the snapshot — cannot recover a pattern or a tint from
+  a textured brush.
+- **Gate G6 measures what a live view does.** No frame is taken in the soak's loop; the gate is
+  unconditional. The rule that follows from what DID grow the process is for the workspace: no
+  repeated `grab()` on a live host that is not presenting; a screenshot goes through the
+  offscreen path.
+
+Validation of the round: `tests/integration/test_scene3d_ground_rules.py` (42 tests by counts —
+the lawn under 255, 256 and 2,000 pavers; six shapes of cover; the budget with a clock that
+advances a second a reading; random edit sessions through three bakers; a raising painter),
+`tests/unit/test_scene3d_ground.py::TestSyncWithAGroundBaker` (pending work, the remembered
+failure, poisoning in a continuation), the 2D suites named in §11.4.14, the render tier's
+budgeted open and five re-texture sequences on the RTX 4070 and on WARP, and 23 mutants of the
+new rules, all killed.

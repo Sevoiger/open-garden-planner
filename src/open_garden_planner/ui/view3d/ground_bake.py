@@ -233,15 +233,20 @@ _SPILL_PX: Final = 2.0
 _ELEMENT_REACH: Final = (2.5, 8.0)
 
 #: The bounds of ONE tile (module docstring, the table). They bound COUNTS; what a
-#: count costs is Qt's to say. Measured on the development box, one 512-px tile at
-#: a bound: 256 turned textured rectangles 196 ms (solid: 39 ms); 262,144 polygon
-#: vertices 172 ms; five plain 20 cm lines of 16,384 points folded into the tile
-#: 509 ms (a stroke that crosses a tile costs about 6 µs a segment, not the 0.7 µs
-#: of a polygon's vertex); two gravel paths of 16,384 points — the styled vertex
-#: bound, with the elements and the walk at theirs — 2.65 s. A plan BUILT for it,
-#: two such paths zigzagging over a 16-tile plan, bakes in 12.6 s (0.8 s a tile)
-#: and again whenever that item is edited; the 2D canvas repaints the same item
-#: with every one of its elements. The two bench plans: 18 ms and 83 ms.
+#: count costs is Qt's to say — and that varies by three orders of magnitude.
+#: Measured on the development box, one 512-px tile at a bound: 256 turned textured
+#: rectangles 196 ms (solid: 39 ms); 262,144 polygon vertices of wavy rings 172 ms
+#: (0.7 µs a vertex); five plain 20 cm lines of 16,384 points folded into the tile
+#: 509 ms (a stroke that crosses a tile costs about 6 µs a segment); two gravel
+#: paths of 16,384 points — the styled vertex bound, with the elements and the walk
+#: at theirs — 2.65 s. And ONE polygon whose outline is a COMB, every tooth
+#: crossing every scanline of the tile: 1.2 ms a vertex — 1.2 s at 1,024 vertices,
+#: 19 s at 16,384, of which the vertex bound admits sixteen (the 2D canvas needs
+#: 10.5 s and 186 s for one paint of those two items). A plan BUILT to be slow,
+#: two such gravel paths zigzagging over a 16-tile plan, is 11.8 s of painting
+#: (0.73 s a tile) and again whenever that item is edited. The two bench plans:
+#: 13 ms and 69 ms. No count here bounds Qt's time for a scanline that crosses
+#: 16,000 edges; ``BAKE_BUDGET_S`` holds a CALL to one such tile, no more.
 TILE_RECORDS: Final = 256
 #: … and below them, the records that lie under everything: a tile that is full
 #: still takes this many records whose fill covers the WHOLE tile (the lawn under
@@ -269,9 +274,11 @@ _ELLIPSE_MAX_CHORDS: Final = 2048
 #: PENDING, in seconds (``GroundBaker(budget_s=…)``; None: no budget). The edit
 #: gate of the 3D workspace is 50 ms from an edit to its frame, the bake's own
 #: gate 10 ms for one small edit on the bench plans — an edit that fits the gate
-#: is one pass. A pass paints at least one tile and looks at the clock after each:
-#: it costs at most the budget plus ONE tile — and a tile at its bounds was
-#: measured at 0.2 to 2.65 s (above).
+#: is one pass (measured: the bench plans open in 2 and 8 passes, the longest
+#: 13.4 ms). A pass paints at least one tile and looks at the clock after each: it
+#: costs at most the budget plus ONE tile — and what one tile can cost is above:
+#: milliseconds on a plan somebody drew, 0.2 to 2.65 s at the bounds for the
+#: shapes measured there, 19 s and more under a comb.
 BAKE_BUDGET_S: Final = 0.010
 
 #: Whether a record's fill can cover a whole tile (``_Painted.cover``).

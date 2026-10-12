@@ -248,6 +248,14 @@ are §12, and rows it added to the tables below say "(L1.2)".
   per tile, and uploads only a tile whose `bytes` changed. Concept and bounds: docs §8.27.5.
   Measured on bench_small (20 tiles, RTX 4070): first show 20 uploads; a 3 m item moved: ≤ 2
   uploads, bake 3–6 ms, a finished `grab()` 4–10 ms later.
+- **The ground arrives in PASSES.** `GroundBaker()` paints for 10 ms a call (`BAKE_BUDGET_S`; at
+  least one tile, nearest to the last edit first) and leaves the rest pending — stale tiles, the
+  same objects as before, bare on first open. `SceneSync.ground_pending` says so;
+  `sync.continue_ground()` is one more pass (one transaction when a tile changed). bench_small
+  opens in 2 passes, bench_large in 8; one tile a pass on the RTX 4070: 14 transactions, each
+  uploading the tile it painted. A test or a screenshot that needs the FINISHED ground uses
+  `GroundBaker(budget_s=None)` or loops until nothing is pending (`render_records` loops); a
+  test of the budget injects a clock (`clock=`), never sleeps.
 - **`ClampToEdge` on both axes of a tile texture.** With the default Repeat, linear filtering at
   a tile's edge blends in its OPPOSITE edge. Invisible on a uniform lawn; on a lawn with another
   colour at the tiles' far edges the luma spread at a four-tile corner was 7.9 (and 24.9 along a
@@ -262,22 +270,38 @@ are §12, and rows it added to the tables below say "(L1.2)".
   `textureDataNodeDirty` by hand, nor setting the `Texture`'s property to null and back in the
   same turn (each variant rendered and read back: twelve cycles, the first picture every time).
   A fresh object per change shows. (`markAllDirty()` is not exposed by PyQt6 6.11.)
+- **ONE texture per `Texture` element, for life — a re-pointed `Texture` goes WHITE.** When a
+  `QQuick3DTextureData` that a `Texture` once held is destroyed, Qt resets that element's
+  `textureData` to null, whatever it holds by then (a QML binding `textureData: someProperty`
+  does not run again). Measured, two tiles, RTX 4070 and WARP: tile A re-textured, then tile B,
+  then a frame — A is white; a tile re-textured, a frame, its replaced texture let go — white one
+  frame later. Hidden for a whole story because every scenario re-baked the SAME tiles after each
+  frame (which sets the property again) and the hardware window presented no frames (so the
+  release after a frame never ran). So a re-baked tile is a NEW Model with its own texture
+  (`ground_tiles._replace` = drop + create), like "one geometry per Model". Test updates WITHOUT
+  a frame between them, on different objects, and look again one frame later.
 - **Count texture objects on the C++ side, not Python references.** `TileTexture.alive` goes up
   in `__init__` and down on Qt's `destroyed` signal: over twenty full re-bakes of 16 tiles it
   never exceeds 32 (the shown generation and the one it replaced), and reads 320 with the
   spike's keep-alive list. A Python-owned `QObject` subclass instance IS destroyed when Python
   lets go of it.
-- **Direct3D 11 keeps every upload until a frame is PRESENTED.** Twenty re-bakes of a 16 MB
-  ground, private bytes per re-bake: D3D11 on the RTX 4070 with 0–1 frames presented (display
-  asleep; threaded and basic render loop) **+16.0 MB** — one upload's worth, given back only
-  when the view closes — while 192 textures were made, 160 destroyed and 32 alive; D3D11 on WARP
-  (41 frames presented) +0.03 MB; OpenGL on the RTX 4070 (45 frames) flat; the same D3D11
-  hardware window once it presented (38 frames) +0.04 MB; grabs without uploads flat. `grab()`
-  renders without presenting. So: a memory slope taken on a hardware D3D11 window says nothing
-  unless `host.health().frames_presented` advanced during the soak — record it with the curve —
-  and this is the A/B the paragraph above asks for: the retained D3D11 resource follows "no
-  frame presented", not the reload. Anything that uploads (tiles, geometry, sky textures) should
-  be applied no faster than frames are presented.
+- **No repeated `grab()` on a live host that is not presenting — it is the grab that grows a
+  Direct3D 11 process, not the upload.** Direct3D frees what was released when a frame is
+  PRESENTED; a frame rendered by `grab()` is rendered (its textures are uploaded for it) and
+  never presented. Twenty full re-bakes of a 16 MB ground on the RTX 4070 while its window
+  presented 0 frames, private bytes per re-bake: a `grab()` after every re-bake **+16 to
+  +17 MB** (one generation, given back only when the view closes; 32 texture objects alive, never
+  more); a `grab()` every fifth **+3.2**; NO `grab()` **+0.0** (nothing is rendered, so nothing is
+  uploaded). Flat in all three on WARP (33–41 frames presented), on OpenGL, and on the same
+  hardware window once it presented (38 frames, a grab a cycle: +0.04). The first diagnosis here
+  — "keeps every upload until a frame is presented; apply edits no faster than frames" — came
+  from a soak that grabbed every cycle, and its remedy targeted the wrong variable. So: (1) a
+  leak soak takes NO frame in its measured loop (a live view takes none) and is then an
+  unconditional gate; the grabbing soak is its control. (2) A still picture of a live view goes
+  through the offscreen path (`offscreen.render_records`: its own hidden view, closed after one
+  frame — everything is given back), never through repeated `host.grab()`. (3) Record
+  `host.health().frames_presented` with every memory curve. Why that window presented nothing is
+  not established (an OpenGL window on the same GPU presented 45 frames in the same session).
 - **Compare a top-down frame with a baked image like with like.** The truth view is linear
   light and each frame pixel covers several texels: the bake against the frame scored NCC 0.93
   compared naively and 0.98 after linearising the bake and averaging the texels a pixel covers
@@ -579,9 +603,10 @@ triangles (`scripts/bench_view3d.py`).
 | A custom material renders the wrong colour, run "ok" | shader compile error is a `QtWarningMsg` | record Qt messages; fail on shader/QML errors |
 | "Cold" open time on the second run of the day | Qt/Mesa disk caches from the first | `--cold`, and read `shader_caches.found_before_run` |
 | RSS climbs ~30 MB per project reload | append-only keep-alive list of ground textures | hold only the shown texture; judge by the tail slope |
-| Private bytes climb by one ground upload per re-bake, and fall back when the view closes | a Direct3D 11 window that presents no frame (display asleep): released resources are destroyed on Present | not our lifetime bug if `TileTexture.alive` stays ≤ 2 generations; check `frames_presented`; flat once frames are presented (§5) |
+| Private bytes climb by one ground upload per cycle, and fall back when the view closes | `grab()` on a Direct3D 11 hardware window that presents no frame: the grabbed frame's uploads stay committed until a Present | not a lifetime bug if `TileTexture.alive` stays ≤ 2 generations; take the grab out of the loop — the curve is flat; screenshots through the offscreen path (§5) |
+| A ground tile turns WHITE after another tile was re-baked, or one frame after its own re-bake | its `Texture` element was pointed at a second `QQuick3DTextureData`; destroying the first reset `textureData` to null | one texture per `Texture`, for life: a re-baked tile is a new Model (§5) |
 | A tile border shows as a line only on patterned ground | the tile texture repeats: its opposite edge is blended in | `tilingModeHorizontal` / `Vertical: Texture.ClampToEdge` (§5) |
-| A re-baked tile keeps its old picture | its `QQuick3DTextureData` was updated in place | a NEW texture object per change (§5) |
+| A re-baked tile keeps its old picture | its `QQuick3DTextureData` was updated in place | a NEW Model with a new texture object per change (§5) |
 | Plan ground white after a probe; the second window "differs" by ~10 luma | the same `QQuick3DTextureData` re-attached after being detached | re-upload it on re-attach; assert `probe_restore_frame_diff` < 1 |
 | The second offscreen frame is an empty sky (L1.2) | a never-shown window renders one frame, then its scene is gone | one host per offscreen frame |
 | A wait for frames times out although the window is visible (L1.2) | display asleep: no vertical blank, no update requests | never wait for presented frames; `grab()` |

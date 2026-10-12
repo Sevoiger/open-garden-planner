@@ -1300,12 +1300,39 @@ tier: `tests/integration/test_scene3d_ground_render.py`):
   measurement must see a 2 cm gap between the quads (48) and a texture set to repeat (7.9). The
   repeat control needs a lawn whose tiles have ANOTHER colour at their opposite edge — on a
   uniform lawn a repeating texture is invisible.
-- **Render tier: a leak gate reads objects first, memory second.** `TileTexture.alive` (counted
-  down by Qt's `destroyed` signal) holds the keep-alive rule on every backend. The memory slope
-  (Theil–Sen over the second half of twenty cycles, with a control that keeps every texture) is
-  taken on a software rasteriser, whose textures are in the process's own memory — and a
-  hardware window that presents no frame is reported as an expected failure with its numbers
-  rather than silently skipped (§11.4.14).
+- **Render tier: a leak gate reads objects first, memory second — and measures what a live
+  view does.** `TileTexture.alive` (counted down by Qt's `destroyed` signal) holds the keep-alive
+  rule on every backend. The memory slope (Theil–Sen over the second half of twenty cycles, with
+  a control that keeps every texture) is taken on the machine's own adapter AND on a software
+  rasteriser, whose textures are in the process's own memory. The soak takes NO frame in its
+  measured loop: the gate's first version called `grab()` after every re-bake, measured the
+  grab instead of the re-bake (+16 MB a cycle on a Direct3D 11 window that presents nothing,
+  +0.00 without the grab) and excused the result as an expected failure. The gate is
+  unconditional now; the grabbing soak is kept as the CONTROL that shows the effect, and is
+  reported as not run where the window presents (§11.4.14).
+- **Render tier: updates without a frame between them are a case of their own.** Every scenario
+  of the first delivery re-baked, took a frame, and re-baked the SAME tiles — which hid a tile
+  that turned white when another tile was re-textured after it, or one frame after its replaced
+  texture was let go (§11.4.14). `ground_retexture` drives five sequences (one tile twice, five
+  times, two tiles in turn, a frame between, the other tile after a frame), lets the replaced
+  textures go as a presenting window would, and judges each tile's colour against a reference
+  frame of that colour — right after the last update and again one frame later.
+- **A bound that drops something is tested by WHAT it drops.** "At most 256 records a tile" was
+  pinned by counts and still dropped the lawn. `tests/integration/test_scene3d_ground_rules.py`
+  paints the same records once more without tiles and without bounds (`unbounded`) and asserts
+  where the capped ground differs from that picture and what is there: pavers missing, the lawn
+  never. A count says how much was left out; only a picture says whether it mattered.
+- **A time budget is tested with a clock the test owns.** `GroundBaker(budget_s=3.0,
+  clock=Ticks())`: a clock that advances one second a reading makes "three tiles a call" an exact
+  count. The strongest assertion is the invariant, held after EVERY call of a random edit
+  session: a tile that is not pending is the finished picture of the records as they are now, and
+  a pending one is the very object it was. One measured row with the real clock belongs in the
+  docs, not in an assertion.
+- **A reviewed fix is not pinned until a mutant of it dies.** Each rule of the review round was
+  broken once in the source (a cover never seen, the budget never spent, a failure cleared by
+  another tile, the paint turn not carried, …): 23 mutants, 23 killed — the first run left one
+  alive (an edge THROUGH a tile was never the deciding fact in a test), and the test that kills
+  it is the one that would have missed the defect.
 
 ## 8.11 Security Scanning (SAST)
 
@@ -1371,10 +1398,20 @@ for everything in it, charged for the work DONE (the steps walked to find an ele
 the elements handed out), and a spent budget means "no more", never "no bound" (`if budget:` is
 the bug); (c) no bound may sit behind bookkeeping that already paid: the per-tile caps were
 applied when a tile was painted, after every record had been entered once per tile it touched —
-2,050,003 entries for 50,000 whole-plan rectangles, 55,121 once a record's tiles are four
+2,050,003 entries for 50,000 whole-plan rectangles, 55,201 once a record's tiles are four
 integers. The criterion these were judged by is stated at the top of the bake's cost table
 (§8.27.5): the cost of what the file holds times a stated constant; no amplification; no bound
 behind its work. Pinned by counts in `tests/integration/test_scene3d_ground_bake.py::TestHostilePlans`.
+
+**… and a bound on counts is not a bound on time.** What a count costs is the library's to say,
+and it varies by three orders of magnitude: Qt fills polygons whose outlines are wavy rings at
+0.7 µs a vertex (262,144 vertices in one tile: 172 ms), and ONE polygon of 16,384 vertices in
+19 s when it is a COMB whose every tooth crosses every scanline of the tile (1.2 ms a vertex; the
+2D canvas needs 186 s for one paint of that item).
+Where work runs on the GUI thread and its unit cost is not ours, add the bound only the caller
+can keep: stop BETWEEN units for a time budget and leave the rest pending — the bake paints at
+least one tile a call and looks at an injectable clock after each (§8.27.5). The budget does not
+bound one unit; say what one unit was measured to cost at its worst, and do not round it down.
 
 **Agent API exposure (US-D1.1, §8.19):** the embedded MCP server is a network listener. It is **on by default but read-only** and **bound to `127.0.0.1` only** (never `0.0.0.0`/LAN — so Bandit's B104 does not apply); a Preferences toggle disables it. Default-on is acceptable while read-only (a garden layout isn't sensitive) and removes the discovery friction for AI clients. Reads have no auth (loopback trust). **Writes (US-D2.0 through D2.6, including `undo`/`redo`) are token-gated**: the scene-mutating tools ship only when the user enables editing (off by default) AND require the token — presented in the connect URL as a `?token=` query param (the reliable route; some clients don't transmit auth headers on tool calls) or as an `Authorization: Bearer <token>` header — checked with constant-time comparison. A default-on, unauthenticated *mutate* surface reachable by any local process is exactly what this prevents (ADR-036, §8.19); delivering the token in the URL keeps that protection (a caller still needs the secret) at the cost of a URL-borne secret — mitigated by disabling the uvicorn access log and stripping the `token` param from the request scope right after extraction, so the residual exposure is the client's own config. The gate is per-tool so read-only clients are unaffected. The pre-bind port check uses a plain `socket.bind` and is not a high-severity finding.
 
@@ -4214,11 +4251,30 @@ coordinates (`params["paint_origin"]`, part of the geometry signature), and `pai
 the painter with `QTransform(cos, sin, −sin, cos, T − R·origin)` — the item's scene transform.
 The style of the pen and the item's opacity are `Material.paint` (`Paint`: width, style, cap,
 join, opacity — a restyle is a material change); a polygon AS DRAWN is `Record.outline` where
-`footprints` is not that polygon. The snapshot reads the LIVE pen: the stored `stroke_color`
-attribute is stale after a load (§11.4.14). A record painted from its regions (one that has no
+`footprints` is not that polygon. A record painted from its regions (one that has no
 `outline`) is ONE path in ONE painter call — one fill, one stroke, non-zero winding with the
 contract's orientations — so the picture depends neither on the order of its regions nor on the
 order of a region's holes, and a translucent fill or pen is blended once.
+
+*A circle's turn is paint.* A circle's record does not turn (scene contract: its footprint and
+its solid are the same whatever its rotation), but what the canvas paints in the circle's
+coordinates does — a fill texture, a dash pattern, a sprite. That turn travels in
+`Paint.rotation_deg` (`LocalFrame.paint_turn_deg`; 0.0 for every other shape, whose transform
+carries the turn) and `paint_record` adds it to the painter's pose. In the diff matrix a circle
+turned about its centre is therefore ONE material change — no geometry, no transform, no builder
+(`tests/integration/test_scene3d_pipeline.py`, `test_scene3d_snapshot.py::TestDiffMatrix`); a
+plant, which is never painted, still changes nothing.
+
+*Where the two colours come from.* The stroke is read from the LIVE pen; the fill from the item's
+`fill_color` / `fill_pattern` ATTRIBUTES — a textured brush cannot be asked for its pattern or
+its tint. So the bake is right exactly where an item's attributes describe its brush, and the
+canvas, which paints the brush, never showed where they parted: the offset tool and the corner
+tools copied the brush alone (an offset copy of a blue brick terrace was baked, and saved, as
+default wood). `core/item_style.py` is now the ONE place that carries a look from item to item
+(`copy_visual_style`) and that sets a pen together with the attributes describing it
+(`adopt_pen`); `tests/integration/test_item_style_in_step.py` walks every shipped operation that
+builds an item from an item, finds a new one by its shape in the source (a census), and refuses a
+brush or pen copied past the helper (§11.4.14).
 
 **Flat items the solid path refuses.** A path of 3,000 points or a lawn of 5,000 vertices costs
 too much to cut into buildable regions (`outline_too_large`) — but painting needs no regions.
@@ -4239,24 +4295,83 @@ names, marks the tiles under their old and new paint bounds (after a re-order: e
 holds records), finds each dirty tile's records in one walk down the stack and re-paints a tile
 only if its list changed or holds a changed record. Every other tile is handed out as the SAME
 object — which is how the sink knows not to upload it. Measured (idle dev box): bench_small
-(98 records, 11 painted, 20 tiles) full bake 18 ms, one move of a 3 m item 3.4 ms median, at most
-2 tiles; bench_large (424 records, 45 painted, 60 tiles) 83 ms and 3.3 ms.
+(98 records, 11 painted, 20 tiles) full bake 13 ms, one move of a 3 m item 3.4 ms median, at most
+2 tiles; bench_large (424 records, 45 painted, 60 tiles) 69 ms and 3.3 ms. A move dirties the
+tiles under the item's old AND new paint bounds. Each place is at most four tiles for an item of
+up to 3 m; together they are at most four when the move is up to 2 m (old and new place then span
+less than one tile's width in each direction — what the gate's 31 moves of 44 cm measure), and
+up to eight for a longer one.
+
+**The time budget — a bake does not have to finish.** Painting is the one part of a bake whose
+cost Qt decides and a plan can drive up, it runs on the GUI thread, and it is paid again for
+every edit that shares a tile; only the baker can stop between two tiles. So one `bake` call
+paints for `BAKE_BUDGET_S` (10 ms; `GroundBaker(budget_s=…, clock=…)`, `None`: no budget): at
+least one tile, a look at the clock after each, and when the budget is spent the tiles it has not
+reached stay **pending** — handed out as the objects they were. The picture is STALE there (bare
+ground where there was none yet) and never wrong elsewhere. `GroundBaker.pending` says how many;
+every later call — whatever it is told, an empty diff too — goes on with them, **nearest to the
+last edit first** (so an edit made while a backlog exists is painted before the backlog), and
+re-admits only the tiles the new changes touch. A tile without records is never pending: bare
+ground is free. **The promise:** once nothing is pending, the tiles are those of one unbudgeted
+bake of the same records — with a diff or without one (pinned over random edit sessions through
+three bakers at once, §8.10.8).
+
+Why 10 ms: the workspace's gate is 50 ms from an edit to its frame, and the bake's own gate —
+10 ms for one small edit on the bench plans — still holds with the budget ON: an edit that fits
+the gate is ONE pass (measured: 31 moves on each bench plan, one pass each). Measured with the
+real clock: bench_small opens in 2 passes (longest 11.6 ms), bench_large in 8 (longest 13.4 ms).
+What the budget does NOT bound is one tile: a pass costs the budget plus the tile it is in. The
+plan built to be slow — two gravel paths of 16,384 points zigzagging over 16 tiles, 12.6 s in one
+call before — is now 16 passes of 0.73 s in the median (longest 0.92 s), and moving a 1 m square
+beside those paths is two passes of 0.45 s; a COMB polygon is worse still (the cost table below).
+
+`SceneSync` reports it: `ground_pending` is true while tiles are pending; `continue_ground()` is
+the pass for a caller with nothing new to apply (one bake, no diff, no builder; one transaction
+when a tile changed), and any `apply` goes on as well. While work is pending the sink's ground is
+behind `expected_state()` in exactly the pending tiles and equal to it in everything else;
+`reset()` drops pending work with the tiles; the failure rules do not change (ADR-056 addendum
+"ground bake", review round 1).
 
 **What a bake may cost** — a plan file is untrusted input (§8.11). The criterion: the bake may
 cost what the plan file holds, times a stated constant, as the 2D canvas does for the same plan;
 it must not AMPLIFY (a small file buying superlinear or unbounded work or memory), and no bound
 may sit behind the work it bounds. The baker holds one entry per painted record (its tiles as a
-block of four integers) plus, per tile, the ids it was last painted with. The bounds of one tile,
-each taken before the work it bounds:
+block of four integers, the box of its geometry, whether its fill can cover a tile) plus, per
+tile, the ids it was last painted with and — while it is pending — the ids it is to be painted
+with. The bounds of one tile, each taken before the work it bounds:
 
 | bound | a tile | what it stops | where it is checked |
 |-------|--------|---------------|---------------------|
-| `TILE_RECORDS` | 256 | records painted into a tile — the TOPMOST ones | the walk that hands tiles their records stops at a full tile; a record left out is never touched |
-| `TILE_VERTICES` | 262,144 | outline vertices × passes (points converted, a path built; a styled path ×8, a dashed stroke ×3) | the same walk; the topmost record is always painted (≤ 16,384 vertices, styled 131,072) |
+| `TILE_RECORDS` | 256 | records painted into a tile — the TOPMOST ones | the walk that hands tiles their records; below the cut a tile takes only its underlays; a record left out is never touched |
+| `TILE_UNDERLAYS` | 4 | records below the cut whose fill covers the WHOLE tile (the lawn under a field of pavers), down to the first opaque one | the same walk |
+| `TILE_VERTICES` | 262,144 | outline vertices × passes (points converted, a path built; a styled path ×8, a dashed stroke ×3) — and once more for a tile's cover tests and underlays together | the same walk; the topmost record is always painted (≤ 16,384 vertices, styled 131,072) |
 | `TILE_ELEMENTS` | 16,384 | stones, planks, posts, dots of path styles — as many as a line is LONG | generated inside the tile only (the walk is clipped, phase kept), each charged in `path_style_paint` before it is handed out |
 | `TILE_WALK_STEPS` | 16,384 | steps of the exact walk that finds them | charged before the walk, for the whole segment; beyond: arithmetic |
 | `TILE_DASHES` | 32,768 | dashes of dashed pens | a line is cut to the tile; each run's dashes (length / 3 pen widths, a pen at least a pixel) are charged before it is stroked — an unaffordable run is stroked solid |
 | `SPRITE_MAX_PIXELS` | 262,144 | the image a furniture sprite is rendered with (its size is the plan's) | before the renderer is asked: a larger one is rendered smaller and stretched |
+
+**What a tile is painted with, and what a capped tile loses** (`GroundBaker._admit`; the first
+rule dropped the BOTTOM record of a full tile — with 256 pavers on a lawn that was the lawn, and
+138,240 px of a 5.12 m square were bare meadow):
+
+1. A tile takes the records that reach it, topmost first, while it has room: fewer than 256
+   taken, and the next one would not take its cost beyond the vertex bound.
+2. A record whose fill **opaquely covers the whole tile** ends the tile's walk, wherever it lies:
+   nothing under it can be seen, so nothing under it is looked at, charged or painted (50,000
+   lawns over the whole plan: one record a tile, 21 comparisons in all).
+3. Once a tile has no room — the cut — it takes only what lies under everything: records whose
+   fill covers the whole tile, the first four of them, ending at the first opaque one. Whatever
+   else lies below the cut is left out, and the tile is `capped`.
+
+So a capped tile loses **the records below its topmost 256 that do not cover the whole tile** —
+the small ones in the middle — and whatever lies below its fourth translucent underlay. A lawn
+that covers the tile is never one of them (255, 256 and 2,000 pavers on a lawn: zero bare pixels;
+at 2,000 the tile shows its topmost 256 pavers on the lawn and says that it is capped); a lawn
+whose EDGE runs through the tile is. "Covers the whole tile" is exact, not a guess: the tile's
+four corners inside the rectangle, the true ellipse or the circle; for a polygon no edge through
+the tile and its middle filled under the polygon's own fill rule — its rings are read once per
+test, within the vertex bound above. "Opaquely" is read off the brush: a fill alpha of 255, an
+item opacity of 1, and a texture without a translucent pixel (all 24 are opaque).
 
 One `WalkBudget` per tile carries the element, step and dash bounds through all its records; a
 spent budget means "no more", never "no bound". A tile painted with a bound in force is in
@@ -4266,48 +4381,97 @@ refused before any arithmetic for a size that is not a positive finite length up
 brush and sprite caches (200 entries each; a brush texture is 256 × 256 px). A fill, a solid
 stroke or a sprite that reaches far beyond a tile costs the tile's pixels: `QPainter` clips to
 the image. Memory: the largest ground is 64 MB, held once — the baker's tiles are the very
-objects the sync and the sink hold. Measured for 50,000 whole-plan rectangles: 55,121 entries
-held (one per record and tile would be 1,000,001), 5,140 comparisons for a full bake, 257 for a
-one-item edit. The bounds are on COUNTS; what a count costs is the rasteriser's. One tile at a
-bound, measured: 256 turned textured rectangles 196 ms; 262,144 polygon vertices 172 ms; five
-plain lines of 16,384 points folded into the tile 509 ms; two gravel paths of 16,384 points 2.65 s.
-A plan built for it — two such paths zigzagging over a 16-tile plan — bakes in 12.6 s and again
-on every edit of that item (the canvas repaints the same item with all of its elements); the
-bench plans take 18 ms and 83 ms. Bounded and linear, not small.
+objects the sync and the sink hold. Measured for 50,000 TRANSLUCENT whole-plan rectangles:
+55,201 entries held (one per record and tile would be 1,000,001), 5,220 comparisons for a full
+bake, 261 for a one-item edit — and for 50,000 opaque ones 21 comparisons and 21 record paints.
+
+**The bounds are on COUNTS; what a count costs is the rasteriser's — and that varies by three
+orders of magnitude.** One tile at a bound, measured: 256 turned textured rectangles 196 ms;
+262,144 polygon vertices of a wavy ring 172 ms (0.7 µs a vertex); five plain lines of 16,384
+points folded into the tile 509 ms; two gravel paths of 16,384 points 2.65 s. And ONE record
+whose outline is a COMB — every tooth crossing every scanline of the tile — costs Qt 1.2 ms a
+vertex: 1.2 s at 1,024 vertices, 4.8 s at 4,096, 19 s at 16,384, in one tile, and the vertex
+bound admits sixteen of the last (not run to the end: about five minutes, extrapolated). The 2D
+canvas needs 10.5 s, 38 s and 186 s for ONE paint of the same three items, so the criterion
+holds — the bake costs less than the canvas does for the same plan, and nothing amplifies — but
+no count here bounds Qt's time for a scanline that crosses 16,000 edges. That is what the time
+budget is for, and all it can do: such a tile is one pass. Bounded and linear, not small.
 
 **In the engine** (`quick3d/ground_tiles.py`, `Garden.qml`): one quad per tile in the plan's
 plane with its own texture. `flipV: true` (rows are north-up); `ClampToEdge` on both axes (a
 repeating texture blends a tile's opposite edge into its border); each quad 0.02 cm wider than
 its tile on every side; the bare plan rectangle is not drawn while tiles lie on it; a tile is not
-pickable. Only a tile whose picture changed is uploaded, as a NEW texture object (an attached
-`QQuick3DTextureData` cannot be updated in place — §11.4.14). **Keep-alive rule:** per tile the
-texture the scene shows, plus — until the next presented frame, and at the latest the next
-update — the one it replaced. `TileTexture.alive` counts the objects that exist on the C++ side.
+pickable. Only a tile whose picture changed is uploaded — as a **new Model with a new texture**,
+and its old Model is destroyed: ONE TEXTURE PER `Texture` ELEMENT, FOR LIFE. (An attached
+`QQuick3DTextureData` cannot be updated in place; and a `Texture` pointed at a second data object
+forgets it when the first is destroyed — the tile is drawn white: §11.4.14.) **Keep-alive rule:**
+per tile the texture the scene shows, plus — until the next presented frame, and at the latest
+the next update — the one it replaced. `TileTexture.alive` counts the objects that exist on the
+C++ side.
 
 **Wiring it** (the workspace, L1.3 — nothing in L1.5 calls this in the product):
 
 ```python
-baker = GroundBaker()                                   # ui/view3d/ground_bake.py
+baker = GroundBaker()                                   # ui/view3d/ground_bake.py; ONE a session
 sync = SceneSync(Quick3DSink(host), production_registry(), ground_baker=baker)
 sync.apply(snapshot_records(scene, plan_date, skipped=skipped), sun=sun,
            ground=GroundSpec(scene.width_cm, scene.height_cm))
-# afterwards: baker.capped (tiles with something left out), baker.failures (items whose paint
-# raised), sync.ground_failure (the bake as a whole failed: the ground stays as it was, or bare)
+if sync.ground_pending:          # the time budget cut the bake short: tiles are stale
+    schedule_one_more_pass()     # → sync.continue_ground(); again while it returns True
+# what the user must be told: baker.capped (tiles that hold less than the plan), baker.failures
+# (items whose paint raised), sync.ground_failure (the bake as a whole failed: the ground stays
+# as it was, or bare — and is not tried again until a record, the solids or the plan change)
 ```
 
-`render_records(..., ground_baker=GroundBaker())` does the same for one offscreen frame and
-reports `ground_tiles` / `ground_failure` with it.
+`render_records(..., ground_baker=GroundBaker())` does the same for one offscreen frame — it runs
+the passes until nothing is pending — and reports `ground_tiles` / `ground_failure` with it.
+A STILL PICTURE of a live view goes that way too, never through repeated `host.grab()`
+(limit 6).
 
-**Known limits.** (1) A circle's record does not turn (scene contract), so the fill texture and
-the sprite of a ROTATED circle are painted unturned. (2) Lines up to a pixel wide are rasterised
-per tile by Qt: single pixels differ from one whole-plan render (mean ≤ 0.016 of 255), and their
-dashes may jump at a tile border. (3) Where a dashed outline is cut to a tile, the one corner
-where its two ends meet is blended twice (a pen-width square). (4) A dashed ellipse cut to a tile
-is stroked along chords 0.02 px from the true curve; Qt's own is four Bézier arcs. (5) A plan of
-more than 16.7 million cm² (41 × 41 m) is baked at ½ px/cm, a larger one coarser still. (6) Direct3D 11 in a window that
-presents no frame (the display asleep) keeps every uploaded tile's bytes until the view closes
-(§11.4.14: +16 MB per re-bake of a 16 MB ground; flat as soon as frames are presented) — the
-workspace should not apply edits faster than frames are presented.
+**Known limits** (each with what was measured; the manual-test checklist of the story names
+1, 7 and 9).
+
+1. **Arcs, Bézier curves and text are not on the ground.** They have no record — the snapshot
+   knows rectangles, ellipses, circles, polygons and polylines — so the 3D view shows nothing of
+   a construction arc, a curve or a text annotation, flat or not.
+2. **A line up to a pixel wide is not the canvas's, pixel for pixel, where it crosses tiles.** Qt
+   rasterises such a pen per image and starts anew in every tile. Measured on a 1100 × 700 cm
+   plan of six tiles: a SOLID 1 px line differs from the canvas's one image in 420 to 569 px by
+   more than 8 of 255 (largest 147; the review's line: 1,123 px, largest 171), mean ≤ 0.07; a
+   DASHED one has its dashes somewhere else in a tile — up to 1,903 px by more than 8, largest
+   225, mean ≤ 0.22. The same lines at 1.5 px and wider, solid or dashed, are bit-identical. The
+   hairlines INSIDE a path style (a border, a bar, a mesh) behave the same: mean ≤ 0.016.
+3. Where a dashed outline is cut to a tile, the one corner where its two ends meet is blended
+   twice (a pen-width square: at most 120 px by more than 2).
+4. **A dashed circle or ellipse that crosses a tile border is stroked along chords** (0.02 px from
+   the true curve), Qt's own along four Bézier arcs: the dashes lie up to a pixel apart. Measured
+   for a circle of 110 cm with a 7.5 cm dashed pen across two and four tiles, turned or not:
+   mean 0.018 to 0.020, about 1,000 px by more than 8 (largest 76). Wholly inside one tile it is
+   the canvas's own call, bit for bit.
+5. A plan of more than 16.7 million cm² (41 × 41 m) is baked at ½ px/cm, a larger one coarser
+   still.
+6. **No repeated `grab()` on a live host that is not presenting.** Direct3D 11 frees what was
+   released when a frame is PRESENTED, and a frame rendered by `grab()` is never presented: in a
+   hardware-adapter window that presents nothing, each grabbed frame leaves what was uploaded for
+   it committed until the view closes (§11.4.14: a `grab()` after every re-bake of a 16 MB ground
+   +16 to +17 MB a cycle; no `grab()` +0.0; flat on WARP and wherever frames are presented).
+   Re-bakes themselves do not grow the process — gate G6 is unconditional. A screenshot goes
+   through the offscreen path, which gives everything back when its view closes.
+7. **While ground work is pending, tiles are stale.** After opening a plan, and after an edit
+   that touches a costly tile, the ground catches up over several passes; a tile not yet painted
+   shows its older picture (bare ground on first open). Nothing shows the user WHICH tiles are
+   behind; `SceneSync.ground_pending` only says that some are.
+8. **A record's coordinates are on the contract's grid (1e-7 cm), the item's are not.** An item
+   whose points are not round numbers — a chamfered or filleted corner, a turned item — is
+   painted from points up to 5e-8 cm away, and single antialiased pixels of a style's elements
+   differ (a chamfered gravel path in ONE tile: 118 px, largest 8, mean 0.0003).
+9. **A capped tile holds less than the plan**: the records below its topmost 256 that do not
+   cover the whole tile, a style's elements beyond 16,384, dashes beyond 32,768 (drawn solid).
+   `GroundBaker.capped` names the tiles; nothing reaches the user until the workspace shows it.
+10. **Painted as the EXPORT paints, not as the live canvas clips.** The live canvas paints an
+    item through its cache, which cuts whatever a style draws beyond the item's bounding
+    rectangle — the bars of a 30 cm metal fence reach 37.5 cm from the line, the rectangle 17 cm.
+    Exports paint without the cache and show them whole; so does the ground.
 
 ### 8.27.6 Built-world builders and base stacking (L1.6)
 
