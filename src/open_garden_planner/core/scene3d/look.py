@@ -51,7 +51,7 @@ __all__ = [
     "NIGHT_BELOW_DEG", "NOON", "NOON_DEG", "PRESETS", "PRESET_SPECS", "QUALITY_CHOICES",
     "SKY_MIN_ELEVATION_DEG", "SKY_REBUILD_DEG", "AutoPolicy", "AutoPreset", "LookSpec",
     "MoodSpec", "PresetSpec", "Rig", "ShadowSpec", "SkySpec", "day_rig", "fill_linear",
-    "fog_color", "linear_to_srgb_hex", "look_for", "mix_linear", "moon_travel_scene",
+    "fog_color", "fog_linear", "linear_to_srgb_hex", "look_for", "mix_linear", "moon_travel_scene",
     "normalise_quality", "scale_linear", "sky_is_stale", "sky_separation_deg",
 ]
 
@@ -141,9 +141,28 @@ def scale_linear(color: str, factor: float) -> str:
     return linear_to_srgb_hex(_linear(color) * factor)
 
 
-def fog_color(sky_horizon: str, probe_exposure: float) -> str:
-    """The fog that meets a sky drawn with ``probe_exposure`` at its horizon."""
-    return scale_linear(sky_horizon, probe_exposure * FOG_OF_HORIZON)
+def fog_linear(sky_horizon: str, probe_exposure: float,
+               sky_energy: float = 1.0) -> tuple[float, float, float]:
+    """The fog that meets a sky at its horizon, in LINEAR rgb: the sky is DRAWN as its
+    horizon colour x its own energy x the probe exposure, and the fog must be what
+    is drawn (x ``FOG_OF_HORIZON``).
+
+    ``sky_energy`` is 1 by day and 0.25 at night. The spike's formula had no energy
+    in it, so its night fog was four times brighter than the night sky it met: a
+    bright line along the whole horizon (a 10.5-luma cliff at high, 21.2 at low,
+    L1.4 round 1 — ``ogp-lush-cinematic`` §7).
+
+    Linear and not ``#rrggbb``: a night fog is a few thousandths in linear light,
+    where 8 bits of sRGB are steps of a fifth — and where the engine's own
+    linearisation of a colour property is far off the sRGB curve
+    (``quick3d/look.py``: ``engine_srgb``)."""
+    value = _linear(sky_horizon) * (probe_exposure * sky_energy * FOG_OF_HORIZON)
+    return (float(value[0]), float(value[1]), float(value[2]))
+
+
+def fog_color(sky_horizon: str, probe_exposure: float, sky_energy: float = 1.0) -> str:
+    """``fog_linear`` as ``#rrggbb`` — to read, to log, to compare; never to render."""
+    return linear_to_srgb_hex(fog_linear(sky_horizon, probe_exposure, sky_energy))
 
 
 def fill_linear(sky_top: str, sky_horizon: str, probe_exposure: float,
@@ -333,21 +352,23 @@ class LookSpec:
 
     Made by ``look_for``; mapped onto the engine's scene by
     ``ui/view3d/quick3d/look.py``. Colours are ``#rrggbb`` sRGB unless the name says
-    ``_linear``.
+    ``_linear``: the three colours that are DERIVED in linear light — and can be
+    very dark, at night — are kept there, at full precision.
     """
 
     preset: PresetSpec
     mood: MoodSpec
     sky: SkySpec
     shadow: ShadowSpec
-    #: Depth fog: the sky horizon x probe exposure x ``FOG_OF_HORIZON`` (linear).
-    fog_color: str
+    #: Depth fog: the sky horizon x the sky's energy x probe exposure x
+    #: ``FOG_OF_HORIZON`` (``fog_linear``).
+    fog_linear: tuple[float, float, float]
     #: Where NO sky texture lights the view (the top-down truth view, the software
-    #: fallback): a flat fill in LINEAR rgb that stands in for the sky's light …
+    #: fallback): a flat fill that stands in for the sky's light …
     fill_linear: tuple[float, float, float]
     #: … and the plain background: the fog's colour, so that the fogged meadow
     #: meets it without a line.
-    plain_sky: str
+    plain_sky_linear: tuple[float, float, float]
     #: The night rig's key light travels along this (scene frame); None by day —
     #: by day the key is the sun, whose direction is not part of any look.
     moon_travel_scene: tuple[float, float, float] | None
@@ -359,9 +380,20 @@ class LookSpec:
         return self.mood.night
 
     @property
+    def fog_color(self) -> str:
+        """``fog_linear`` as ``#rrggbb`` (to read and to compare; the engine gets the
+        linear value)."""
+        return linear_to_srgb_hex(self.fog_linear)
+
+    @property
     def fill_color(self) -> str:
-        """``fill_linear`` as the ``#rrggbb`` an engine light takes."""
+        """``fill_linear`` as ``#rrggbb``."""
         return linear_to_srgb_hex(self.fill_linear)
+
+    @property
+    def plain_sky(self) -> str:
+        """``plain_sky_linear`` as ``#rrggbb``."""
+        return linear_to_srgb_hex(self.plain_sky_linear)
 
 
 #: Saturation and contrast of the graded frame by day (spike).
@@ -388,7 +420,7 @@ def look_for(sun: SunState, preset: str = "high") -> LookSpec:
     rig = NIGHT if night else day_rig(sun.elevation_deg)
     sky_energy, ground_energy, sun_energy = (0.25, 0.15, 0.0) if night else (1.0, 1.0, 1.0)
     factor, pcf_factor = _NIGHT_SHADOW if night else _DAY_SHADOW
-    fog = fog_color(rig.sky_horizon, rig.probe_exposure)
+    fog = fog_linear(rig.sky_horizon, rig.probe_exposure, sky_energy)
     return LookSpec(
         preset=cost,
         mood=MoodSpec(night=night, sun_color=rig.sun_color, sun_brightness=rig.sun_brightness,
@@ -404,9 +436,9 @@ def look_for(sun: SunState, preset: str = "high") -> LookSpec:
             night=night),
         shadow=ShadowSpec(cost.shadow_map_quality, cost.shadow_cascades, cost.soft_shadows,
                           cost.shadow_bias, factor, pcf_factor),
-        fog_color=fog,
+        fog_linear=fog,
         fill_linear=fill_linear(rig.sky_top, rig.sky_horizon, rig.probe_exposure, sky_energy),
-        plain_sky=fog,
+        plain_sky_linear=fog,
         moon_travel_scene=moon_travel_scene() if night else None,
     )
 

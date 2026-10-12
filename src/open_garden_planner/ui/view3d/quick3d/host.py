@@ -148,6 +148,7 @@ from .lifecycle import (
 )
 from .look import (
     COLOR_PROPERTIES,
+    LINEAR_COLOR_PROPERTIES,
     NEUTRAL_DAY,
     LookSpec,
     SkySpec,
@@ -942,7 +943,12 @@ class Quick3DHost:
         look's moon, by day it leaves the sun where the pipeline put it."""
         self._open("set_look")
         for name, value in scene_properties(look).items():
-            _set(self._root, name, QColor(str(value)) if name in COLOR_PROPERTIES else value)
+            if name in COLOR_PROPERTIES:
+                value = QColor(str(value))
+            elif name in LINEAR_COLOR_PROPERTIES:
+                red, green, blue = value  # type: ignore[misc]  # an sRGB-space float triple
+                value = QColor.fromRgbF(float(red), float(green), float(blue))
+            _set(self._root, name, value)
         previous, self._shown_look = self._shown_look, look
         if look.moon_travel_scene != previous.moon_travel_scene:
             self._apply_light()   # dusk or dawn: the key light changes hands

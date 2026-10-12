@@ -136,8 +136,25 @@ class TestTheRigIsTheSpikes:
                                                                   spike_sun.brightness)
         assert look.moon_travel_scene == pytest.approx(spike_sun.travel_scene, abs=1e-12)
         spike = runner.look_for(SpikeSun(-10.0, 0.0, (0.0, 0.0, -1.0), "#ffffff", 1.0, True))
-        assert look.fog_color == spike["fogColor"]
         assert (look.mood.exposure, look.mood.probe_exposure) == (spike["exposure"], spike["probe"])
+
+    def test_the_one_deliberate_difference_from_the_spike_is_the_night_fog(self) -> None:
+        """L1.4, look-dev round 1. The spike's fog was the horizon x probe exposure x 0.8
+        in every mood; its night SKY is drawn x 0.25 on top (``skyEnergy``), so the night
+        fog was four times brighter than the sky it met: a bright line along the whole
+        horizon (a one-row step of 10.5 luma at high and 21.2 at low at eye height; with
+        the sky's energy in the fog, and the fog handed to the engine in linear light:
+        2.4 / 3.2). By day the energy is 1 and nothing changed."""
+        from open_garden_planner.spike_q3d import runner
+        from open_garden_planner.spike_q3d.quick import SunState as SpikeSun
+
+        spike = runner.look_for(SpikeSun(-10.0, 0.0, (0.0, 0.0, -1.0), "#ffffff", 1.0, True))
+        night = look_for(sun(-10.0))
+        assert night.sky.sky_energy == 0.25
+        assert night.fog_color == runner.scale_linear(
+            spike["skyHorizon"], spike["probe"] * 0.25 * runner.FOG_OF_HORIZON)
+        assert night.fog_color != spike["fogColor"]
+        assert luma(night.fog_color) < luma(spike["fogColor"]) / 1.5
 
     def test_the_boards_own_numbers(self) -> None:
         """``ogp-lush-cinematic`` §3, "On the board": what the bench plan's shots get."""
@@ -175,14 +192,18 @@ class TestAnchorsAndMixing:
         middle = day_rig((L.GOLDEN_DEG + L.NOON_DEG) / 2.0)
         assert middle.exposure == pytest.approx(math.sqrt(GOLDEN.exposure * NOON.exposure))
 
-    def test_fog_is_the_horizon_times_probe_times_point_eight_in_linear_light(self) -> None:
+    def test_fog_is_the_horizon_as_the_sky_draws_it_times_point_eight_in_linear_light(self) -> None:
+        """Horizon x the sky's own energy x probe exposure — what the skybox shows at its
+        horizon — x 0.8, in linear light."""
         for elevation in (-20.0, 0.5, 3.0, 6.0, 15.0, 30.0, 61.0):
             look = look_for(sun(elevation))
             expected = srgb_to_linear(look.sky.horizon).astype(np.float64) * (
-                look.mood.probe_exposure * 0.8)
+                look.mood.probe_exposure * look.sky.sky_energy * 0.8)
             assert look.fog_color == L.linear_to_srgb_hex(expected)
-            assert look.fog_color == fog_color(look.sky.horizon, look.mood.probe_exposure)
+            assert look.fog_color == fog_color(look.sky.horizon, look.mood.probe_exposure,
+                                               look.sky.sky_energy)
             assert look.plain_sky == look.fog_color, "without a sky texture the fog meets the sky"
+        assert look_for(sun(-20.0)).sky.sky_energy == 0.25 and look_for(sun(20.0)).sky.sky_energy == 1.0
 
     def test_the_flat_fill_is_derived_from_the_sky_not_chosen(self) -> None:
         """Where no sky texture lights the view, a flat fill of the same energy stands in:
@@ -349,7 +370,7 @@ class TestPresets:
         assert first == second and first is not second
         assert isinstance(first, LookSpec) and dataclasses.is_dataclass(first)
         with pytest.raises(dataclasses.FrozenInstanceError):
-            first.fog_color = "#000000"  # type: ignore[misc]
+            first.fog_linear = (0.0, 0.0, 0.0)  # type: ignore[misc]
         assert first != look_for(sun(22.5, 140.0), "medium")
 
     def test_the_neutral_day_is_the_noon_rig_at_high(self) -> None:

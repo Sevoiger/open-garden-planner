@@ -69,7 +69,9 @@ from open_garden_planner.core.scene3d.look import PRESETS, look_for, moon_travel
 from open_garden_planner.ui.view3d.quick3d.adapter import PartSpec, Quick3DSink
 from open_garden_planner.ui.view3d.quick3d.look import (
     COLOR_PROPERTIES,
+    LINEAR_COLOR_PROPERTIES,
     NEUTRAL_DAY,
+    engine_linear,
     scene_properties,
     sky_properties,
 )
@@ -272,10 +274,30 @@ def _assert_look_shown(host: Any, look: Any) -> None:
         shown = host.scene_property(name)
         if name in COLOR_PROPERTIES:
             assert shown == QColor(str(value)), name
+        elif name in LINEAR_COLOR_PROPERTIES:
+            # handed over as floats: a QColor keeps 16 bits a channel, so that a night
+            # colour of a few thousandths survives (8 bits are steps of a fifth there)
+            assert (shown.redF(), shown.greenF(), shown.blueF()) == pytest.approx(value, abs=2e-5), name
         elif isinstance(value, float):
             assert shown == pytest.approx(value, rel=1e-12), name
         else:
             assert shown == value, name
+
+
+def test_a_night_fog_reaches_the_scene_as_the_linear_value_the_look_derived(qtbot) -> None:  # noqa: ARG001
+    """L1.4 round 1: the scene's fog colour, put through the ENGINE's own linearisation,
+    is the look's linear fog — to four significant digits, also at a few thousandths.
+    (As ``#rrggbb`` through the sRGB curve it arrived three times too dark.)"""
+    made = _new_host((320, 240))
+    try:
+        night = look_for(SunState(-11.07, 337.12), "high")
+        made.set_look(night)
+        shown = made.scene_property("fogColor")
+        reached = tuple(engine_linear(channel) for channel in (shown.redF(), shown.greenF(), shown.blueF()))
+        assert reached == pytest.approx(night.fog_linear, rel=2e-2)
+        assert max(night.fog_linear) < 0.005, "a night fog IS a few thousandths in linear light"
+    finally:
+        made.close()
 
 
 def _light_travel(host: Any) -> tuple[float, float, float]:

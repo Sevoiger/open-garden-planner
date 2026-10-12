@@ -33,13 +33,17 @@ Item {
     property real sunBrightness: 1.9
     property real exposure: 0.85
     property real probeExposure: 0.55       // how bright the sky texture is drawn and lights
-    property color fogColor: "#8f9ca8"      // sky horizon x probe exposure x 0.8 (linear)
+    // The three colours the look derives in LINEAR light arrive as the colour the
+    // engine's own linearisation turns back into that value (quick3d/look.py:
+    // engine_srgb) - Qt linearises a colour property with a polynomial, not the sRGB
+    // curve, and reads a dark sRGB code up to three times too dark.
+    property color fogColor: "#8f9ca8"      // sky horizon x sky energy x probe exposure x 0.8
     property real saturation: 1.06
     property real contrast: 1.04
     // where NO sky texture lights the view (the top-down truth view; a host without a
     // sky: the software fallback, the self-test): a plain background and a flat fill
     property color skyColor: "#8f9ca8"
-    property color fillColor: "#778cab"
+    property color fillColor: "#778bab"
     property color meadowColor: "#487f34"   // ONE albedo for the meadow and for bare plan ground
     // the key light's shadows: the preset's cost, the mood's softness
     property string shadowMapQuality: "very_high"   // high | very_high | ultra

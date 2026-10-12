@@ -58,7 +58,7 @@ from open_garden_planner.core.scene3d.look import (
     AutoPreset,
     LookSpec,
     SkySpec,
-    fog_color,
+    fog_linear,
     look_for,
     normalise_quality,
     sky_is_stale,
@@ -257,8 +257,8 @@ class LookController(QObject):
                 shown = self._sky_shown
                 if shown is not None and shown.horizon != look.sky.horizon:
                     # the sky on screen is an older one: the fog must meet THAT horizon
-                    look = replace(look, fog_color=fog_color(shown.horizon,
-                                                             look.mood.probe_exposure))
+                    look = replace(look, fog_linear=fog_linear(
+                        shown.horizon, look.mood.probe_exposure, shown.sky_energy))
             if look != self._look:
                 self._host.set_look(look)
                 self._look = look

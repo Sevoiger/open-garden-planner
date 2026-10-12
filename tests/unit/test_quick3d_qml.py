@@ -17,6 +17,7 @@ import pytest
 from open_garden_planner.core.scene3d import MATERIAL_KINDS
 from open_garden_planner.ui.view3d.quick3d.look import (
     COLOR_PROPERTIES,
+    LINEAR_COLOR_PROPERTIES,
     NEUTRAL_DAY,
     scene_properties,
 )
@@ -222,6 +223,9 @@ def test_the_look_properties_are_exactly_the_mapping_and_start_as_the_neutral_da
         kind, default = declared[name]
         if name in COLOR_PROPERTIES:
             assert (kind, default) == ("color", value), name
+        elif name in LINEAR_COLOR_PROPERTIES:  # the engine-space colour, to 8 bits
+            written = "#" + "".join(f"{round(channel * 255):02x}" for channel in value)
+            assert (kind, default) == ("color", written), name
         elif isinstance(value, bool):
             assert (kind, default) == ("bool", "true" if value else "false"), name
         elif isinstance(value, int):

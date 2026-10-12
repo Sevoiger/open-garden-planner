@@ -25,7 +25,11 @@ from open_garden_planner.core.scene3d import (
 from open_garden_planner.core.scene3d.look import look_for
 from open_garden_planner.ui.view3d.quick3d.look import (
     COLOR_PROPERTIES,
+    LINEAR_COLOR_PROPERTIES,
     NEUTRAL_DAY,
+    engine_hex,
+    engine_linear,
+    engine_srgb,
     scene_properties,
     sky_longitude,
     sky_properties,
@@ -72,17 +76,24 @@ class TestLook:
         assert properties["exposure"] == runner.LOOK_NOON["exposure"]
         assert properties["probeExposure"] == runner.LOOK_NOON["probe"]
         assert properties["meadowColor"] == runner.MEADOW_ALBEDO
-        assert properties["fogColor"] == properties["skyColor"] == runner.scale_linear(
+        assert NEUTRAL_DAY.fog_color == NEUTRAL_DAY.plain_sky == runner.scale_linear(
             runner.LOOK_NOON["skyHorizon"], runner.LOOK_NOON["probe"] * runner.FOG_OF_HORIZON)
+        assert properties["fogColor"] == properties["skyColor"] == engine_srgb(NEUTRAL_DAY.fog_linear)
 
     def test_the_mapping_holds_plain_values_only(self) -> None:
         for elevation, preset in ((60.0, "high"), (3.0, "low"), (-20.0, "ultra"), (15.0, "medium")):
             properties = scene_properties(look_for(SunState(elevation, 200.0), preset))
             for name, value in properties.items():
+                if name in LINEAR_COLOR_PROPERTIES:
+                    assert isinstance(value, tuple) and len(value) == 3, name
+                    assert all(isinstance(channel, float) and 0.0 <= channel <= 1.0
+                               for channel in value), (name, value)
+                    continue
                 assert isinstance(value, (str, float, int, bool)), (name, value)
                 if name in COLOR_PROPERTIES:
                     assert isinstance(value, str) and len(value) == 7 and value[0] == "#", name
-            assert set(properties) >= COLOR_PROPERTIES
+            assert set(properties) >= COLOR_PROPERTIES | LINEAR_COLOR_PROPERTIES
+        assert not COLOR_PROPERTIES & LINEAR_COLOR_PROPERTIES
 
     def test_the_mapping_follows_the_look(self) -> None:
         look = look_for(SunState(-8.0, 320.0), "low")
@@ -94,7 +105,37 @@ class TestLook:
                 properties["softShadows"], properties["shadowBias"]) == ("very_high", 1, "pcf4", 15.0)
         assert (properties["antialiasing"], properties["ambientOcclusion"], properties["glow"],
                 properties["fog"], properties["reflections"]) == ("fxaa", False, False, True, False)
-        assert properties["fillColor"] == look.fill_color and properties["skyColor"] == look.plain_sky
+        assert properties["fillColor"] == engine_srgb(look.fill_linear)
+        assert properties["skyColor"] == properties["fogColor"] == engine_srgb(look.fog_linear)
+
+    @pytest.mark.parametrize("linear", [0.0, 1e-5, 0.0005, 0.0015, 0.0044, 0.02, 0.2, 0.44, 0.9, 1.0])
+    def test_the_engines_own_linearisation_gives_the_looks_linear_value_back(self, linear: float) -> None:
+        """A colour PROPERTY is linearised by Qt Quick 3D with a polynomial (measured in
+        L1.4 — ``quick3d/look.py``); ``engine_srgb`` is its inverse, so what the shader
+        computes with is the linear value the look derived."""
+        srgb = engine_srgb((linear, linear, linear))
+        assert all(0.0 <= channel <= 1.0 for channel in srgb)
+        assert engine_linear(srgb[0]) == pytest.approx(linear, abs=1e-12)
+
+    def test_a_dark_colour_is_where_the_srgb_curve_would_have_been_wrong(self) -> None:
+        """The night fog's green channel, linear 0.0014: the sRGB curve encodes it as
+        code 5, which the ENGINE reads as 0.0005 — a third. Bright colours agree."""
+        from open_garden_planner.core.scene3d.color import srgb_channel_to_linear
+
+        night = look_for(SunState(-10.0, 0.0), "high")
+        green = night.fog_linear[1]
+        assert green == pytest.approx(0.00142, abs=2e-5)
+        naive = int(night.fog_color[3:5], 16) / 255.0          # the sRGB curve's code
+        assert engine_linear(naive) < green / 2.5
+        assert engine_linear(engine_srgb(night.fog_linear)[1]) == pytest.approx(green, rel=1e-9)
+        assert engine_hex(night.fog_linear) == "#060912" and night.fog_color == "#03050e"
+        for bright in (0.2, 0.5, 0.9):                         # within one 8-bit code up here
+            exact = srgb_channel_to_linear(bright)
+            assert abs(engine_srgb((exact,) * 3)[0] - bright) * 255.0 < 1.0
+
+    def test_the_scene_files_defaults_are_the_engine_colours_of_the_neutral_day(self) -> None:
+        assert engine_hex(NEUTRAL_DAY.fog_linear) == "#8f9ca8"
+        assert engine_hex(NEUTRAL_DAY.fill_linear) == "#778bab"
 
     def test_no_property_of_the_mapping_could_aim_the_light(self) -> None:
         """Truth: where the sun stands is the pipeline's (``Quick3DSink.set_sun``). The
