@@ -1327,10 +1327,19 @@ thread once the main window exists.
   `controller.applied` — not `frameSwapped`, and not after `processEvents()` (which adds the
   rest of the 2D side's turn to the 3D number). State the window and pane size with the number:
   a readback grows with the pane's pixels.
-- **A memory soak presents frames.** Qt frees a destroyed Model's buffers at the end of a
-  presented frame; a readback is not one; with the display asleep Windows presents none.
-  `run_gate(timer_paced=True)` sets Qt's `QT_D3D_NO_VBLANK_THREAD=1`; the scenario reports how
-  many frames each reload presented, and the test asserts at least one.
+- **Every scripted run presents frames; the soak also runs without.** Qt frees a destroyed
+  Model's buffers at the end of a presented frame; a readback is not one; with the display
+  asleep Windows presents none — and the pipeline waits for presented frames, so a scenario
+  on a sleeping display would stop after its first edit. `run_gate` therefore sets Qt's
+  `QT_D3D_NO_VBLANK_THREAD=1` by default (update requests by timer); the soak reports how
+  many frames each reload presented and the test asserts at least one. The opposite is a
+  scenario of its own (`dark`): the engine story's no-paint filter on the view, twenty
+  rebuilds, and the assertion that ONE generation was uploaded.
+- **A stand-in view presents.** The GPU-less tests' sink "presents" a frame one turn of the
+  event loop after each committed transaction (`ShownSink` in
+  `test_view3d_workspace_widget.py`), as a visible view does; a test about a view that has
+  not presented yet, or presents nothing, says so (`presenting = False`). A fake that never
+  presents would hold every pass after the first.
 - **A slope gate needs its control and its "off" run.** The soak runs with the fix, with 25 MB
   kept per reload (must FAIL) and with the fix out of reach (reported): three numbers from one
   instrument on one machine.
@@ -4302,6 +4311,12 @@ instant_changed ─► sun flag (light only: no snapshot)         ─► SceneSy
 - **A pass owed to a shown pane waits for its notice.** "Building the 3D view…" is set and the
   pass starts after that label PAINTED (an event filter on the label; 250 ms fallback): a first
   pass costs the sum of its items, with the GUI thread inside it.
+- **Uploads are paced by presented frames.** After a pass reached the engine, the next one
+  waits until the view has presented a frame (`presented_frames`, the host's counter); until
+  then a change is a flag, as while hidden. A view that presents nothing — the display asleep
+  — is therefore given ONE generation it has not shown, however the plan changes. A held pass
+  looks for the frame a few times at growing intervals and is then let go by the health poll
+  (`controller.resume()`); a pass that sent nothing starts no wait.
 - **A document change is a plain apply**, not a reset; it drops what 3D remembers of the old plan
   (`_drop_plan_memories`: the plant builder's shapes, the record layer's outlines) and frames the
   camera once, when the new document is in the engine (`document_shown`).
@@ -4338,9 +4353,16 @@ outline) must count them the same way, or measure that they leave nothing.
 
 - *A new consumer of the sim clock*: `connect_qobject(clock.date_changed, self._slot)`; never
   `clock.date_changed.connect(...)` (a scan refuses it).
-- *A new ground* (L1.5): `controller.set_ground_stage(stage)` with
-  `stage(previous_records, records, width_cm, depth_cm) -> GroundSpec`. It runs before `apply`,
-  inside the pass; if it raises, the bare rectangle is sent and one line is logged.
+- *A new ground* (L1.5): the pass hands the ground to the engine in ONE place —
+  `Scene3DController._pass_records` → `sync.apply(records, sun=…, ground=self._ground(…))`,
+  on the `SceneSync` built in `__init__`. A baker that lives in the sync is one argument there
+  (`SceneSync(sink, registry, ground_baker=…)`); a stage function is
+  `controller.set_ground_stage(stage)` with `stage(previous_records, records, width_cm,
+  depth_cm) -> GroundSpec`, run before `apply` inside the pass (if it raises, the bare
+  rectangle is sent and one line is logged). What the bake could not paint joins the
+  problems list where the other two sources meet: `problems_dialog.problems_of` and
+  `Scene3DController._set_problems`. A bake uploads: it is paced like every pass, and needs
+  no pacing of its own.
 - *A look, a sky* (L1.4): through the host; not through the pipeline.
 - *A click in 3D* (L1.8): `try: host.pick(x, y) except HostStateError` in the input filter. The
   workspace calls `wait_ready()` nowhere and must not start to.

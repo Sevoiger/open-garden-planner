@@ -2520,9 +2520,14 @@ on a hardware adapter with the production scene's shadow passes. Where it is:
      frames emitted it 40 times. On Windows update requests come from a display-vblank thread,
      and with the display asleep a visible window presents its first frame and no more (the
      addendum "L1.2" above) — so every soak run with the display asleep kept every buffer it
-     uploaded. That is a measuring fact, not a product leak: without a frame nothing is uploaded
-     either. Qt's own `QT_D3D_NO_VBLANK_THREAD=1` paces update requests by timer; the soak runs
-     with it.
+     uploaded. Qt's own `QT_D3D_NO_VBLANK_THREAD=1` paces update requests by timer; the soak runs
+     with it. *This entry first said "a measuring fact, not a product leak: without a frame
+     nothing is uploaded either". Half right:* with no frame at all nothing is uploaded — but
+     anything that renders without presenting (a readback, a sync for another reason) uploads,
+     and none of it comes back until a frame is PRESENTED. The ground story measured the same
+     for textures in a view that merely did not present: +16 MB per re-bake of a 16 MB ground.
+     A window left visible on a machine whose display sleeps, with something editing the plan,
+     grows without bound — a product defect, closed below.
   2. **Per Model that was ever drawn, Qt keeps cached draw-call state after the Model is
      destroyed** — about 62 kB without shadow passes, about 190 kB with the sun's two cascades,
      independent of the vertex count (the 300-vertex row), 0.12 to 0.35 MB per Model in the
@@ -2576,6 +2581,22 @@ reload. What remains on WARP WITH the release lies in the range this log measure
 - **The "at once" rule** — the release from INSIDE the pass, which an animated date runs into —
   with its threshold set to 1, so that every rebuild takes it: 2.12 MB per reload, a smooth
   line (1472 → 1514 MB over 20 reloads).
+
+**A view that presents nothing is given ONE generation** (ADR-057 decision 17). After a pass
+reached the engine the pipeline applies no further pass until the view has presented a frame.
+The same twenty rebuilds as above with the view's paint events eaten (the engine story's
+no-paint device: shown, exposed, on the screen, and nothing draws it — 0 frames presented):
+
+| | geometry uploads | rebuilds that waited | growth over 20 | slope, reloads 11–20 |
+|---|---|---|---|---|
+| with the pacing | 98 (one generation) | 19 of 20 | −43 MB | 0.51 MB per reload |
+| without it (the frame counter taken away) | 1,960 | 0 of 20 | +279 MB | 8.54 MB per reload |
+
+When the filter is removed the view presents again and the pipeline catches up by itself (the
+health poll lets the held pass go): 98 parts, and the frame is the frame from before the dark
+spell. With frames presented the pacing costs nothing that could be measured: edit → finished
+readback on the small bench plan p50 12.8 / p95 17.5 ms with it (13.0 / 17.6 and 15.2 / 20.6
+in two runs before it).
 
 **What remains, and where its floor is.** After the release about **2 MB per rebuild of 98
 Models** stays — some 20 kB per destroyed Model, linear over 60 reloads, not converging. It is
@@ -4462,6 +4483,23 @@ Five facts shaped the design:
     hours-of-sun map — which cancels a compute still running and drops its late result — and
     unchecks the toolbar's button, before the scene is cleared, on all three document paths
     (new, open, recovery load).
+17. **Uploads are paced by presented frames.** A window that presents no frame — the display
+    asleep, a session that does not present — keeps every byte uploaded to it until it
+    presents again (mesh buffers: ADR-048 addendum "L1.3"; ground textures: +16 MB per
+    re-bake, measured by the ground story). So `Scene3DController` is handed the host's
+    presented-frame counter, and after a pass REACHED THE ENGINE the next one is not applied
+    until the counter has moved past the value it had then. Until it has, a change sets the
+    dirty flags and nothing else — exactly as while 3D is hidden — so a view that presents
+    nothing holds at most ONE generation it has not shown, whatever happens to the plan. A
+    held pass looks for the frame after 8, 16, 32, 64, 128 and 256 ms (the last edit of a
+    burst must not wait for the next one) and then waits to be told: the workspace's health
+    poll calls `resume()`. No timer spins for a dark view. A pass that sent nothing starts no
+    wait — a still scene presents no frame, and it would wait for ever. `reset()` clears the
+    engine at once (that frees) and is paced for what it sends again. Without a counter
+    (`presented_frames=None`) nothing is paced: that is the recording sink of the GPU-less
+    tests, and every process that renders by readback and owns itself — the self-test, the
+    Beauty Board, the engine story's driver — which do not go through this controller at all
+    (`offscreen.render_records` applies once and reads back once).
 
 ### Alternatives considered (rejected)
 
@@ -4479,6 +4517,14 @@ Five facts shaped the design:
 - **Polling the scene on a timer.** A snapshot per tick is O(total vertices): 13 ms of the GUI
   thread per tick on the large plan, for nothing, also while idle.
 - **A timer of interval zero, or a high-priority event** — decision 6's table.
+- **Letting the held pass go from a frame signal of the host, or polling the counter at 60 Hz.**
+  The signal would be a fourth addition to a host whose contract is closed, for a delay that a
+  handful of timer shots bounds as well; a steady poll is a timer that spins for exactly the
+  view that shows nothing. Six shots at growing intervals, then the existing two-second health
+  poll.
+- **Pacing only the passes that upload.** Whether a pass uploads is known after the snapshot,
+  and the snapshot is what a dark view must not pay for per edit (13 ms on the large plan).
+  Every pass waits; a pass that turned out to send nothing leaves no mark.
 - **Keeping the start marker in the settings store.** The marker must be on disk before the
   engine is imported and must survive a process that dies without flushing anything; it is a
   fact about a process (it carries a pid), and it belongs where support looks — beside
@@ -4513,11 +4559,25 @@ Five facts shaped the design:
 - **The workspace needs three things of the host beyond the engine story's contract:**
   `Quick3DHost(prefer_software=…)`, `install_event_filter(watcher)` and
   `release_cached_resources()` (with the `cache_releases` counter).
-- **A memory soak must present frames.** Qt Quick 3D frees the mesh buffers of a destroyed Model
-  at the end of a PRESENTED frame, and `grabWindow()` never emits that signal (0 of 40). With
-  the display asleep Windows presents one frame and no more, so a soak whose frames are all
-  readbacks measures a retention the product does not have. `QT_D3D_NO_VBLANK_THREAD=1` paces
-  update requests by timer (`run_gate(timer_paced=True)`).
+- **Every scripted run of the workspace presents frames, and says so.** Qt Quick 3D frees the
+  mesh buffers of a destroyed Model at the end of a PRESENTED frame, `grabWindow()` never emits
+  that signal (0 of 40), and with the display asleep Windows presents one frame and no more.
+  Since decision 17 the pipeline itself waits for presented frames, so a scenario on a machine
+  whose display sleeps would stop after its first edit: the gate's children run with Qt's
+  `QT_D3D_NO_VBLANK_THREAD=1` by default (update requests by timer;
+  `run_gate(timer_paced=True)`), and the soak asserts that frames were presented. The same
+  soak with frames WITHHELD on purpose is its own scenario (`dark`).
+- **In a drag the 3D view follows at the rate the view presents**, not at the mouse's: one
+  generation per presented frame. A pass that had to wait is applied 8 to 16 ms after its
+  frame; not measured as a number of its own.
+- **The ground bake (L1.5) plugs in at two places and is not wired here.** Where the pass hands
+  a ground to the engine: `Scene3DController.__init__` builds `SceneSync(sink, registry)` — the
+  bake's `ground_baker=` goes there — and `_pass_records` passes `ground=` from `_ground()`
+  (`set_ground_stage` if a stage function is preferred). Where its problems join the list:
+  `problems_dialog.problems_of(skipped, failures)` and `Scene3DController._set_problems` /
+  `problem_count` are the one path from "something is missing in 3D" to the count in the
+  strip — `GroundBaker.capped`, `.failures` and `sync.ground_failure` become a third source
+  there, with their own reason codes in `View3DProblemsDialog.reason_text`.
 - **Known limits, stated.** The Keyboard Shortcuts dialog does not list Alt+1 / 2 / 3 while the
   workspace is behind its switch (L1.9). Edit latency is measured to a finished READBACK; the
   time to photons is not measured. The real map picker (it needs the network and a key) is on
@@ -4548,14 +4608,19 @@ Default tier (no GPU; the engine replaced at the seam):
   root), `tests/unit/test_plain_text.py` (71), `tests/unit/test_view3d_workspace_i18n.py` (40),
   `tests/unit/test_view3d_workspace_packaging.py` (4).
 - `tests/ui/test_view3d_orbit_input.py` (21), `tests/ui/test_view3d_host_seams.py` (7).
-- `tests/integration/test_view3d_sync_controller.py` (38) — through the real `scene.changed`,
+- `tests/integration/test_view3d_sync_controller.py` (47) — through the real `scene.changed`,
   `stack_changed` and clock channels: **G4** (28 hidden edits: 0 snapshots, 0 sink calls; one
   catch-up pass equal to a from-scratch apply), **G9** (time → light only; date → the dated
-  plants and nothing else; a destroyed subscriber is never called).
-- `tests/integration/test_view3d_workspace_widget.py` (42) — modes, the kept host, **G3** (the
+  plants and nothing else; a destroyed subscriber is never called), and the pacing: 1,000
+  edits while the presented-frame counter stands still are ONE pass, then one catch-up pass
+  equal to a from-scratch apply; a pass that sent nothing waits for no frame; a held pass
+  runs by itself soon after the frame; a view that stays dark stops being asked.
+- `tests/integration/test_view3d_workspace_widget.py` (44) — modes, the kept host, **G3** (the
   pose compared exactly around each of 100 edits of every kind, a date and a time change; a
-  document change frames once), **G6** (the marker and its notices), the notice painted before
-  the first snapshot, the release thresholds, hostile names.
+  document change frames once; and the catch-up pass after a dark spell does not touch the
+  camera), **G6** (the marker and its notices), the notice painted before the first snapshot,
+  the release thresholds, hostile names. The stand-in engine PRESENTS — a turn of the event
+  loop after each committed transaction, as a visible view does.
 - `tests/integration/test_view3d_workspace.py` (22) — the §8.10 workflow through a real
   `GardenPlannerApp`; **G1** in two fresh processes (without the switch: no engine import and
   the canvas view's pixels identical to the build with it in Plan mode); **G10** (#428).
@@ -4579,11 +4644,17 @@ own `main()` in a child, on Direct3D 11 (RTX 4070), 2026-10-12:
 | G7 dedicated GPU memory (DXGI, this process) | 298.5 MB before; ONE step, 299 → 378 MB, at the tenth reload; 372–378 after (slope −0.11 MB / reload) | < 10 |
 | G7 elsewhere, with the release (one run each) | the large plan (421 parts): 5.07 MB / reload; WARP: 7.42 (27.1 without the release) | < 10 |
 | G7 over 60 reloads; and with the release inside every pass (20 reloads) | 1.78 MB / reload over reloads 31–60 (60 releases, the frame unchanged in 60 of 60); 2.12 | < 10 |
+| G7 with frames WITHHELD (the view's paint events eaten; 0 frames presented), 20 rebuilds | 98 uploads — one generation —, 19 of 20 rebuilds waited, 0.51 MB / reload, growth −43 MB; the view presents again → 98 parts, the same frame. Without the pacing: 1,960 uploads, +279 MB (8.54 MB / reload) | < 10; one generation |
 | G8 a Qt WebEngine page before and after the 3D host exists | painted both times (`#1e90ff` at its centre); 131 distinct colours in the 3D frame beside it | — |
 | G11 pan step, Split against Plan at the same canvas size (874 × 967) | 1.04 (the fastest tenth: 1.05) | ≤ 1.3 |
 
-Hand mutation (one text mutant at a time, the story's tests run, the tree restored): 17 of 17
-(controller), 24 of 24 (workspace), 13 + 9 + 2 + 2 (plain text and logs), 11 of 11 (app), 2 of
-2 (the switch), and for what the sync with the integration branch added: 11 of 11 (retired
-counts and plan memories), 9 of 9 (release), 7 of 7 (notice), 3 of 3 (host seam), 6 of 6
-(workspace paths that moved).
+Hand mutation (one text mutant at a time, the tests that should notice run, the tree restored;
+a scratch tool, point-in-time, not a gate): on the final code **126 of 126 killed** in 17 sets —
+controller 14, workspace 19, plain text in the dialog 3 and in the workspace 5, the plain-text
+helper 14, log lines 5 + 2 + 2, the application's wiring 11, the switch 2, retired counts and
+plan memories 11, the release 9, the notice 7, the host seam 3, workspace paths that moved 6,
+the pacing 11 and its wiring in the workspace 2. Two findings of the tool itself are worth
+keeping: every mutant of `application.py` was once "killed" by the same unrelated test, which
+was failing on the unmutated tree (a mutation verdict is only worth something on a green
+tree — run the story's tests first); and one set listed too few test files and reported a
+survivor that a test in the missing file kills.

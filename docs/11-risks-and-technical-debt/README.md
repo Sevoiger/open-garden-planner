@@ -2242,13 +2242,20 @@ about measuring it.
    created with `createObject()` and destroyed, never drawn, the engine's collector called.
    Churn of QML objects is not free; a feature that replaces many Models per tick has to
    avoid the replacing.
-3. **A soak that only reads frames back measures something the product does not have.**
-   `grabWindow()` renders and reads back but never ends a frame the way a presented one ends:
-   `afterFrameEnd` fired 0 times in 40 grabs. With the display asleep Windows presents no frame
-   at all (update requests come from a vblank thread), so on this machine at night every frame
-   of every soak was a readback and every buffer stayed. *Fix:* the soak's child runs with Qt's
-   `QT_D3D_NO_VBLANK_THREAD=1` (frames presented by timer) and asserts that frames were
-   presented. **Before reading a memory curve, check what kind of frames produced it.**
+3. **A view that presents nothing keeps what it is given — first filed as "the soak measures
+   something the product does not have".** `grabWindow()` renders and reads back but never
+   ends a frame the way a presented one ends: `afterFrameEnd` fired 0 times in 40 grabs. With
+   the display asleep Windows presents no frame at all (update requests come from a vblank
+   thread), so on this machine at night every frame of every soak was a readback and every
+   buffer stayed. That looked like a property of the INSTRUMENT, and the first fix was only
+   there (the soak's child presents by timer, `QT_D3D_NO_VBLANK_THREAD=1`). The ground story
+   then measured the same retention for textures in a view that simply did not present, and
+   named the case nobody had thought of: the 3D pane left visible overnight while an agent
+   edits the plan over the API. *Fix:* the pipeline is paced by presented frames — a dark
+   view is given ONE generation (ADR-057 decision 17; 98 uploads instead of 1,960 over twenty
+   rebuilds, −43 MB instead of +279). **"Only my instrument does that" deserves the question
+   "who else does what my instrument does?" before it is filed. And before reading a memory
+   curve, check what kind of frames produced it.**
 4. **`processEvents()` after an edit measures the 2D side.** The first edit-to-frame number
    (p95 56.6 ms) was taken as "edit, `processEvents()`, readback": it contained the rest of the
    event-loop turn — the canvas repainting itself, the minimap, the panels. *Fix:* the readback

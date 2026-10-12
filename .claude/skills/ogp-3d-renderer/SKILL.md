@@ -741,13 +741,18 @@ test patterns: docs §8.10.7. What the ENGINE taught once it ran inside the real
   `PrincipledMaterial` — straight lines over 120 rounds. So: do not design a feature around
   replacing many Models per tick (a date played back regrows every dated plant). Untried
   ways out: keep the Model and hand it a new geometry; scale instead of rebuilding.
-- **A destroyed Model's mesh buffers are freed at the end of a PRESENTED frame.** A readback is
-  not one: `grabWindow()` emitted `afterFrameEnd` 0 times in 40 grabs. With the display asleep
-  Windows presents one frame and no more (§6), so a process whose frames are all readbacks
-  keeps every buffer it uploaded. Not a product leak — without a frame nothing is uploaded
-  either — but **a memory soak must present frames**: set Qt's own
-  `QT_D3D_NO_VBLANK_THREAD=1` in the child (update requests by timer;
-  `workspace_gate_support.run_gate(timer_paced=True)`), and assert that frames were presented.
+- **What is uploaded comes back at the end of a PRESENTED frame — so a view that presents
+  nothing is given one generation.** A readback is not a presented frame: `grabWindow()`
+  emitted `afterFrameEnd` 0 times in 40 grabs. With the display asleep Windows presents one
+  frame and no more (§6), and whatever is uploaded then stays: mesh buffers (here), 16 MB per
+  re-baked ground texture (the ground story). The pipeline therefore applies no second pass
+  before the view presented the first (`Scene3DController(presented_frames=…)`, the workspace
+  hands it `host.health().frames_presented`); twenty rebuilds in a view whose paint events
+  were eaten: 98 uploads instead of 1,960, −43 MB instead of +279. **Anything that uploads
+  outside that controller must pace itself the same way.** And every scripted run must
+  PRESENT: `workspace_gate_support.run_gate` sets Qt's `QT_D3D_NO_VBLANK_THREAD=1` by default
+  (update requests by timer) — on a sleeping display a scenario would otherwise stop after
+  its first edit.
 - **Software rendering is chosen per window, not per process.**
   `QSG_RHI_PREFER_SOFTWARE_RENDERER=1` is read ONCE: set before the first Qt Quick window it
   selects WARP, set after it does nothing. `QQuickGraphicsConfiguration.setPreferSoftwareDevice(True)`
