@@ -4120,7 +4120,7 @@ for every edit, and kept every texture it ever made alive.
 5. **One implementation with the canvas.** The brush is `create_pattern_brush`, a sprite
    `render_furniture_pixmap`, and the path-style painters were moved out of `PolylineItem.paint`
    into `ui/canvas/items/path_style_paint.py`, which both call. Only single `QPainter` calls are
-   mirrored. A second implementation of eleven path styles would have been a second place to be
+   mirrored. A second implementation of ten path and fence styles would have been a second place to be
    wrong; the extraction found two defects of the first (§11.4.14).
 6. **Tiles are crops of one pixel grid.** 512 px tiles; the finest of 1, ½, ¼ … px/cm within
    4096 × 4096 px and 256 tiles; whole-pixel offsets — seamless by construction, not by
@@ -4179,7 +4179,7 @@ for every edit, and kept every texture it ever made alive.
 
 **Validation.** Default tier — `tests/integration/test_scene3d_ground_bake.py`: G1 parity for the
 25 fill patterns × tinted/untinted × 0° / 33° × two tile-straddling positions (200 cases: not
-turned mean 0 and max 0, turned mean ≤ 0.0002 and max 1, of 255; bound 6), every shape, eleven
+turned mean 0 and max 0, turned mean ≤ 0.0002 and max 1, of 255; bound 6), every shape, the ten
 path styles (one tile: bit-identical; six tiles: mean ≤ 0.016), sprites, pens, opacity; G2 on
 `bench_small.ogp` (mean 0.00006, max 3; NCC 0.99999999 against −0.28 / −0.09 / 0.005); G3 on both
 bench plans (≤ 2 tiles, 3.4 ms and 3.3 ms median, `last_examined == 1`, untouched tiles the same
