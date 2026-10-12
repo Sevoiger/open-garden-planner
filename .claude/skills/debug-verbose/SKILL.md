@@ -1776,3 +1776,21 @@ The next print failed because the code page could not encode a check mark.
 **Lesson.** A semantic type predicate does not prove a concrete graphics-item class. Run the complete suite to exercise representations absent from the new subsystem fixtures. The temporary print was removed.
 
 **Follow-up: imported polygon centres.** Review then exercised the real save/load/picker path, not only badge refresh. A temporary regression printed `[GUILD-CENTRE] loaded_type PolygonItem eligible_index 1`; Insert refused with `PolygonItem object has no attribute rect`. An initial probe omitted a layer and correctly found no eligible centre; the decisive probe persisted a valid visible/unlocked layer. `guild_plant_bounds()` now supplies base-shape bounds to existing-centre placement, whole-layout preflight, preview and badges. Polygon/path bounds exclude painted shadows and cosmetic children. Round-trip insertion and exact undo restoration are pinned at 0?, 45? and 215?, including the centre-relative mature-spacing layout. All probe prints were removed.
+
+## Case study: sun self-shadow and old-document heatmaps (#314/#428, 2026-10-12)
+
+**Symptom.** Both reference tomatoes read zero hours, and a heatmap worker finishing after New/Open/recovery repainted the replacement plan.
+**Wrong theories.** The centre-lookup acceptance assumption was rejected by the measured self-shadow probe. No alternative solar formula, date owner or per-caller reset was adopted. Date-only clearing and `is_running` checks do not establish document ownership.
+**Key evidence.** The planning probe recorded `north=0 h south=0 h` with all casters and `north=0 h south=16.5 h` excluding each receiver only. Six deterministic controlled-worker regressions failed on `assert not heatmap.heatmap_visible()` with actual True before the reset fix; malformed-load preservation already passed. Queued timing waits for run() to return without delivering success to the GUI, proving thread completion is not queued-signal completion.
+**Root cause.** A solid plant shadows its own ground centre. The old controller lacked the canonical document-reset subscription and result-generation/signature ownership checks.
+**Fix/lesson.** Retain the displayed grid policy; accumulate sparse owner-aware receiver sun in the same explicit worker. Reset on `CanvasScene.document_replaced` before teardown, reject stale result ownership and retain the worker until finished. Test missing/stale values as unavailable, not zero/pass; compare against the independent point reference and measured constants. General Diagnostics needs one publisher for all cached producers. No debug instrumentation remains in committed application code.
+
+
+## Case study: sun badge footprint, malformed species and collected observers (F3, 2026-10-12)
+
+**Symptom.** Review found an L-shaped imported plant's badge outside its footprint and a selected legacy tree raising in the refresh timer. The complete suite also caught an exception during delayed QObject destruction.
+**Wrong theories.** None adopted before reproducing the exact shape, accepted metadata, and captured teardown traceback.
+**Evidence.** The imported/grouped regression failed `path.contains(QRectF(1189, 1319, 22, 22))`; accepted string/list species metadata failed at `species.get` with AttributeError. The suite traceback identified `disconnect -> Channel.disconnect: ValueError("listener is not connected")`. All regressions pass after correction.
+**Root cause.** Bounding rectangles contain empty space in concave footprints. Evaluation and canopy paths normalized species differently. A weak observer can be pruned during cyclic collection before Qt emits destroyed.
+**Fix.** Fit the complete badge rectangle inside the undecorated QPainterPath, normalize species once for both consumers, and make destruction cleanup idempotent for an already-removed subscription. Preserve navigation and item geometry across grouped save/load.
+**Lesson.** Test actual containment rather than rectangle placement, exercise accepted legacy metadata, and allow both Python collection and Qt destruction to own cleanup without raising.
