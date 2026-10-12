@@ -32,7 +32,7 @@ are §12, and rows it added to the tables below say "(L1.2)".
   `tests/unit/test_scene3d_contract.py`). That is a rule about its source — no module there uses
   Qt — not about the interpreter: importing the package runs `core/__init__.py`, which loads
   PyQt6 for other `core` modules. It is the production side of the engine boundary since
-  L1.1 (ADR-054, §8.26.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
+  L1.1 (ADR-056, §8.27.1): an engine adapter implements `core/scene3d/sink.py::EngineSink` and is
   driven by `SceneSync`; builders are tested against `RecordingSink` with no GPU.
 - **`EngineSink` has ten methods, and `clear()` is the one an adapter gets wrong.** After
   `clear()` the engine holds nothing — no items, no sun, no ground, no open transaction — and it
@@ -533,7 +533,7 @@ triangles (`scripts/bench_view3d.py`).
 
 ## 12. The production package — `ui/view3d/quick3d/` (L1.2)
 
-Concept and module map: §8.26.2 of `docs/08-crosscutting-concepts/README.md`; the decision and
+Concept and module map: §8.27.2 of `docs/08-crosscutting-concepts/README.md`; the decision and
 every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
 
 - **Sink and host.** `adapter.Quick3DSink(host)` is the `EngineSink`; `host.Quick3DHost(size)`

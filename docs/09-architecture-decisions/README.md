@@ -1915,7 +1915,7 @@ P0/P1 row links its own issue, as decision 1 requires of every P0/P1 row (TD-037
 ### Addendum L1.2 — the production engine package (2026-10-11, #385 story L1.2)
 
 **Status**: Accepted with L1.2. It turns the GO into code: `ui/view3d/quick3d/`, the Qt Quick 3D
-side of ADR-054's `EngineSink`. Nothing is wired into the app yet (L1.3), and the shipped
+side of ADR-056's `EngineSink`. Nothing is wired into the app yet (L1.3), and the shipped
 "3D View…" still opens the Qt 3D window.
 
 **Context.** The spike proved the engine on one long-lived script: build everything, set a model
@@ -2077,7 +2077,7 @@ never shown can render at all, and what the self-test costs on WARP.
       third-party package installs, nor a Python override of a virtual that Qt calls on the
       render thread.
 12. **At rest the wind moves nothing.** With the scene's clock at 0 a vertex is drawn exactly
-    where its mesh puts it; the truth principle (ADR-054) does not stop at the shader. "At
+    where its mesh puts it; the truth principle (ADR-056) does not stop at the shader. "At
     rest" means the clock IS 0 (or the wind strength is): a clock paused at any other value
     leaves the sway in the frame, so a truth probe pins the clock or the strength.
 
@@ -2103,7 +2103,7 @@ rig's numbers.
 | the water colour as one uniform for every pond | water albedo = vertex colour × tint (`VAR_COLOR`) | the same rule as every other kind; the mesh carries its colour |
 | sky light probe, fog, glow, AO, four presets | plain sky colour, flat fill, one look | L1.4 owns looks; a probe costs 40–85 s once on WARP — nothing for a self-test |
 | the meadow hidden and a white probe ground in the orthographic view | the meadow and the plan rectangle always shown | the truth view shows the scene, not a probe rig |
-| `wait_frames` on `frameSwapped`, then grab | grab only | a visible window may present one frame and no more (§11.4.9) |
+| `wait_frames` on `frameSwapped`, then grab | grab only | a visible window may present one frame and no more (§11.4.12) |
 | two hosts, `QQuickView` and `QQuickWidget` | `QQuickView` only | criterion 3; the package does not import `QtQuickWidgets` |
 | one process-wide message recorder | recorders that chain; an exact `environment` class | a render inside a recorded run, or inside the app, must not deafen the outer listener |
 | `SunState` with colour and brightness | direction (`core/scene3d.SunState`) apart from the look | where the sun stands is truth; what it looks like is art direction |
@@ -2261,7 +2261,7 @@ a first fix had not seen:
 4. *Teardown was not exception-safe* (the fourth `reset()` "succeeded" with three Models left),
    *`attach()` accepted an occupied host*, *`wait_ready()` span to its timeout*, *the watchdog's
    exit was not guaranteed*, and *tests of the package wrote into the developer's profile.*
-   → decisions 2, 6 and 9, and §8.10.4.
+   → decisions 2, 6 and 9, and §8.10.6.
 5. Found while fixing, before any reviewer saw it: the first supervised watchdog would have
    ENDED A PROCESS THAT HAD FINISHED ITS BLOCK. A block that is over before the supervising
    process is up destroys the release event; the late supervisor found none, waited on the
@@ -2283,7 +2283,7 @@ a first fix had not seen:
 | A QML function called from Python that fails | missing: PyQt raises `RuntimeError`; one that THROWS: the call returns `None`, silently, and the QML engine emits a warning. Both are an `EngineError` now |
 | pytest-qt and the rule of decision 11 | pytest-qt 4.5 installs a Python Qt message handler for every test (`_QtMessageCapture`), unless the test is marked `no_qt_log`. Under the offscreen platform Qt logs "Loading backend software" and announces no render loop; the in-process host tier ran under that handler several hundred times without a hang. It is marked `no_qt_log` all the same, and real-platform hosts stay in child processes |
 | The frozen gate after review round 2 (built from 7ca084f, locked Python 3.11) | 646,640,942 bytes, 2,442 files — the exe +37,668 bytes and three QML / shader files +691 against round 1's build, plus Git's two OpenSSL DLLs (the PATH effect below). Smoke: exit 124. `--selftest` through `Start-Process -Wait -PassThru`, three runs each: exit 0; 6.1–7.2 s on the GPU and 7.1 s on WARP with a full test suite running on the machine (3.0–4.9 s for the build of 264f06b on a quieter one); `other_threads=0`; the supervising process started in every run and had nothing to do. The frozen exe AS the supervising process, against a dummy: past the deadline the dummy ends with exit code 1 and the reason is in the log; with the wrong creation time it is left alone; released, the supervisor is gone 0.07 s later; with no event it leaves after 0.4 s |
-| Where does `QStandardPaths` point on Windows? | at `<USERPROFILE>/AppData/Roaming` and `…/Local` — the shell expands its known folders from `USERPROFILE`; the `APPDATA` variable is not read. Hence the test children's profile (§8.10.4) |
+| Where does `QStandardPaths` point on Windows? | at `<USERPROFILE>/AppData/Roaming` and `…/Local` — the shell expands its known folders from `USERPROFILE`; the `APPDATA` variable is not read. Hence the test children's profile (§8.10.6) |
 | The lifecycle matrix (round 2) | 19 call orders and 9 controls, one process each, judged against the truth table: green on the GPU and on WARP, and on xcb in the container — where every control that can run there (the three killing orders, the collapsed pane's wrong frames, the message-handler deadlock) fails the way it was first measured to on Windows, and the fourth killing order, `show(); hide(); grab()`, fails only there |
 
 **Review round 3 (2026-10-11).** The scoped re-review confirmed the three round-2 P1 fixes on
@@ -2793,7 +2793,7 @@ It pins:
 
 All three P1 tests (round 1's two, round 2's typing test) fail when their fix is reverted.
 
-## ADR-054: 3D scene pipeline and the truth principle (Phase 17, L1.1)
+## ADR-056: 3D scene pipeline and the truth principle (Phase 17, L1.1)
 
 **Status**: Accepted (2026-10-11, #385 story L1.1, epic #383). This is the scene-pipeline ADR the
 epic reserved as "ADR-049" (that number went to frost dates; ADR-053 announced it for L1.1). It
@@ -3168,7 +3168,7 @@ it stands after that round.
   `item_footprints` hands a closed fence's two rings to `compute_scene_shadows` as two solids, so
   a 10 m × 8 m fence 1.2 m high shades 88.8 m² at a 60° sun where its stroke shades 17.5 m². The
   golden footprint fixture pins `item_footprints` byte for byte, so the fix is a follow-up of its
-  own (§11.4.8 has the reproduction). Until it lands, 2D and 3D disagree ON PURPOSE for a closed
+  own (§11.4.11 has the reproduction). Until it lands, 2D and 3D disagree ON PURPOSE for a closed
   stroke and for a polygon that crosses itself: the 3D record is the stroke, or the resolved
   regions; the 2D footprint is every ring as a solid, or the ring as drawn. That follow-up should
   also move "resolve an outline" and "sort rings into regions" into one `core` function both

@@ -82,7 +82,7 @@ The living register (ADR-047). Every row has a status; P0/P1 rows link their iss
 | TD-033 | Tests (test) | Small Qt-free modules score 80-88 %; the surviving gaps are the canvas edge, stacking expand/arrange and shape-type branches | P2 / S | open | epic checklist | audit-2026-10 AUD-025 |
 | TD-034 | Performance (performance) | NFR-PERF-01 missed in a real window: fit-in-view repaint of the 500-object reference plan takes 54 ms (≤ 18 fps), a zoom step 40 ms; 100 % zoom and pan stay inside the budget | P1 / M | fixed (#409) | #409 | audit-2026-10 AUD-056 (Windows check §8.1) |
 | TD-035 | Bundle size | Master's release ships ~21 MB of Qt Quick 3D runtime it never loads (Quick3D + ShaderTools DLLs and QML modules, pulled in by the PyInstaller QtQml hook; measured in the ADR-048 evidence run). Phase 17 puts it to use; on a NO-GO, exclude it in `installer/ogp.spec`. | P3 / S | accepted (ADR-048) | #384 | ADR-048 L0 evidence (Windows v6 footprint) |
-| TD-036 | 3D geometry source | The Qt Quick 3D spike builds its world from private canvas helpers (`_item_footprints`, `_plant_canopy_radius_cm` in `ui/canvas/sun_shadow_controller.py`). The Qt-free core of Phase 17 L1.1 must promote them to a public, tested module before building on them (senior review, ADR-048). **Fixed in L1.1:** `ui/canvas/footprints.py` is their public home (`item_outline`, `item_footprints`, `plant_canopy_radius_cm`), pinned by a golden fixture generated before the move; the spike, the shadow overlay and the 3D snapshot import the public names. Two underscore aliases stay in `sun_shadow_controller.py` for two frozen test suites until L1.10. | P2 / M | fixed (L1.1, ADR-054) | #385 | ADR-048 L0 senior review |
+| TD-036 | 3D geometry source | The Qt Quick 3D spike builds its world from private canvas helpers (`_item_footprints`, `_plant_canopy_radius_cm` in `ui/canvas/sun_shadow_controller.py`). The Qt-free core of Phase 17 L1.1 must promote them to a public, tested module before building on them (senior review, ADR-048). **Fixed in L1.1:** `ui/canvas/footprints.py` is their public home (`item_outline`, `item_footprints`, `plant_canopy_radius_cm`), pinned by a golden fixture generated before the move; the spike, the shadow overlay and the 3D snapshot import the public names. Two underscore aliases stay in `sun_shadow_controller.py` for two frozen test suites until L1.10. | P2 / M | fixed (L1.1, ADR-056) | #385 | ADR-048 L0 senior review |
 | TD-037 | Task calendar | Every GUI task surface (the planting calendar's Gantt and dashboard, the Tasks tab) takes its frost-relative windows from the current year's frost only, and the Gantt clips them to that year, while the agent's `get_tasks` / `get_task_calendar` (`generate_for_date_window`) also list windows anchored on other years' frosts. So the GUI does not show a task whose window is anchored on another year's frost: with a 9 April frost, garlic's autumn sowing (9–23 October 2026) appears on no GUI surface. A sweep of the 6 frost dates `scripts/measure_task_window_sweep.py` uses finds each of the bundled (species, task type) windows missed at some frost date; the `--wide` mode covers all 118 species on every day of 2026. Examples, sweeps and the code sites to change are in #414. | P1 / M | fixed (#414) | #414 | ADR-048 L0 senior review (PR #413) |
 
 ## 11.4 Known Development Pitfalls
@@ -1004,10 +1004,10 @@ before saying a fix changed it.*
   - **A two-way view must write back only what changed** (senior review round 2, P1). Round 1 made the toolbar a view of the clock: the app mirrors every clock change into it with `set_datetime_local`. That called `QDateEdit.setDate()` with the *unchanged* date on every Animate tick (every 200 ms). `setDate` makes the widget redraw its text whenever the text differs from the stored value, and a half-typed date always differs, so typing a date while animating was impossible. Measured with QTest keystrokes: the field read `'2026-06-'`, one tick turned it back into `'2026-06-21'`, and the typed `28` was lost. On master the tick only moved the slider. Fix: the setter writes a field only when it differs. Pinned by `test_sim_clock_wiring.py::TestTypingUnderAnimate`, which fails with the unconditional `setDate`. The same round found `run_for_day` still guarded on `is_running`: a second launch in the queued window let the first worker's `finished` `deleteLater` the running second one, a Qt fatal abort that the busy button keeps unreachable today. It now refuses while `result_pending` (`TestHeatmapLaunchGuard`). *Mirroring a model into an editable widget is a write into the user's hands: compare before you set.*
   - **Two traps in writing the clock itself.** `datetime.time` equality ignores `fold`, so the two occurrences of 02:30 on a fall-back night compare equal. A change-detecting setter would swallow the switch between them, so `SimInstant` equality includes `fold`. And the first range check ran on the instant's UTC date, which refused a valid local 1971-01-01 00:00 at +09:00 (UTC 1970-12-31). The edge test found it before any caller did: the platform guard now allows a day of margin, and the range itself is enforced on the local date.
 
-### 11.4.8 Four things measured while building the 3D scene contract (Phase 17 L1.1, #385)
+### 11.4.11 Four things measured while building the 3D scene contract (Phase 17 L1.1, #385)
 
 None of these was reported by a user: each was found by measuring a claim before building on it
-(ADR-054). Each would have shipped a diff that silently lies to the engine.
+(ADR-056). Each would have shipped a diff that silently lies to the engine.
 
 - **A hash is not an equality — `hash(-1.0) == hash(-2.0)` in CPython.** The first design compared
   two snapshots by three hash signatures alone ("cheap: a hash of already-normalised tuples"). A
@@ -1071,7 +1071,7 @@ building on.
   gate measured an extensive quantity.* Fix: `Record.holes`, orientation enforced by the record,
   a default builder that cuts holes out and checks its own cap area, a plan-view check in
   `verify_builder`, and a third committed plan made of the shapes the bench plans lack
-  (ADR-054 decision 3 and 9; `tests/integration/test_scene3d_snapshot.py::TestClosedStrokes`,
+  (ADR-056 decision 3 and 9; `tests/integration/test_scene3d_snapshot.py::TestClosedStrokes`,
   `test_scene3d_edge_plan.py`). A 2 cm gap **at a corner** does not help: the strokes of the two
   sides overlap there, and the loop closes anyway (35,952 cm², one hole).
   - **"A gap narrower than the stroke closes it" — written here first, and false.** A stroke
@@ -1204,7 +1204,7 @@ building on.
   when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the
   preset's width whatever was saved. The edge-case plan therefore uses fences without a preset.
 
-### 11.4.9 What the engine taught while the production package was built (Phase 17 L1.2, #385)
+### 11.4.12 What the engine taught while the production package was built (Phase 17 L1.2, #385)
 
 The first six were found by measuring before building on them; the rest by two independent
 reviews and by CI's runs of the branch — each of those is a thing a green suite did not see
@@ -1355,7 +1355,7 @@ a container with the CI job's packages.
   `test_a_pane_beyond_the_screens_edge_gets_a_frame_or_a_prompt_refusal_and_answers_when_it_is_back`
   and, without a window, `tests/ui/test_quick3d_host.py::TestWaitReady`.
 - **(Round 3) A contract written down in nine places is wrong in three.** The host's state
-  table stood in `lifecycle.py`, `host.py`, §8.26.2, ADR-048, this section, the glossary, the
+  table stood in `lifecycle.py`, `host.py`, §8.27.2, ADR-048, this section, the glossary, the
   building-block view and both copies of the `ogp-3d-renderer` skill; after round 2 three of
   them said "after every resize the host is starting for one pass", which the code did not
   do and Qt does not do. *Fix:* the module docstring of `lifecycle.py` IS the contract; every
@@ -1420,7 +1420,7 @@ a container with the CI job's packages.
   around rendering on the calling thread — the one-shot offscreen frame — where every message
   was measured to arrive on that thread (the recorder counts the others; the tier requires
   0), and never while a Qt Quick window is shown (`render_records` refuses). A shown host
-  reports what Qt delivers on the GUI thread instead (`health()`, §8.26.2). *Lesson:* "thread
+  reports what Qt delivers on the GUI thread instead (`health()`, §8.27.2). *Lesson:* "thread
   safe" is not "safe to call from that thread" when the caller holds a lock you need — and
   the GIL is a lock. Pinned as a control that must hang
   (`test_a_python_message_handler_beside_a_shown_window_deadlocks`).
@@ -1500,7 +1500,7 @@ a container with the CI job's packages.
   log directory wrote into the developer's real roaming profile — under a throwaway
   organisation name, which is how the empty directory it left behind was found. Qt Quick's
   shader cache and the graphics driver's caches hang on the same profile. *Fix:* the children
-  of the engine tests get a profile of the test process's own (§8.10.4), and the one test
+  of the engine tests get a profile of the test process's own (§8.10.6), and the one test
   that resolves the log directory first ASKS Qt where it would be — which creates nothing —
   and stops unless the answer is inside that profile.
 - **`exposure` is not a property of `SceneEnvironment`.** Only `ExtendedSceneEnvironment`

@@ -279,7 +279,7 @@ store would read and write the developer's own settings: loading a plan ends wit
 write to Recent Files. The rule: **a child has the two names rebound before it can
 build a store, and empties its own key when it exits.** For the children of the 3D
 engine's tests that is not left to each child. Their environments have one source,
-`tests/integration/quick3d_render_support.isolated_env` (gated: §8.10.4), and it puts
+`tests/integration/quick3d_render_support.isolated_env` (gated: §8.10.6), and it puts
 a directory holding one `sitecustomize.py` first on the child's `PYTHONPATH`. Python
 imports that file at start-up; it imports nothing of the app, waits for the import of
 `app/settings.py`, and rebinds the names the moment that module's body has run —
@@ -640,7 +640,7 @@ Patterns `tests/integration/test_footprints_golden.py`, `test_scene3d_snapshot.p
 `test_scene3d_pipeline.py`, `test_scene3d_edge_plan.py`, `tests/unit/test_scene3d_sync.py` and
 `tests/perf/test_scene3d_snapshot_budget.py` established; reuse them where they fit. The last
 four were paid for by an independent review that found two interface defects behind a green
-suite (ADR-054, "What the first version got wrong").
+suite (ADR-056, "What the first version got wrong").
 
 - **A timing budget is asserted on untraced code.** A budget for pure-Python code cannot be
   asserted under a line tracer: under `pytest --cov=open_garden_planner --cov-branch` — how CI's
@@ -703,7 +703,7 @@ suite (ADR-054, "What the first version got wrong").
   (it rewrites source files): run it after changing the pipeline or its tests, and add a mutant
   with every rule.
 
-### 8.10.4 The 3D render tier (Phase 17 L1.2)
+### 8.10.6 The 3D render tier (Phase 17 L1.2)
 
 3D cannot be rendered in the default test run: `tests/conftest.py` sets
 `QT_QPA_PLATFORM=offscreen`, and under that platform Qt Quick falls back to the software scene
@@ -750,7 +750,7 @@ window where a 1024 × 768 screen leaves it (asserted: the pane WAS shown beyond
 and the condition that broke CI is not waited for, it is made: `pane_without_paint` puts an
 event filter on the view that eats `Expose`, `UpdateRequest` and `Paint` — the view is on
 the screen and nothing draws it — because whether a machine withholds those by itself was
-measured to change within a day (display asleep, display awake; §11.4.9).
+measured to change within a day (display asleep, display awake; §11.4.12).
 
 **Running it** (it opens windows on the desktop):
 
@@ -823,7 +823,7 @@ and must report failures and not one skip (measured: 9 failed, 43 errors, 12 pas
   embedding test must turn the window into an RHI surface. Angles that cannot tell two senses
   apart (0°, 90° for a rectangle) are not enough — the matrix has two that can.
 - **`grab()` on a live host is the only moment of certainty.** The tier never waits for a frame
-  to be presented (§11.4.9: with the display asleep a visible window presents one frame and
+  to be presented (§11.4.12: with the display asleep a visible window presents one frame and
   then none); every step is "change, grab, judge" — after `wait_ready()` said the host is live,
   an answer the driver checks at every place it asks.
 - **A crash is not an exception: one call order per process.** The lifecycle matrix starts a
@@ -857,7 +857,7 @@ and must report failures and not one skip (measured: 9 failed, 43 errors, 12 pas
   in-process test that shows a host is marked `@pytest.mark.no_qt_log`
   (`tests/ui/test_quick3d_host.py` is, as a module), and no test of that file installs a
   Python handler while a host is shown (the file pins it about itself). The driver
-  installs none for its shown-host scenarios (it would deadlock: §8.26.2). Two witnesses
+  installs none for its shown-host scenarios (it would deadlock: §8.27.2). Two witnesses
   report instead, and each has a positive control: an OFFSCREEN frame records its own
   messages, on the calling thread (a broken shader fails the render, and the report says no
   message arrived on another thread); for a SHOWN window Qt prints its messages to the
@@ -960,7 +960,7 @@ another local user before the app writes it. Bandit does not flag this form (it 
   unpredictable name, mode 0700) and is removed afterwards.
 - **Tests never write under a real user location**: they pass an explicit path
   (`OGP_SELFTEST_LOG`), or give the child process a user profile of its own
-  (`quick3d_render_support.isolated_env`, §8.10.4). A throwaway application NAME is not
+  (`quick3d_render_support.isolated_env`, §8.10.6). A throwaway application NAME is not
   enough — the first version of this rule said it was: the directory is then still created in
   the developer's real profile, under that name (found in review round 2; on Windows
   `QStandardPaths` follows `USERPROFILE`, not `APPDATA`). A test that lets the app resolve a
@@ -2265,7 +2265,7 @@ L1.1); only `ui/view3d/qt3d_adapter.py` may import
 `PyQt6.Qt3D*` (ADR-038's engine-swap insurance). The sun vector's ground
 projection is pinned exactly opposite the 2D shadow direction — if the
 3D light and the 2D overlay ever disagree, a unit test fails first.
-Contract v2 (§8.26.1) keeps the same single mapping as numpy
+Contract v2 (§8.27.1) keeps the same single mapping as numpy
 (`core/scene3d/frame.py`; a drift-guard test holds the two equal) and adds
 the item-local frame beneath it.
 
@@ -2803,13 +2803,13 @@ concern at the layer counts this app supports, and unchanged by #338 (the
 formula was already `layer.z_order * 100` before per-object stacking; #338
 only subdivides the same band, it does not widen it).
 
-## 8.26 3D scene pipeline (Phase 17 L1, #385, ADR-054)
+## 8.27 3D scene pipeline (Phase 17 L1, #385, ADR-056)
 
-How the plan reaches a 3D engine. Each L1 story adds its own `### 8.26.N` subsection at the end;
-this section is the map. The decisions and their rejected alternatives are ADR-054; the engine
+How the plan reaches a 3D engine. Each L1 story adds its own `### 8.27.N` subsection at the end;
+this section is the map. The decisions and their rejected alternatives are ADR-056; the engine
 facts are the `ogp-3d-renderer` skill; the look is `ogp-lush-cinematic`.
 
-### 8.26.1 Scene contract v2 — records, diff, builders, sink (L1.1)
+### 8.27.1 Scene contract v2 — records, diff, builders, sink (L1.1)
 
 **The pipeline.** Five steps, all Qt-free except the first:
 
@@ -2963,7 +2963,7 @@ invalid mesh for a test with `dataclasses.replace(mesh, positions=…)`, not thr
 **The record grid.** Lengths are snapped to 1e-7 cm, angles to 1e-9° (`quantize_cm`,
 `quantize_deg`), so the same geometry reached along two float paths is one record. This is
 load-bearing, not hygiene: without it a HOUSE with a ridge was rebuilt on 689 of 1,000 moves
-(ADR-054 decision 5).
+(ADR-056 decision 5).
 
 **Signatures and the diff.** `geometry_sig`, `transform_sig` and `material_sig` are hashes of the
 three field groups; `Record.same_geometry` / `same_transform` / `same_material` compare the
@@ -3097,10 +3097,10 @@ for each rule your builder must keep to `scripts/mutation_check_scene3d.py`.
 `srgb_to_linear` and `item_seed` keep their names. Drift-guard tests keep the ported helpers equal
 to the spike's until L1.10 deletes it.
 
-### 8.26.2 The engine package — `ui/view3d/quick3d/` (L1.2)
+### 8.27.2 The engine package — `ui/view3d/quick3d/` (L1.2)
 
 The other side of the `EngineSink` seam: Qt Quick 3D. The decision, what was ported from the
-spike and every measurement are the **ADR-048 addendum "L1.2"**; the engine's traps are §11.4.9
+spike and every measurement are the **ADR-048 addendum "L1.2"**; the engine's traps are §11.4.12
 and the `ogp-3d-renderer` skill. L1.2 wires nothing into the app — the shipped "3D View…" still
 opens the Qt 3D window; L1.3 embeds this package's host.
 
@@ -3179,7 +3179,7 @@ show it.
 
 A Qt Quick window can be asked for a frame at moments when answering kills the process — not
 with an exception: the grab returns a correct image and the process dies in the next passes of
-the event loop — and at moments when the answer is a picture that is not the scene (§11.4.9).
+the event loop — and at moments when the answer is a picture that is not the scene (§11.4.12).
 So the host never guesses. `host.state` is derived on every call from facts the host reads
 from Qt (`Quick3DHost._facts()` → `lifecycle.state_of`, a pure function whose whole truth table
 runs in the unit tests) plus the two things Qt cannot report: the one offscreen frame was
@@ -3189,7 +3189,7 @@ resized and collapsed by its parent, which asks nobody.
 **The contract is written down in ONE place: the module docstring of
 `src/open_garden_planner/ui/view3d/quick3d/lifecycle.py`** — the facts, the six states, what
 each state promises, which call is legal in which state, what `wait_ready()` means and what
-raises what. Nothing else restates it — not this section, not ADR-048, not §11.4.9, not the
+raises what. Nothing else restates it — not this section, not ADR-048, not §11.4.12, not the
 `ogp-3d-renderer` skill, not `host.py`. It stood in nine places once, and three of them were
 wrong (review round 3); `tests/unit/test_quick3d_packaging.py` now fails a second copy of the
 state table. Read it there before calling the host. What this section adds is how to live
@@ -3198,7 +3198,7 @@ with it:
 - **When you NEED a frame — the view was just opened, an export is about to read it — call
   `wait_ready()` after `show()` or after the change of size or visibility, and act on its
   answer.** Do not reason about passes of the event loop: Qt delivers some resizes inside
-  the call that caused them and others later (§11.4.9), and the main window the workspace
+  the call that caused them and others later (§11.4.12), and the main window the workspace
   is embedded in is put into full screen by `application.py`. It is bounded — its timeout,
   1 s by default, the delivery of events included — and it answers False promptly when
   nothing is on its way; False is not "never", the cause may go. The first show of a
@@ -3217,7 +3217,7 @@ with it:
   and what to do; a caller that draws on a timer skips that tick. `EngineError` says the
   engine failed.
 - **`grab()` on a live host is the synchronisation point**: it renders the current state now
-  and reads it back. Do not wait for `frameSwapped` to be sure of a frame (§11.4.9).
+  and reads it back. Do not wait for `frameSwapped` to be sure of a frame (§11.4.12).
 - **`pick(x, y)` answers for the frame rendered last** and returns the item id, the part index
   and the hit point in the SCENE frame. "No hit" never means "could not look": a scene
   function that fails is an `EngineError`, not an empty answer.
@@ -3229,7 +3229,7 @@ with it:
   `project` raise `EngineError`: a frame without the garden must not pass for one. Nothing
   collapses or minimises there either, which is why the default test tier checks the state
   machine's logic with the facts put where a window system would put them, and the render
-  tier checks that Qt really reports them (§8.10.4).
+  tier checks that Qt really reports them (§8.10.6).
 - **Every property write is checked.** A name `Garden.qml` does not declare is an
   `EngineError` that names it — not a dynamic property that swallows the value.
 
@@ -3267,7 +3267,7 @@ destroy what another owner is showing.
 Recovery after a failed engine call is `sync.reset()`, then `sync.apply(...)`; when the engine
 itself died, `sink.attach(fresh_host)` in between points the emptied sink at a new host. It is
 proven for every engine call the sink makes — one call fails in mid-transaction, reset, apply
-— against `sync.expected_state()` (§8.26.1), on a list-backed engine, on the real host, and in
+— against `sync.expected_state()` (§8.27.1), on a list-backed engine, on the real host, and in
 pixels; and with an engine that REFUSES to destroy, where no `reset()` may report success
 while a Model is left.
 
@@ -3336,7 +3336,7 @@ logging rules put back. A process that owns itself wraps the call in `runlog.wat
 the time is up the reason, then every thread's stack, are written to the log and the process
 exits with code 1. With `supervised=True` a second process ends the first from outside ten
 seconds later if it is still there — on Windows the in-process exit was measured not to end a
-process deadlocked inside Qt (§11.4.9). One watchdog per process at a time: a second one
+process deadlocked inside Qt (§11.4.12). One watchdog per process at a time: a second one
 while the first is armed raises `WatchdogError` (the timer behind it is one per process, and
 a supervising process acts for exactly one block).
 
@@ -3354,7 +3354,7 @@ the log — when it is still alive at 310 s. It acts for ONE block of ONE proces
 nothing else: the process is named by pid and creation time and must be the supervisor's own
 parent (in the frozen build: running the same image); the block by a random nonce in the name
 of its release event — a name per process let a finished block's late supervisor terminate
-the block after it (§11.4.9); and arguments it may not act on end it with exit code 2 and one
+the block after it (§11.4.12); and arguments it may not act on end it with exit code 2 and one
 line, before anything is opened. The safety net is checked like the subsystems it guards: on
 Windows the self-test FAILS when that process did not start, refused, never found this block
 (exit code 4 — it used to leave with 0, like one that did its job), or did not leave within

@@ -59,7 +59,7 @@ src/open_garden_planner/
 │   ├── shadow_geometry.py        # Qt-free shadow sweep/union — L=h/tanα, Minkowski sweep, pyclipper union (US-E3, ADR-037)
 │   ├── shade_aggregation.py      # Qt-free hours-of-sun sampling/bands/grid — rasterizer injected (US-E4, ADR-037)
 │   ├── heatmap_render.py         # Qt-free heatmap rendering — cool→warm ramp LUT + marching-squares hour contours (US-E4)
-│   ├── scene3d/                  # Qt-free 3D scene core (Phase 17 L1.1, ADR-054) — see §5.10
+│   ├── scene3d/                  # Qt-free 3D scene core (Phase 17 L1.1, ADR-056) — see §5.10
 │   │   ├── record.py             #   contract v2: Record (outer rings + holes) / Transform / Material / Params, three signatures, the record grid
 │   │   ├── scene_diff.py         #   diff() → SceneDiff(added, removed, transform, material, geometry, reordered)
 │   │   ├── frame.py              #   scene ↔ engine (det +1), item-local ↔ scene, LocalFrame, engine_pose, the sun vector
@@ -128,7 +128,7 @@ src/open_garden_planner/
 │   │   ├── canvas_view.py        # Pan/zoom, key/mouse handling
 │   │   ├── canvas_scene.py       # Scene (holds objects)
 │   │   ├── dimension_lines.py    # Dimension line rendering & management
-│   │   ├── footprints.py         # THE footprint extraction — item_outline / item_footprints / plant_canopy_radius_cm; shadows, heatmap and 3D all read it (Phase 17 L1.1, ADR-054)
+│   │   ├── footprints.py         # THE footprint extraction — item_outline / item_footprints / plant_canopy_radius_cm; shadows, heatmap and 3D all read it (Phase 17 L1.1, ADR-056)
 │   │   ├── sun_shadow_controller.py # Runtime-only solar shadow overlay + debounced recompute (US-E3, ADR-037)
 │   │   ├── sun_heatmap.py        # QImage rasterizer + HeatmapWorker(QThread) + cool→warm ramp overlay + hourly contour lines/labels (US-E4)
 │   │   ├── geometry_apply.py     # THE canonical resize/rotate/vertex apply path — panel + handles + agent (US-D2.2/D2.6)
@@ -431,10 +431,10 @@ Black-box view of persistent plant collections, favourites, drag-to-canvas orche
 | `ui/canvas/canvas_view.py` (`_create_plant_item_at_scene_pos`) | Canonical unified plant creation helper shared between gallery drops and `plant_list:<entry_id>` drops: sizes footprint (respects `max_spread_cm`), auto-parents to underlying bed, stamps default planting date (US-E8), assigns active layer, runs as a single undo step via `CreateItemCommand`. | `(scene_pos, tool_type, obj_type, radius, ...)` → created `CircleItem` |
 | `agent_api/server.py` (`garden://plant-lists`) | Read-only MCP resource exposing all lists and entries (`id`, `name`, `species_key`, `note`, `added_at`) to AI assistants. | GET `garden://plant-lists` → JSON catalog |
 
-## 5.10 3D Scene Pipeline — Qt-free core (Phase 17 L1.1, #385, ADR-054)
+## 5.10 3D Scene Pipeline — Qt-free core (Phase 17 L1.1, #385, ADR-056)
 
 Black-box view of the path from the plan to a 3D engine. Nothing here renders: the engine adapter
-is `ui/view3d/quick3d/` (L1.2). The concept, the diff table and the builder how-to are §8.26.1.
+is `ui/view3d/quick3d/` (L1.2). The concept, the diff table and the builder how-to are §8.27.1.
 `core/scene3d/` imports the standard library, numpy and Qt-free `core` siblings only (pinned by an
 AST scan that follows those siblings). That is a statement about the source — no module here uses
 Qt — not about the interpreter: importing the package runs `core/__init__.py`, which loads PyQt6
@@ -460,7 +460,7 @@ Black-box view of `ui/view3d/quick3d/`, the engine side of the 3D scene pipeline
 the only place in the product that imports `PyQt6.QtQuick3D`, `QtQuick` or `QtQml` (an AST scan
 over the whole tree pins it: `tests/unit/test_quick3d_boundary.py`), it is never loaded at app
 start, and L1.2 wires it into nothing — the shipped "3D View…" still opens the Qt 3D window
-(L1.3 embeds the host). Concept: §8.26.2. Engine facts: the `ogp-3d-renderer` skill.
+(L1.3 embeds the host). Concept: §8.27.2. Engine facts: the `ogp-3d-renderer` skill.
 
 | Building block | Responsibility | Interface (in → out) |
 |----------------|----------------|----------------------|
