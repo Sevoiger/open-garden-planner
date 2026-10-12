@@ -46,6 +46,9 @@ Item {
     property vector3d groundCenter: Qt.vector3d(0, 0, 0)
     property real groundWidth: 1000         // along x (East), cm
     property real groundDepth: 1000         // along z (North), cm
+    // true while baked tiles lie on the plan (quick3d/ground_tiles.py, L1.5): the bare
+    // rectangle below is then not drawn — two coplanar surfaces would fight for the depth
+    property bool groundTiled: false
 
     // ---- camera (Quick3DHost.set_shot) ----
     property bool topDown: false
@@ -104,6 +107,41 @@ Item {
                 "r": p.tint.r, "g": p.tint.g, "b": p.tint.b,
                 "casts": p.castsShadows, "geometry": p.geometry !== null,
                 "visible": p.visible
+            })
+        }
+        return out
+    }
+
+    // ---- baked ground tiles (quick3d/ground_tiles.py drives these four) ----
+    function createGroundTile(column, row, data) {
+        return groundTile.createObject(groundTiles, {
+            "tileColumn": column, "tileRow": row, "tileData": data
+        })
+    }
+
+    function placeGroundTile(tile, x, z, width, depth) {
+        tile.position = Qt.vector3d(x, 0, z)
+        tile.scale = Qt.vector3d(width / 100, depth / 100, 1)
+    }
+
+    function destroyGroundTile(tile) {
+        tile.retired = true
+        tile.visible = false
+        tile.tileData = null
+        tile.destroy()
+    }
+
+    function listGroundTiles() {
+        var out = []
+        for (var i = 0; i < groundTiles.children.length; ++i) {
+            var t = groundTiles.children[i]
+            if (t.retired)
+                continue   // destroyed, waiting for its deferred delete
+            out.push({
+                "column": t.tileColumn, "row": t.tileRow,
+                "x": t.position.x, "y": t.position.y, "z": t.position.z,
+                "width": t.scale.x * 100, "depth": t.scale.y * 100,
+                "textured": t.tileData !== null, "visible": t.visible
             })
         }
         return out
@@ -216,6 +254,37 @@ Item {
                 property real uRough: 0.02
                 shadingMode: CustomMaterial.Shaded
                 fragmentShader: "water.frag"
+            }
+        }
+    }
+    // One baked ground tile (L1.5): a quad in the plan's plane with its own texture.
+    //  - flipV: a tile's pixel rows are north-up, the engine samples bottom-up
+    //    (measured in the spike: without it the plan is mirrored north-south);
+    //  - ClampToEdge: with the default Repeat, linear filtering at a tile's edge
+    //    blends in the texels of its OPPOSITE edge - a line along every tile border;
+    //  - not pickable, like the bare plan rectangle: a click on the ground hits no item.
+    Component {
+        id: groundTile
+        Model {
+            property int tileColumn: 0
+            property int tileRow: 0
+            property var tileData: null
+            property bool retired: false   // set by destroyGroundTile()
+            source: "#Rectangle"
+            eulerRotation.x: -90
+            receivesShadows: true
+            castsShadows: false
+            materials: PrincipledMaterial {
+                baseColorMap: Texture {
+                    textureData: tileData
+                    flipV: true
+                    tilingModeHorizontal: Texture.ClampToEdge
+                    tilingModeVertical: Texture.ClampToEdge
+                    generateMipmaps: true
+                    mipFilter: Texture.Linear
+                }
+                roughness: 0.92
+                specularAmount: 0.2
             }
         }
     }
@@ -348,9 +417,8 @@ Item {
             }
         }
 
-        // the plan rectangle. L1.5 puts the baked 2D surfaces on it (a Texture from a
-        // QQuick3DTextureData needs flipV: true - texture rows are north-up); until
-        // then it is bare ground in the meadow's albedo.
+        // the plan rectangle, bare: ground in the meadow's albedo. Drawn only while no
+        // baked tiles lie on the plan (L1.5: the groundTile component above).
         Model {
             source: "#Rectangle"
             position: Qt.vector3d(root.groundCenter.x, 0, root.groundCenter.z)
@@ -358,7 +426,7 @@ Item {
             scale: Qt.vector3d(root.groundWidth / 100, root.groundDepth / 100, 1)
             receivesShadows: true
             castsShadows: false
-            visible: root.groundVisible
+            visible: root.groundVisible && !root.groundTiled
             materials: PrincipledMaterial {
                 baseColor: root.meadowColor
                 roughness: 0.92
@@ -366,6 +434,7 @@ Item {
             }
         }
 
+        Node { id: groundTiles }
         Node { id: parts }
     }
 }

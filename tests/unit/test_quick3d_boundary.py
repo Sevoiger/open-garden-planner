@@ -35,7 +35,7 @@ ENGINE_MODULES = ("PyQt6.QtQuick3D", "PyQt6.QtQuick", "PyQt6.QtQml", "PyQt6.QtQu
 #: one engine module (dormant, ``--spike-q3d`` only; deleted with the spike in L1.10).
 ALLOWED_OUTSIDE = {PRODUCT / "spike_q3d" / "quick.py"}
 #: Inside the package: the modules that IMPORT the engine …
-ENGINE_IMPORTERS = {"geometry.py", "host.py"}
+ENGINE_IMPORTERS = {"geometry.py", "ground_tiles.py", "host.py"}  # ground_tiles: L1.5
 #: … and the one that names its bindings as strings, to import them one by one and
 #: report each (the self-test).
 ENGINE_NAMERS = {"selftest.py"}

@@ -135,6 +135,8 @@ def test_every_material_kind_has_its_part_component() -> None:
 def test_every_part_component_is_a_pickable_model_with_the_tint_properties() -> None:
     code = _scene()
     blocks = re.split(r"Component\s*\{\s*id:\s*", code)[1:]
+    # the ground tile (L1.5) is a component too, and no part: test_quick3d_ground_tiles.py
+    blocks = [block for block in blocks if block.split()[0] != "groundTile"]
     assert len(blocks) == len(PART_COMPONENTS)
     for block in blocks:
         name = block.split()[0]

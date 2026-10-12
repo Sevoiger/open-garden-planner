@@ -182,6 +182,7 @@ a = Analysis(
         "open_garden_planner.ui.view3d.quick3d",
         "open_garden_planner.ui.view3d.quick3d.adapter",
         "open_garden_planner.ui.view3d.quick3d.geometry",
+        "open_garden_planner.ui.view3d.quick3d.ground_tiles",
         "open_garden_planner.ui.view3d.quick3d.host",
         "open_garden_planner.ui.view3d.quick3d.lifecycle",
         "open_garden_planner.ui.view3d.quick3d.look",
