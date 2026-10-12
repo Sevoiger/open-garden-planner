@@ -55,6 +55,7 @@ from open_garden_planner.core.shadow_geometry import (
 )
 from open_garden_planner.core.sim_clock import SimChange, SimClock
 from open_garden_planner.core.solar import solar_position
+from open_garden_planner.ui.sim_clock_subscription import connect_qobject
 
 from .footprints import ItemLookup, item_base_cm, item_footprints, plant_canopy_radius_cm
 
@@ -275,7 +276,9 @@ class SunShadowController(QObject):
         # Qt-free channel (ADR-053): like a Qt connection it holds this bound
         # method weakly, so controller → clock → controller is no reference
         # cycle and an unparented controller dies with its last reference.
-        self._clock.instant_changed.connect(self._on_clock_changed)
+        # Through ``connect_qobject`` (L1.3): the channel cannot see Qt destroy
+        # this object with its parent, and would call into the dead slot.
+        connect_qobject(self._clock.instant_changed, self._on_clock_changed)
         self._overlay: SunShadowOverlayItem | None = None
         self._state = STATE_DISABLED
         self._last_key: tuple[Any, ...] | None = None

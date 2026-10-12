@@ -4826,8 +4826,12 @@ class GardenPlannerApp(QMainWindow):
         # 3D light. The overlay subscribes itself to instant_changed (constructed
         # above, so on that channel it re-solves before _on_sim_instant_changed;
         # date_changed — and with it _on_sim_date_changed — fires before both).
-        self._sim_clock.date_changed.connect(self._on_sim_date_changed)
-        self._sim_clock.instant_changed.connect(self._on_sim_instant_changed)
+        # Through connect_qobject (L1.3, ADR-053 addendum): every QObject on the
+        # clock is disconnected when Qt destroys it, not only when Python does.
+        from open_garden_planner.ui.sim_clock_subscription import connect_qobject
+
+        connect_qobject(self._sim_clock.date_changed, self._on_sim_date_changed)
+        connect_qobject(self._sim_clock.instant_changed, self._on_sim_instant_changed)
 
         # ── Find & Replace panel (US-11.24) ──────────────────────────────────
         from open_garden_planner.ui.panels.find_replace_panel import FindReplacePanel
