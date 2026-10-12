@@ -206,7 +206,11 @@ def test_the_shader_moves_a_vertex_by_band_widths_and_pulls_it_in_front() -> Non
     assert "UV0.x * width" in source and "UV0.y * width" in source
     assert "uFlat + depth * uPerDepth" in source
     assert "mat3(MODEL_MATRIX) * NORMAL" in source
-    assert "POSITION.z *= uDepthScale;" in source
+    # towards the NEAR PLANE, wherever the backend has it: plainly scaling clip z is
+    # right for a 0..1 depth range only — on OpenGL (-1..1) it put the ring behind the
+    # ground of the truth view (measured: 0 ring pixels; the render tier's OpenGL row)
+    assert "POSITION.z = mix(NEAR_CLIP_VALUE * POSITION.w, POSITION.z, uDepthScale);" in source
+    assert "POSITION.z *=" not in source
     fragment = strip_comments((QML_DIR / "ring.frag").read_text(encoding="utf-8"))
     assert "FRAGCOLOR = vec4(uColor, 1.0);" in fragment
     block = ring_block()

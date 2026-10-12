@@ -10,10 +10,13 @@
 // near and far, so the ring is a hair neither when the whole garden is framed nor a
 // plank in walk mode.
 //
-// uDepthScale < 1 pulls the ring towards the camera in depth only (its place on the
-// screen is untouched): at 0.01 it is in front of everything further away than about
-// twice the near plane. Scaling clip z works for a depth range of 0..1 (Direct3D,
-// Vulkan, Metal) and of -1..1 (OpenGL) alike.
+// uDepthScale < 1 pulls the ring towards the NEAR PLANE in depth only (its place on
+// the screen is untouched): at 0.01 its depth is a hundredth of what it was. Where the
+// near plane is in clip space depends on the backend - z = 0 (Direct3D, Vulkan, Metal)
+// or z = -w (OpenGL) - and NEAR_CLIP_VALUE says which. Plainly scaling z is right only
+// for the first: on OpenGL it moves the ring to the MIDDLE of the depth range, which
+// in the orthographic truth view is behind the ground (measured: 0 ring pixels in
+// every top-down frame, 1,548 with this line).
 void MAIN()
 {
     vec4 world = MODEL_MATRIX * vec4(VERTEX, 1.0);
@@ -23,5 +26,5 @@ void MAIN()
     world.xyz += outward * (UV0.x * width);
     world.y += UV0.y * width;
     POSITION = VIEWPROJECTION_MATRIX * world;
-    POSITION.z *= uDepthScale;
+    POSITION.z = mix(NEAR_CLIP_VALUE * POSITION.w, POSITION.z, uDepthScale);
 }
