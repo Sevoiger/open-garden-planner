@@ -97,6 +97,14 @@ PARAM_SPRITE_SPECIES: Final = "sprite_species"
 PARAM_PLANT_CATEGORY: Final = "plant_category"  # str — PlantCategory name
 PARAM_PATH_STYLE: Final = "path_style"  # str — PathFenceStyle name, when not NONE
 PARAM_CONTAINER_MATERIAL: Final = "container_material"  # str — container_model key
+#: ``(x, y)`` — where the record's local origin lies in the ITEM's own coordinates
+#: (L1.5): the frame the 2D canvas paints the item in. A fill texture is anchored
+#: at the item's coordinate origin — not at its centre — and a furniture sprite is
+#: aligned to whole centimetres there, so the ground bake paints in that frame:
+#: an item point is ``paint_origin + local point``. It changes with the item's
+#: geometry (a resize, a vertex edit) and never with a move or a turn. Absent for
+#: a plant, which is never painted on the ground.
+PARAM_PAINT_ORIGIN: Final = "paint_origin"
 #: True — present ONLY when the drawn polygon could not be used as it was (it
 #: crosses or touches itself) and ``footprints`` / ``holes`` are what the snapshot
 #: resolved it into: not the drawn vertices, possibly several rings, and anything
@@ -221,27 +229,22 @@ class Paint:
     canvas does (Phase 17 L1.5). Plain data; part of the ``Material``, so a
     change of it re-bakes ground tiles and never rebuilds a mesh.
 
-    The snapshot gives one to every record the ground can show: an item without
-    a height that is not a plant. A record with a height has none (it is a
-    solid, and nothing of it is painted).
+    The snapshot gives one to every record but a plant's (a plant is never
+    painted on the ground). Whether a record IS painted is not said here: the
+    ground shows it while the scene holds no solid for it.
 
-    - ``stroke_width_cm``, ``stroke_style``, ``stroke_cap``, ``stroke_join``:
-      the item's pen as the canvas strokes its outline with it (its colour is
-      ``Material.stroke_rgba``). The names are Qt's (``PEN_STYLES`` …).
+    - ``stroke_width_cm``: the width of the pen the canvas strokes the item's
+      OUTLINE with — a filled shape's. 0.0 for a polyline: its stroke is its
+      geometry (``Record.path_width_cm``), and a wider line is a geometry
+      change.
+    - ``stroke_style``, ``stroke_cap``, ``stroke_join``: that pen's style, cap
+      and join, by Qt's names (``PEN_STYLES`` …). Its colour is
+      ``Material.stroke_rgba``.
     - ``opacity``: the item's effective opacity, its layer's included.
-    - ``origin`` and ``matrix``: the ITEM's own coordinate frame, in which the
-      canvas paints — a fill texture is anchored at the item's origin, not at
-      its centre, and a furniture sprite is aligned to whole centimetres there.
-      A point ``p`` of the record's local frame is the item's point
-      ``origin + matrix⁻¹ · p``; ``matrix`` is ``(m11, m12, m21, m22)`` with
-      ``x' = m11·x + m21·y``, ``y' = m12·x + m22·y`` (Qt's convention). The
-      identity for every item that is posed rigidly — then ``origin`` is the
-      item-coordinate point the record is centred on; the item's own linear
-      part for a circle (its record does not turn, its texture does) and for an
-      item under a transform that is not rigid.
 
-    A move or a turn of the item changes none of this: it is the record's
-    ``transform`` and nothing else.
+    Where the canvas anchors a fill texture is not here either: that is the
+    item's own coordinate origin, a fact of its GEOMETRY
+    (``params["paint_origin"]``).
     """
 
     stroke_width_cm: float = 0.0
@@ -249,8 +252,6 @@ class Paint:
     stroke_cap: str = "SquareCap"
     stroke_join: str = "BevelJoin"
     opacity: float = 1.0
-    origin: Point = (0.0, 0.0)
-    matrix: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 1.0)
 
     def __post_init__(self) -> None:
         if self.stroke_style not in PEN_STYLES:
@@ -264,15 +265,6 @@ class Paint:
         _check_length("a stroke width", self.stroke_width_cm)
         if not 0.0 <= self.opacity <= 1.0:  # also False for a NaN
             raise ValueError(f"Paint.opacity lies in 0..1, got {self.opacity!r}")
-        if len(self.origin) != 2 or len(self.matrix) != 4:
-            raise ValueError(f"Paint needs an (x, y) origin and a 2 x 2 matrix, got {self!r}")
-        if not all(math.isfinite(value) for value in (*self.origin, *self.matrix)):
-            raise ValueError(f"Paint has a non-finite frame: {self!r}")
-        for value in self.origin:
-            _check_length("a paint origin", value)
-        m11, m12, m21, m22 = self.matrix
-        if abs(m11 * m22 - m12 * m21) < 1e-12:
-            raise ValueError(f"Paint.matrix cannot be inverted: {self.matrix!r}")
 
 
 @dataclass(frozen=True, slots=True)

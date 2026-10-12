@@ -16,6 +16,7 @@ import pytest
 from open_garden_planner.core.scene3d import (
     MAX_GROUND_PIXELS,
     MEADOW_RGB,
+    PARAM_PAINT_ORIGIN,
     TILE_PX,
     BuilderRegistry,
     GroundBaking,
@@ -200,19 +201,19 @@ class TestGroundSpec:
 
 
 class TestPaint:
-    def test_the_defaults_are_qts_own_pen_and_an_untouched_frame(self) -> None:
+    def test_the_defaults_are_qts_own_pen(self) -> None:
         paint = Paint()
         assert (paint.stroke_style, paint.stroke_cap, paint.stroke_join) == (
             "SolidLine", "SquareCap", "BevelJoin")
-        assert paint.opacity == 1.0 and paint.origin == (0.0, 0.0)
-        assert paint.matrix == (1.0, 0.0, 0.0, 1.0)
+        assert paint.opacity == 1.0 and paint.stroke_width_cm == 0.0
         assert hash(Paint()) == hash(paint) and Paint(stroke_width_cm=2.0) != paint
+        assert {f.name for f in dataclasses.fields(Paint)} == {
+            "stroke_width_cm", "stroke_style", "stroke_cap", "stroke_join", "opacity"}
 
     @pytest.mark.parametrize("changes", [
         {"stroke_style": "Wavy"}, {"stroke_cap": "round"}, {"stroke_join": "Mitre"},
         {"stroke_width_cm": -1.0}, {"stroke_width_cm": float("nan")}, {"opacity": 1.5},
-        {"opacity": float("nan")}, {"origin": (1.0,)}, {"origin": (float("inf"), 0.0)},
-        {"matrix": (1.0, 0.0, 0.0)}, {"matrix": (1.0, 2.0, 2.0, 4.0)},
+        {"opacity": float("nan")}, {"opacity": -0.1},
     ])
     def test_what_no_painter_could_use_is_refused(self, changes: dict[str, object]) -> None:
         with pytest.raises(ValueError):
@@ -220,16 +221,16 @@ class TestPaint:
 
     def test_a_length_beyond_what_a_plan_can_hold_is_out_of_range(self) -> None:
         with pytest.raises(RecordRangeError):
-            Paint(origin=(2e6, 0.0))
-        with pytest.raises(RecordRangeError):
             Paint(stroke_width_cm=1e300)
+        with pytest.raises(RecordRangeError):  # the paint origin is a param: a length like any
+            Params({PARAM_PAINT_ORIGIN: (2e6, 0.0)})
 
     def test_the_paint_is_part_of_the_material_and_of_nothing_else(self) -> None:
-        """A change of the pen, the opacity or the paint frame is a MATERIAL change:
-        it re-bakes tiles and never rebuilds a mesh."""
+        """A change of the pen or the opacity is a MATERIAL change: it re-bakes
+        tiles and never rebuilds a mesh."""
         base = flat("a")
         for paint in (Paint(stroke_width_cm=3.0), Paint(2.0, "DashLine"), Paint(2.0, opacity=0.5),
-                      Paint(2.0, origin=(1.0, 0.0)), Paint(2.0, matrix=(0.0, 1.0, -1.0, 0.0))):
+                      Paint(2.0, stroke_cap="RoundCap"), Paint(2.0, stroke_join="MiterJoin")):
             other = dataclasses.replace(base, material=dataclasses.replace(base.material, paint=paint))
             assert not base.same_material(other)
             assert base.same_geometry(other) and base.same_transform(other)

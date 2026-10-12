@@ -54,6 +54,7 @@ from open_garden_planner.core.object_types import ObjectType, PathFenceStyle
 from open_garden_planner.core.scene3d import (
     SHAPES,
     Material,
+    Paint,
     Params,
     Record,
     RecordingSink,
@@ -711,7 +712,7 @@ def _plain(value: Any) -> bool:
         return all(_plain(v) for v in value)
     if isinstance(value, Params):
         return all(_plain(v) for v in value.values())
-    if isinstance(value, Transform | Material):
+    if isinstance(value, Transform | Material | Paint):  # Paint: the material's own part (L1.5)
         return all(_plain(getattr(value, f)) for f in value.__dataclass_fields__)
     return False
 

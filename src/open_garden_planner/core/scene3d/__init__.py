@@ -312,11 +312,18 @@ from .ground import (  # noqa: E402
     TileKey,
     changed_tiles,
 )
-from .record import PEN_CAPS, PEN_JOINS, PEN_STYLES, Paint  # noqa: E402
+from .record import (  # noqa: E402
+    PARAM_PAINT_ORIGIN,
+    PEN_CAPS,
+    PEN_JOINS,
+    PEN_STYLES,
+    Paint,
+)
 
 __all__ += [
     "MAX_GROUND_PIXELS",
     "MEADOW_RGB",
+    "PARAM_PAINT_ORIGIN",
     "PEN_CAPS",
     "PEN_JOINS",
     "PEN_STYLES",

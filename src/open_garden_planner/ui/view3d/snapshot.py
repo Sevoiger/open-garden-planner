@@ -58,6 +58,7 @@ from PyQt6.QtWidgets import QGraphicsScene
 from open_garden_planner.core.container_model import container_material
 from open_garden_planner.core.object_height import effective_height_cm
 from open_garden_planner.core.object_types import PathFenceStyle, is_container_type
+from open_garden_planner.core.plant_art import PLANT_KINDS
 from open_garden_planner.core.scene3d import (
     PARAM_CONTAINER_MATERIAL,
     PARAM_PATH_STYLE,
@@ -70,6 +71,7 @@ from open_garden_planner.core.scene3d import (
     PARAM_SPRITE_SPECIES,
     LocalFrame,
     Material,
+    Paint,
     Params,
     ParamValue,
     Record,
@@ -98,6 +100,10 @@ from open_garden_planner.core.scene3d.polygon import (
 from open_garden_planner.core.scene3d.record import (
     MAX_LENGTH_CM,
     PARAM_OUTLINE_RESOLVED,
+    PARAM_PAINT_ORIGIN,
+    PEN_CAPS,
+    PEN_JOINS,
+    PEN_STYLES,
     RecordRangeError,
 )
 from open_garden_planner.core.shadow_geometry import (
@@ -720,8 +726,52 @@ def _polygon_regions(ring: Ring) -> tuple[tuple[Region, ...] | _Refused, bool]:
 
 
 @lru_cache(maxsize=1024)
-def _material(key: str, fill: Rgba | None, stroke: Rgba | None, pattern: str | None) -> Material:
-    return Material(key, fill, stroke, pattern)
+def _material(key: str, fill: Rgba | None, stroke: Rgba | None, pattern: str | None,
+              paint: Paint | None = None) -> Material:
+    return Material(key, fill, stroke, pattern, paint)
+
+
+#: Kinds that are never painted on the ground, height or no height: a plant is a
+#: plant — without a height it is the plant builder's placeholder, never its 2D
+#: sprite laid flat on the lawn.
+_NEVER_ON_THE_GROUND: Final = PLANT_KINDS
+
+
+@lru_cache(maxsize=256)
+def _paint(width_cm: float, style: str, cap: str, join: str, opacity: float) -> Paint:
+    return Paint(
+        stroke_width_cm=width_cm,
+        stroke_style=style if style in PEN_STYLES else "SolidLine",  # a custom dash pattern
+        stroke_cap=cap if cap in PEN_CAPS else "SquareCap",
+        stroke_join=join if join in PEN_JOINS else "BevelJoin",
+        opacity=min(max(opacity, 0.0), 1.0),
+    )
+
+
+def _paint_of(item: Any, shape: str) -> tuple[Paint, Any]:
+    """How the canvas paints ``item``'s surface (``core.scene3d.Paint``), and its
+    pen's colour (None for an item that strokes nothing) — read from the LIVE pen:
+    it is what ``paint()`` strokes with, and the item's stored ``stroke_color`` is
+    not kept in step with it by every path that sets a pen (the project loader
+    sets the pen alone). A polyline's pen width is its geometry
+    (``path_width_cm``) and is not repeated here."""
+    pen = item.pen()
+    style = pen.style().name
+    width = 0.0 if shape == OUTLINE_POLYLINE else float(pen.widthF())
+    return (_paint(width, style, pen.capStyle().name, pen.joinStyle().name,
+                   float(item.effectiveOpacity())),
+            pen.color() if style != "NoPen" else None)
+
+
+def _drawn_only(outline: ItemOutline, frame: LocalFrame) -> tuple[tuple[Region, ...], Ring,
+                                                                 float | None, float | None, bool]:
+    """What ``_regions_of`` returns, for an outline it REFUSED — without regions:
+    only what is drawn (a polyline's centre line and width; a polygon's ring is the
+    caller's to add, as ``Record.outline``). For a shape that has nothing else to
+    paint with — a sliver of a rectangle, a circle of no radius — None."""
+    if outline.shape == OUTLINE_POLYLINE:
+        return (), frame.local_ring(outline.points), outline.width_cm, None, False
+    return (), (), None, None, False
 
 
 def _rgba(color: Any) -> Rgba | None:
@@ -856,8 +906,18 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     frame = _frame_of(item, outline.anchor, rotatable=shape != OUTLINE_CIRCLE)
     if not math.isfinite(frame.east_cm + frame.north_cm):
         raise ValueError("a position that is not finite")
-    regions, path, width, radius, resolved = _regions_of(outline, frame)
-    if not regions:
+    refused: _UnbuildableOutline | None = None
+    try:
+        regions, path, width, radius, resolved = _regions_of(outline, frame)
+    except _UnbuildableOutline as error:
+        # No solid can be built of this outline. An item that is PAINTED on the ground
+        # needs none — the bake fills and strokes what was drawn — so the verdict waits
+        # until the item's height is known (below): only then is it left out.
+        if shape not in (OUTLINE_POLYGON, OUTLINE_POLYLINE):
+            raise
+        refused = error
+        regions, path, width, radius, resolved = _drawn_only(outline, frame)
+    if not regions and refused is None:
         return None
     params: dict[str, ParamValue] = {PARAM_SEED: item_id}
     if resolved:
@@ -897,6 +957,20 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
     height = effective_height_cm(object_type, metadata, at_date=at_date)
     if height is not None and height <= 0.0:
         height = None  # no height. One that is no usable number — 1e300, 1e-300 — is the Record's to refuse.
+    paint: Paint | None = None
+    drawn: Ring = ()
+    if kind not in _NEVER_ON_THE_GROUND:
+        # what the canvas paints the item with (L1.5) — whatever its height: the ground
+        # bake shows it while no builder makes a solid for it, and a height that comes
+        # or goes stays a change of the geometry alone
+        paint, pen_colour = _paint_of(item, shape)
+        if pen_colour is not None:
+            stroke = pen_colour
+        params[PARAM_PAINT_ORIGIN] = (quantize_cm(frame.anchor_x), quantize_cm(frame.anchor_y))
+        if height is None and shape == OUTLINE_POLYGON and (resolved or refused is not None):
+            drawn = frame.local_ring(outline.points)  # footprints is not the drawn polygon
+    if refused is not None and (paint is None or height is not None):
+        raise refused  # a solid needs regions: left out and reported, as before
     pattern = getattr(item, "fill_pattern", None)
     parent = getattr(item, "parent_bed_id", None)
     base = item_base_cm(item, lookup, at_date) if parent is not None else 0.0
@@ -908,7 +982,7 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
         footprints=tuple(outer for outer, _holes in regions),
         transform=frame.transform(quantize_cm(base)),
         material=_material(kind, _rgba(getattr(item, "fill_color", None)), _rgba(stroke),
-                           pattern.name if pattern is not None else None),
+                           pattern.name if pattern is not None else None, paint),
         height_cm=height,
         path=path,
         path_width_cm=width,
@@ -916,6 +990,7 @@ def _record_of(item: Any, object_type: Any, item_id: str, at_date: date | None,
         parent_id=str(parent) if parent is not None else None,
         name=str(getattr(item, "name", "") or ""),
         holes=holes if any(holes) else (),
+        outline=drawn,
     )
 
 
