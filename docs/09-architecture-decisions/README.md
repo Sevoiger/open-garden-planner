@@ -2480,8 +2480,8 @@ Qt 6.11. The bounds are asserted in `tests/integration/test_view3d_workspace_ren
 
 **Criterion 2 — Qt WebEngine beside the production host.** A `QWebEngineView` on a page of one
 colour loads and paints (the colour read back from its centre) BEFORE the 3D host was created
-and AFTER, in the same session, with the 3D view drawing its garden beside it (131 distinct
-colours in a 2334 × 1203 frame); zero Qt warnings. The automated check uses the map picker's
+and AFTER, in the same session, with the 3D view drawing its garden beside it (131 and 138
+distinct colours in a 2334 × 1203 frame, two runs); zero Qt warnings. The automated check uses the map picker's
 ENGINE on a local page — the picker's own page needs the network and a key — so the picker
 itself stays on the owner's manual checklist. The main window is still a raster window with the
 3D pane embedded (`surfaceType() == RasterSurface`), and a 2D pan step costs 1.04 times what it
@@ -4647,27 +4647,28 @@ Default tier (no GPU; the engine replaced at the seam):
 - `tests/integration/test_workspace_gate.py` (11) — the gate's own safety: `main()` on a plan
   builds every store on the throw-away key; a decoy organisation is refused with exit code 97.
 
-Render tier (`OGP_RENDER3D=1`), `tests/integration/test_view3d_workspace_render.py` — the app's
-own `main()` in a child, on Direct3D 11 (RTX 4070), 2026-10-12:
+Render tier (`OGP_RENDER3D=1`), `tests/integration/test_view3d_workspace_render.py` (24) — the
+app's own `main()` in a child, on Direct3D 11 (RTX 4070), 2026-10-12; the numbers of the tier's
+run on the final code unless a cell says "by hand" (the same scenario started from a script):
 
 | Gate | Measured | Bound |
 |---|---|---|
-| G2 edit → finished readback, `bench_small`, Split at 1600 × 900, 120 edits of seven kinds | p50 15.2 / **p95 20.6** / max 43.4 ms (edit 0.8, wait 0.8, snapshot 3.6, apply 0.4, readback 9.2 at the median) | p95 ≤ 50 ms |
-| the same on `bench_large` (424 records) | p50 29.9 / p95 80.3 / max 150 ms (snapshot 15.3 ms at the median, 27.8 at p95; wait p95 41 ms) | reported |
-| the same on the maximised window (5120 × 1369, 3D pane 2334 × 1203), `bench_small` | p50 18.5 / p95 29.2 / max 51.2 ms (the readback alone 12.9 ms at the median) | reported |
+| G2 edit → finished readback, `bench_small`, Split at 1600 × 900, 120 edits of seven kinds | p50 14.8 / **p95 19.7** / max 52.4 ms (edit 0.9, wait 0.9, snapshot 3.6, apply 0.4, readback 8.6 at the median; an earlier run of the tier: 15.2 / 20.6 / 43.4) | p95 ≤ 50 ms |
+| the same on `bench_large` (424 records) | p50 31.3 / p95 71.8 / max 105 ms (snapshot 13.6 ms at the median, 21.4 at p95; wait p95 39 ms; an earlier run: 29.9 / 80.3 / 150) | reported |
+| the same on the maximised window (5120 × 1369, 3D pane 2334 × 1203), `bench_small`, by hand | p50 18.5 / p95 29.2 / max 51.2 ms (the readback alone 12.9 ms at the median) | reported |
 | G3 twin: 100 edits of nine kinds on the real host | the engine's camera was set 0 times; a new document set it once | exact |
 | G5 never / visible / hidden | exit 0, 0 Qt warnings, no ERROR in `app.log`, nothing of Qt Quick imported before 3D is asked for | — |
 | G5 in the frozen build (`installer/workspace_gate.spec`: the product recipe plus the gate's runtime hook; PyInstaller 6.18, Python 3.12) | the same three: exit 0, 0 Qt warnings, 98 parts drawn on the GPU; every store the exe built is the throw-away one. The product exe from the same tree: the 8-second smoke stays up, `--selftest` exit 0 in 4.2 s | — |
 | G6 twin: died → next start → try hardware → next start | compatibility mode on "Microsoft Basic Render Driver" by Qt's own log, then "NVIDIA GeForce RTX 4070" again | — |
-| G7 soak, 20 rebuilds, the view PRESENTING, no readback inside the measured loop | **2.00 MB / rebuild** (rebuilds 11–20), growth +125 MB, 20 releases, the frame after the loop equal to the frame before it | < 10 |
-| G7 the same with the view's frames WITHHELD (paint events eaten; 0 frames presented) | **1.48 MB / rebuild**, growth +34 MB, 20 releases; dedicated GPU memory did not move; the view presents again → the same frame | < 10 |
-| G7 rebuild off / positive control (+25 MB per rebuild) / release out of reach | 0.01 / 27.3 (fails, as it must) / 19.3 (1.54 with frames withheld) | < 10 / ≥ 10 / reported |
+| G7 soak, 20 rebuilds, the view PRESENTING, no readback inside the measured loop | **1.56 MB / rebuild** (rebuilds 11–20; 2.00 in a run by hand), growth +121 MB, 20 releases, the frame after the loop equal to the frame before it | < 10 |
+| G7 the same with the view's frames WITHHELD (paint events eaten; 0 frames presented) | **1.32 MB / rebuild** (1.48 by hand), growth +36 MB, 20 releases; dedicated GPU memory did not move; the view presents again → the same frame | < 10 |
+| G7 rebuild off / positive control (+25 MB per rebuild) / release out of reach | 0.33 / 26.8 (fails, as it must) / 18.8 (by hand: 0.01 / 27.3 / 19.3, and 1.54 without the release with frames withheld) | < 10 / ≥ 10 / reported |
 | G7 dedicated GPU memory (DXGI, this process), presenting | 289 → 346 → 362 → 378 MB over the first releases, then flat (slope 0.0) | < 10 |
 | G7 elsewhere, with the release (one run each, by hand) | the large plan (421 parts): 6.38 MB / rebuild (65.5 without the release); WARP: 3.32 (20.1 without), 1.23 with frames withheld | < 10 |
-| G7 over 60 rebuilds (by hand); and with the release inside every pass (20 rebuilds) | 1.78 MB / rebuild over rebuilds 31–60 (60 releases, the frame after equal to the frame before); 1.82 | < 10 |
-| What a readback per rebuild adds — why decision 17 (reported, never judged) | frames withheld: 8.48 MB / rebuild with the release, 26.0 without (WARP: 6.20 with); presenting: 3.85 and 16.4 | — |
-| G8 a Qt WebEngine page before and after the 3D host exists | painted both times (`#1e90ff` at its centre); 131 distinct colours in the 3D frame beside it | — |
-| G11 pan step, Split against Plan at the same canvas size (874 × 967) | 1.04 (the fastest tenth: 1.05) | ≤ 1.3 |
+| G7 over 60 rebuilds (by hand); and with the release inside every pass (20 rebuilds) | 1.78 MB / rebuild over rebuilds 31–60 (60 releases, the frame after equal to the frame before); 1.88 (1.82 by hand) | < 10 |
+| What a readback per rebuild adds — why decision 17 (reported, never judged) | frames withheld: 8.63 MB / rebuild with the release (8.48 by hand), 26.0 without (WARP: 6.20 with); presenting, by hand: 3.85 and 16.4 | — |
+| G8 a Qt WebEngine page before and after the 3D host exists | painted both times (`#1e90ff` at its centre); 138 distinct colours in the 3D frame beside it | — |
+| G11 pan step, Split against Plan at the same canvas size (874 × 967) | 1.04 (the fastest tenth: 1.04) | ≤ 1.3 |
 
 Hand mutation (one text mutant at a time, the tests that should notice run, the tree restored;
 a scratch tool, point-in-time, not a gate): on the final code **every mutant killed** in 18
