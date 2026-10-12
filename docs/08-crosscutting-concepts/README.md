@@ -2792,7 +2792,9 @@ Worked example: a 60 cm perennial on the soil of a 40 cm raised bed (base
 38), α = 35° → the tip lies `(38 + 60) / tan 35° = 140.0 cm` beyond the
 plant, 54.3 cm further than from the ground (85.7 cm) — and no longer inside
 the bed's own 57.1 cm shadow. **One walk makes the casters**
-(`collect_shadow_casters`): the overlay and the heatmap both call it, and the
+(`collect_identified_casters`, which keeps each caster's owner for the per-plant
+sun estimates of §8.27; `collect_shadow_casters` flattens it): the overlay, the
+heatmap and those estimates all come from it, and the
 3D records take `transform.base_cm` from the same
 `ui/canvas/footprints.item_base_cm` (§8.32.6) — a drift guard counts the
 callers and the consumers of `compute_scene_shadows`. A caster is a
@@ -2818,7 +2820,7 @@ let `paint()` only draw the cached path. Guard every timer start with
 
 **Threaded canvas-scale computation** (US-E4 heatmap; the pattern for any
 seconds-scale analysis): snapshot plain data on the GUI thread
-(`collect_shadow_casters` — never live QGraphicsItems across threads),
+(`collect_exposure_snapshot` → `collect_identified_casters` — never live QGraphicsItems across threads),
 run a `_WeatherFetchWorker`-shaped `QThread` whose results come back via
 signals, paint only `QImage` in the worker (`QPixmap` is GUI-thread-only;
 the QImage license is pinned by a 2-thread smoke test), recompute **on
@@ -3460,6 +3462,16 @@ The walnut template uses Penn State's [reported tolerance list](https://extensio
 ### Runtime and testing discipline
 
 Guild links are orthogonal to §8.14 plant-parent relationships; no new bed predicate or parentage path exists. The canonical build-only plant constructor is shared by gallery, Plant Lists and guild insertion, and creation commands retain `_auto_parent_plant`. A 100 ms parented timer coordinates snapshots/badges/panels. Cosmetic updates are idempotent, and navigation resolves UUIDs after the clicked row callback. API diagnostics may lag one debounce tick; reads do not force recomputation. Tests must compare refusal scene/history state, undo depth, copied metadata independence, editor failure preservation, unchanged-panel signatures and rotated centre geometry in addition to ordinary success.
+
+## 8.27 Cached sun exposure and shared diagnostics
+
+US-F3 (#314) and #428 follow ADR-056. `core/shade_aggregation.compute_sun_exposure` shares the explicit day's sample loop with the existing grid aggregator. `collect_identified_casters` is the single footprint / height / base collector (one `ItemLookup` per walk; `collect_shadow_casters` flattens it for the overlay). Sparse coverage uses unioned owner footprints — each swept from where its owner stands — and excludes the receiver's own UUID and, for a plant that stands in a soil parent with a height, that parent (`SunReceiver.stands_on`, from `footprints.standing_parent`: without it every plant in a raised bed read 0 hours, ADR-056 addendum). Receiver coordinates use base-shape centres transformed by `mapToScene`; badge/decorative bounds are never sampling geometry. Row zero remains south.
+
+`SunExposureCoordinator` compares immutable runtime snapshots in 60 ms and publishes cached evaluations. Commands are subscribed separately because metadata-only changes need not repaint. Requirement-only edits reclassify without recomputing. No panel, selection, repaint or Agent API read can start work. Ordinary edits retain the grid's visual snapshot with a stale tooltip, but clear receiver minutes, badges and mismatches. Missing location, cancellation, absent results, hidden plants and out-of-grid centres remain unavailable rather than becoming zero hours. Known unavailable requirements produce `sun_evaluation` information diagnostics; Information is a panel severity filter and counts say diagnostics.
+
+`DiagnosticsCoordinator` is the sole general-panel publisher. Producers cache records and emit `CanvasScene.diagnostics_changed`; `ProjectManager.diagnostics_snapshot` harvests all producers for both UI and MCP conversion. Rows store UUIDs and resolve them at click time; document replacement cancels pending navigation. Sun records use enclosing-group navigation UUIDs and retain the physical receiver in details. Theme-aware runtime child badges stay inside plant footprints, with unchanged transform origins, snapping and serialization. Translated labels and one-decimal localized hours are presentation only.
+
+Tests distinguish the displayed ground heatmap from estimated receiver sun. The Berlin constants are measured outside the new sparse implementation, not computed expectations. Deterministic controlled workers emit even after cancellation to prove late-result rejection. Cancellation is checked inside caster loops; an owner keeps its worker until queued `finished` and refuses a second launch while cleanup is pending. The full suite retains the existing heatmap budget and adds a 200-receiver budget plus a live GUI timer assertion.
 
 ## 8.32 3D scene pipeline (Phase 17 L1, #385, ADR-064)
 
@@ -4334,7 +4346,11 @@ instant_changed ─► sun flag (light only: no snapshot)         ─► SceneSy
   first frame after the dark spell shows the plan as it is.
 - **A document change is a plain apply**, not a reset; it drops what 3D remembers of the old plan
   (`_drop_plan_memories`: the plant builder's shapes, the record layer's outlines) and frames the
-  camera once, when the new document is in the engine (`document_shown`).
+  camera once, when the new document is in the engine (`document_shown`). The workspace hears of
+  it from `CanvasScene.document_replaced` — the app's ONE "the document was replaced" signal,
+  emitted when the old document is about to go and never for an open that failed its validation
+  (`Workspace.connect_plan`); the main window tells the workspace nothing by hand. A failed open
+  therefore leaves the view, its camera and its memories as they were.
 - **A failure is contained.** A sink call that raised, or a poisoned sync: `reset()`, one more
   `apply`, one log line. A second failure gives the pass up; the next change tries again. No
   exception of the pipeline reaches the event loop.
@@ -4575,7 +4591,9 @@ that asks "where does it stand" takes `standing_point`; one that asks "which bed
 to" takes `bed_membership_point`; neither writes its own containment test (a guard counts them).
 
 `item_base_cm` is asked by `snapshot_records` (→ `transform.base_cm`) and by
-`collect_shadow_casters` (→ `ShadowCaster.base_cm`, §8.20), and `beds.py` puts the soil at the
+`collect_identified_casters` (→ `IdentifiedCaster.base_cm` and, flattened, `ShadowCaster.base_cm`,
+§8.20); its membership half, `standing_parent`, is asked alone by the sun receivers (§8.27: which
+parent's solid a plant stands in). `beds.py` puts the soil at the
 same `soil_surface_cm` — one function for the soil mesh, the 3D base and the 2D caster's base. A
 bed that changes height reaches each of its plants as one `update_transform`; no plant mesh is
 rebuilt. A bed that is resized reaches a plant it no longer contains the same way (38 → 0).
@@ -4588,10 +4606,12 @@ plant, a kept lookup still says 38). Do not keep "the scene's lookup" on a contr
 a test reads the source and holds three things
 (`TestTheParentShapeIsBuiltOncePerWalk::test_a_lookup_lives_for_one_walk_and_is_never_kept`):
 the identifier `ItemLookup` appears in `src/` only as an import (under its own name), as the
-class, as a parameter's annotation and as a call inside the two walks — so `make = ItemLookup`,
+class, as a parameter's annotation and as a call inside the three walks (the casters, the sun
+receivers, the 3D records) — so `make = ItemLookup`,
 an alias import and `functools.partial(ItemLookup, …)` fail it; a walk binds its lookup to a
-local name and uses that name ONLY as an argument of `item_base_cm` / `_record_of` — so a list,
-a dict, `.append(lookup)`, `setattr`, `return lookup, 1` and a closure fail it; and the two
+local name and uses that name ONLY as an argument of `item_base_cm` / `standing_parent` /
+`_record_of` — so a list,
+a dict, `.append(lookup)`, `setattr`, `return lookup, 1` and a closure fail it; and the three
 functions that take a lookup use their parameter the same way. What a reading cannot see is
 stated in the helpers: a dynamic spelling (`type(lookup)(…)`, `getattr(module, "Item" +
 "Lookup")`, `copy.copy(lookup)`), and what a callee that only shares the NAME of a taker does.

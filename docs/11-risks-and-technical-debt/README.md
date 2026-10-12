@@ -2223,7 +2223,12 @@ about measuring it.
    deferred delete runs. The callable lives and dies with Python's idea of the wrapper, not
    with the C++ object; the collector clears it and the connection stays behind. *Fix:* nothing
    hangs on `destroyed`. The clock's channel calls a guard that asks `sip.isdeleted()` at every
-   delivery (`ui/sim_clock_subscription.py`, ADR-053 addendum). **Do not hang clean-up on a
+   delivery (`ui/sim_clock_subscription.py`, ADR-053 addendum). *(Fix round 1: master's sun
+   coordinator, v1.30.1, had the same shape — a closure on its own `destroyed` holding a bound
+   method of itself. In bare PyQt that closure runs 0 times in the deferred order, 5 of 5:
+   its clean-up silently does not happen. It listens through the helper now, and a scan
+   refuses a new `….destroyed.connect(…)` anywhere in the product; the one older site, the
+   global search field, is listed there by name.)* **Do not hang clean-up on a
    QObject's `destroyed` signal from Python: the callable can be collected before the signal
    fires. Ask at the moment of use.**
 2. **Qt keeps graphics state for every Model it ever drew.** *Symptom:* the memory soak read
@@ -2325,6 +2330,28 @@ about measuring it.
     no process-wide state: compare with what was there before, never with zero. Compare a
     widget only with one in the same state (shown, polished). And run the whole suite in its
     own order before a story's files are believed — the order is part of the test.**
+14. **A "before the document changes" hook ran before the change could fail.** This story fixed
+    #428 with a hook of the main window in front of each document path: clear the
+    hours-of-sun map, uncheck its button. In `_load_project_file` that is in front of
+    `ProjectManager.load()`, whose first phase validates the file and can raise — so opening a
+    damaged file, a recent file that had moved, or an agent's `open_plan` on a bad file left
+    the plan open and threw its map away (found by the independent review; master, fixing #428
+    at the same time through `CanvasScene.document_replaced`, pins the opposite). *Fix:* the
+    hooks are gone; the scene's signal — emitted in the COMMITTING phase — is the one
+    mechanism, for the map and for the 3D workspace. **Tie clean-up to the event that says
+    the thing happened, not to the call that is about to try. And when two changes fix one
+    issue, one of them goes.**
+15. **An estimate "at ground level under the plant" is inside whatever the plant stands in.**
+    Merged from master: the per-plant hours of sun sample the ground cell under the plant's
+    centre and leave out the plant's own solid. A raised bed is a solid too. *Measured on
+    v1.30.1:* a tomato in a 40 cm raised bed in the open, Berlin, 21 June: 0.0 hours and a
+    "too little sun" warning — on every plant of every raised bed. The reference plan of
+    that feature has a tree and two tomatoes on open ground; no bed. *Fix:* the receiver
+    names the soil parent it stands in (the membership half of the base rule the casters and
+    the 3D records already used) and that parent is spared like the plant's own solid: 16.5
+    hours. **When a sample point is "under" an object, ask what else is under the object.
+    And the first plan a sun feature must be tried on is the one the feature is for: a
+    vegetable garden is raised beds.**
 
 ### 11.4.8 Guild boundaries found by independent review (F1/F2)
 
@@ -2339,6 +2366,16 @@ The full battery found one further representation boundary: existing task/soil t
 **F1/F2 owner manual-pass follow-up (PR #433).** The German guild picker displayed English catalog names, and selecting a gallery plant then drawing it ignored food-forest auto-assignment. Instrumentation showed `[F1] auto=True species=shrub chosen=<active-id> active=<active-id>` from `CircleTool._finalize_circle`; the previous integration test exercised only the drag/drop constructor. Circle placement now uses the same `build_plant` constructor as drops, preserving plant metadata, planting-date stamping, parentage and one-step undo. Names in the guild picker, editor and member list use display-time translations, including the previously unregistered bundled catalog names. The saved English names and canonical keys are unchanged, and explicit object names are preserved. Regression tests assert German widget contents and both eligible-layer assignment and fallback behavior; table completeness alone cannot establish either contract.
 
 **Final PR #433 review: deferred P2 maintenance finding.** The synchronous `PlantSearchDialog._enrich_selected_plant()` helper has no callers; selection acceptance uses the asynchronous `_on_accept()` / `_poll_results()` path. Stale comments in the dialog and provider base still reference the synchronous helper. This creates a future validation/fallback maintenance risk, with no observed runtime defect or outstanding P0/P1. A separate cleanup should remove the unused helper and update those references while retaining the asynchronous enrichment integration tests.
+
+## 11.4.6 Sun self-shadow and late document results (#314, #428)
+
+The #314 centre-lookup example assumed the receiving plant was absent from its own ground heatmap. The planning probe measured zero hours for both tomatoes with all solid casters, versus 0 h north and 16.5 h south when only each receiver's own caster was excluded. Zero is a valid measurement only after completed, valid evaluation. The fix preserves the ordinary displayed grid and adds sparse identified receivers in the same explicit run; it does not claim exposure at leaves or model canopy transparency. Whole-day reruns per plant took 17.6 seconds for 20 receivers among 100 casters; batched integer sweeps and vectorized point sampling measured 3.226 seconds for 200 casters/receivers locally.
+
+The document-lifecycle regression was observed failing in all six GUI New/Open/recovery timing cases: a cancelled worker deliberately emitted success and `heatmap_visible()` remained True after replacement. A date-only clear cannot protect document ownership, and `is_running` becomes False before queued success/finished cleanup. The canonical `document_replaced` reset cancels, clears and unchecks before C++ teardown; generation/signature guards reject late results. Ownership stays until finished and the next run is refused while signals remain pending. A malformed prevalidation load deliberately emits no reset and retains the valid current map. Real MCP New/Open and cached diagnostic reads pin the transport seam.
+
+Snapshot comparison must use physical base-shape centres transformed into scene coordinates, not decorated bounding boxes or the assumption that every plant is a circle. Semantic plant types can be imported as rectangles/polygons or grouped. Commands require their own subscription because metadata-only edits may not produce a scene repaint. Cosmetics must be idempotent to avoid an infinite scene-change loop. General diagnostics have one publisher so guild/sun producers cannot erase each other's records.
+
+Review pinned two representation gaps: a badge placed at a concave polygon's bounding-box centre was outside the footprint, and accepted non-dict species metadata raised in the selected-tree timer. Badge rectangles now pass whole-path containment against undecorated base geometry; species snapshots are normalized once. Grouped/imported save-load regressions cover both. The complete suite also caught a delayed destruction callback after a weak clock subscription had been pruned; cleanup now tolerates that already-disconnected state, with a cyclic-collection regression.
 
 ## 11.5 Community and Governance
 

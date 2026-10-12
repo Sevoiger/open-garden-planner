@@ -231,9 +231,9 @@ visibility calls.
 
 | Toggle | Where | Status |
 |---|---|---|
-| **Smart Symbols sidebar panel hidden** | `application.py:5324` `set_panel_visible("smart_symbols", False)` | **experimental / deferred UI** (US-C4). Engine, persistence, DXF export, and properties editing all ship and are tested; symbols in existing `.ogp` files still regenerate. Re-enable by deleting that one line (the comment says exactly this). |
+| **Smart Symbols sidebar panel hidden** | `application.py:5340` `set_panel_visible("smart_symbols", False)` | **experimental / deferred UI** (US-C4). Engine, persistence, DXF export, and properties editing all ship and are tested; symbols in existing `.ogp` files still regenerate. Re-enable by deleting that one line (the comment says exactly this). |
 | Contextual panels hidden until relevant selection | `set_panel_visible(key, relevant)` for `plant_details` / `companion` / `crop_rotation` in the selection updaters (ADR-030) | production behavior — not a bug when they're absent with nothing selected |
-| Satellite menu action disabled | `application.py:7968` `_update_satellite_menu_state` when both the Preferences key and `OGP_GOOGLE_MAPS_KEY` are unset (§3) | production guard |
+| Satellite menu action disabled | `application.py:7969` `_update_satellite_menu_state` when both the Preferences key and `OGP_GOOGLE_MAPS_KEY` are unset (§3) | production guard |
 | Nearest / perpendicular / tangent snap default-OFF | §1 snap table | production, opt-in |
 | **3D workspace (Plan / 3D / Split) absent** | `OGP_QUICK3D` is not `1` (§3) — `app/settings.py` `quick3d_workspace_enabled()` | **dark until L1.9** (Phase 17, ADR-065): the mode switch, the View → Workspace submenu and Alt+1 / 2 / 3 exist only with the switch on |
 
