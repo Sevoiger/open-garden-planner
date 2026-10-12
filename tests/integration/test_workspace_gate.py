@@ -156,7 +156,8 @@ def test_the_hook_is_imported_before_the_app_and_imports_nothing_of_it() -> None
 
 def test_nothing_in_the_test_tree_imports_the_hook_into_the_test_process() -> None:
     """Importing the hook rebinds the importer's settings names. Only the child runner
-    may; a test reads the file."""
+    may — and the measuring scenarios, which exist inside that child alone; a test
+    reads the file."""
     importers = []
     for path in sorted((REPO / "tests").rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -166,7 +167,12 @@ def test_nothing_in_the_test_tree_imports_the_hook_into_the_test_process() -> No
             if any(name.split(".")[-1] == "workspace_gate_hook" or "workspace_gate_hook" in
                    name.split(".") for name in names):
                 importers.append(path.name)
-    assert sorted(set(importers)) == ["workspace_gate_child.py"]
+    assert sorted(set(importers)) == ["workspace_gate_child.py", "workspace_gate_measure.py"]
+    # … and nothing imports THOSE two into the test process either
+    for path in sorted((REPO / "tests").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for name in ("workspace_gate_child", "workspace_gate_measure"):
+            assert f"import {name}" not in source or path.name == "workspace_gate_hook.py", path
 
 
 @pytest.mark.parametrize("name", [

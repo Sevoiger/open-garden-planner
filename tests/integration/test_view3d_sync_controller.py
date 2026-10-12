@@ -253,6 +253,24 @@ def test_many_edits_in_one_turn_of_the_event_loop_are_one_snapshot(rig: Rig) -> 
     assert rig.recorder.ops() == [BEGIN, ("update_transform", str(bed.item_id)), COMMIT]
 
 
+def test_one_command_is_one_snapshot_although_two_signals_announce_it(rig: Rig) -> None:
+    """A command fires the undo stack's ``stack_changed`` at once and the scene's
+    ``changed`` a moment later (it is queued). Both mark the plan dirty; the pass is a
+    posted event of NORMAL priority, which Qt delivers after the scene's own queued
+    signal — so the two share one pass. (Posted at high priority the pass ran first
+    and ``changed`` cost a second whole-plan snapshot per edit: measured, ADR-057.)"""
+    bed = rig.bed()
+    rig.controller.set_active(True)
+    rig.settle()
+    for index in range(10):
+        snapshots = rig.controller.snapshot_count
+        rig.commands.execute(MoveItemsCommand([bed], QPointF(3.0 + index, 1.0)))
+        assert rig.controller.snapshot_count == snapshots, "not inside the command"
+        calls = rig.settle()
+        assert calls == [BEGIN, ("update_transform", str(bed.item_id)), COMMIT]
+        assert rig.controller.snapshot_count == snapshots + 1
+
+
 def test_a_height_typed_into_the_metadata_reaches_3d_through_the_undo_stack_signal(rig: Rig) -> None:
     """A metadata-only edit repaints nothing, so ``scene.changed`` stays silent: the
     undo stack's ``stack_changed`` is the second trigger (the shadow overlay's rule)."""

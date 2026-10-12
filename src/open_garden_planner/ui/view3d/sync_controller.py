@@ -54,7 +54,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Final
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsScene
 
 from open_garden_planner.core.plain_text import log_text
@@ -77,9 +77,11 @@ from .snapshot import SkippedItem, snapshot_records
 
 _LOG: Final = logging.getLogger(__name__)
 
-#: The tick timer's interval: 0 = the next pass of the event loop, so every change
-#: signal of one pass shares one snapshot.
+#: How long a change waits for its pass: 0 = the next turn of the event loop (a posted
+#: event, so every change signal of one turn shares one snapshot); a positive value
+#: is a timer of that interval.
 TICK_MS: Final = 0
+_PASS_EVENT: Final = QEvent.Type(QEvent.registerEventType())
 #: The catch-up pass after 3D became visible waits this long, so that the pane (and
 #: its "building" note) is painted before a first build that can take a second.
 CATCH_UP_MS: Final = 25
@@ -172,6 +174,7 @@ class Scene3DController(QObject):
         self.recovery_count = 0
         self.last_tick: TickReport | None = None
         self._tick_ms = tick_ms
+        self._posted = False  # a pass event is in the queue
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._tick)
@@ -298,8 +301,30 @@ class Scene3DController(QObject):
         if not self._active:
             return  # paused: the flag is all that happens
         with contextlib.suppress(RuntimeError):  # the #230 teardown guard
-            if not self._timer.isActive():
+            if self._timer.isActive() or self._posted:
+                return  # a pass is on its way already: this change rides with it
+            if delay_ms > 0:
                 self._timer.start(delay_ms)
+            else:
+                # "The next turn of the event loop" as a POSTED EVENT, not a timer of
+                # interval zero: posted events are delivered before the timers that are
+                # due, and a zero timer waits behind the 2D side's debounced work
+                # (spacing, companions, the minimap) — measured on the large bench
+                # plan: 5 % of the passes started more than 228 ms late (ADR-057).
+                # NORMAL priority, on purpose: the scene's own queued ``changed`` for
+                # the same edit was posted first and is delivered first, so the undo
+                # stack's signal and the scene's share ONE pass. (At high priority the
+                # pass ran before it, and ``changed`` then cost a second snapshot.)
+                self._posted = True
+                QCoreApplication.postEvent(self, QEvent(_PASS_EVENT),
+                                           Qt.EventPriority.NormalEventPriority.value)
+
+    def event(self, event: QEvent | None) -> bool:
+        if event is not None and event.type() == _PASS_EVENT:
+            self._posted = False
+            self._tick()
+            return True
+        return super().event(event)
 
     def _on_scene_changed(self, *_regions: object) -> None:
         self.mark_dirty()
