@@ -234,7 +234,11 @@ class PresetSpec:
     soft_shadows: str
     #: 1024-texel maps at bias 5 left a sun-grazed roof acned and stair-stepped
     #: (33-40 % of the slope); 15 measured clean with the IoU gate unchanged. Low keeps
-    #: 15 on its 2048 map.
+    #: 15 on its 2048 map. High and ultra: 10 — at the spike's 5 a sun-grazed LIT wall
+    #: was hatched on Direct3D 11 (L1.4 round 2, RTX 4070, a wall at n.l 0.33: pixel
+    #: noise 1.15 % of its luma and the face 3.7 luma darker; 8 and above: 0.18 %, the
+    #: dither's own floor; a grazed top face needs 10 down to a 12-degree sun), with
+    #: the shadow IoU unchanged (0.976 / 0.986 at 15 / 35 degrees).
     shadow_bias: float
     #: ``fxaa`` (a post effect, with specular anti-aliasing) | ``msaa``.
     antialiasing: str
@@ -277,9 +281,9 @@ PRESET_SPECS: Final[Mapping[str, PresetSpec]] = MappingProxyType({
                       False, False),
     "medium": PresetSpec("medium", "high", 1, "pcf8", 15.0, "msaa", "high", True, 2, True,
                          False, False),
-    "high": PresetSpec("high", "very_high", 2, "pcf16", 5.0, "msaa", "high", True, 3, True,
+    "high": PresetSpec("high", "very_high", 2, "pcf16", 10.0, "msaa", "high", True, 3, True,
                        False, False),
-    "ultra": PresetSpec("ultra", "ultra", 3, "pcf32", 5.0, "msaa", "very_high", True, 4, True,
+    "ultra": PresetSpec("ultra", "ultra", 3, "pcf32", 10.0, "msaa", "very_high", True, 4, True,
                         True, True),
 })
 

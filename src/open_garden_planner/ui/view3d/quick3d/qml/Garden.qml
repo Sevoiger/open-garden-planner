@@ -49,7 +49,7 @@ Item {
     property string shadowMapQuality: "very_high"   // high | very_high | ultra
     property int shadowCascades: 2                   // perspective view only
     property string softShadows: "pcf16"            // pcf4 | pcf8 | pcf16 | pcf32
-    property real shadowBias: 5
+    property real shadowBias: 10
     property real shadowFactor: 82
     property real pcfFactor: 2
     // the preset: what the frame costs

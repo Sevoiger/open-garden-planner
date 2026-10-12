@@ -31,6 +31,8 @@ laid beside an L0 board): ``golden_hour``, ``sunset`` (the 6° golden anchor),
                records' own footprints), and does the sky draw its sun at the solar
                azimuth (the disc read 25° off-centre)
 ``--horizon``  how the fogged meadow meets the sky, per mood and preset
+``--moods``    ONE camera and ONE date under the suns of noon, golden hour, sunset and
+               night: how dark the night is against the noon of the same shot
 ``--fps-seconds N``  frames a SHOWN view presents per second with the wind running,
                per preset — or, where nothing is presented (the display asleep), the
                cost of a finished readback, labelled as such
@@ -346,6 +348,39 @@ class Board:
                          clipped_pct=row["clipped_pct"], failures=len(row["build_failures"]))
                 self.write()
 
+    def mood_strip(self, shots: list[BoardShot], presets: list[str]) -> None:
+        """ONE camera and ONE date through the day's moods (gate G3): the hero camera,
+        the plan as it stands on the day of the ``noon`` shot, lit by the suns of the
+        noon, golden-hour, sunset and night shots. Night against noon on the same
+        shot and plan — and nothing but the light differs between the frames."""
+        from open_garden_planner.core.scene3d.builders import production_registry
+        from open_garden_planner.ui.view3d.quick3d.shots import PerspectiveShot
+
+        by_name = {shot.name: shot for shot in shots}
+        camera = by_name["golden_hour"]
+        at = by_name["noon"].when_utc.date()
+        records, registry = self.records_for(at), production_registry()
+        out: dict[str, Any] = {}
+        self.metrics["moods"] = out
+        for preset in presets:
+            rows: dict[str, Any] = {}
+            for mood in HORIZON_SHOTS:
+                when = by_name[mood].when_utc.replace(year=at.year, month=at.month, day=at.day)
+                sun = self.sun_at(when)
+                look = look_for(sun, preset)
+                rgb, _frame, info = self.frame(
+                    f"mood_{mood}_{preset}", records, sun=sun, look=look, ground=self.plan_ground(),
+                    registry=registry, shot=PerspectiveShot(camera.eye, camera.target, camera.fov_deg))
+                rows[mood] = {"sun_elev": round(sun.elevation_deg, 2), "night": look.night,
+                              "file": info["file"], **probes.frame_stats(rgb)}
+            noon, night = rows["noon"], rows["night"]
+            rows["night_over_noon"] = {
+                "luminance": round(night["mean_luminance"] / noon["mean_luminance"], 4),
+                "luma": round(night["mean_luma"] / noon["mean_luma"], 4)}
+            out[preset] = rows
+            self.log("moods", preset=preset, **rows["night_over_noon"])
+            self.write()
+
     # ── truth probes ─────────────────────────────────────────────────────────
 
     def shadow_iou(self, presets: list[str]) -> None:
@@ -592,6 +627,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--iou", action="store_true", help="shadow IoU, perspective with cascades")
     parser.add_argument("--orient", action="store_true", help="north-up and the sky's sun azimuth")
     parser.add_argument("--horizon", action="store_true", help="how fog meets sky, per mood")
+    parser.add_argument("--moods", action="store_true",
+                        help="one camera and one date through noon, golden hour, sunset and night")
     parser.add_argument("--fps-seconds", type=float, default=0.0,
                         help="frames a SHOWN window presents per second, per preset (0 = off)")
     parser.add_argument("--software", action="store_true",
@@ -644,6 +681,8 @@ def run(args: argparse.Namespace, out: Path, log: Any, metrics: dict[str, Any]) 
                   f"{look.mood.exposure:.3f}  key {look.mood.sun_color}")
         return board
     board.shoot(shots, presets)
+    if args.moods:
+        board.mood_strip(default_shots(board.width, board.depth), presets)
     if args.iou:
         board.shadow_iou(presets)
     if args.orient:

@@ -318,7 +318,10 @@ class TestTheRampIsContinuous:
 
 class TestPresets:
     def test_the_four_presets_are_the_measured_ones(self) -> None:
-        """``ogp-3d-renderer`` §4 / the spike's ``GardenSpike.qml``, as data."""
+        """``ogp-3d-renderer`` §4 / the spike's ``GardenSpike.qml``, as data — with ONE
+        value moved in L1.4's round 2: the shadow bias of high and ultra, 5 -> 10 (a
+        sun-grazed lit wall was hatched at 5 on Direct3D 11; the numbers are at
+        ``PresetSpec.shadow_bias``)."""
         rows = {name: (p.shadow_map_quality, p.shadow_cascades, p.soft_shadows, p.shadow_bias,
                        p.antialiasing, p.antialiasing_quality, p.ambient_occlusion,
                        p.ao_sample_rate, p.glow, p.glow_high_quality, p.reflections)
@@ -326,10 +329,31 @@ class TestPresets:
         assert rows == {
             "low": ("very_high", 1, "pcf4", 15.0, "fxaa", "high", False, 2, False, False, False),
             "medium": ("high", 1, "pcf8", 15.0, "msaa", "high", True, 2, True, False, False),
-            "high": ("very_high", 2, "pcf16", 5.0, "msaa", "high", True, 3, True, False, False),
-            "ultra": ("ultra", 3, "pcf32", 5.0, "msaa", "very_high", True, 4, True, True, True),
+            "high": ("very_high", 2, "pcf16", 10.0, "msaa", "high", True, 3, True, False, False),
+            "ultra": ("ultra", 3, "pcf32", 10.0, "msaa", "very_high", True, 4, True, True, True),
         }
         assert tuple(PRESET_SPECS) == PRESETS == ("low", "medium", "high", "ultra")
+
+    def test_everything_else_of_the_presets_is_still_the_spikes_scene_file(self) -> None:
+        """Drift guard until the spike retires: map, cascades and filter per preset, read
+        from ``GardenSpike.qml``'s own bindings."""
+        spike = (SOURCE.parents[2] / "spike_q3d" / "qml" / "GardenSpike.qml").read_text(
+            encoding="utf-8")
+        for line in (
+            'shadowMapQuality: root.preset === "low" ? Light.ShadowMapQualityVeryHigh',
+            ': root.preset === "medium" ? Light.ShadowMapQualityHigh',
+            ': root.preset === "high" ? Light.ShadowMapQualityVeryHigh',
+            ': root.preset === "medium" ? 1 : (root.preset === "high" ? 2 : 3))',
+            'softShadowQuality: root.preset === "low" ? Light.PCF4',
+            ': root.preset === "high" ? Light.PCF16 : Light.PCF32',
+            'shadowBias: (root.preset === "low" || root.preset === "medium") ? 15 : 5',
+            'aoEnabled: !root.orthoTopDown && root.preset !== "low"',
+            'aoSampleRate: root.preset === "ultra" ? 4 : (root.preset === "high" ? 3 : 2)',
+            'glowEnabled: !root.orthoTopDown && root.preset !== "low"',
+            'fxaaEnabled: root.preset === "low" && !root.orthoTopDown',
+            'ssrEnabled: root.preset === "ultra" && root.allowSsr',
+        ):
+            assert line in spike, line
 
     @pytest.mark.parametrize("preset", PRESETS)
     def test_every_preset_has_fog_no_sharpening_and_no_ssgi(self, preset: str) -> None:

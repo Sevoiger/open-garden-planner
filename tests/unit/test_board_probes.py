@@ -52,7 +52,8 @@ def test_frame_statistics_are_the_spikes() -> None:
 
 def test_a_clean_frame_has_no_speckles_and_a_speckled_one_is_counted() -> None:
     frame = np.full((60, 80, 3), 170.0)
-    assert P.frame_stats(frame) == {"isolated_dark_px": 0, "clipped_pct": 0.0, "mean_luma": 170.0}
+    assert P.frame_stats(frame) == {"isolated_dark_px": 0, "clipped_pct": 0.0, "mean_luma": 170.0,
+                                    "mean_luminance": 0.40198}
     for row, col in ((10, 10), (20, 33), (41, 70)):
         frame[row, col] = 12.0                       # a near-black dot on a lit surface
     frame[30:36, 40:52] = 255.0                      # a clipped highlight
@@ -61,6 +62,16 @@ def test_a_clean_frame_has_no_speckles_and_a_speckled_one_is_counted() -> None:
     assert stats["clipped_pct"] == pytest.approx(100.0 * 72 / 4800, abs=1e-3)
     frame[50:56, 5:25] = 12.0                        # a dark AREA is not 120 speckles:
     assert P.isolated_dark_pixels(frame) == 3 + 4    # only its four corners have lit surroundings
+
+
+def test_luminance_is_linear_light_and_luma_is_not() -> None:
+    """Gate G3 says LUMINANCE: a frame of code 128 has a fifth of the luminance of a
+    white one and half its luma — the two must not be mixed up in a "quarter" gate."""
+    white, grey = np.full((4, 4, 3), 255.0), np.full((4, 4, 3), 128.0)
+    assert float(P.luminance(white).mean()) == pytest.approx(1.0)
+    assert float(P.luminance(grey).mean()) == pytest.approx(0.2158, abs=1e-4)
+    assert float(P.luma(grey).mean() / P.luma(white).mean()) == pytest.approx(0.502, abs=1e-3)
+    assert float(P.luminance(np.array([[[255.0, 0.0, 0.0]]])).mean()) == pytest.approx(0.2126)
 
 
 # ── the camera ───────────────────────────────────────────────────────────────

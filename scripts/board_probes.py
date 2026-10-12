@@ -56,13 +56,24 @@ def isolated_dark_pixels(rgb: Any) -> int:
     return int(((values < SPECKLE_MAX_LUMA) & (around > SPECKLE_MIN_NEIGHBOURS)).sum())
 
 
+def luminance(rgb: Any) -> Array:
+    """Relative LUMINANCE (linear light, 0..1) of an ``(..., 3+)`` array of sRGB codes:
+    every channel through the sRGB curve first, then the Rec. 709 weights. Luma is
+    the weighted sum of the CODES; a frame at a quarter of the luminance has well
+    over half the luma."""
+    codes = np.asarray(rgb, dtype=np.float64)[..., :3] / 255.0
+    linear = np.where(codes <= 0.04045, codes / 12.92, ((codes + 0.055) / 1.055) ** 2.4)
+    return np.asarray(0.2126 * linear[..., 0] + 0.7152 * linear[..., 1] + 0.0722 * linear[..., 2])
+
+
 def frame_stats(rgb: Any) -> dict[str, Any]:
     """A board frame's own numbers: isolated dark pixels, the share of pixels with a
-    clipped channel (per cent) and the mean luma."""
+    clipped channel (per cent), the mean luma (codes) and the mean luminance (linear)."""
     values = np.asarray(rgb, dtype=np.float64)[..., :3]
     return {"isolated_dark_px": isolated_dark_pixels(values),
             "clipped_pct": round(float((values.max(axis=2) >= CLIPPED_CODE).mean()) * 100.0, 3),
-            "mean_luma": round(float(luma(values).mean()), 2)}
+            "mean_luma": round(float(luma(values).mean()), 2),
+            "mean_luminance": round(float(luminance(values).mean()), 5)}
 
 
 # ── our own camera ───────────────────────────────────────────────────────────
@@ -295,13 +306,17 @@ def bearing_error_deg(measured: float, expected: float) -> float:
 # ── gate G5: fog meets sky ───────────────────────────────────────────────────
 
 
-def horizon_step(rgb: Any, camera: Pinhole, *, reach_deg: float = 0.6, line_deg: float = 0.25,
-                 columns: tuple[float, float] = (0.0, 1.0)) -> dict[str, Any]:
+def horizon_step(rgb: Any, camera: Pinhole, *, reach_deg: float = 0.4, line_deg: float = 0.25,
+                 step_deg: float = 0.15, columns: tuple[float, float] = (0.0, 1.0)) -> dict[str, Any]:
     """How the fogged ground meets the sky at the geometric horizon — three numbers
-    of the row-mean luma within ``reach_deg`` of the horizon:
+    of the row-mean luma within ``reach_deg`` of the horizon. (0.4 degrees: from eye
+    height the fog is complete beyond 160 m, which is 0.59 degrees under the horizon.
+    Further down the meadow shows through the fog — at night it is brighter than the
+    sky — and that is the fog's own depth curve, not how fog meets sky.)
 
-    ``step``   the largest change from one row to the next: a CLIFF where the meadow
-               meets the sky (the low preset without fog: 84.5 luma in one row);
+    ``step``   the largest change across ``step_deg`` of elevation (at least one row,
+               so the number does not grow with the frame's size): a CLIFF where the
+               meadow meets the sky (the low preset without fog: 84.5 luma in one row);
     ``dip``    how far the darkest row lies under BOTH the rows ``line_deg`` above
                and below it: a thin dark line (the sky's ground hemisphere reaching
                its dark end within a texel: 9-10 luma);
@@ -325,7 +340,8 @@ def horizon_step(rgb: Any, camera: Pinhole, *, reach_deg: float = 0.6, line_deg:
                 "rows_per_degree": round(per_degree, 2), "judged_rows": 0}
     near = row_luma[first:last + 1]
     above, below = row_luma[first - apart:last + 1 - apart], row_luma[first + apart:last + 1 + apart]
-    step = float(np.abs(np.diff(near)).max()) if near.size > 1 else 0.0
+    span = max(1, int(round(step_deg * per_degree)))
+    step = float(np.abs(near[span:] - near[:-span]).max()) if near.size > span else 0.0
     dip = max(0.0, float((np.minimum(above, below) - near).max()))
     ridge = max(0.0, float((near - np.maximum(above, below)).max()))
     return {"step": round(step, 2), "dip": round(dip, 2), "ridge": round(ridge, 2),
