@@ -58,6 +58,7 @@ src/open_garden_planner/
 │   ├── plant_sizing.py           # PlantSizing resolver — footprint/override/max_spread precedence (ADR-028)
 │   ├── solar.py                  # Qt-free NOAA solar position engine — elevation/azimuth/declination/EoT (US-E1, ADR-037)
 │   ├── sim_clock.py              # Qt-free ONE sim moment: local plan date + wall time → UTC; date_changed / instant_changed channels (Phase 17 L1.0, ADR-053)
+│   ├── plain_text.py             # Qt-free: plan text as TEXT — normalise, then cap, then escape; for tooltips, labels and log lines (Phase 17 L1.3, §8.11)
 │   ├── object_height.py          # Qt-free effective-height resolver — explicit/container/species/type-default (US-E2, ADR-037);
 │   │                             #   and where an item STANDS: standing_base_cm / soil_surface_cm (Phase 17 L1.6)
 │   ├── shadow_geometry.py        # Qt-free shadow sweep/union — L=h/tanα, Minkowski sweep, pyclipper union (US-E3, ADR-037);
@@ -86,6 +87,8 @@ src/open_garden_planner/
 │   │   │   ├── beds.py           #     RAISED_BED, CONTAINER, WALL_PLANTER, CONTAINER_ROUND, raised GARDEN_BED — frame + soil
 │   │   │   ├── hedges.py         #     HEDGE_SECTION, HEDGE_POLYGON: core + seeded leaf shell, trimmed at the height
 │   │   │   └── plants.py         #     plant v0: one silhouette per sprite archetype, the placeholder (L1.7)
+│   │   ├── camera.py             #   the orbit camera as a value: goal + critically damped pose, clamps, frame_pose — L1.3
+
 │   │   ├── interleave.py         #   a Mesh as the bytes an engine uploads (stride 48, engine frame) — L1.2
 │   │   └── legacy.py             #   what is left of the former scene3d.py (US-E6, ADR-038): the Qt 3D record + scene-space extrusion — deleted in L1.10
 │   ├── walk_camera.py            # Qt-free walkthrough rules — eye height, bounds clamp, pitch-limited look vector (US-E7)
@@ -162,6 +165,12 @@ src/open_garden_planner/
 │   │       └── resize_handle.py
 │   ├── view3d/                   # 3D view MVP (US-E6): snapshot.py (plan→records: collect_scene3d_records for Qt 3D,
 │   │                             #   snapshot_records for contract v2 — L1.1) + qt3d_adapter.py (ONLY Qt3D importer) + view3d_window.py
+│   │   ├── workspace.py          # the Plan / 3D / Split workspace of the main window (Phase 17 L1.3, ADR-057) — see §5.12;
+│   │   │                         #   behind OGP_QUICK3D=1; builds the engine lazily through engine_factory (the test seam)
+│   │   ├── sync_controller.py    #   Scene3DController: change signals → at most one pipeline pass per event-loop turn
+│   │   ├── orbit_input.py        #   the 3D window's mouse / wheel / keys → OrbitCamera (an event filter)
+│   │   ├── init_guard.py         #   the start marker and the compatibility flag (standard library only)
+│   │   ├── problems_dialog.py    #   the list of what 3D could not show
 │   │   └── quick3d/              # the Qt Quick 3D engine package (Phase 17 L1.2, ADR-048) — see §5.11: the ONLY
 │   │                             #   importer of PyQt6.QtQuick3D / QtQuick / QtQml; adapter.py (Quick3DSink), host.py
 │   │                             #   (QQuickView), lifecycle.py (its states), geometry.py, offscreen.py, selftest.py,
@@ -204,6 +213,8 @@ src/open_garden_planner/
 │   │   ├── sun_sim_toolbar.py    # Sun & shade sim date/time-slider toolbar (US-E3)
 │   │   └── collapsible_panel.py
 │   ├── icons.py                  # Central themed icon provider (#279, ADR-039)
+│   ├── sim_clock_subscription.py # connect_qobject(): a QObject on the Qt-free sim clock, never called after Qt destroyed it (L1.3)
+
 │   └── theme.py                  # Theme system — single source of chrome colors (ADR-039)
 ├── spike_q3d/                    # DORMANT Qt Quick 3D GO/NO-GO spike (ADR-048, Phase 17 L0): only
 │                                 #   reached via `--spike-q3d`, never imported at startup; quick.py is
@@ -506,6 +517,28 @@ start, and L1.2 wires it into nothing — the shipped "3D View…" still opens t
 | `quick3d/look.py`, `shots.py`, `materials.py` | Plain data and rules: `Look` / `NEUTRAL_DAY`; `PerspectiveShot` / `TopDownShot` and `top_down_pixel`; material kind → QML part component and the tint rule. No Qt import. | — |
 | `quick3d/qt_messages.py`, `runlog.py` | Qt's messages recorded and classified, by level first (a shader or QML error fails a render) — only around rendering on the calling thread — and the graphics adapter read from Qt's log; a line-flushed log, a watchdog that writes its reason before it ends the process, and the supervising process that ends what the watchdog cannot (`main` dispatches the internal flag `--selftest-supervisor` to it; it acts for one block of its own parent process and for nothing else). | Qt messages → counts, errors |
 | `quick3d/qml/` | `Garden.qml`: lights, cameras, the ground, one part `Component` per material kind, `createPart` / `destroyPart` / `pickAt` / `listParts`; `foliage.vert`, `foliage.frag`, `grass.vert`, `water.frag`. No user-visible strings (scanned: `tests/unit/test_quick3d_qml.py`). | root properties and functions ← Python |
+
+## 5.12 3D Workspace (Phase 17 L1.3, #385, ADR-057)
+
+Black-box view of what puts the 3D scene pipeline (§5.10) and the engine package (§5.11) into the
+main window: the Plan / 3D / Split workspace. It exists only behind the internal switch
+`OGP_QUICK3D=1` (`app/settings.py::quick3d_workspace_enabled()`); without it none of these modules
+is imported, and the shipped "3D View…" window (Qt 3D) is unchanged with it. Concept: §8.27.3.
+Tests: §8.10.7.
+
+| Building block | Responsibility | Interface (in → out) |
+|----------------|----------------|----------------------|
+| `ui/view3d/workspace.py` | `Workspace`: holds the canvas view and, from the first switch to 3D or Split on, a 3D pane beside it (a splitter whose sides do not collapse). Builds the engine through `engine_factory` on first use — the test seam; this module imports no Qt Quick binding — keeps ONE host for the window's life, pauses the pipeline while the pane is hidden or the window minimised, starts a pass that is owed only after its "building" notice was painted, owns the session's one camera, polls `host.health()` (first frame, graphics failure, QML warnings), shows every notice in a strip above the native view or in its place, counts retired Models and releases the engine's caches. | canvas view, scene, sim clock, location, undo stack → three mode actions, a View-menu submenu, `mode_changed`, `view3d_state_changed` |
+| `ui/view3d/sync_controller.py` | `Scene3DController`: engine-free. `scene.changed`, `stack_changed` and the clock's two channels become at most one pipeline pass per event-loop turn (a posted event); a time-of-day change is light only; hidden means flags only; a sink failure is reset, re-applied once and logged; what the record layer refused and what a builder could not build is kept. Drops what 3D remembers per plan on a document change and on shutdown. `set_ground_stage` is the seam for the ground bake (L1.5). | change signals → `SceneSync.apply(records, sun, ground)`; `applied(TickReport)`, `problems_changed`, `document_shown`, `failed` |
+| `core/scene3d/camera.py` | Qt-free, standard library only. `CameraPose`, `Bounds`, `frame_pose` and `OrbitCamera`: a goal that input moves and a pose that follows it as a critically damped spring integrated exactly; clamps for pitch, distance and the target. The pose changes through this class and nothing else. | orbit / zoom / pan / frame / `step(dt)` → pose (eye and target in the scene frame) |
+| `ui/view3d/orbit_input.py` | `OrbitInput`: an event filter on the engine's native window; the shipped view's gestures (drag, wheel, arrows, PageUp / PageDown, Home). Passes Escape and every other key on. | Qt input events → `OrbitCamera` calls; `moved`, `reset_requested` |
+| `ui/view3d/init_guard.py` | Standard library only. `Init3DGuard`: a per-process start marker and a compatibility flag in the app's log directory; `begin()` decides hardware or software from what is on disk; exactly one outcome ends a start. Never raises into the app. | files → `RenderMode`, `ModeReason` |
+| `ui/view3d/problems_dialog.py` | `View3DProblemsDialog` (non-modal) and `problems_of`: the items 3D does not show, with a translated text per reason code; activating a row names the item. Rows are plain text; tooltips go through `core/plain_text.py`. | skipped items and build failures → rows; `item_chosen(id)` |
+| `ui/sim_clock_subscription.py` | `connect_qobject` / `disconnect_qobject`: how a QObject listens to the Qt-free sim clock — a guard that asks `sip.isdeleted` at every delivery, held weakly with its receiver. The only way the product connects to a clock channel (scanned). | channel, bound slot → a subscription that dies with the receiver |
+| `core/plain_text.py` | Qt-free, standard library only. Plan text as text: normalise (every line boundary to one; other controls and bidi overrides to U+FFFD), then cap, then escape. | untrusted text → text for a tooltip, a label, a log line |
+| `ui/view3d/quick3d/host.py` (three additions) | `Quick3DHost(prefer_software=True)` asks Qt for the software adapter for this window; `install_event_filter(watcher)`; `release_cached_resources()` (Qt's `releaseResources()`), counted in `cache_releases`. | — |
+| `app/application.py` (the wiring) | Builds the workspace around the canvas view when the switch is on; `_before_document_change()` (clears the hours-of-sun map: #428) and `_after_document_change()` on new / open / recovery load; `workspace.shutdown()` in `closeEvent`; hides the workspace's controls in the fullscreen preview. | — |
+| `tests/integration/workspace_gate_hook.py`, `installer/workspace_gate.spec` | Test tooling, never shipped: drives the real app (source or frozen) through the workspace on a throw-away settings store and refuses any other (§8.10.7). | scenario file → report |
 
 ## Developer quality and release tooling
 

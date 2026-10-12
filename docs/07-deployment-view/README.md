@@ -44,6 +44,24 @@ python installer/build_installer.py --skip-nsis
 python installer/build_installer.py --skip-pyinstaller
 ```
 
+**The gate build — test tooling, never shipped (Phase 17 L1.3).**
+`installer/workspace_gate.spec` builds `OpenGardenPlannerGate.exe`: the product recipe (it
+executes the text of `ogp.spec`) plus ONE PyInstaller runtime hook,
+`tests/integration/workspace_gate_hook.py`, which moves the app's settings store to a throw-away
+key before the app's entry script runs and ends the process before a store under any other
+organisation exists. It exists so that the frozen app can be scripted through "open a plan, enter
+3D, close" without touching the user's Recent Files or window geometry (§8.10.7):
+
+```bash
+python -m PyInstaller installer/workspace_gate.spec --noconfirm --distpath <dir> --workpath <dir>
+OGP_RENDER3D=1 OGP_WORKSPACE_GATE_EXE=<dir>/OpenGardenPlannerGate/OpenGardenPlannerGate.exe \
+    python -m pytest tests/integration/test_view3d_workspace_render.py -k frozen
+```
+
+The product build ships no runtime hook, and the gate spec has no recipe of its own — both
+pinned by `tests/unit/test_view3d_workspace_packaging.py`. Never install or publish the gate
+build.
+
 ### Installer Files
 
 | File | Purpose |

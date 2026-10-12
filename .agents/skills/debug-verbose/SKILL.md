@@ -2195,3 +2195,105 @@ system puts a window, or on how large the screen is**: place it, and run once as
 smallest screen you ship to. And **a condition that differs between two days on one machine
 cannot be a pin**: reproduce it on purpose (here: withhold the paint events), pin THAT, and
 assert only what holds on every machine for the real thing.
+
+## Case study: 34.6 MB per reload, and nothing was leaking in Python or in VRAM — two retentions inside Qt, and a soak that could not present a frame (Phase 17 L1.3, fixed 2026-10-12)
+
+**Symptom**: the memory soak of the 3D workspace in the real app (20 reloads of `bench_small`,
+every reload rebuilding the engine scene; private bytes; Theil–Sen over reloads 11–20) read
+**34.6 MB per reload** against a bound of 10. Reloads that rebuilt nothing read 0.2. The
+positive control (25 MB kept per reload) read 58.8, so the instrument worked.
+
+**Wrong theories**:
+
+1. *"Something of ours keeps the old scene — the controller's records, the plant shape cache,
+   the sink's books."* `tracemalloc` between reloads 5 and 15 of the same soak: 0.045 MB per
+   reload. A weak set of every geometry wrapper ever made: 0 alive.
+2. *"Then it is a D3D resource, in VRAM."* DXGI's figure for this process
+   (`IDXGIAdapter3::QueryVideoMemoryInfo`): 298.1 MB before, 305.6 after the first reload, 305.6
+   after the twentieth.
+3. *"It is the mesh buffers — 1.5 times their size per round — and they are freed at the end of
+   a presented frame, which a readback is not."* TRUE, measured in a bare host (22 MB per round
+   by readback, 6.5 with presented frames) — and in the production host presenting frames
+   changed nothing: 27.9 and 38.5. A cause that explains the probe and not the product is half
+   a cause.
+4. *"The remainder is the QML engine's garbage, it will be collected."*
+   `QQmlEngine.collectGarbage()` per round: 6.1 instead of 6.3 to 7.7.
+
+**Key evidence**: a bare `Quick3DHost`, 100 Models of 3,000 vertices (14.9 MB of buffers)
+created, drawn and destroyed per round — and ONE thing changed per run:
+
+```
+VARIANT buffers        SLOPE second half -0.13 MB/round          (no Qt object)
+VARIANT geometry       SLOPE second half 0.00 MB/round           (no Model)
+VARIANT models_hidden  SLOPE second half 0.78 MB/round           (never drawn)
+VARIANT models         SLOPE second half 22.00 MB/round (x1.48)  afterFrameEnd 0  grabs 40
+VARIANT models_update  SLOPE second half 6.77 MB/round (x0.46)   afterFrameEnd 40 grabs 0   [QT_D3D_NO_VBLANK_THREAD=1]
+   + embedded 6.43 · foliage material 6.60 · host.clear() 6.13 · extra frames 6.33
+   + PROBE_SUN=1            18.06 MB/round          <- the production difference
+   + sun, verts=300         18.19   (x12.22 of the buffers)   <- not the mesh
+   + sun, verts=12000       24.59   (x0.41 of the buffers)
+   + sun, no shadow casting  6.17
+   + sun, releaseResources() per round   3.90 (20 rounds) · 0.85 (60 rounds)
+```
+
+**Root cause**: two things inside Qt Quick 3D, and one about the instrument. (1) Qt keeps
+cached per-draw-call state for every Model it ever drew, after the Model is destroyed — about
+three times as much for a Model that also casts into the sun's shadow cascades — until
+`QQuickWindow.releaseResources()`. (2) A destroyed Model's mesh buffers are freed at the end of a
+PRESENTED frame; `grabWindow()` never ends a frame that way. (3) The display was asleep: Windows
+presented no frame at all, so every frame of every soak on this machine that night was a
+readback.
+
+**Fix**: `Quick3DHost.release_cached_resources()`; the pipeline's passes count the items whose
+Models they destroyed, and the workspace releases when 64 piled up and the pipeline is quiet,
+or at once at 512. The soak's child runs with `QT_D3D_NO_VBLANK_THREAD=1` and asserts that
+frames were presented. After: 3.9 and 4.9 MB per reload (the large plan 5.1, WARP 7.4), the
+control 28, the same soak with the release out of reach 29.
+
+**Lesson**: **shrink it until one run takes seconds, then change one thing per run** — the
+whole table above cost less than the first three theories. **Scale the suspect**: three vertex
+counts said "not the mesh" in thirty seconds. **A cause must explain the product, not only the
+probe**: theory 3 was real and was not it. **Know what your instrument does to the thing it
+measures** — a readback is not a frame the way the product makes frames. And when a fix lands,
+keep three numbers from one instrument: with it, without it, and a control that must fail.
+
+## Case study: an access violation in a test that had nothing to do with the change — a Python callable on `destroyed`, and the garbage collector (Phase 17 L1.3, fixed 2026-10-12)
+
+**Symptom**: after `connect_qobject` — "take a clock subscriber off its channel when Qt destroys
+it" — was built on `receiver.destroyed.connect(<closure>)`, the suite died with
+`Windows fatal exception: access violation` in
+`tests/integration/test_sim_clock_wiring.py::TestHeatmapMidComputeDateChange`, a test that was
+not changed.
+
+**Wrong theory**: *"a slot was called after its receiver died"* — the very thing the helper
+exists to prevent, so the helper was the last place looked at. The receiver was alive; what was
+called dead was the helper's own closure.
+
+**Key evidence**: bare PyQt 6.11, no product code, four ways to let an object with a closure on
+its own `destroyed` signal go:
+
+```
+toplevel_plain   (refcount frees the wrapper)                       survived; hook ran 1 time(s)
+toplevel_cycle   (wrapper in a cycle; gc.collect())                 collected 6;  hook ran 0 time(s)   <- silently never called
+child_cycle      (a child of that wrapper)                          collected 7;  hook ran 1 time(s)
+deferred_cycle   (Qt owns it, deleteLater() pending; gc.collect();  collected 11; Windows fatal exception: access violation
+                  then the deferred delete runs)                                  File "...", line ??? in hook
+```
+
+**Root cause**: a Python callable connected to `destroyed` lives and dies with Python's idea of
+the wrapper, not with the C++ object. When the wrapper is garbage in a reference cycle while Qt
+still owns the object — a `deleteLater()` is pending, a parent holds it — the cyclic collector
+clears the callable, and the connection stays behind in C++. Then either the signal is never
+delivered (the second line), or Qt delivers it into what is left (the fourth). It surfaced in
+an unrelated test because that is where the collector happened to run.
+
+**Fix**: nothing hangs on `destroyed`. The clock's channel calls a guard that asks
+`sip.isdeleted(receiver)` at every delivery and takes itself off
+(`src/open_garden_planner/ui/sim_clock_subscription.py`); a test pins that the module never
+names the signal.
+
+**Lesson**: **a crash in a test you did not touch is a lifetime bug in what you did touch** —
+suspect the garbage collector, and reproduce with an explicit `gc.collect()` in bare PyQt before
+reading product code. **Do not hang clean-up on a QObject's `destroyed` signal from Python**:
+the callable can be collected before the signal fires. Ask at the moment of use
+(`sip.isdeleted`) instead of waiting to be told.

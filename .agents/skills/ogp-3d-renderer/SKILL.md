@@ -699,3 +699,85 @@ every measurement: ADR-048, addendum L1.2. What you need at the keyboard:
   the FROZEN exe as its own supervisor never ran on one (from source the supervising
   process does start inside a GitHub job); macOS; an integrated GPU; a display scale other
   than 100 %; a failed device creation on OpenGL or Vulkan.
+
+## 13. The engine inside the app — the workspace (L1.3)
+
+Concept: docs §8.27.3; decisions and every number: ADR-057 and the ADR-048 addendum "L1.3"; the
+test patterns: docs §8.10.7. What the ENGINE taught once it ran inside the real app:
+
+- **Qt keeps graphics state for every Model it ever drew — release it.** After a Model is
+  destroyed, Qt Quick 3D still holds its cached per-draw-call state: about 62 kB per Model, about
+  190 kB when it casts into the sun's two shadow cascades, independent of the mesh's size
+  (measured with 300, 3,000 and 12,000 vertices). Only `QQuickWindow.releaseResources()` gives
+  it back — `Quick3DHost.release_cached_resources()`, 2 to 10 ms, and the next frame is the same
+  frame. More frames, the QML engine's garbage collection, `clear()` instead of single
+  destroys: no effect. The workspace counts what each pass destroyed (`TickReport.retired`)
+  and releases when 64 piled up and the pipeline is quiet, or at once at 512
+  (`src/open_garden_planner/ui/view3d/workspace.py`). **Anything new that creates and destroys
+  engine objects per edit or per tick — a ground texture per bake, a selection outline, plants
+  regrown by an animated date — must be counted the same way, or measured to leave nothing.**
+  20 rebuilds of `bench_small` in the production host: 29 to 38 MB per rebuild without the
+  release, 3.9 to 4.9 with it; on WARP 27.1 and 7.4.
+- **A destroyed Model's mesh buffers are freed at the end of a PRESENTED frame.** A readback is
+  not one: `grabWindow()` emitted `afterFrameEnd` 0 times in 40 grabs. With the display asleep
+  Windows presents one frame and no more (§6), so a process whose frames are all readbacks
+  keeps every buffer it uploaded. Not a product leak — without a frame nothing is uploaded
+  either — but **a memory soak must present frames**: set Qt's own
+  `QT_D3D_NO_VBLANK_THREAD=1` in the child (update requests by timer;
+  `workspace_gate_support.run_gate(timer_paced=True)`), and assert that frames were presented.
+- **Software rendering is chosen per window, not per process.**
+  `QSG_RHI_PREFER_SOFTWARE_RENDERER=1` is read ONCE: set before the first Qt Quick window it
+  selects WARP, set after it does nothing. `QQuickGraphicsConfiguration.setPreferSoftwareDevice(True)`
+  on the window works at any time (`Quick3DHost(prefer_software=True)`; Qt's log then names
+  "Microsoft Basic Render Driver"). That is the workspace's compatibility mode after a start
+  that died (`src/open_garden_planner/ui/view3d/init_guard.py`).
+- **Nothing overlays the view; its input is its own.** The view is a native window: a sibling
+  widget is drawn UNDER it. Notices go into a strip above it or replace it. Mouse, wheel and
+  keys go to the native window — `host.install_event_filter(watcher)` sees them; pass on every
+  key you do not use and Qt's shortcut map keeps working with the keyboard in the 3D window
+  (measured: Ctrl+Z, Alt+1).
+- **Embedding does not cost the 2D side.** The main window stays a raster window
+  (`surfaceType() == RasterSurface`); a pan step of the canvas beside the live view costs 1.04
+  times what it costs alone (bound 1.3).
+- **A pass is a posted event.** `QTimer.singleShot(0)` waits behind every timer that is due
+  (the large bench plan: 5 % of the passes more than 228 ms late); a posted event at HIGH
+  priority overtakes the scene's own queued `changed` and costs a second snapshot per edit.
+  Normal priority.
+- **Measure edit → frame inside the pass.** The readback is taken in a slot on the controller's
+  `applied` signal. "Edit, `processEvents()`, grab" measures the 2D side's turn with it (56.6
+  ms p95 instead of 17.6). `bench_small`, Split at 1600 × 900, RTX 4070: p50 15.2 / p95 20.6 ms;
+  maximised at 5120 × 1369: 18.5 / 29.2; `bench_large`: 29.9 / 80.3 (the snapshot alone is 15
+  ms there — a whole-plan snapshot is O(total vertices) even fully cached, so it runs on a
+  real change only, never on a timer).
+- **The first pass of a plan freezes the GUI thread for the sum of its items.** The workspace
+  starts it from the PAINT of "Building the 3D view…", not from a timer that hopes the paint
+  came first.
+- **Dedicated GPU memory can be read without a counter.** `IDXGIAdapter3::QueryVideoMemoryInfo`
+  through `ctypes` — `tests/integration/workspace_gate_measure.py`, `gpu_dedicated_mb()` — gives
+  the calling process's usage on the adapter's local segment. With the release in place it
+  makes ONE step of about 79 MB at an early release and is flat after.
+
+Running the workspace's tiers:
+
+```bash
+# default tier (no GPU): the engine replaced at Workspace.engine_factory
+venv/Scripts/python.exe -m pytest tests/integration/test_view3d_workspace.py \
+    tests/integration/test_view3d_workspace_widget.py tests/integration/test_view3d_sync_controller.py
+# render tier: the app's own main() in a child, on a throw-away settings store (about 9 minutes)
+OGP_RENDER3D=1 venv/Scripts/python.exe -m pytest tests/integration/test_view3d_workspace_render.py -s
+# the frozen gate build (the product recipe plus one runtime hook), then its three scenarios
+venv/Scripts/python.exe -m PyInstaller installer/workspace_gate.spec --noconfirm --distpath <dir> --workpath <dir>
+OGP_RENDER3D=1 OGP_WORKSPACE_GATE_EXE=<dir>/OpenGardenPlannerGate/OpenGardenPlannerGate.exe \
+    venv/Scripts/python.exe -m pytest tests/integration/test_view3d_workspace_render.py -k frozen
+```
+
+**Never script the product exe or `-m open_garden_planner` onto a plan.** A plan load writes
+Recent Files and a clean close the window geometry, into the user's own settings. The gate's hook
+(`tests/integration/workspace_gate_hook.py`) moves the store first and ends the process (exit
+code 97) before a store under any other organisation exists.
+
+**Not measured (L1.3):** more than 20 rebuilds with the release in place; the soak in a frozen
+exe or on a CI runner (the workspace's render tier is not in CI's render job); time to photons
+(edit latency ends at a finished readback); a change of the device pixel ratio in mid-session
+and OS display scaling (manual checklist); the real map picker beside the 3D view (the
+automated check uses its engine on a local page).

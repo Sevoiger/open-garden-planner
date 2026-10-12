@@ -2416,6 +2416,110 @@ display at a scale other than 100 % (the code and the tests carry the device pix
 machine did not have one); a failed device creation on OpenGL or Vulkan (only Direct3D 11's
 was forced); the memory curve of criterion 10, which stays with L1.3.
 
+### Addendum L1.3 — criterion 2's deferred half and criterion 10's leak half, in the production view (2026-10-12, #385 story L1.3)
+
+Two things this decision left to the workspace story (criterion 2's coexistence with Qt
+WebEngine in the product, and "criterion 10's leak half is open on D3D11" in entry 10 of the
+evidence log above; ADR-057 is the workspace's own record). Both are answered in the REAL app — its own `main()` with
+`OGP_QUICK3D=1`, in a child process on a settings store that is never the developer's
+(`tests/integration/workspace_gate_hook.py`) — on the dev box: Windows 11, Direct3D 11, RTX 4070,
+Qt 6.11. The bounds are asserted in `tests/integration/test_view3d_workspace_render.py`.
+
+**Criterion 2 — Qt WebEngine beside the production host.** A `QWebEngineView` on a page of one
+colour loads and paints (the colour read back from its centre) BEFORE the 3D host was created
+and AFTER, in the same session, with the 3D view drawing its garden beside it (131 distinct
+colours in a 2334 × 1203 frame); zero Qt warnings. The automated check uses the map picker's
+ENGINE on a local page — the picker's own page needs the network and a key — so the picker
+itself stays on the owner's manual checklist. The main window is still a raster window with the
+3D pane embedded (`surfaceType() == RasterSurface`), and a 2D pan step costs 1.04 times what it
+costs without the 3D view (six alternating rounds of 60 steps along one path at the same canvas
+size; bound 1.3).
+
+**Criterion 10, the leak half — located, and closed by a release.** The pre-registered gate
+(private bytes, Theil–Sen over reloads 11–20 of 20, below 10 MB per reload, with its positive
+control on the same machine) read **34.6 MB per reload** in the production host on the small
+bench plan (98 parts) when every reload rebuilt the engine scene, 0.2 when it rebuilt nothing,
+58.8 for the control. So the growth this log could not explain (entry 10: 1.5 to 9.0 MB per
+reload on WARP, +62 to +222 MB by reload 50) is real, grows with what is REBUILT, and is larger
+on a hardware adapter with the production scene's shadow passes. Where it is:
+
+- **Not in Python.** `tracemalloc` between reloads 5 and 15 of the same soak: 0.045 MB per reload.
+  No geometry wrapper survives its Model (a weak set of every `BufferGeometry`: 0 alive).
+- **Not in dedicated GPU memory.** `IDXGIAdapter3::QueryVideoMemoryInfo` (node 0, the local
+  segment group, called through `ctypes` — `CurrentUsage` is the figure for the calling process):
+  298.1 MB before, 305.6 MB after the first reload, the same after the twentieth.
+- **Two retentions inside Qt Quick 3D, separated with a bare host** (100 Models of 3,000
+  vertices — 14.9 MB of buffers — created, drawn and destroyed per round, 20 rounds):
+
+  | What the round does | MB per round |
+  |---|---|
+  | builds the buffers and drops them (no Qt object) | −0.13 |
+  | builds the geometries and drops them (no Model) | 0.00 |
+  | Models created and destroyed, never drawn (hidden host, or shown and not read back) | 0.8 – 1.0 |
+  | drawn through readbacks only (`grabWindow()`), no sun | 22.0 – 22.5 |
+  | drawn in PRESENTED frames, no sun | 6.3 – 7.7 |
+  | presented, sun up — 300 / 3,000 / 12,000 vertices per Model | 18.2 / 18 – 20 / 22 – 25 |
+  | presented, sun up, the Models cast no shadow | 6.2 |
+  | presented, sun up, `QQuickWindow.releaseResources()` once per round | 3.4 – 3.9 (20 rounds), 0.85 – 1.14 (60 rounds) |
+
+  1. **The mesh buffers of a destroyed Model are freed at the end of a PRESENTED frame.** A
+     readback is not one: `grabWindow()` emitted `afterFrameEnd` 0 times in 40 grabs, 40 presented
+     frames emitted it 40 times. On Windows update requests come from a display-vblank thread,
+     and with the display asleep a visible window presents its first frame and no more (the
+     addendum "L1.2" above) — so every soak run with the display asleep kept every buffer it
+     uploaded. That is a measuring fact, not a product leak: without a frame nothing is uploaded
+     either. Qt's own `QT_D3D_NO_VBLANK_THREAD=1` paces update requests by timer; the soak runs
+     with it.
+  2. **Per Model that was ever drawn, Qt keeps cached draw-call state after the Model is
+     destroyed** — about 62 kB without shadow passes, about 190 kB with the sun's two cascades,
+     independent of the vertex count (the 300-vertex row), 0.12 to 0.35 MB per Model in the
+     production host. `QQuickWindow.releaseResources()` gives it back — on a visible window Qt
+     keeps the scene graph and drops what it caches. Nothing else does: more frames, the QML
+     engine's garbage collection, `clear()` instead of single destroys, an embedded instead of
+     a top-level window and the material kind made no difference.
+
+**The fix** (ADR-057 decision 15): `Quick3DHost.release_cached_resources()`; the pipeline counts
+the items whose Models each pass destroyed, and the workspace releases when 64 piled up and the
+pipeline has been quiet for half a second, or at once at 512. One release costs 2 to 10 ms on
+the GUI thread; the frame after it is the same frame (identical readbacks in 20 of 20 after it).
+
+**The gate, through the product's own path** (frames presented, each reload followed by the
+workspace's own release as a user who opened a plan gives it the time; 2026-10-12, twice):
+
+| Variant | MB per reload, reloads 11–20 | growth over 20 | releases |
+|---|---|---|---|
+| rebuild on | **4.90** and 3.88 | +154 and +131 MB | 20 |
+| rebuild off | 0.07 and 0.16 | +3.4 and +5.4 MB | 0 |
+| positive control (rebuild on, 25 MB kept per reload) | 28.0 and 28.4 — fails, as it must | +609 and +623 MB | 20 |
+| rebuild on, the workspace's release out of reach | 29.0 (27.9 and 38.5 in two earlier runs) | +571 MB | 0 |
+
+The curve with the release, in MB: 1354, 1378, 1371, 1373, 1382, 1374, 1378, 1381, 1374, 1488,
+1464, 1466, 1479, 1480, 1499, 1501, 1472, 1511, 1489, 1508. It is not a straight line: flat for
+nine reloads, ONE step of about 110 MB, then about 4 MB per reload with a scatter of ±15.
+Dedicated GPU memory makes the same single step at the same reload (299 → 378 MB; it had been
+FALLING before it, 305.5 → 299.0) and stays there (372 to 378 MB; slope −0.11 MB per reload).
+In the control run the step came at the second reload, in both memories again; without the
+release dedicated memory never leaves 305. So at one of the first releases the driver starts
+to keep a larger pool, once: about +79 MB dedicated and +110 MB committed. Not explained
+further, and not growing.
+
+**The same soak elsewhere** (one run each, the same day, the same path):
+
+| Where | with the release | without it |
+|---|---|---|
+| the large bench plan (421 parts, 424 items retired per reload), RTX 4070 | **5.07** MB per reload over reloads 11–20 (6.3 over all 20; +278 MB, a saw-tooth of ±60 MB in the first half), 20 releases, the frame unchanged in 20 of 20; dedicated GPU memory 283 → 379 MB in three early steps, slope 0.0 after | 50.9 MB per reload (12 reloads, +651 MB) |
+| the small bench plan on WARP ("Microsoft Basic Render Driver", the whole process) | **7.42** MB per reload (5.5 over all 20; +107 MB) | 27.1 MB per reload (+560 MB) |
+
+So the retention is Qt's own and not the hardware driver's: WARP keeps the same 27 MB per
+reload. What remains on WARP WITH the release lies in the range this log measured for the spike
+(1.5 to 9.0) and passes the gate with less room than the GPU does.
+
+**What this closes and what it does not.** Criterion 10's leak half holds under its
+pre-registered gate, in the production view, on a hardware adapter and on WARP, with its
+control firing and with dedicated GPU memory read for the first time. Not measured: more than
+20 reloads with the release in place; a frozen exe; a CI runner (the workspace's render tier is
+not part of CI's render job).
+
 ## ADR-049: Frost-Date Semantics - One Parser, 29 February Substituted as 1 March
 
 **Status**: Accepted (2026-10, #414 / #416, task-date correctness package)
@@ -2834,6 +2938,42 @@ It pins:
 - an unparented controller dies without a GC cycle.
 
 All three P1 tests (round 1's two, round 2's typing test) fail when their fix is reverted.
+
+### Addendum L1.3 — `connect_qobject`: the rule of decision 4 as a mechanism (2026-10-12, #385 story L1.3)
+
+Decision 4 ended with a rule: nothing disconnects a QObject receiver whose C++ side is destroyed
+while its Python wrapper lives, so every Qt subscriber disconnects in its own teardown. L1.3 adds
+more subscribers (the 3D pipeline's controller listens on both channels) and turns the rule into
+one helper, `ui/sim_clock_subscription.py`:
+
+```python
+connect_qobject(clock.date_changed, self._on_date_changed)      # a bound method of a QObject
+connect_qobject(clock.instant_changed, self._on_instant_changed)
+```
+
+- The channel calls a **guard**, not the slot. The guard asks `sip.isdeleted(receiver)` at every
+  delivery; a receiver Qt has destroyed is not called, and the guard takes itself off the channel.
+- The guard lives exactly as long as the receiver's Python wrapper (a weak-keyed registry), so
+  L1.0's two properties survive: a subscription never keeps its receiver alive, and a collected
+  receiver leaves the channel at once.
+- Only a bound method of a live QObject is taken (`TypeError` otherwise; `RuntimeError` for a
+  receiver that is already gone). `disconnect_qobject` takes a slot off by hand.
+- **Binding from now on:** no module of the product connects to `date_changed` or
+  `instant_changed` directly. An AST scan of `src/` enforces it
+  (`tests/unit/test_sim_clock_subscription.py::test_no_module_of_the_product_connects_to_a_clock_channel_directly`);
+  the main window's two subscriptions and the shadow overlay's were moved.
+
+**The alternative that was built first and crashed.** "Disconnect on `destroyed`", as decision 4
+suggests, was implemented as `receiver.destroyed.connect(<closure that disconnects>)`. The suite
+then died with an access violation in a test that has nothing to do with it
+(`test_sim_clock_wiring.py::TestHeatmapMidComputeDateChange`). Reproduced in bare PyQt: a Python
+callable connected to `destroyed` lives and dies with Python's idea of the wrapper. When the
+wrapper is garbage in a reference cycle while Qt still owns the C++ object (a `deleteLater()` is
+pending), the cyclic collector clears the callable and the connection stays behind — and then
+the signal is either never delivered (the hook ran 0 times) or delivered into what is left (the
+access violation). The helper therefore hangs nothing on `destroyed`; a test pins that
+(`::test_the_helper_hangs_nothing_on_the_destroyed_signal`). §11.4.13 has the reproduction.
+
 ## ADR-054: Recorded species traits and semantic food-forest layers (#312)
 
 **Status:** Accepted for Package F1, October 2026. Additive `.ogp` version 1.4.
@@ -4081,3 +4221,283 @@ a pot — through the production builders;
 `tests/integration/test_scene3d_built_world.py` (§8.10: a garden drawn with the real tools, an
 edit session with exact sink calls, the ridge in the mesh against the live ridge item for turned
 and non-rectangular houses, ≤ 0.1 cm); `tests/perf/test_scene3d_built_world_budget.py`.
+
+## ADR-057: The 3D workspace — Plan / 3D / Split in the main window, one kept engine host (Phase 17, L1.3)
+
+**Status**: Accepted (2026-10-12, #385 story L1.3, epic #383). Behind the internal switch
+`OGP_QUICK3D=1`; the shipped "3D View…" window (Qt 3D) stays the product until L1.9 flips the
+default. Builds on ADR-048 (the engine), ADR-053 (the clock) and ADR-056 (the pipeline), and closes
+the two things ADR-048 left to this story: criterion 2's deferred half and criterion 10's leak half
+(addendum there).
+
+### Context
+
+L1.1 built a pipeline (records → diff → builders → sink) and L1.2 an engine host; nothing connected
+either to the app. The shipped 3D view is a second window that rebuilds its whole scene on every
+change. The epic wants 3D to be a **mode of the main window** — Plan, 3D, or both side by side — in
+which an edit appears while the user watches.
+
+Five facts shaped the design:
+
+- **The engine's view is a native window** (`QQuickView` in `QWidget.createWindowContainer`,
+  ADR-048 criterion 3). No sibling widget paints over it; a notice "on top of 3D" cannot exist.
+- **The host must be built lazily and never built twice.** Importing and starting it costs 0.4 to
+  1.2 s on the GUI thread, and ADR-048 criterion 10 demands zero aborts over hide / show cycles —
+  which the host delivers when it is kept and only hidden.
+- **A first 3D start can kill the process inside the graphics driver** — no exception, no dialog,
+  no log line. A user whose driver does that must still reach 3D at the next start.
+- **The default test tier has no GPU** (`QT_QPA_PLATFORM=offscreen` selects the software scene
+  graph, where Qt Quick 3D draws nothing). Whatever is a decision and not a Qt Quick call must be
+  testable without the engine.
+- **A whole-plan snapshot is O(total vertices) even when every record is cached** (3 to 4 ms on
+  the small bench plan, 13 to 15 ms on the large one, measured below), and the first pass of a
+  plan costs the sum of its items — seconds for a hostile plan.
+
+### Decision
+
+1. **One internal switch.** `app/settings.py::quick3d_workspace_enabled()` is the only read of
+   `OGP_QUICK3D`; exactly `"1"` switches the workspace on. Off, the app is what it was: no
+   workspace object, nothing of `ui/view3d/workspace` or of Qt Quick imported, the canvas area's
+   widget tree unchanged. No setting, no menu entry, no persisted value: the switch leaves with
+   L1.9.
+2. **`Workspace` holds the canvas and, from the first switch to 3D or Split on, a 3D pane beside
+   it** (`ui/view3d/workspace.py`). Three modes: *Plan* (the canvas alone, at the size and with the
+   pixels it had without the workspace), *3D* (the pane alone), *Split* (a splitter; neither side
+   collapses, the pane is at least 220 px wide — a collapsed 3D pane would be a third way of saying
+   "Plan" in which the engine keeps running). The mode is three checkable, exclusive actions:
+   **Alt+1 / Alt+2 / Alt+3**, a *Workspace* submenu of the View menu with "Reset 3D View", and a
+   small button row — floating over the canvas in Plan and Split, in the pane's strip in 3D. The
+   Split position is kept through the UI-state store (ADR-041), and only when the session really
+   was in Split.
+3. **Nothing overlays the native 3D window.** Every control, notice and message of the 3D pane
+   sits in a strip ABOVE the view or REPLACES the view (a message page in a stacked widget). The
+   floating switch is the one overlay there is, and it floats over the canvas, an ordinary widget.
+   L1.8's info card goes into the same pane, beside or below the view.
+4. **One engine host per main window, built on first use, kept, only hidden and shown.**
+   `Workspace.engine_factory(prefer_software) -> (host, sink)` builds it — by default
+   `Quick3DHost` and `Quick3DSink`, imported inside the factory — and is THE test seam: the
+   default tier hands in a recording sink and a stand-in host. The workspace module imports no Qt
+   Quick binding. Shutdown runs in the main window's `closeEvent`, while the window exists:
+   pipeline, start marker, host.
+5. **The pipeline's controller is engine-free** (`ui/view3d/sync_controller.py::Scene3DController`):
+   `scene.changed`, the undo stack's `stack_changed` and the clock's two channels in — at most ONE
+   pass per turn of the event loop out. Its rules:
+   - *Paused while 3D is hidden*: two flags and nothing else — no snapshot, no diff, no sink call,
+     no timer. Showing 3D runs one catch-up pass, which `SceneSync` guarantees equals a
+     from-scratch apply.
+   - *One pass, one transaction*: records, sun and ground travel in one `sync.apply`. A
+     time-of-day change is LIGHT ONLY (one `set_sun`, no snapshot); a date change regrows the dated
+     plants; writes faster than passes coalesce in the flags — an animated date never queues more
+     than one regrow.
+   - *A snapshot only on a real change, never on a timer.*
+   - *A document change is not a reset.* A new or opened plan is another snapshot; `apply` removes
+     what is gone. `SceneSync.reset()` is RECOVERY: after a sink call raised or the sync is
+     poisoned the controller resets, applies once more, logs one line, and never lets the error
+     reach the event loop; if that fails too it gives up for this pass and the next change tries
+     again.
+   - *One snapshotting scene per process* — the record layer's outline memories ride a
+     process-wide generation clock (ADR-056); the workspace has one canvas scene and one
+     controller.
+   - *What 3D remembers per plan is dropped in one place* (`_drop_plan_memories`: the plant
+     builder's shapes, the record layer's outlines) — on a document change and when the view
+     closes.
+   - *The ground seam*: `set_ground_stage(stage)` — `stage(previous_records, records, width_cm,
+     depth_cm) -> GroundSpec` runs BEFORE `apply`, so what it returns rides the same transaction
+     (L1.5's baker).
+6. **A pass is a posted event of normal priority, not a zero timer.** Measured in the real app
+   with the real engine (RTX 4070, window 1600 × 900, 3D pane 574 × 734, 120 scripted edits, clock
+   from before the command to a finished readback taken the moment the pass committed):
+
+   | scheduling | `bench_small` p50 / p95 | `bench_large` p50 / p95 | wait for the pass, p95 (large) |
+   |---|---|---|---|
+   | timer, 1 ms | 16.1 / 24.5 ms | 38.4 / 257.4 ms | 228.5 ms |
+   | posted event, high priority | 14.0 / 18.9 ms | 29.7 / 45.5 ms | 0.1 ms |
+   | **posted event, normal priority** | 13.0 / 17.6 ms | 29.2 / 66.7 ms | 34.9 ms |
+
+   A zero timer waits behind the timers that are due — the 2D side's own debounced work
+   (spacing, companions, the minimap). A posted event is delivered before them. At HIGH priority
+   it also overtakes the scene's own queued `changed` for the same edit, which then costs a
+   SECOND whole-plan snapshot per edit; at normal priority the undo stack's signal and the
+   scene's share one pass.
+7. **The first pass of a document is started by the PAINT of its notice.** "Building the 3D
+   view…" is set, and an event filter on that label starts the pipeline after the label painted
+   — not a timer that hopes the paint came first. A label that is never painted releases the
+   pipeline after 250 ms; with the controls hidden (fullscreen preview) nothing is waited for.
+   The same on a document change while 3D is shown, and for a catch-up pass after hidden edits
+   (which may be a whole new plan).
+8. **The camera is a Qt-free value with one owner** (`core/scene3d/camera.py::OrbitCamera`): a
+   goal pose that input moves and a pose that follows it as a critically damped spring,
+   integrated exactly (a stalled timer lands where many short steps would have). Target on the
+   ground, distance 0.5 to 600 m, pitch 5° to 89°, the target kept within the plan plus 10 m.
+   **It is moved by four things only — user input, "Reset 3D View", the first open and a
+   document change — and "edits never move the camera" is therefore a property of the code:
+   there is no other call site.** The step timer (16 ms) runs only while the camera is still
+   moving and the pane is shown.
+9. **Input is an event filter on the native window** (`ui/view3d/orbit_input.py`,
+   `Quick3DHost.install_event_filter`): the shipped view's gestures — left or middle drag pans,
+   right drag orbits, both buttons or the wheel zoom, arrows pan, Alt+arrows orbit, PageUp /
+   PageDown zoom, Home resets. Escape and every other key are passed on: the app's shortcuts
+   work with the keyboard in the 3D window (measured: Ctrl+Z undoes, Alt+1 leads back to the
+   plan), and Escape stays free for L1.8's walk mode.
+10. **A start guard instead of a crash** (`ui/view3d/init_guard.py`, standard library only). Two
+    small files in the app's log directory, beside `app.log`: `view3d-init-<pid>.marker`, written
+    before the first 3D window of a session is built and removed when a frame was presented (or
+    Qt reported "no graphics device", or Python caught an error, or the app closed in good
+    order); and `view3d-compat.flag`. A marker whose process is gone means the start died: the
+    flag goes on and 3D renders on the software adapter — **per window**
+    (`QQuickGraphicsConfiguration.setPreferSoftwareDevice`), because
+    `QSG_RHI_PREFER_SOFTWARE_RENDERER` is read once per process and does nothing after the first
+    Qt Quick window (measured both ways). The pane says so, and offers "Try Hardware Next Time";
+    ONLY the user removes the flag — a machine whose driver crashes would otherwise alternate
+    between a crash and a software session for ever. A marker is per process, so a second
+    running instance is not a crash; one older than 600 s whose process id "runs" is (the id was
+    handed out again). A session that never opens 3D reads and writes nothing.
+11. **"No graphics device" is a message, not a retry loop.** `health().scene_graph_error` ends
+    the view for the session: the pane shows the message and — once, on hardware — "Use
+    Compatibility Mode Next Time". An error raised in-process (an import, the scene file) is a
+    message with "Try Again". Opening 3D never takes the 2D app down.
+12. **What 3D could not show is said.** The record layer refuses some items the canvas draws
+    (`SkipReason`), and a builder can fail: the strip shows a quiet, persistent count ("3 objects
+    are not shown in 3D") and, on demand, a non-modal list — name, kind, a translated text per
+    reason code — whose rows select the item on the canvas.
+13. **Plan text is text** (`core/plain_text.py`, §8.11). A plan file is untrusted and Qt decides
+    "rich text or plain" by LOOKING at a string. Everything plan-derived that reaches a tooltip,
+    a label or a log goes through one helper: normalise (every line boundary `str.splitlines()`
+    knows becomes one line break; other control characters and the bidi overrides become
+    U+FFFD), THEN cap (lines and length, on what the consumer will see), THEN escape. Labels are
+    `PlainText`; list rows are plain by the default delegate. This story's own log records are
+    one normalised line at ERROR / WARNING with the traceback at DEBUG only.
+14. **`connect_qobject` is how a QObject listens to the clock** (`ui/sim_clock_subscription.py`,
+    ADR-053 addendum): the channel calls a guard that asks `sip.isdeleted` at every delivery. A
+    scan of the product refuses a direct connect.
+15. **What a destroyed Model leaves behind is released.** Qt Quick 3D keeps per-draw-call
+    graphics state for every Model it ever drew, after the Model is destroyed — 0.1 to 0.35 MB
+    each on Direct3D 11 with the sun's shadow passes on, independent of the mesh — and only
+    `QQuickWindow.releaseResources()` gives it back (`Quick3DHost.release_cached_resources()`,
+    2 to 10 ms, the next frame unchanged). Every pass says how many items lost their Models
+    (`TickReport.retired`: removed, geometry replaced, cleared by a reset); the workspace counts
+    them and releases when 64 piled up and the pipeline has been quiet for half a second, or at
+    once at 512 — an animated date regrows every dated plant per tick and is never quiet.
+    **This is the leak half of ADR-048 criterion 10** (numbers in the addendum there).
+16. **#428 is fixed where documents change.** `_before_document_change()` clears the
+    hours-of-sun map — which cancels a compute still running and drops its late result — and
+    unchecks the toolbar's button, before the scene is cleared, on all three document paths
+    (new, open, recovery load).
+
+### Alternatives considered (rejected)
+
+- **A stacked widget instead of a splitter.** Split is the mode that makes the feature (an edit on
+  the left, its solid on the right); a stack has no Split.
+- **The mode switch in the toolbar, the tab bar or the status bar.** The toolbars are the tools';
+  the tab bar belongs to the tabs. A switch on the surface it switches needs no finding, and in
+  3D mode it must be in the pane anyway. Cost: one small overlay on the canvas in Plan mode — the
+  canvas view's own pixels stay identical (pinned), the area's do not.
+- **A notice over the 3D view.** Not possible over a native window; `QQuickWidget` would allow
+  it and was rejected by ADR-048 (an offscreen round trip per frame).
+- **Building the host at start-up, or rebuilding it per show.** The first costs every session
+  half a second and a graphics device it may never use; the second is the abort ADR-048
+  measured.
+- **Polling the scene on a timer.** A snapshot per tick is O(total vertices): 13 ms of the GUI
+  thread per tick on the large plan, for nothing, also while idle.
+- **A timer of interval zero, or a high-priority event** — decision 6's table.
+- **Keeping the start marker in the settings store.** The marker must be on disk before the
+  engine is imported and must survive a process that dies without flushing anything; it is a
+  fact about a process (it carries a pid), and it belongs where support looks — beside
+  `app.log` and `crash.log`. A registry value is none of these.
+- **Falling back to software automatically, within the session.** A device that could not be
+  created is reported by Qt in good order (`sceneGraphError`), and a second host built at once
+  on the software adapter would be a second engine in a session that was promised one. A dead
+  PROCESS cannot fall back at all. Both lead to the same place: the next start, and a choice
+  the user can undo.
+- **Disconnecting a clock subscriber on its own `destroyed` signal.** Built first; it crashed
+  the suite with an access violation — the cyclic collector clears a Python callable connected
+  to `destroyed` while Qt still owns the object, and Qt then calls what is left (§11.4.13).
+- **Releasing the engine's caches on every pass, on a timer, or never.** Every pass: 2 to 10 ms
+  per edit plus a frame that rebuilds what was dropped. A timer: wake-ups while idle, and no
+  relation to what was destroyed. Never: 29 to 38 MB per rebuild of the small bench plan
+  (measured), and a date animation that keeps hundreds of megabytes per minute.
+
+### Consequences
+
+- **For L1.4 (looks, sky):** subscribe with `connect_qobject`; a look is applied through the host
+  (`set_look`), never through the pipeline. Whatever animates `windTime` makes frames differ from
+  one another — the soak's "a release changes no pixel" check and the camera rule's readbacks
+  assume a still scene and must pin the wind clock to 0.
+- **For L1.5 (ground bake):** `Scene3DController.set_ground_stage(stage)` is the seam; the stage
+  runs on the GUI thread inside the pass and is contained when it raises (the bare rectangle is
+  sent). A bake that replaces a texture per pass destroys no Model and so does not count as
+  retired; if it creates and destroys engine objects of its own, they need the same release.
+- **For L1.8 (selection, walk):** `OrbitInput` passes Escape and unknown keys on;
+  `Workspace.select_item(id)` is how the problems list selects on the canvas; a click on the 3D
+  view is `try: host.pick(...) except HostStateError` — never `wait_ready()` (the workspace calls
+  it nowhere); the info card goes beside or below the view.
+- **The workspace needs three things of the host beyond the engine story's contract:**
+  `Quick3DHost(prefer_software=…)`, `install_event_filter(watcher)` and
+  `release_cached_resources()` (with the `cache_releases` counter).
+- **A memory soak must present frames.** Qt Quick 3D frees the mesh buffers of a destroyed Model
+  at the end of a PRESENTED frame, and `grabWindow()` never emits that signal (0 of 40). With
+  the display asleep Windows presents one frame and no more, so a soak whose frames are all
+  readbacks measures a retention the product does not have. `QT_D3D_NO_VBLANK_THREAD=1` paces
+  update requests by timer (`run_gate(timer_paced=True)`).
+- **Known limits, stated.** The Keyboard Shortcuts dialog does not list Alt+1 / 2 / 3 while the
+  workspace is behind its switch (L1.9). Edit latency is measured to a finished READBACK; the
+  time to photons is not measured. The real map picker (it needs the network and a key) is on
+  the manual checklist; the automated check uses its engine on a local page. A change of the
+  device pixel ratio in mid-session, and OS display scaling, are unmeasured (manual checklist).
+  With the release in place, dedicated GPU memory makes ONE step of about 79 MB at an early
+  release (299 → 378 MB) and is flat after; committed memory steps with it once, by about 110
+  MB (ADR-048 addendum "L1.3"). The workspace's render tier is not part of CI's render job: it
+  was measured on the dev box only (GPU, and the soak on WARP).
+- The builder-failure record of `core/scene3d/sync.py` and the record layer's `record_failed`
+  record still attach the exception at ERROR (they are the scene contract's, and pinned by its
+  tests): decision 13's "one line" holds for this story's five modules.
+
+### Validation
+
+Default tier (no GPU; the engine replaced at the seam):
+
+- `tests/unit/test_scene3d_camera.py` (62) — pose, clamps, framing, the exact spring; the module
+  is standard library only.
+- `tests/unit/test_sim_clock_subscription.py` (23), `tests/unit/test_view3d_init_guard.py` (44 —
+  every transition in a temp directory; the default folder under pytest is inside the test
+  root), `tests/unit/test_plain_text.py` (71), `tests/unit/test_view3d_workspace_i18n.py` (40),
+  `tests/unit/test_view3d_workspace_packaging.py` (4).
+- `tests/ui/test_view3d_orbit_input.py` (21), `tests/ui/test_view3d_host_seams.py` (7).
+- `tests/integration/test_view3d_sync_controller.py` (38) — through the real `scene.changed`,
+  `stack_changed` and clock channels: **G4** (28 hidden edits: 0 snapshots, 0 sink calls; one
+  catch-up pass equal to a from-scratch apply), **G9** (time → light only; date → the dated
+  plants and nothing else; a destroyed subscriber is never called).
+- `tests/integration/test_view3d_workspace_widget.py` (42) — modes, the kept host, **G3** (the
+  pose compared exactly around each of 100 edits of every kind, a date and a time change; a
+  document change frames once), **G6** (the marker and its notices), the notice painted before
+  the first snapshot, the release thresholds, hostile names.
+- `tests/integration/test_view3d_workspace.py` (22) — the §8.10 workflow through a real
+  `GardenPlannerApp`; **G1** in two fresh processes (without the switch: no engine import and
+  the canvas view's pixels identical to the build with it in Plan mode); **G10** (#428).
+- `tests/integration/test_workspace_gate.py` (11) — the gate's own safety: `main()` on a plan
+  builds every store on the throw-away key; a decoy organisation is refused with exit code 97.
+
+Render tier (`OGP_RENDER3D=1`), `tests/integration/test_view3d_workspace_render.py` — the app's
+own `main()` in a child, on Direct3D 11 (RTX 4070), 2026-10-12:
+
+| Gate | Measured | Bound |
+|---|---|---|
+| G2 edit → finished readback, `bench_small`, Split at 1600 × 900, 120 edits of seven kinds | p50 15.2 / **p95 20.6** / max 43.4 ms (edit 0.8, wait 0.8, snapshot 3.6, apply 0.4, readback 9.2 at the median) | p95 ≤ 50 ms |
+| the same on `bench_large` (424 records) | p50 29.9 / p95 80.3 / max 150 ms (snapshot 15.3 ms at the median, 27.8 at p95; wait p95 41 ms) | reported |
+| the same on the maximised window (5120 × 1369, 3D pane 2334 × 1203), `bench_small` | p50 18.5 / p95 29.2 / max 51.2 ms (the readback alone 12.9 ms at the median) | reported |
+| G3 twin: 100 edits of nine kinds on the real host | the engine's camera was set 0 times; a new document set it once | exact |
+| G5 never / visible / hidden | exit 0, 0 Qt warnings, no ERROR in `app.log`, nothing of Qt Quick imported before 3D is asked for | — |
+| G5 in the frozen build (`installer/workspace_gate.spec`: the product recipe plus the gate's runtime hook; PyInstaller 6.18, Python 3.12) | the same three: exit 0, 0 Qt warnings, 98 parts drawn on the GPU; every store the exe built is the throw-away one. The product exe from the same tree: the 8-second smoke stays up, `--selftest` exit 0 in 4.2 s | — |
+| G6 twin: died → next start → try hardware → next start | compatibility mode on "Microsoft Basic Render Driver" by Qt's own log, then "NVIDIA GeForce RTX 4070" again | — |
+| G7 soak, 20 reloads, rebuild on | **4.90 MB / reload** (reloads 11–20), 20 releases, the frame unchanged in 20 of 20 | < 10 |
+| G7 rebuild off / positive control (+25 MB per reload) / release out of reach | 0.07 / 28.0 (fails, as it must) / 29.0 | < 10 / ≥ 10 / reported |
+| G7 dedicated GPU memory (DXGI, this process) | 298.5 MB before; ONE step, 299 → 378 MB, at the tenth reload; 372–378 after (slope −0.11 MB / reload) | < 10 |
+| G7 elsewhere, with the release (one run each) | the large plan (421 parts): 5.07 MB / reload; WARP: 7.42 (27.1 without the release) | < 10 |
+| G8 a Qt WebEngine page before and after the 3D host exists | painted both times (`#1e90ff` at its centre); 131 distinct colours in the 3D frame beside it | — |
+| G11 pan step, Split against Plan at the same canvas size (874 × 967) | 1.04 (the fastest tenth: 1.05) | ≤ 1.3 |
+
+Hand mutation (one text mutant at a time, the story's tests run, the tree restored): 17 of 17
+(controller), 24 of 24 (workspace), 13 + 9 + 2 + 2 (plain text and logs), 11 of 11 (app), 2 of
+2 (the switch), and for what the sync with the integration branch added: 11 of 11 (retired
+counts and plan memories), 9 of 9 (release), 7 of 7 (notice), 3 of 3 (host seam), 6 of 6
+(workspace paths that moved).

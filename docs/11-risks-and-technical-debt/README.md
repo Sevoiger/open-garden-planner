@@ -2156,6 +2156,90 @@ bootstrap pin must be checked against hosted update tooling as well as installat
 
 **Unicode CLI output needs an explicit stream encoding** (issue #417): UTF-8 wiki files did not prevent redirected Windows stdout from using cp1252. The comparison command emitted byte 0x96 for an en dash and failed to encode a check mark. `scripts/sync_wiki.py` now sets stdout and stderr to UTF-8 before printing. The subprocess comparison regression in `tests/integration/test_wiki_publication.py` captures real Unicode diffs without a UTF-8 environment override.
 
+### 11.4.13 What the 3D workspace taught (Phase 17 L1.3, #385)
+
+Symptom → root cause → fix, for the things that cost time while the workspace (ADR-057, §8.27.3)
+was built. The engine's own traps are §11.4.12; these are about wiring an engine into an app and
+about measuring it.
+
+1. **A Python callable on a QObject's `destroyed` signal crashes a test that has nothing to do
+   with it.** *Symptom:* after "disconnect a clock subscriber when its QObject is destroyed" was
+   built as `receiver.destroyed.connect(<closure>)`, the suite died with an access violation in
+   `test_sim_clock_wiring.py::TestHeatmapMidComputeDateChange`. *Root cause* (bare PyQt 6.11,
+   four ways to let such an object go): freed by refcount — the hook runs once; the wrapper in a
+   reference cycle and collected — the hook runs **0 times**, silently; the same with Qt owning
+   the object and a `deleteLater()` pending — **access violation** inside the hook when the
+   deferred delete runs. The callable lives and dies with Python's idea of the wrapper, not
+   with the C++ object; the collector clears it and the connection stays behind. *Fix:* nothing
+   hangs on `destroyed`. The clock's channel calls a guard that asks `sip.isdeleted()` at every
+   delivery (`ui/sim_clock_subscription.py`, ADR-053 addendum). **Do not hang clean-up on a
+   QObject's `destroyed` signal from Python: the callable can be collected before the signal
+   fires. Ask at the moment of use.**
+2. **Qt keeps graphics state for every Model it ever drew.** *Symptom:* the memory soak read
+   34.6 MB per reload against a bound of 10, with nothing growing in Python (`tracemalloc`: 0.045
+   MB per reload) and nothing in VRAM (DXGI: flat). *Root cause:* two retentions inside Qt Quick
+   3D — per-draw-call state kept for every destroyed Model until
+   `QQuickWindow.releaseResources()` (0.1 to 0.35 MB each with shadow passes, independent of the
+   mesh), and mesh buffers that are freed only at the end of a PRESENTED frame. *Fix:* the
+   workspace counts retired Models and releases (ADR-057 decision 15). *How it was found:* a
+   bare host, 100 Models per round, ONE thing changed per run — buffers only, geometries only,
+   Models never drawn, drawn by readback, drawn in presented frames, sun on, shadows off,
+   embedded, another material, 300 or 12,000 vertices (ADR-048 addendum "L1.3" has the table).
+   The vertex-count runs said "not the mesh"; the sun run said "per pass".
+3. **A soak that only reads frames back measures something the product does not have.**
+   `grabWindow()` renders and reads back but never ends a frame the way a presented one ends:
+   `afterFrameEnd` fired 0 times in 40 grabs. With the display asleep Windows presents no frame
+   at all (update requests come from a vblank thread), so on this machine at night every frame
+   of every soak was a readback and every buffer stayed. *Fix:* the soak's child runs with Qt's
+   `QT_D3D_NO_VBLANK_THREAD=1` (frames presented by timer) and asserts that frames were
+   presented. **Before reading a memory curve, check what kind of frames produced it.**
+4. **`processEvents()` after an edit measures the 2D side.** The first edit-to-frame number
+   (p95 56.6 ms) was taken as "edit, `processEvents()`, readback": it contained the rest of the
+   event-loop turn — the canvas repainting itself, the minimap, the panels. *Fix:* the readback
+   is taken inside a slot on the pipeline's `applied` signal, the moment the pass committed
+   (p95 17.6 to 20.6 ms at 1600 × 900; 29.2 ms on the maximised 5120 × 1369 window).
+   Also there: a scripted `redo` with nothing to redo "measured" about 200 ms — the time-out of
+   waiting for a pass that never came. A measuring script counts the edits that reached the
+   engine and reports misses.
+5. **A zero timer is not "next turn".** A pass scheduled with `QTimer.singleShot(0)` waited
+   behind every timer that was due — on the large bench plan 5 % of the passes started more
+   than 228 ms late, behind the 2D side's debounced work. A posted event is delivered first.
+   And at HIGH priority it is delivered too early: before the scene's own queued `changed` for
+   the same edit, which then starts a second pass (four tests met two snapshots per edit).
+   Normal priority, and the two signals share one pass.
+6. **The pan comparison was wrong three times.** (a) Two long blocks one after the other —
+   Split, then Plan — measured the machine's drift: 1.10 to 1.28 for the same build while other
+   suites ran. (b) Short alternating blocks that walked on from where the last one stopped
+   compared lawn with dense beds: per-round ratios between 0.16 and 7.2. (c) A walk that reaches
+   the end of the scroll range "pans" for 0.001 ms a step. *Now:* six alternating rounds, every
+   block from the same position along the same pixels, every step asserted to have scrolled:
+   0.83, 1.04 and 1.09 in three runs on the same busy machine (the fastest tenth: 1.05).
+7. **An editing tool wrote three `\u` escapes as the characters themselves.** The module that
+   DEFINES the line separators (U+2028, U+2029) then contained two of them, invisibly, and so
+   did two tests. *Fix:* named escapes (`\N{LINE SEPARATOR}`), and a test that scans `src/` and
+   `tests/` for characters a reader cannot see
+   (`tests/unit/test_plain_text.py`; its own control caught that the first version missed
+   U+FFFD).
+8. **Importing the gate's hook into the test process moved the test process off its own
+   settings key.** The hook's job is to rebind the settings names of the process that imports
+   it — a child. A test that imported it to read a constant rebound pytest's own; conftest's
+   per-test check caught it. *Fix:* tests READ the file; a test pins the two modules that may
+   import it.
+9. **Two delegating import finders asked each other for ever.** The gate's finder and the test
+   children's own settings finder both "ask the other finders and wrap the loader they name".
+   Each found the other. *Fix:* a re-entrancy guard per module name.
+10. **A value read back from a child's store after the child left was empty** — the child's exit
+    hook empties its throw-away key. What a run wrote (Recent Files, the saved geometry) is
+    recorded INSIDE the child at its last step.
+11. **`QSG_RHI_PREFER_SOFTWARE_RENDERER` is read once per process.** Set before the first Qt
+    Quick window it selects WARP; set after, it does nothing — and the workspace learns that it
+    needs software rendering long after start-up. *Fix:*
+    `QQuickGraphicsConfiguration.setPreferSoftwareDevice(True)` on the window, which works at
+    any time (the adapter read from Qt's own log: "Microsoft Basic Render Driver").
+12. **A test that waits for a memory to shrink must use shapes that differ.** The record
+    layer remembers outlines by shape: three identical hedges are one entry, and "fewer entries
+    after the plan changed" compared 4 with 4.
+
 ### 11.4.8 Guild boundaries found by independent review (F1/F2)
 
 Guild happy-path insertion tests did not establish document lifetime, copy isolation or translated refusal behavior. Review reproduced a mirror copy whose species dictionary still aliased the source, a grouped existing centre whose ancestor layer was locked, a stale search-detail response accepted after another selection, and malformed imported trait shapes that could invent functions through substring matching. The fixes deep-copy the complete copied metadata, check every ancestor layer, invalidate enrichment on selection changes, and normalize imported trait containers without inferring values. Unknown data remains preserved.

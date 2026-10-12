@@ -58,6 +58,18 @@
 | **Look** | `quick3d.look.Look` — everything about a frame that is art direction and not truth (sun colour and brightness, fill, exposure, sky colour, meadow albedo). L1.2 has one, `NEUTRAL_DAY`; where the sun stands is never part of a look |
 | **Render tier** | The opt-in tests that need a real renderer (`OGP_RENDER3D=1`): a driver process with a real Qt platform renders, the tests judge its frames with a CPU projection of their own. Runs on a GPU, on WARP and on llvmpipe (CI job `render3d`) |
 | **WARP** | Windows Advanced Rasterization Platform — Direct3D's software rasteriser (Qt's log names it "Microsoft Basic Render Driver"). What a GPU-less Windows runner renders with; forced locally with `QSG_RHI_PREFER_SOFTWARE_RENDERER=1` |
+| **Workspace (3D)** | `ui/view3d/workspace.Workspace` — the plan area of the main window with its three **workspace modes**: Plan (the canvas alone), 3D (the 3D pane alone), Split (both in a splitter whose sides do not collapse). Behind `OGP_QUICK3D=1` until L1.9 (Phase 17 L1.3, ADR-057, §8.27.3) |
+| **3D pane** | The workspace's 3D side: a strip of controls and notices above the engine's native window — or a message in its place. Nothing ever overlays the native window (§8.9.9) |
+| **Sync controller** | `ui/view3d/sync_controller.Scene3DController` — turns the canvas scene's and the sim clock's change signals into at most one **pass** per turn of the event loop: snapshot → `SceneSync.apply`. Paused (flags only) while the 3D pane is hidden (ADR-057) |
+| **Pass (3D pipeline)** | One run of snapshot and apply, started by a posted event; a time-of-day change is a light-only pass without a snapshot. Reported as a `TickReport` |
+| **Catch-up pass** | The one pass that runs when the 3D pane becomes visible with changes owed; a plain apply of the current snapshot, equal to a from-scratch apply. It starts after its "building" notice was painted |
+| **Retired item** | An item whose engine Models a pass destroyed — removed, its geometry replaced, or cleared by a reset (`TickReport.retired`). Qt keeps graphics state for every Model it once drew; the workspace counts retired items to know when to release it (ADR-057 decision 15) |
+| **Orbit camera** | `core/scene3d/camera.OrbitCamera` — the session's one 3D camera as a Qt-free value: a goal pose and a critically damped pose that follows it. Moved only by user input, "Reset 3D View", the first open and a document change — never by an edit |
+| **Start marker / start guard** | `ui/view3d/init_guard.Init3DGuard` — a per-process file written before the first 3D window of a session is built and removed after its first presented frame. A marker left by a process that is gone means the graphics driver took the process down (ADR-057 decision 10) |
+| **Compatibility mode (3D)** | 3D rendered on the software adapter (WARP on Windows) for this window, after a start that died or at the user's request; shown as a notice in the 3D pane with "Try Hardware Next Time". Only the user switches back |
+| **Engine factory** | `Workspace.engine_factory(prefer_software) -> (host, sink)` — what builds the engine on first use, and the seam at which the GPU-less tests put a recording sink and a stand-in host |
+| **Workspace gate** | `tests/integration/workspace_gate_hook.py` — test tooling that runs a scripted scenario inside the real app (from source, or as a runtime hook of the **gate build**, `installer/workspace_gate.spec`) on a throw-away settings store, and ends the process before a store under any other organisation exists (§8.10.7) |
+| **Presented frame** | A frame Qt rendered AND handed to the window system — as opposed to a readback (`grabWindow()`). Qt Quick 3D frees a destroyed Model's buffers only at the end of a presented frame; with the display asleep Windows presents none (§11.4.13) |
 | **Light probe (IBL)** | An environment image (here the procedural sky) that lights a Qt Quick 3D scene from all directions — image-based lighting. Pre-filtered once per texture object, so a sun change builds a new one; costly on software rasterisers (ADR-048 evidence) |
 | **Canopy Diameter** | The spread/width of a tree or shrub's foliage when viewed from above |
 | **Amendment** | Soil-improving substance (lime, blood meal, compost, etc.) loaded from `resources/data/amendments.json`. Carries application rate (g/m²) and per-fix effect coefficients used by the calculator |
@@ -207,6 +219,8 @@
 | Measure Tool | M |
 | Plant Tool | T |
 | Fullscreen Preview | F11 |
+| Workspace: Plan / 3D / Split (only with the 3D workspace switched on, `OGP_QUICK3D=1`, until L1.9) | Alt+1 / Alt+2 / Alt+3 |
+| 3D view (keyboard in the 3D view): pan / orbit / zoom / show the whole garden | Arrows / Alt+Arrows / PageUp, PageDown / Home |
 | Print | Ctrl+P |
 | Garden Plan tab | Ctrl+1 |
 | Planting Calendar tab | Ctrl+2 |

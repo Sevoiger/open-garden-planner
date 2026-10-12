@@ -415,6 +415,30 @@ self._reposition()
 
 Rect-bearing items (`CircleItem`/`RectangleItem`/`EllipseItem`) serialize their position as `pos + rect.center()` with rotation stored as a *separate* angle pivoting on the centre (`core/project.py`). Every geometry mutation on such an item — rotate, programmatic resize, interactive drag-resize, and the undo/redo of any of them — **must end with `transformOriginPoint() == rect().center()`**, or a rotated item's saved centre diverges from its on-screen centre and it drifts on reload / jumps on the next rotation. Do not re-derive this per gesture. **Route every rect-backed resize through `ui/canvas/geometry_apply.py`** (US-D2.2): `apply_rect_like_geometry` is the `apply_func` every `ResizeItemCommand` must be given, and the `build_*_resize` helpers compute the target geometry for either anchor policy. Its module docstring is the authoritative list of callers and exceptions. Below it sit the two lower-level primitives, a coupled pair rather than pick-and-choose: `resize_handle.resize_rect_item_keeping_anchor(item, new_rect, scene_anchor, local_anchor)` (mutating: `prepareGeometryChange()`, apply rect, re-pin origin, reposition so a chosen scene point stays fixed), whose `scene_anchor` must come from the pure forward transform `scene_point_of` — never hand-derived — and `anchored_position`, the inverse form the `geometry_apply` builders solve `pos` through. **Never hand-derive a position beside a re-pin** — `anchored_position` bakes in `O = new_rect.center()`, so a `pos` computed by hand under the *old* origin and then combined with a re-pin is two half-solutions to one transform: that combination slid a rotated rectangle 671 cm out from under the cursor (§11.4). Rotation goes through `geometry_apply.apply_rotation`, the only definition in the codebase (it delegates to `RotationHandleMixin._apply_rotation`, which pivots on `rect().center()`). Note `ResizeItemCommand` accepts **two** callables — `apply_func` and each `partner_resizes` entry's — and both must obey this. For rect-backed items, the interactive `ResizeHandle._apply_resize` takes the fixed corner/edge **authoritatively from the handle position**, never inferred from scene-space, which disagrees with the item frame under rotation. It lets the item normalise the rect (`CircleItem._constrain_resize_size` squares it so the dragged handle tracks the cursor — never `min(w,h)`, which collapses under rotation), then refreshes via `_after_resize_geometry()`. The non-rect fallback (PolygonItem) is exact compensation, not an alignment accident: it rotates the local delta into scene space (`pos_dx * cos_a - pos_dy * sin_a`) before applying it, so the dragged edge tracks the cursor and the opposite edge stays fixed under rotation too. The pivot must come from the *geometric* `rect()`, never the decoration-expanded `boundingRect()` (a runtime-only badge expands the latter asymmetrically); and any shrink of a custom `boundingRect()` must `prepareGeometryChange()` or Qt leaves a stale "ghost". See ADR-028 and §11.4 (#218/#219). Sizing precedence (footprint vs. spacing override vs. DB `max_spread_cm`) likewise has one home: the Qt-free `core/plant_sizing.py` resolver.
 
+### 8.9.9 A native window inside the layout — nothing overlays it (Phase 17 L1.3)
+
+The 3D view is a `QQuickView` in `QWidget.createWindowContainer` (ADR-048): a NATIVE child
+window. The patterns above — a child widget parented to the view and raised — do not apply to
+it:
+
+- **A sibling or child widget does not paint over a native window.** Raised or not, it is drawn
+  underneath. A control or a notice for the 3D view goes ABOVE the view (the pane's strip),
+  BESIDE it, or IN ITS PLACE (a message page in a stacked widget) — `ui/view3d/workspace.py`,
+  §8.27.3.
+- **Its input does not reach the widget that embeds it.** Mouse, wheel and key events go to the
+  native window; an event filter installed on that window sees them
+  (`Quick3DHost.install_event_filter`). Qt's shortcut map still works across it (measured:
+  Ctrl+Z, Alt+1 with the keyboard in the 3D window) as long as the filter passes on the keys it
+  does not use.
+- **Tests read the 3D view back through the host** (`host.grab()`, in a child process on a real
+  platform), never through `QWidget.grab()` of the workspace: a widget grab renders widgets, and
+  the 3D view is not one.
+- **The top-level window stays a raster window** (`surfaceType() == RasterSurface`, asserted in
+  the render tier): embedding the container did not switch the main window to a composited
+  path, and a 2D pan step costs the same with the view beside it (×1.04).
+- The floating mode switch of the workspace follows §8.9.1 to §8.9.3 — but it is parented to the
+  WORKSPACE and floats over the canvas only; in 3D mode it moves into the pane's strip.
+
 ## 8.10 Integration Test Policy
 
 **Every user story (US) must ship with at least one end-to-end integration test. No merge without it. No exceptions.**
@@ -1229,6 +1253,80 @@ and must report failures and not one skip (measured: 9 failed, 43 errors, 12 pas
 - **A failing run must leave its pictures.** `OGP_RENDER3D_ARTIFACTS` makes every driver run
   copy its frames, `result.json` and log there; CI uploads the directory even when the job fails.
 
+### 8.10.7 Patterns from the 3D workspace (Phase 17 L1.3)
+
+How the workspace (§8.27.3, ADR-057) is tested, and the patterns worth reusing.
+
+**Three tiers, one seam.**
+
+| Tier | Files | What stands in for the engine |
+|---|---|---|
+| default, no GPU | `tests/unit/test_scene3d_camera.py`, `test_view3d_init_guard.py`, `test_sim_clock_subscription.py`, `test_plain_text.py`; `tests/ui/test_view3d_orbit_input.py`; `tests/integration/test_view3d_sync_controller.py`, `test_view3d_workspace_widget.py`, `test_view3d_workspace.py` (the §8.10 workflow through a real `GardenPlannerApp`) | `Workspace.engine_factory` returns a stand-in host and a `RecordingSink` — every sink call of an edit session is asserted exactly |
+| default, offscreen host | `tests/ui/test_view3d_host_seams.py` (marked `no_qt_log`) | the real `Quick3DHost`, never shown |
+| render (`OGP_RENDER3D=1`) | `tests/integration/test_view3d_workspace_render.py` | nothing: the app's own `main()` in a child process on a real device |
+
+- **Replace the engine at the documented seam, not by patching.** `window._workspace.engine_factory
+  = factory` before the first switch to 3D. The stand-in host is twenty lines: it records what it
+  is told and has a `health()` the test can set.
+- **Drive the real signals.** The controller tests execute real commands on a real canvas scene
+  and let `QGraphicsScene.changed`, the undo stack's `stack_changed` and the sim clock's channels
+  do the rest; "one pass per turn" is only a fact when the turn is Qt's.
+- **Assert identity where the rule is "unchanged".** The camera rule compares the pose object
+  (`camera.pose is pose`), the goal, the moving flag and the number of camera calls the host got —
+  around each of 100 edits. "Approximately the same pose" would pass a camera that drifts.
+- **Order on the GUI thread is tested with a paint log, not a sleep.** `PaintLog` (an event filter)
+  notes the label's text at every `Paint`; a wrapper around `snapshot_records` notes what had been
+  painted when the first snapshot STARTS. The test keeps the GUI thread busy first, so that every
+  timer of the start is overdue — the case in which a timer would win.
+- **A clock the test holds.** "Quiet for half a second" is read through `workspace._now`; the
+  release tests replace it and advance it by hand. No test of a time rule sleeps.
+
+**Scripting the REAL app — the workspace gate.** `workspace_gate_hook.py` runs inside the app's
+own process (from source: imported by `workspace_gate_child.py` before `main()`; frozen: a
+PyInstaller runtime hook of `installer/workspace_gate.spec`) and plays a scenario on the GUI
+thread once the main window exists.
+
+> **Rule: no scripted run of the app opens a plan on the production settings names.** A plan
+> load writes Recent Files and a clean close writes the window geometry — on Windows into a
+> registry key that no environment variable moves. The hook rebinds the two names before
+> anything builds a store, records every store by the names Qt reports for it, and ends the
+> process with exit code 97 BEFORE a store under any other organisation exists. That is proven
+> in the default tier (`test_workspace_gate.py`: `main()` on a plan; a decoy organisation
+> refused) before the gate is used once on a real platform, and asserted again inside the
+> frozen exe.
+
+- The hook is READ by tests, never imported: importing it rebinds the settings names of the
+  importing process. A test pins who may import it.
+- A scenario is a generator that yields "wait this long" or "wait until this is true"; every
+  step is written to the report at once, so a process that dies leaves the last step it reached.
+- The verdict (`GateRun.problems()`): the exit code, a failed step, any Qt warning or error on
+  stderr (Qt's own handler, never a Python one), any ERROR line in the child's `app.log`, and a
+  run that did not end with a closed window.
+
+**Measuring rules, each paid for** (§11.4.13 has the wrong versions):
+
+- **"A frame" is a finished readback taken the moment the pass committed** — inside a slot on
+  `controller.applied` — not `frameSwapped`, and not after `processEvents()` (which adds the
+  rest of the 2D side's turn to the 3D number). State the window and pane size with the number:
+  a readback grows with the pane's pixels.
+- **A memory soak presents frames.** Qt frees a destroyed Model's buffers at the end of a
+  presented frame; a readback is not one; with the display asleep Windows presents none.
+  `run_gate(timer_paced=True)` sets Qt's `QT_D3D_NO_VBLANK_THREAD=1`; the scenario reports how
+  many frames each reload presented, and the test asserts at least one.
+- **A slope gate needs its control and its "off" run.** The soak runs with the fix, with 25 MB
+  kept per reload (must FAIL) and with the fix out of reach (reported): three numbers from one
+  instrument on one machine.
+- **Compare two modes along the same path, in alternating short blocks.** The 2D pan cost in
+  Split against Plan: six rounds of 60 steps each, every block from the same scroll position
+  along the same pixels, the canvas at the same size in both, every step checked to have
+  scrolled. Report the medians and the fastest tenth.
+- **Committed memory, not the working set; and ask DXGI for VRAM** —
+  `IDXGIAdapter3::QueryVideoMemoryInfo` through `ctypes` (`workspace_gate_measure.gpu_dedicated_mb`).
+
+**Checking that a test bites.** After the tests were green, each rule was broken once in the
+source — one text mutant at a time, the story's tests run, the file restored — and a mutant that
+survived got a test (the sets are listed in ADR-057, Validation).
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
@@ -1279,6 +1377,48 @@ that with one unit less the step does not run. A time-out would have passed on a
 And price every quadratic by what it does, not by its size alone: the last hole found here was a
 simplicity test priced at the square of its edges, which is right for an outline and a
 hundredth of the truth for a ring whose every pair of edges lies close.
+
+**Plan text in Qt's rich-text widgets and in the log (Phase 17 L1.3, #385).** A plan file is
+input, and so is everything that quotes it — an item's name, and an exception's message that
+repeats the name. Two consumers turn such text into something else, and Bandit sees neither:
+
+- **Qt decides "rich text or plain" by looking at the string.** A tooltip, and a `QLabel` left on
+  `AutoText`, render markup found in their text (`Qt.mightBeRichText`): a plant called
+  `<b>x</b><img src="file:///C:/Windows/win.ini">` put a bold `x` and an image request into the
+  tooltip of the "not shown in 3D" list.
+- **A log line ends at a line break.** A name with `"\n2026-10-12 ERROR forged"` in it writes a
+  line of its own into `app.log` — the file a user sends to support. A traceback's last line is
+  the exception's message as it came.
+
+The rule, and the one helper (`core/plain_text.py`, standard library only):
+
+1. **Normalise, then cap, then escape — in that order.** `normalise_text` turns every character
+   `str.splitlines()` splits at (LF, CR, VT, FF, FS, GS, RS, NEL, U+2028, U+2029) into ONE line
+   break, a tab into a blank, and every other C0 / C1 control and the bidi overrides and
+   isolates (U+202A–U+202E, U+2066–U+2069) into U+FFFD. The caps (`clip_text`: lines and
+   characters; `clip_line`: one line) are applied to that normalised text — what the CONSUMER
+   will see. The first version counted `"\n"` only, and a text broken with U+2028 passed a
+   cap of 8 lines with as many lines as it liked. Only then `html.escape`, where the consumer
+   renders rich text (`plain_tooltip`, in an explicit `<qt>` element). Each function reads a
+   prefix of its input whose length depends on the cap alone.
+2. **Labels that can show plan text are `Qt.TextFormat.PlainText`**, said out loud at
+   construction; list rows stay plain through the default delegate (pinned with a hostile name).
+3. **A log record that can quote the plan is ONE normalised, capped line** (`log_text`) at
+   ERROR / WARNING; the traceback goes to DEBUG, which the log file does not record. This holds
+   for the workspace's five modules. The scene contract's own records — the builder failure in
+   `core/scene3d/sync.py`, the `record_failed` and refusal records in `ui/view3d/snapshot.py`
+   — still attach the exception at ERROR or write its message as it came: that story's
+   records, pinned by its tests, and an open item.
+4. **Do not write invisible characters into source.** An editing tool turned three `\u`
+   escapes into the characters themselves, in the very module that defines the separators.
+   Named escapes (`\N{LINE SEPARATOR}`), and `tests/unit/test_plain_text.py` scans `src/` and
+   `tests/` for characters a reader cannot see.
+
+Pinned by `tests/unit/test_plain_text.py` (each separator in turn yields the same capped result;
+the positive control — the old splitter — fails),
+`tests/integration/test_view3d_workspace_widget.py::test_a_hostile_name_is_shown_as_its_characters_everywhere`
+(checked against Qt's own renderer, with the unescaped string as the control) and
+`tests/integration/test_view3d_sync_controller.py::test_an_engine_error_that_quotes_the_plan_is_one_log_line_per_event`.
 
 **Agent API exposure (US-D1.1, §8.19):** the embedded MCP server is a network listener. It is **on by default but read-only** and **bound to `127.0.0.1` only** (never `0.0.0.0`/LAN — so Bandit's B104 does not apply); a Preferences toggle disables it. Default-on is acceptable while read-only (a garden layout isn't sensitive) and removes the discovery friction for AI clients. Reads have no auth (loopback trust). **Writes (US-D2.0 through D2.6, including `undo`/`redo`) are token-gated**: the scene-mutating tools ship only when the user enables editing (off by default) AND require the token — presented in the connect URL as a `?token=` query param (the reliable route; some clients don't transmit auth headers on tool calls) or as an `Authorization: Bearer <token>` header — checked with constant-time comparison. A default-on, unauthenticated *mutate* surface reachable by any local process is exactly what this prevents (ADR-036, §8.19); delivering the token in the URL keeps that protection (a caller still needs the secret) at the cost of a URL-borne secret — mitigated by disabling the uvicorn access log and stripping the `token` param from the request scope right after extraction, so the residual exposure is the client's own config. The gate is per-tool so read-only clients are unaffected. The pre-bind port check uses a plain `socket.bind` and is not a high-severity finding.
 
@@ -4075,6 +4215,110 @@ in the frame. A truth probe — and the look story, when it animates the clock �
 ground texture
 (L1.5: `set_ground` sizes the bare plan rectangle and the endless meadow, both in the one meadow
 albedo); no builders beyond the default prism (L1.6, L1.7); no selection (L1.8).
+
+### 8.27.3 The workspace — Plan / 3D / Split in the main window (L1.3)
+
+Where the pipeline (§8.27.1) and the engine (§8.27.2) meet the app. The decisions and every
+measurement are **ADR-057**; how it is tested is §8.10.7; what went wrong on the way is §11.4.13.
+Behind the internal switch `OGP_QUICK3D=1` (`app/settings.py::quick3d_workspace_enabled()`, the
+one read of it) until L1.9; without it the app is what it was, and the shipped "3D View…" window
+keeps working with it.
+
+**The parts, and which of them needs the engine.**
+
+| Module | Engine? | What it is |
+|---|---|---|
+| `core/scene3d/camera.py` | Qt-free | `OrbitCamera`: a goal pose that input moves and a pose that follows it as a critically damped spring, integrated exactly; `frame_pose` (the pose that shows a plan); the clamps |
+| `core/plain_text.py` | Qt-free | plan text as text: `normalise_text`, `clip_text` / `clip_line`, `log_text`, `plain_tooltip` (§8.11) |
+| `ui/sim_clock_subscription.py` | no | `connect_qobject(channel, slot)`: a QObject on the sim clock, never called after Qt destroyed it (ADR-053 addendum) |
+| `ui/view3d/init_guard.py` | stdlib only | `Init3DGuard`: the start marker and the compatibility flag as a state machine |
+| `ui/view3d/sync_controller.py` | no | `Scene3DController`: change signals in, at most one pipeline pass per event-loop turn out |
+| `ui/view3d/orbit_input.py` | no | `OrbitInput`: an event filter that turns the 3D window's mouse, wheel and keys into camera calls |
+| `ui/view3d/problems_dialog.py` | no | the list of what 3D could not show |
+| `ui/view3d/workspace.py` | no | `Workspace`: the modes, the lazily built 3D pane, the notices, the timers |
+| `ui/view3d/quick3d/host.py` | **yes** | three things the workspace asked of the host: `prefer_software=`, `install_event_filter()`, `release_cached_resources()` |
+
+`workspace.py` imports no Qt Quick binding: the engine is built by `Workspace.engine_factory`
+— by default `quick3d_engine`, which imports `quick3d.host` and `quick3d.adapter` when it is
+called. That attribute is THE test seam (§8.10.7).
+
+**Layout.** `Workspace` is a splitter: canvas | 3D pane. *Plan* hides the pane, *3D* hides the
+canvas, *Split* shows both, and neither side can be dragged shut. The pane is a strip (mode
+switch, "Reset 3D View", a status line, the "not shown in 3D" count, the compatibility notice)
+above a stacked widget that holds either the engine's window container or a message page.
+
+> **Rule: nothing overlays the 3D view.** It is a native window; a sibling widget does not paint
+> over it. A control or a notice for 3D goes into the strip above the view, beside it, or in its
+> place — never on top. (The one floating thing in the workspace is the mode switch in Plan and
+> Split, and it floats over the canvas.)
+
+**The life of the 3D pane** (`View3DState`): `not_started` → (first switch to 3D or Split: the
+start marker is written, the engine factory runs) → `starting` → (the health poll sees the first
+presented frame: the marker is removed) → `running`. Two ends beside it: `unavailable` (Qt
+reported that it could not create a graphics device — a message, for the session, no retry) and
+`failed` (building the engine raised — a message with "Try Again"). The host is never closed
+and rebuilt on a mode switch; it is hidden with its pane and its scene stays.
+
+**The pipeline pass.**
+
+```
+scene.changed ─┐
+stack_changed ─┼─► dirty flags ─► ONE posted event per turn ─► snapshot_records(scene, plan_date)
+date_changed  ─┘                                              ─► ground stage (L1.5's seam)
+instant_changed ─► sun flag (light only: no snapshot)         ─► SceneSync.apply(records, sun, ground)
+                                                              ─► applied(TickReport)
+```
+
+- **Hidden means paused**: with the pane hidden or the window minimised the controller keeps two
+  flags and does nothing else. Showing 3D runs ONE catch-up pass — a plain `apply` of the current
+  snapshot.
+- **A pass owed to a shown pane waits for its notice.** "Building the 3D view…" is set and the
+  pass starts after that label PAINTED (an event filter on the label; 250 ms fallback): a first
+  pass costs the sum of its items, with the GUI thread inside it.
+- **A document change is a plain apply**, not a reset; it drops what 3D remembers of the old plan
+  (`_drop_plan_memories`: the plant builder's shapes, the record layer's outlines) and frames the
+  camera once, when the new document is in the engine (`document_shown`).
+- **A failure is contained.** A sink call that raised, or a poisoned sync: `reset()`, one more
+  `apply`, one log line. A second failure gives the pass up; the next change tries again. No
+  exception of the pipeline reaches the event loop.
+- **What a pass reports** (`TickReport`): the diff, whether a snapshot was taken, the time of the
+  snapshot and of the apply, whether it had to recover, and `retired` — how many items lost
+  their engine Models.
+
+**What moves the camera.** Four things: user input in the 3D window, "Reset 3D View" (Home), the
+first open, and a document change. Nothing else has a call site — an edit, an undo, a date or a
+time change, a selection, a resized canvas leave the pose exactly as it was (identity, not
+"close": gate G3).
+
+**When 3D cannot start.** A marker file is written before the first 3D window of a session is
+built and removed after the first presented frame. A marker left by a process that is gone means
+the driver took the process down: the next session renders 3D on the software adapter
+("compatibility mode"), says so in the strip and offers "Try Hardware Next Time". Only the user
+switches back. `Init3DGuard`'s docstring is the state machine.
+
+**What 3D could not show.** `Scene3DController.skipped` (the record layer refused the item) and
+`.failures` (its builder raised) feed a count in the strip and a non-modal list; activating a row
+selects the item on the canvas. Fixing the item clears it with the next pass.
+
+**What a destroyed Model leaves behind.** Qt keeps graphics state for every Model it once drew.
+`Workspace` adds up `TickReport.retired` and calls `host.release_cached_resources()` when
+`RELEASE_AFTER_RETIRED` (64) piled up and the pipeline has been quiet for `RELEASE_IDLE_S`
+(0.5 s; the health poll looks), or at once at `RELEASE_NOW_RETIRED` (512). A story that makes
+the engine create and destroy objects on its own (a ground texture per bake, a selection
+outline) must count them the same way, or measure that they leave nothing.
+
+**How to add to it.**
+
+- *A new consumer of the sim clock*: `connect_qobject(clock.date_changed, self._slot)`; never
+  `clock.date_changed.connect(...)` (a scan refuses it).
+- *A new ground* (L1.5): `controller.set_ground_stage(stage)` with
+  `stage(previous_records, records, width_cm, depth_cm) -> GroundSpec`. It runs before `apply`,
+  inside the pass; if it raises, the bare rectangle is sent and one line is logged.
+- *A look, a sky* (L1.4): through the host; not through the pipeline.
+- *A click in 3D* (L1.8): `try: host.pick(x, y) except HostStateError` in the input filter. The
+  workspace calls `wait_ready()` nowhere and must not start to.
+- *A new notice*: a label in the strip, `Qt.TextFormat.PlainText`, its text through `self.tr()`;
+  anything that came out of a plan through `core/plain_text.py` first.
 
 ### 8.27.6 Built-world builders and base stacking (L1.6)
 
