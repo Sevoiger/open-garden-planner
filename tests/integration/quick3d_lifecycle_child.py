@@ -567,6 +567,55 @@ def pane_without_paint(app: Any, _qml: Path | None = None) -> dict[str, Any]:
     return out
 
 
+#: Logical pane widths whose frame at 125 % rounds UP by half a pixel (width x 1.25 ends in
+#: .5): there the frame of the pane is less than one device pixel off the size of a pane one
+#: logical pixel WIDER — the pairs review round 5 found handed out.
+HALF_PIXEL_WIDTHS = (442, 446)
+
+
+def pane_one_pixel_wider(app: Any, _qml: Path | None = None) -> dict[str, Any]:
+    """Review round 5 — sentence 1 at a FRACTIONAL pixel ratio. Run with
+    ``QT_SCALE_FACTOR=1.25``.
+
+    Qt sizes the render target as the logical size times the ratio, rounded: a 442 px pane
+    has a 553 px frame (552.5 rounds up), a 443 px pane a 554 px one. The pane is made
+    ONE logical pixel wider while nothing draws the view (round 4's no-paint filter), so
+    Qt's frame is still the narrower pane's. Round 4's host — "less than one device pixel
+    off" — handed that frame out for the wider pane (553 is 0.75 off 553.75) and picked
+    with the old viewport. Nothing is judged in here: a RAW grab is recorded beside the
+    host's answers, and what QT says the window's size and ratio are."""
+    from PyQt6.QtCore import QEvent, QObject
+
+    class NoPaint(QObject):
+        def eventFilter(self, _watched: Any, event: Any) -> bool:  # noqa: N802 - Qt's name
+            return event.type() in (QEvent.Type.Expose, QEvent.Type.UpdateRequest, QEvent.Type.Paint)
+
+    window, splitter, host = _in_splitter()
+    view = host._view  # noqa: SLF001 - the matrix asks Qt directly
+    out: dict[str, Any] = {"ready": host.wait_ready(10.0), "dpr": host.device_pixel_ratio(),
+                           "open": _look(host), "pairs": []}
+    total = sum(splitter.sizes())
+    blocker = NoPaint(view)
+    for width in HALF_PIXEL_WIDTHS:
+        splitter.setSizes([total - width, width])
+        pair: dict[str, Any] = {"ready": host.wait_ready(5.0), "before": _look(host)}
+        view.installEventFilter(blocker)  # installed last: it runs before the host's own watch
+        splitter.setSizes([total - width - 1, width + 1])
+        _pump(app, 150)  # the resize arrives, the scene follows; nothing draws the view
+        raw = view.grabWindow()  # what Qt's render target IS, asked without the host
+        pair["raw"] = [int(raw.width()), int(raw.height()), float(raw.devicePixelRatio())]
+        pair["wider"] = _look(host)
+        view.removeEventFilter(blocker)
+        out["pairs"].append(pair)
+    splitter.setSizes([total // 2, total - total // 2])  # painting resumes with the next resize
+    out["ready_painting"], out["wait_painting_s"] = _timed_wait(host, 5.0)
+    out["painting"] = _look(host)
+    out.update(stale_frames=host.stale_frames, probes=host.probes, health=_health(host))
+    host.close()
+    window.close()
+    return out
+
+
 def pane_off_screen(app: Any, _qml: Path | None = None) -> dict[str, Any]:
     """Review round 4 — where CI found it. The main window is moved so that the 3D pane
     lies entirely beyond the right edge of every screen. Then the pane is made smaller,
@@ -1169,6 +1218,7 @@ ORDERS: dict[str, Callable[..., dict[str, Any]]] = {
     "tiny_pane": tiny_pane,
     "pane_off_screen": pane_off_screen,
     "pane_without_paint": pane_without_paint,
+    "pane_one_pixel_wider": pane_one_pixel_wider,
     "minimised_window": minimised_window,
     "embedded_never_shown_grab": embedded_never_shown_grab,
     "embed_after_show": embed_after_show,

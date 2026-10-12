@@ -1,4 +1,4 @@
-"""THE STATE CONTRACT of the engine host (L1.2, fix rounds 2 to 4). Engine-free.
+"""THE STATE CONTRACT of the engine host (L1.2, fix rounds 2 to 5). Engine-free.
 
 This docstring is the ONE place the contract is written down. ``host.py``, the
 architecture docs, the ADR and the skills link here and do not restate it
@@ -9,48 +9,65 @@ The contract — three sentences
 ------------------------------
 1. **``grab()`` returns the scene at the window's current size, or it raises
    ``HostStateError``** — never a frame of another size, never another scene.
-2. **``wait_ready(timeout_s)`` returns within ``timeout_s`` — the delivery of
-   events included — and True means: a ``grab()`` issued right after it answers.**
-3. **When nothing is on its way, ``wait_ready()`` returns False promptly — within
-   ``STALL_S`` (0.5 s) of the last sign of progress — never at the deadline.**
+2. **``wait_ready(timeout_s)`` starts no pass of the event loop once ``timeout_s``
+   is up, and True means: a ``grab()`` issued right after it answers.** It
+   returns within ``timeout_s`` PLUS whatever was queued on the event loop when
+   its last pass began; only ``wait_ready(0)``, which runs no event loop, is
+   bounded by itself.
+3. **When nothing is on its way, ``wait_ready()`` returns False promptly — after
+   ``STALL_S`` (0.5 s) of silence — never at the deadline.**
 
 THE WITNESS IS A FRAME, not a message of the operating system. Whether a frame
 can be had is not something the host can know from what Qt reports: Qt resizes
 the render target when it next draws the window, and nothing obliges a platform
 to ask for that. (Measured: Windows asks for none of a pane that grew beyond the
 screen's edge while the display sleeps — and for one, through an update request,
-while it is awake.) So the host does not keep a fact "the frame is right". It takes a frame and looks at its size — ``grab()`` for its
-caller, ``wait_ready()`` as a probe, ``pick()`` and ``project()`` once after
-each resize — and a frame of another size is a refusal, never an answer.
+while it is awake.) So the host does not keep a fact "the frame is right". It
+takes a frame and looks at its size — ``grab()`` for its caller,
+``wait_ready()`` as a probe, ``pick()`` and ``project()`` when they know of none
+for the window's size — and a frame of another size is a refusal, never an
+answer.
+
+"The window's size", exactly: Qt sizes a render target as the logical size times
+the device pixel ratio, rounded per side (``qRound``). The RIGHT frame is
+therefore at most HALF a device pixel off ``logical × ratio``, and that is the
+check; at a ratio of 1 or more the frame of a window one logical pixel smaller
+or larger is further off. (Round 4 allowed "less than one pixel": at 125 % a
+pane grown from 442 to 443 px got its old 553 px frame back from ``grab()``.)
 
 What "within" and "promptly" mean, exactly
 ------------------------------------------
-- ``wait_ready(timeout_s)`` starts no delivery of events and no wait once
-  ``timeout_s`` is up. What it cannot cut short is the ONE thing that is running
-  then: a Qt event handler (the first expose creates the graphics device —
-  0.8 to 1.0 s measured; an expose while the display sleeps: about 1 s), or its
-  probe frame (1 to 4 ms; about 0.3 s behind a frame Qt is presenting while the
-  display sleeps). ``wait_ready(0)`` delivers nothing and waits for nothing: it
-  looks, takes at most one frame, and answers.
-- Its default, ``WAIT_READY_DEFAULT_S`` (1 s), is short enough for one call on
-  the GUI thread when a view is opened. It runs the event loop: **never call it
-  from a timer slot, a sync tick, a paint or a resize handler.** A click handler
-  does not call it either: ``try: host.pick(x, y)`` / ``except HostStateError``.
-- The FIRST show of a process is the slow one — its first expose creates the
-  graphics device. Measured with the default timeout, GPU and WARP: True after
-  0.70 to 0.92 s for a top-level host, and after 1.52 to 1.73 s for an embedded
-  one (the expose of its own window was running when the second was up: the one
-  thing that cannot be cut short). On a machine where that takes longer, the
-  answer is False while the host IS on its way. A caller that needs that first
-  frame passes a longer timeout — it costs nothing when nothing comes: the next
-  bullet bounds that — or asks again; the test drivers pass 10 s.
+- **``wait_ready()`` is a nested event loop, and it takes user input**: clicks,
+  keys, timers and other objects' slots run inside it. The workspace needs it
+  nowhere on the GUI thread — a view shows itself, and ``pick()`` / ``project()``
+  take the frame they need. It is for a caller that must HAVE a frame and can
+  wait: an export, a tool, a test. **Never call it from a timer slot, a sync
+  tick, a paint or a resize handler**, and not from a click handler:
+  ``try: host.pick(x, y)`` / ``except HostStateError``.
+- One pass of Qt's event loop delivers EVERYTHING that is queued, not one
+  event: ``wait_ready(0.2)`` behind six queued handlers of 0.3 s each returned
+  after 1.80 s. That is the bound of sentence 2, and it cannot be made tighter
+  from the thread those handlers run on. ``wait_ready(0)`` delivers nothing and
+  waits for nothing: it looks, takes at most one frame (1 to 4 ms; about 0.3 s
+  behind a frame Qt is presenting while the display sleeps), and answers.
+- The default, ``WAIT_READY_DEFAULT_S`` (1 s), is a default for tools and tests.
+  The FIRST show of a process is the slow one — its first expose creates the
+  graphics device — and overruns it as a rule: True after 0.70 to 0.92 s for a
+  top-level host and after 0.96 to 1.73 s for an embedded one (30 cold starts,
+  GPU and WARP). On a slower machine the answer is False while the host IS on
+  its way: pass a longer timeout — it costs nothing when nothing comes, the
+  next bullet bounds that — or ask again; the test drivers pass 10 s. A timeout
+  is clamped to a day; a negative one, or one that is not a number, is 0.
 - "A sign of progress" is an event for the view that can change what a frame is
   (resize, expose, update request, show, hide, window state, platform surface)
-  or a change of any fact below. While such signs keep coming the host waits, up
-  to ``timeout_s``; ``STALL_S`` after the last one it answers False. That closes
-  "waits for something that never comes" for every cause at once: a view that
-  is not on any screen, a session that paints nothing, a window that never gets
-  its first expose.
+  or a change of any fact below. "Silence" is time the event loop spent IDLE
+  with no such sign: a pass of the loop that overran its step — a handler of
+  something else was running: a plan load, a repaint — is not silence, however
+  long it took. While signs keep coming the host waits, up to ``timeout_s``;
+  after ``STALL_S`` of silence it answers False. That closes "waits for
+  something that never comes" for every cause at once: a view that is not on
+  any screen, a session that paints nothing, a window that never gets its
+  first expose.
 - False does not mean "never": the time was up, or nothing was on its way — and
   then the host comes up when the cause goes (the pane is moved back onto a
   screen). Ask again, or simply try the frame.
@@ -98,10 +115,11 @@ What the states mean
   embedded; it is ``SPENT`` after. ``SPENT`` refuses ``show()`` and
   ``container()`` (they would kill the process). ``HIDDEN`` and ``SPENT`` give
   no frame.
-- After ANY change of size or visibility: ``wait_ready()``, and look at its
-  answer — or try the call and take the refusal. Do not reason about passes of
-  the event loop: Qt delivers some resizes inside the call that caused them
-  (``showFullScreen()``) and others later (a splitter move, ``showMaximized()``).
+- After ANY change of size or visibility: try the call and take the refusal —
+  or, where a frame must be had and the caller can wait, ``wait_ready()``, and
+  look at its answer. Do not reason about passes of the event loop: Qt delivers
+  some resizes inside the call that caused them (``showFullScreen()``) and
+  others later (a splitter move, ``showMaximized()``).
 
 Which call is legal in which state
 ----------------------------------
@@ -123,9 +141,14 @@ every other call            yes    yes       yes     yes     yes    refuse
 (``why_no_frame``). ``once*``: refused when the host is embedded. ``frame#``:
 the answer, or ``HostStateError`` when the frame Qt renders has another size
 than the window. ``pick`` and ``project`` answer for a frame of the window's
-size: when the host has taken none since the last resize they take one
-themselves (measured: without it a pick right after a resize MISSES). ``probes``:
-True when a frame has the window's size; else it waits for a sign of progress.
+size. In the steady state they take none. When the host knows of none — after
+a resize — they take one themselves (measured: without it a pick right after a
+resize MISSES). And after a REFUSAL they take no further frame until a sign of
+progress is counted or ``REPROBE_S`` (0.25 s) has passed: they refuse on the
+evidence of the frame that was just refused — 200 refused calls in a row cost
+ONE frame. **A tick that draws stops at its first ``HostStateError``**: the next
+call of the same tick would get the same answer. ``probes``: True when a frame
+has the window's size; else it waits for a sign of progress.
 ``waits+``: while signs of progress keep coming (sentence 3). ``False+``: False
 at once for a host that is not visible. One that Qt still calls visible
 (minimised, a pane collapsed to nothing) gets its pending events first when
@@ -137,8 +160,9 @@ What raises what
 ``HostStateError``: the call cannot be answered truthfully NOW — the state does
 not allow it, or (``grab``, ``pick``, ``project`` on a live host) the frame Qt
 rendered has another size than the window: the render target is behind. The
-host counts those in ``stale_frames``; nothing is latched — the next call looks
-again.
+host counts those frames in ``stale_frames``. It keeps no fact about them:
+``grab()`` takes a frame every time, and ``pick()`` / ``project()`` let a
+refusal stand for ``REPROBE_S`` at most — less when a sign of progress comes.
 ``EngineError``: the engine failed — the scene file did not load, a property or
 a scene function is missing or threw, a Model was refused or not destroyed, no
 image came back, this backend renders no 3D at all — or the ONE offscreen frame
@@ -160,9 +184,11 @@ it waited for ever.
 Not measured: platforms that un-expose an occluded window (macOS, Wayland) — a
 visible window may read ``STARTING`` there for as long as it is covered;
 ``wait_ready()`` then answers False after ``STALL_S``, like for every other
-cause; and a change of the device pixel ratio in mid-session (a window dragged
-to a display with another scale) — the frame's size is checked against its own
-ratio, so the worst case is a refusal.
+cause; a change of the device pixel ratio in mid-session (a window dragged to a
+display with another scale) — the frame's size is checked against its own
+ratio, so the worst case is a refusal; and real display scaling of the
+operating system (the ratios between 1 and 3 were set with ``QT_SCALE_FACTOR``
+on a 100 % screen).
 """
 
 from __future__ import annotations
@@ -176,16 +202,22 @@ from typing import Final
 #: clear colour, in either dimension; at 2 px it is the scene.
 MIN_SIDE_PX: Final = 2
 
-#: ``wait_ready()``'s default timeout, seconds: short enough for ONE call on the GUI
-#: thread when a view is opened (the first expose alone was measured at 0.8 to 1.0 s).
+#: ``wait_ready()``'s default timeout, seconds. A default for tools and tests: the
+#: workspace needs ``wait_ready()`` nowhere on the GUI thread (module docstring).
 WAIT_READY_DEFAULT_S: Final = 1.0
 
-#: How long ``wait_ready()`` waits without a sign of progress before it answers False
-#: ("nothing is on its way"). Measured: on Windows the expose a host waits for arrives
-#: in the first pass of the event loop (1 ms after a resize, 12 to 91 ms after
-#: ``show()``); on xcb + llvmpipe the longest quiet spell before a host came up is in
-#: ADR-048's round-4 table.
+#: How much SILENCE ``wait_ready()`` accepts before it answers False ("nothing is on its
+#: way"): seconds the event loop was idle with no sign of progress — a busy pass is not
+#: counted. Measured: on Windows the expose a host waits for arrives in the first pass
+#: of the event loop (1 ms after a resize, 12 to 91 ms after ``show()``); on xcb +
+#: llvmpipe the longest quiet spell before a host came up is in ADR-048's round-4 table.
 STALL_S: Final = 0.5
+
+#: How long a refusal of ``pick()`` / ``project()`` stands without a new frame when no
+#: sign of progress was counted: at most four probe frames a second while a render
+#: target stays behind — and a host that recovered without a sign the watch counts is
+#: refused no longer than this.
+REPROBE_S: Final = 0.25
 
 
 class HostState(enum.Enum):
