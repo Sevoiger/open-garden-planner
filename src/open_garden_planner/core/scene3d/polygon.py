@@ -723,16 +723,25 @@ def _inside_corner(points: Sequence[Point], loop: Sequence[int], at: int, target
 #: nearly level with every other); a straight fence of about 6,650 posts east–
 #: west or north–south (4,514 at 30 degrees, where its outline keeps a vertex
 #: per post); a ladder of 168 rungs or a mesh of 15 x 15 openings drawn as one
-#: stroke; a drawn outline of 1,513 vertices that crosses itself. What a large
-#: plan needs is far inside it — a closed fence along 400 traced points 16 % of
-#: the bound, a line of 2 km 0.02 %, a rectangle 10,200 units.
+#: stroke; a drawn outline of 1,513 vertices that crosses itself; ONE ring with
+#: holes bridged to its edge — 146 triangular ones in a slab, 105 square ones
+#: in a row, 112 frames (148, 106 and 118 before the strict union's rings were
+#: sorted out of the item's budget). What a large plan needs is far inside it —
+#: a closed fence along 400 traced points 16 % of the bound, a line of 2 km
+#: 0.02 %, a rectangle 10,200 units.
 #:
 #: In TIME the bound is a measurement, not a promise. A unit of the reference (a
 #: plain traced outline) took 0.35 to 1.15 ns on the development box when it was
 #: quiet and 0.7 to 2.3 ns beside other test runs, and a unit CHARGED for
-#: something else took 0.1 to 1.7 times that (the script prints the ratio for
-#: every row; the dearest is a wide path with close points). So one item costs
-#: at most 0.05 to 0.35 s of the reference — up to 0.6 s where both factors meet.
+#: something else took 0.1 to 2.1 times that in every row of the script's tables
+#: but one family: a ring whose holes TOUCH its outer ring, 3.6 to 8.1 times —
+#: the bridge search (``_bridge_position``) is priced too low for them, and 110
+#: such holes, 444 vertices, are refused after 0.7 to 1.5 s (review of fix
+#: round 4; known, not re-priced). So one item costs at most 0.05 to 0.35 s of
+#: the reference — measured up to 0.39 s beside other test runs for everything
+#: else, up to 0.7 s where both factors meet. The script FAILS above 12 times:
+#: a union asked for a tree stood at 14 to 76 and ran for seconds inside this
+#: bound, twice.
 MAX_REGION_WORK: Final = 150_000_000
 
 # The price list, in work units. Fitted to measurements on the development box
@@ -790,8 +799,8 @@ class WorkBudget:
     it runs wherever its price is known beforehand, and as it goes where it is
     not (the ears, the bridges). What a unit takes is measured, per step, by
     ``scripts/measure_region_work.py`` — a price that is too low is a step that
-    runs longer than its units say (``StrictlySimple`` as a tree did: 3.6 s
-    inside the budget, until the review of fix round 3)."""
+    runs longer than its units say (a union asked for a tree did, twice: 3.6 s
+    and 5.3 s inside the budget, until the reviews of fix rounds 3 and 4)."""
 
     __slots__ = ("budget", "left", "what")
 

@@ -13,9 +13,11 @@ Two collectors live here until L1.10 removes Qt 3D:
   one ``core.scene3d.Record`` per item, in the item-local frame with a rigid
   transform, for ``SceneSync`` and the Qt Quick 3D sink.
 
-Four things on record about the contract-v2 half (reviews of fix rounds 1 and 3):
+Four things on record about the contract-v2 half (reviews of fix rounds 1, 3 and 4):
 
-- What it remembers is module-global and never cleared. ``_polyline_regions``
+- What it remembers is module-global, for ONE snapshotting scene per process,
+  and stays until ``clear_outline_cache()`` is called (on a document change,
+  when the 3D view closes). ``_polyline_regions``
   and ``_polygon_regions`` are keyed by whole rings (``core.scene3d.polygon.
   ring_keyed``). What the plan asks for is LIVE and never dropped: a snapshot
   is one ``snapshot_generation``, and an answer asked for in this snapshot or
@@ -331,7 +333,9 @@ class _OutlineTooLarge(_UnbuildableOutline):
 # crossing anything); and the pairs of segments that cross or lie within a
 # stroke's reach of each other (``touching_pairs``). Each price is the dearest
 # case measured (``scripts/measure_region_work.py`` prints price against cost for
-# every family it knows), so an honest outline pays more than it costs.
+# every family it knows, and fails when one costs more than 12 times its price).
+# What a price cannot see is HOW the clipper is asked: a union as a tree costs by
+# the rings it joins — so no union is (``_union_rings``).
 _CLIP_UNITS: Final = 10_000  # any call of the clipper
 _OFFSET_POINT_UNITS: Final = 2_500  # inflating a path, a band along rings: per point …
 _OFFSET_STACK_UNITS: Final = 70  # … per point and edge in the stack (a path)
