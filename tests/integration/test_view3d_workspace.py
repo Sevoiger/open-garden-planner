@@ -242,14 +242,12 @@ print("RESULT " + json.dumps(out))
 '''
 
 
-def _g1_child(scratch: Path, switch: str | None) -> dict[str, Any]:
-    extra = {"QT_QPA_PLATFORM": "offscreen"}
-    env = isolated_env(scratch, **extra)
-    env.pop(SWITCH, None)
-    if switch is not None:
-        env[SWITCH] = switch
+def _g1_child(scratch: Path, switch: str) -> dict[str, Any]:
+    """``switch``: the variable's value in the child — set explicitly either way, so
+    that what the developer's own shell exports cannot decide the test."""
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own code
-        [sys.executable, "-c", _G1_CHILD, str(PLANS / "bench_small.ogp")], env=env,
+        [sys.executable, "-c", _G1_CHILD, str(PLANS / "bench_small.ogp")],
+        env=isolated_env(scratch, QT_QPA_PLATFORM="offscreen", OGP_QUICK3D=switch),
         capture_output=True, text=True, timeout=170, cwd=scratch)
     assert proc.returncode == 0, proc.stderr[-3000:]
     (line,) = [line for line in proc.stdout.splitlines() if line.startswith("RESULT ")]
@@ -264,7 +262,7 @@ def test_g1_the_engine_is_never_imported_and_the_canvas_is_pixel_identical(tmp_p
     engine — and the canvas has the same place, the same size and the same PIXELS."""
     (tmp_path / "off").mkdir()
     (tmp_path / "on").mkdir()
-    off = _g1_child(tmp_path / "off", None)
+    off = _g1_child(tmp_path / "off", "")
     on = _g1_child(tmp_path / "on", "1")
     assert off["workspace"] == "NoneType" and off["splitter0"] == "CanvasView"
     assert off["loaded"] == [] and off["loaded_after_close"] == []
