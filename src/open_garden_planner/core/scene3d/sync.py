@@ -40,13 +40,22 @@ closed and rebuilt, the graphics device was lost). It is NOT needed for a new or
 newly opened plan: a plain ``apply`` of the new snapshot removes what is gone and
 adds what is new.
 
+SELECTION (L1.8, ADR-065). ``select(ids)`` remembers which items are selected and
+calls nothing; the ring that shows them (``selection.selection_of`` — one mesh)
+goes to the sink through ``set_selection``, and only when the ring the engine
+would draw differs from the one it has: in the transaction of the next ``apply``
+— so a selected item that moves takes its ring along with the move — or in one
+of its own (``send_selection`` / ``set_selection``). What is remembered is the
+WISH: a selected item that is deleted loses its ring and gets it back when an
+undo brings the item back; ``reset()`` forgets what was sent, not what was asked.
+
 Qt-free and thread-agnostic: call it from the thread that owns the sink.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from types import MappingProxyType
@@ -55,6 +64,7 @@ from .build import Builder, BuilderRegistry, checked_parts
 from .mesh import MeshPart
 from .record import Record
 from .scene_diff import SceneDiff, diff
+from .selection import EMPTY_SELECTION, Selection, selection_of
 from .sink import EngineSink, GroundSpec, RecordingSink, SinkState, SunState
 
 _log = logging.getLogger(__name__)
@@ -117,6 +127,9 @@ class SceneSync:
         self._build_count = 0
         self._quiet = False
         self._registry_version: int | None = None  # the registry as the held items were built
+        self._selected: frozenset[str] = frozenset()   # what is asked for (L1.8)
+        self._selection: Selection = EMPTY_SELECTION   # the ring the sink was last sent
+        self._selection_stale = False                  # asked for since it was last compared
 
     # ── state ───────────────────────────────────────────────────────────────
 
@@ -158,6 +171,18 @@ class SceneSync:
         """The ground last sent to the sink."""
         return self._ground
 
+    @property
+    def selected_ids(self) -> frozenset[str]:
+        """The ids asked to be shown as selected (``select``) — the wish, whether or
+        not each has a record right now."""
+        return self._selected
+
+    @property
+    def selection(self) -> Selection:
+        """The selection ring last sent to the sink (empty before the first, and
+        after ``reset``)."""
+        return self._selection
+
     def expected_state(self) -> SinkState:
         """What a sink that honours the protocol holds right now: the state ONE
         ``apply`` of the current snapshot, sun and ground gives an empty sink.
@@ -175,6 +200,8 @@ class SceneSync:
         empty_sink = RecordingSink()
         reference = SceneSync(empty_sink, self._registry, validate=self._validate)
         reference._quiet = True  # the failures were logged when they first happened
+        if self._selection.ids:  # the ring the sink HOLDS: a wish not yet sent is not in it
+            reference.select(self._selection.ids)
         reference.apply(self._records, sun=self._sun, ground=self._ground)
         return empty_sink.state()
 
@@ -230,15 +257,19 @@ class SceneSync:
                                record.kind, item_id, exc_info=error)
         send_sun = sun is not None and sun != self._sun
         send_ground = ground is not None and ground != self._ground
-        if changes.touches_sink or restyled or send_sun or send_ground:
+        ring = self._pending_selection(changes, new)  # None: the ring shown is the ring owed
+        if changes.touches_sink or restyled or send_sun or send_ground or ring is not None:
             def send() -> None:
                 self._send(changes, new, built, restyled)
                 if send_ground and ground is not None:
                     self._sink.set_ground(ground)
                 if send_sun and sun is not None:
                     self._sink.set_sun(sun)
+                if ring is not None:
+                    self._sink.set_selection(ring)
 
             self._transact(send)
+        self._selection_sent(ring)
         for item_id in (*changes.removed, *fresh, *restyled):
             self._failures.pop(item_id, None)
             self._built_with.pop(item_id, None)
@@ -272,6 +303,32 @@ class SceneSync:
         self._ground = ground
         return True
 
+    def select(self, ids: Iterable[str]) -> None:
+        """Remember which items are selected. NO sink call: the ring goes out with
+        the next ``apply`` or ``send_selection``. Legal in every state — also
+        poisoned: remembering touches nothing."""
+        selected = frozenset(str(item_id) for item_id in ids)
+        if selected != self._selected:
+            self._selected = selected
+            self._selection_stale = True
+
+    def send_selection(self) -> bool:
+        """Send the selection ring in a transaction of its own, if the ring the
+        engine would draw is not the one it has. Returns True when a call was made."""
+        self._require_usable()
+        ring = self._pending_selection(SceneDiff(), self._records)
+        if ring is not None:
+            self._transact(lambda: self._sink.set_selection(ring))
+        self._selection_sent(ring)
+        return ring is not None
+
+    def set_selection(self, ids: Iterable[str]) -> bool:
+        """``select(ids)`` and ``send_selection()``: tell the sink what is selected
+        now. Returns True when a call was made. To send it together with a
+        snapshot, ``select`` first and ``apply``."""
+        self.select(ids)
+        return self.send_selection()
+
     def reset(self) -> None:
         """Start over: ``sink.clear()``, then forget everything.
 
@@ -288,6 +345,8 @@ class SceneSync:
         self._failures = {}
         self._sun = None
         self._ground = None
+        self._selection = EMPTY_SELECTION  # what was SENT; what is selected stays asked for
+        self._selection_stale = bool(self._selected)
         try:
             self._sink.clear()
         except BaseException:
@@ -303,6 +362,25 @@ class SceneSync:
                 "a sink call failed earlier, so the engine's scene is unknown: "
                 "call reset() (it clears the sink) before applying again"
             )
+
+    def _pending_selection(self, changes: SceneDiff, new: Mapping[str, Record]) -> Selection | None:
+        """The ring to send with ``new`` — or None when the sink's ring is the ring
+        owed. Asked BEFORE the sink is touched. The ring is rebuilt only when the
+        wish changed or the diff touches a selected item's outline or pose (a
+        recolour does not), and sent only when it then differs."""
+        if not self._selection_stale:
+            if not self._selected:
+                return None
+            moved = (*changes.added, *changes.removed, *changes.geometry, *changes.transform)
+            if self._selected.isdisjoint(moved):
+                return None
+        ring = selection_of(new, self._selected)
+        return None if ring == self._selection else ring
+
+    def _selection_sent(self, ring: Selection | None) -> None:
+        if ring is not None:
+            self._selection = ring
+        self._selection_stale = False
 
     def _build(self, builder: Builder, record: Record) -> tuple[MeshPart, ...]:
         self._build_count += 1

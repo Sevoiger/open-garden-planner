@@ -128,14 +128,16 @@ from PyQt6.QtQuick import (
 )
 
 from open_garden_planner.core.scene3d import (
+    EngineBuffers,
     EnginePose,
     Rgba,
     engine_to_scene_points,
     scene_to_engine_points,
 )
+from open_garden_planner.core.scene3d.selection import SELECTION_RGBA
 
 from .adapter import GroundPlacement, PartSpec
-from .geometry import BufferGeometry
+from .geometry import BufferGeometry, ReloadableGeometry
 from .lifecycle import (
     REPROBE_S,
     STALL_S,
@@ -168,6 +170,10 @@ _BUSY_PASS_S: Final = 0.05
 #: The longest timeout ``wait_ready()`` takes, seconds: a day. Qt's ``processEvents``
 #: takes milliseconds in a C int; ``inf`` and 3e6 s overflowed it.
 _LONGEST_WAIT_S: Final = 86_400.0
+#: The selection ring's vertex shader moves vertices outwards by pixels, which at a
+#: distance are centimetres; the engine culls by the bounds it is told. So the ring's
+#: bounds are this much wider than its mesh on every side (L1.8).
+RING_BOUNDS_MARGIN_CM: Final = 500.0
 #: Qt sizes a render target as ``qRound(logical × ratio)`` per side: the RIGHT frame is
 #: at most half a device pixel off ``logical × ratio``. The rest is the float error of
 #: that product (3000 × 1.1 is not exact; a neighbour's frame is at least 0.1 px further).
@@ -537,11 +543,12 @@ class Quick3DHost:
         return len(self._parts)
 
     def clear(self) -> None:
-        """Destroy EVERY Model, switch the sun off, drop the plan ground. On a closed
-        host: a no-op. This is the sink's teardown (``Quick3DSink.clear``).
+        """Destroy EVERY Model, switch the sun off, drop the plan ground, hide the
+        selection ring. On a closed host: a no-op. This is the sink's teardown
+        (``Quick3DSink.clear``).
 
-        It finishes whatever fails: every Model is tried, then the sun, then the
-        ground, and only then the first failure is raised (``EngineError``). A Model
+        It finishes whatever fails: every Model is tried, then the sun, the ground
+        and the ring, and only then the first failure is raised (``EngineError``). A Model
         the engine did not destroy STAYS in the host's books — books and engine agree
         after a failure, and the next ``clear()`` tries it again.
         """
@@ -556,7 +563,8 @@ class Quick3DHost:
             except Exception as error:  # noqa: BLE001 - finish the teardown, then report
                 failures.append(error)
         steps: tuple[Callable[[], None], ...] = (
-            lambda: self.set_sun(None), lambda: self.set_ground(None))
+            lambda: self.set_sun(None), lambda: self.set_ground(None),
+            lambda: self.set_selection_ring(None))  # the ring is no item's: hidden, not destroyed
         for step in steps:
             try:
                 step()
@@ -564,7 +572,7 @@ class Quick3DHost:
                 failures.append(error)
         if failures:
             raise EngineError(
-                f"clear(): {len(failures)} of {total + 2} steps failed; the engine still holds "
+                f"clear(): {len(failures)} of {total + len(steps)} steps failed; the engine still holds "
                 f"{len(self._parts)} Model(s), and so do the host's books. First: "
                 f"{failures[0]}") from failures[0]
 
@@ -605,6 +613,47 @@ class Quick3DHost:
         state shows the new scene with its next frame anyway."""
         if self._open("request_frame") is HostState.LIVE:
             self._view.update()
+
+    # ── the selection ring (L1.8, ADR-065) ───────────────────────────────────
+
+    #: The ONE geometry of the selection ring: created with the first selection, as
+    #: a child of the scene's ring Model (they go together), and re-loaded for every
+    #: later one. A class default, so that no host starts with one.
+    _ring: ReloadableGeometry | None = None
+    #: How often the ring's data was loaded into the engine (the gates read it).
+    ring_loads = 0
+
+    def set_selection_ring(self, ring: EngineBuffers | None) -> None:
+        """Show ``ring`` (engine frame) as the selection ring, or hide it (None).
+
+        ``Garden.qml`` declares ONE ring Model for the life of the scene. This
+        loads new vertex data into the one geometry that Model has: a selection
+        change creates and destroys no engine object — not a Model (Qt keeps
+        graphics state for every Model it once drew until it is told to let go,
+        and about 15 to 20 kB per destroyed Model for good; ADR-065), not a
+        geometry. The first selection of a host creates that one geometry.
+
+        ``clear()`` hides the ring too (the engine then holds nothing to draw).
+        """
+        self._open("set_selection_ring")
+        if ring is None or ring.is_empty:
+            _set(self._root, "selectionVisible", False)
+            return
+        geometry = self._ring
+        if geometry is None or sip.isdeleted(geometry):
+            model = self._call("selectionRingModel")
+            try:
+                geometry = ReloadableGeometry(model)
+            except TypeError as error:
+                raise EngineError(f"the scene's selection ring is no 3D object ({error})") from error
+            geometry.load(ring, RING_BOUNDS_MARGIN_CM)
+            self._call("setSelectionGeometry", geometry)
+            _set(self._root, "selectionColorLinear", QVector3D(*tint_uniform(SELECTION_RGBA)))
+            self._ring = geometry
+        else:
+            geometry.load(ring, RING_BOUNDS_MARGIN_CM)
+        self.ring_loads += 1
+        _set(self._root, "selectionVisible", True)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
