@@ -318,6 +318,7 @@ def scenario_ring_depth(ctx: Context) -> dict[str, Any]:
         sync.set_selection(("wall",))
         host.set_shot(RING_TOP)
         out["shipped_scale"] = float(host.scene_property("ringDepthScale"))
+        out["graphics_api"] = host.graphics_api()
         out["in_front"] = ctx.save("ring_depth_in_front", host.grab("ring_depth_in_front"))
         host._root.setProperty("ringDepthScale", 1.0)  # noqa: SLF001 - the control of this probe
         out["depth_tested"] = ctx.save("ring_depth_tested", host.grab("ring_depth_tested"))
@@ -629,7 +630,17 @@ def scenario_workspace(ctx: Context) -> dict[str, Any]:
         rng.shuffle(targets)
         armed: dict[str, Any] = {}
 
-        def on_pass(_report: Any) -> None:
+        passes: list[dict[str, Any]] = []   # of the change being timed: read only on a miss
+
+        def on_pass(report: Any) -> None:
+            changes = report.changes
+            passes.append({
+                "at_ms": round((time.perf_counter() - armed.get("started", 0.0)) * 1000.0, 2),
+                "snapshot": bool(report.snapshot), "sent": list(controller.sync.selection.ids),
+                "wished": sorted(controller.sync.selected_ids), "canvas": selected(),
+                "ring_loads": host.ring_loads,
+                "diff": [len(changes.added), len(changes.removed), len(changes.geometry),
+                         len(changes.transform)]})
             if "wanted" in armed and "done" not in armed and (
                     controller.sync.selection.ids == armed["wanted"]):
                 armed["done"] = time.perf_counter()
@@ -640,24 +651,40 @@ def scenario_workspace(ctx: Context) -> dict[str, Any]:
                   "frames": host.health().frames_presented}
         latencies: list[float] = []
         misses = 0
+        missed: list[dict[str, Any]] = []
         for index in range(120):
             target = targets[index % len(targets)]
             scene.clearSelection()
             _spin(20)
+            cleared = list(passes)
+            passes.clear()
             armed.clear()
             armed["wanted"] = (str(target.item_id),)
-            started = time.perf_counter()
+            loads = host.ring_loads
+            started = armed["started"] = time.perf_counter()
             target.setSelected(True)
             _spin_until(lambda: "done" in armed, 2.0)
             if "done" in armed:
                 latencies.append((armed["done"] - started) * 1000.0)
             else:
                 misses += 1
+                missed.append({
+                    "index": index, "id": str(target.item_id),
+                    "kind": records[str(target.item_id)].kind,
+                    "is_selected": bool(target.isSelected()), "canvas": selected(),
+                    "wished": sorted(controller.sync.selected_ids),
+                    "sent": list(controller.sync.selection.ids), "dirty": bool(controller.dirty),
+                    "selection_dirty": bool(controller._selection_dirty),  # noqa: SLF001
+                    "last_error": str(getattr(controller, "last_error", None)),
+                    "host": host.state.value, "loads_before": loads, "loads_now": host.ring_loads,
+                    "visible": bool(target.isVisible()), "enabled": bool(target.isEnabled()),
+                    "passes": list(passes), "passes_of_the_clear": cleared})
         controller.applied.disconnect(on_pass)
         armed.clear()
         ordered = sorted(latencies)
         out["timing"] = {
-            "n": len(latencies), "misses": misses, "ms": [round(value, 3) for value in latencies],
+            "n": len(latencies), "misses": misses, "missed": missed,
+            "ms": [round(value, 3) for value in latencies],
             "median_ms": round(statistics.median(latencies), 3),
             "p95_ms": round(ordered[int(0.95 * (len(ordered) - 1))], 3),
             "max_ms": round(ordered[-1], 3), "before": before,

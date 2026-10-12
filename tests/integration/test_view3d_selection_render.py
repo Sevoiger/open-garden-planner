@@ -587,7 +587,11 @@ def test_a_selection_reaches_the_real_engine_within_the_edit_budget(run: Run, ws
     print(f"\n[selection to the real engine] {timing['n']} changes: median {timing['median_ms']} "
           f"ms, p95 {timing['p95_ms']} ms, max {timing['max_ms']} ms; "
           f"{after['frames'] - before['frames']} frames presented meanwhile")
-    assert timing["n"] == 120 and timing["misses"] == 0
+    # A change that did not reach the engine within two seconds is a MISS. One was seen,
+    # once (WARP, the first run of this test: 119 of 120, and 121 ring loads instead of
+    # 120), and never again in 3,240 changes on WARP and 480 on the GPU; what it was is
+    # not known. The driver records every pass of a missed change — that is this message.
+    assert timing["n"] == 120 and timing["misses"] == 0, timing["missed"]
     assert timing["p95_ms"] <= 50.0 * (3.0 if _software(run) else 1.0)
     # what 120 selection changes created and destroyed in the engine: nothing
     assert after["ring_loads"] - before["ring_loads"] == 120
@@ -675,6 +679,60 @@ def test_hiding_and_showing_the_real_view_keeps_the_walker(ws) -> None:
     assert ws["data"]["health"]["ok"] is True
 
 
+# ── the ring on the OpenGL backend (clip z runs -1..1 there) ─────────────────
+
+
+def _ring_depth_on_opengl(folder: Path, qml_dir: Path | None = None) -> dict[str, Any]:
+    """The ``ring_depth`` scenario with ``QSG_RHI_BACKEND=opengl`` (on Linux that is the
+    tier's backend anyway; on Windows the tier runs on Direct3D 11 and this is the
+    one row that does not)."""
+    out = folder / "opengl"
+    proc, result = run_selection_driver(out, "ring_depth", qml_dir=qml_dir,
+                                        env=render_env(folder, QSG_RHI_BACKEND="opengl"))
+    if result.get("status") != "ok" and "opengl" in (proc.stderr + str(result.get("error"))).lower():
+        pytest.skip(f"no OpenGL backend on this machine: {result.get('error')}")
+    assert proc.returncode == 0 and result.get("status") == "ok", failure_report(proc, out)
+    scenario = result["scenarios"]["ring_depth"]
+    assert scenario["graphics_api"] == "OpenGL", scenario["graphics_api"]
+    record = driver.wall_record()
+    shares = {}
+    for name in ("in_front", "depth_tested"):
+        rgb = load_rgb(out / scenario[name]["file"])
+        dpr = float(scenario[name]["dpr"])
+        outline = outline_pixels(top_down_outline(record, driver.RING_TOP,
+                                                  (rgb.shape[1], rgb.shape[0]), dpr))
+        ring = mask_pixels(ring_mask(rgb))
+        shares[name] = (len(ring), float((distances_to(outline, ring) <= 4.0 * dpr).mean()))
+    return {"shares": shares, "qt": result["qt_messages"], "adapter": result.get("adapter")}
+
+
+def test_the_ring_is_in_front_on_the_opengl_backend_too(tmp_path: Path) -> None:
+    """Found by this row: "in front" was first written as ``POSITION.z *= uDepthScale``,
+    which is right where clip z runs 0..1. On OpenGL (-1..1) it moves the ring to the
+    MIDDLE of the depth range — behind the ground of the orthographic truth view: 0 ring
+    pixels in every top-down frame. The shader now pulls towards ``NEAR_CLIP_VALUE``."""
+    seen = _ring_depth_on_opengl(tmp_path)
+    shares = seen["shares"]
+    print(f"\n[ring depth, OpenGL on {seen['adapter']}] in front: {shares['in_front'][0]} px, "
+          f"outline covered {shares['in_front'][1]:.1%}; depth-tested: "
+          f"{shares['depth_tested'][0]} px, {shares['depth_tested'][1]:.1%}")
+    assert seen["qt"]["counts"]["error"] == 0, seen["qt"]["errors"]
+    assert shares["in_front"][1] >= 0.98
+    assert shares["depth_tested"][1] <= 0.15
+
+
+def test_plainly_scaled_clip_z_hides_the_ring_on_opengl(tmp_path: Path) -> None:
+    """Positive control of the row above: the shader as it was first written."""
+    qml = broken_qml_copy(
+        tmp_path, "ring.vert",
+        "POSITION.z = mix(NEAR_CLIP_VALUE * POSITION.w, POSITION.z, uDepthScale);",
+        "POSITION.z *= uDepthScale;")
+    shares = _ring_depth_on_opengl(tmp_path, qml)["shares"]
+    print(f"\n[ring depth, OpenGL, clip z plainly scaled] in front: {shares['in_front'][0]} px, "
+          f"outline covered {shares['in_front'][1]:.1%}")
+    assert shares["in_front"][1] <= 0.05, "the old shader's ring is behind the ground there"
+
+
 # ── the ring's shader: the judge is not deaf ─────────────────────────────────
 
 
@@ -683,8 +741,8 @@ def test_a_broken_ring_shader_is_heard_by_the_judge(tmp_path: Path) -> None:
     not compile is only a Qt message and the frame still renders (exit code 0): the
     judge reads the driver's stderr and must find the error there, in the scenario
     that selected something."""
-    qml = broken_qml_copy(tmp_path, "ring.vert", "POSITION.z *= uDepthScale;",
-                          "POSITION.z *= uDepthScaleMissing;")
+    qml = broken_qml_copy(tmp_path, "ring.vert", "POSITION.z, uDepthScale);",
+                          "POSITION.z, uDepthScaleMissing);")
     out = tmp_path / "out"
     proc, result = run_selection_driver(out, "ring_depth", qml_dir=qml, env=render_env(tmp_path))
     assert proc.returncode == 0 and result["status"] == "ok", failure_report(proc, out)
