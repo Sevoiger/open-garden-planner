@@ -27,8 +27,8 @@ from open_garden_planner.core.scene3d import (
     SinkProtocolError,
     Transform,
     srgb8_to_linear,
+    walk,
 )
-from open_garden_planner.core.scene3d import walk
 from open_garden_planner.core.scene3d.selection import (
     EMPTY_SELECTION,
     RING_LIFT_CM,
