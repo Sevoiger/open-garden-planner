@@ -191,6 +191,17 @@ a = Analysis(
         "open_garden_planner.ui.view3d.quick3d.runlog",
         "open_garden_planner.ui.view3d.quick3d.selftest",
         "open_garden_planner.ui.view3d.quick3d.shots",
+        # The Plan / 3D / Split workspace (ADR-057, L1.3) — behind OGP_QUICK3D=1
+        # and imported only then; the pipeline, the orbit input and the list of
+        # what 3D could not show are imported on the first switch to 3D.
+        "open_garden_planner.ui.view3d.workspace",
+        "open_garden_planner.ui.view3d.sync_controller",
+        "open_garden_planner.ui.view3d.init_guard",
+        "open_garden_planner.ui.view3d.orbit_input",
+        "open_garden_planner.ui.view3d.problems_dialog",
+        "open_garden_planner.ui.sim_clock_subscription",
+        "open_garden_planner.core.scene3d.camera",
+        "open_garden_planner.core.plain_text",
         # Qt Quick 3D spike (ADR-048, L0) — dormant evidence tooling behind
         # --spike-q3d. PyQt6.QtQuickWidgets is ITS import only; both leave
         # with the spike in L1.10 (see the data loop above).
