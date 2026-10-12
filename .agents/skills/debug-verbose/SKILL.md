@@ -415,7 +415,7 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Key signal**: visually, the closing segment looked like a *single hairline*, while the other edges were a clean 4 px stroke. That's the signature of stroking a thin-band shape: the outline gets a 4 px stroke but the band itself is < 4 px wide.
 
-**Root cause**: Qt's `QGraphicsPolygonItem.shape()` (bypassed at `ui/canvas/items/garden_item.py:1026` `drawPolygon`) does **not** return the polygon's outline. It returns the *stroke envelope* — a closed band path that's the polygon outline expanded by the pen width, intended for hit-testing (so clicking near the edge counts as a hit). Stroking that band's outline produces the observed double-line effect, with the addPolygon-induced open seam reduced to a thin closing line.
+**Root cause**: Qt's `QGraphicsPolygonItem.shape()` (bypassed at `ui/canvas/items/garden_item.py:1057` `drawPolygon`) does **not** return the polygon's outline. It returns the *stroke envelope* — a closed band path that's the polygon outline expanded by the pen width, intended for hit-testing (so clicking near the edge counts as a hit). Stroking that band's outline produces the observed double-line effect, with the addPolygon-induced open seam reduced to a thin closing line.
 
 **Fix**: When the item has a `polygon()` method (i.e. it *is* a `QGraphicsPolygonItem`), bypass `shape()` entirely and use `painter.drawPolygon(self.polygon())`. That uses the raw vertex list and produces a uniform stroke on every edge with proper miter joins. Rect / circle / ellipse keep the `drawPath(self.shape())` fallback because their `shape()` *does* return a closed outline.
 
@@ -2325,9 +2325,80 @@ uploaded stays committed until a Present. The growth belongs to the instrument.
 adapter and on WARP (measured: −0.10 to +0.01 and +0.02 to +0.14 MB a cycle); the grabbing soak
 is kept as the control that must show the growth where nothing is presented. The rule for the
 product: no repeated `grab()` on a live host that is not presenting — screenshots go through the
-offscreen path.
+offscreen path. *What the re-check added:* that hardware cell presented no frame, so it rendered
+nothing and cannot see the graphics side — half a gate. The other half is WARP (it presents)
+and a manual check with the display on; a gate's report names the cell it measured.
 
 **Lesson**: **a soak measures everything in its loop — before a growth is blamed on the thing
 under test, run the loop without the instrument.** And an expected failure with a plausible
 story attached is where a diagnosis goes to stop being checked: the remedy it handed on (pace
 the edits) would have been built and would have fixed nothing.
+
+## Case study: the lawn that stayed on the ground — only while it was the plan rectangle (Phase 17 L1.5, fixed 2026-10-12)
+
+**Symptom**: a full ground tile (more than 256 records) had dropped the lawn under its pavers:
+138,240 px of a 5.12 m square were bare meadow. The fix of the first review round — "an opaque
+cover ends the walk; below the cut a tile keeps what covers it WHOLE" — passed its pins: zero
+bare pixels under 255, 256 and 2,000 pavers. The re-check moved the lawn 10 cm inside the plan's
+edge: 149,604 px bare again (158,721 at half a centimetre), mean 24.4 of 255 against the canvas,
+and more pavers did not help.
+
+**Wrong theories**:
+
+1. *"Zero bare pixels at 2,000 pavers shows the lawn is safe."* The test lawn was
+   `surface("lawn", (550, 350), (550, 350))` on a 1100 x 700 plan — the plan rectangle, the one
+   lawn that covers EVERY tile whole.
+2. *"The rule was implemented as ruled, so the outcome follows."* It was implemented to the
+   letter. The letter named a mechanism ("covers the whole tile"), not what it was for.
+
+**Key evidence**: one number changed in the fixture — the lawn's half size, 550 -> 540.
+
+**Root cause**: a rule worded as a mechanism, pinned by a fixture that sits exactly on the
+mechanism's best case. A lawn whose edge runs through a tile covers 99 % of it and counted as
+nothing.
+
+**Fix**: the rule by its OUTCOME — when a bound bites, a tile loses its smallest records, never
+a large one (ranked by how much of the tile each record's paint box overlaps; ties to the
+topmost; an opaque cover still ends the walk). Pinned for four lawns (the plan rectangle, 10 cm
+inside, half a centimetre inside, 30 % of the tile), three counts of pavers and a real scene
+against the canvas.
+
+**Lesson**: **when a fix is specified as a mechanism, restate it as the outcome it is for and
+test THAT — with a fixture the mechanism was not written for** (off its boundary by a little,
+and by a lot). A fixture that coincides with a special case of the code — the plan rectangle, a
+tile-aligned item, a centred upright one — proves the special case.
+
+## Case study: undo raised on a line just drawn — and worked once the plan had been reopened (Phase 17 L1.5 review, fixed 2026-10-12)
+
+**Symptom** (shipped in v1.30.1): draw a fence, change its stroke width in the properties
+panel, Ctrl+Z — `TypeError: setWidthF(self, width: float): argument 1 has unexpected type
+'NoneType'`, and the line keeps the new width. The same for a dash edit (`AttributeError:
+'NoneType' object has no attribute 'to_qt_pen_style'`) and for a type change made in the panel.
+Save, reopen, repeat: no error.
+
+**Wrong theories**:
+
+1. *"The stroke attributes of lines were fixed last round."* The LOADER was (`adopt_pen` after a
+   load), and every pin of that fix went through a project file.
+2. *"The guard walks every operation that makes an item from an item."* A constructor is not
+   one; nothing judged an item that was merely built.
+
+**Key evidence**: the attributes printed next to the pen they mirror —
+
+```
+fresh line    pen #ff8b4513 3 SolidLine | states None None None
+loaded line   pen #ff8b4513 3 SolidLine | states #ff8b4513 3.0 SOLID
+```
+
+**Root cause**: `PolylineItem.__init__` handed no stroke to `GardenItemMixin`, and
+`_setup_styling` built the pen without writing the attributes; the panel's undo takes the value
+to go back to from the attribute.
+
+**Fix**: `_setup_styling` builds a line's pen from the stroke it STATES (else its type's) and
+ends in `adopt_pen` — which also makes the context menu's undo restore a re-stroked line. The
+guard is behaviour now: at the end of every integration test, every item of every scene must
+state the look it paints (`tests/integration/conftest.py`).
+
+**Lesson**: **an object with two ways into existence (constructed, loaded) needs every state pin
+on BOTH** — a fix on one way makes the two behave differently, which is harder to find than
+both being wrong. And print a mirrored attribute NEXT to the Qt state it mirrors.

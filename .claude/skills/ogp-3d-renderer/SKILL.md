@@ -255,7 +255,21 @@ are §12, and rows it added to the tables below say "(L1.2)".
   opens in 2 passes, bench_large in 8; one tile a pass on the RTX 4070: 14 transactions, each
   uploading the tile it painted. A test or a screenshot that needs the FINISHED ground uses
   `GroundBaker(budget_s=None)` or loops until nothing is pending (`render_records` loops); a
-  test of the budget injects a clock (`clock=`), never sleeps.
+  test of the budget injects a clock (`clock=`), never sleeps. Two rules of the queue: a call
+  that brings an EDIT while older tiles are pending paints the edit's own tiles first and then
+  one tile of the backlog whatever the budget says (a drag used to keep 14 of 15 tiles pending
+  for as long as it lasted) — so a pass is the budget plus up to two tiles; and a tile whose
+  paint raises as a whole keeps its picture, is listed in `GroundBaker.tile_failures`, is NOT
+  pending, and is retried by the next call that brings a change (clearing the baker instead
+  made the next edit blank 15 of 16 tiles). A bake that raises anywhere else is the sync's
+  `ground_failure`, and the sync calls `baker.restart()` — books forgotten, PICTURES kept until
+  each tile is painted anew — never `clear()`, which is for a new plan.
+- **A full tile loses its SMALLEST records, never a large one.** More than 256 records (or
+  262,144 vertex passes) in a tile: the members are ranked by how much of the tile their paint
+  box overlaps — box against box, ties to the topmost — and the lowest go; the rest is painted
+  in z order and the tile is in `GroundBaker.capped`. A lawn under 2,000 pavers stays wherever
+  its edge runs. The ranking does not know a shape: a thin diagonal line counts as large, and a
+  small item on top of 256 larger ones is lost.
 - **`ClampToEdge` on both axes of a tile texture.** With the default Repeat, linear filtering at
   a tile's edge blends in its OPPOSITE edge. Invisible on a uniform lawn; on a lawn with another
   colour at the tiles' far edges the luma spread at a four-tile corner was 7.9 (and 24.9 along a
@@ -296,8 +310,12 @@ are §12, and rows it added to the tables below say "(L1.2)".
   hardware window once it presented (38 frames, a grab a cycle: +0.04). The first diagnosis here
   — "keeps every upload until a frame is presented; apply edits no faster than frames" — came
   from a soak that grabbed every cycle, and its remedy targeted the wrong variable. So: (1) a
-  leak soak takes NO frame in its measured loop (a live view takes none) and is then an
-  unconditional gate; the grabbing soak is its control. (2) A still picture of a live view goes
+  leak soak takes NO frame in its measured loop (a live view takes none) — and asks the QML
+  scene nothing there either: per cycle it reads counters on the Python side — and is then an
+  unconditional gate; the grabbing soak is its control. Say which CELL a run measured: in a
+  hardware window that presents nothing the soak renders nothing, so it shows the process side
+  only (half a gate); a hardware window that presents is a manual check ("watch Commit size
+  while dragging a lawn with the display on"). (2) A still picture of a live view goes
   through the offscreen path (`offscreen.render_records`: its own hidden view, closed after one
   frame — everything is given back), never through repeated `host.grab()`. (3) Record
   `host.health().frames_presented` with every memory curve. Why that window presented nothing is

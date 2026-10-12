@@ -565,8 +565,9 @@ def _keepalive(ctx: base.Context, name: str, *, leak: bool = False, grab: bool =
     """Twenty full re-bakes of a 16-tile ground in one shown host. The measured loop
     takes NO frame unless ``grab`` — a live view does not grab: a window that
     presents renders the new tiles on its own while the loop pumps events, and one
-    that does not renders nothing. ``grab=True`` is the control of §11.4.14: a
-    ``grab()`` after every re-bake."""
+    that does not renders nothing. Nor does it ask the QML scene anything: what a
+    cycle is judged by are counters on this side. ``grab=True`` is the control of
+    §11.4.14: a ``grab()`` after every re-bake."""
     host = ctx.shown_host((320, 240))
     try:
         kept: list[Any] = []
@@ -592,7 +593,10 @@ def _keepalive(ctx: base.Context, name: str, *, leak: bool = False, grab: bool =
             held.append(host.ground.textures_held() + len(kept))
             alive.append(_textures_alive() - alive_before)
             uploads.append(_tile_uploads() - before)
-            tiles.append(len(host.ground.readback()))
+            # the engine side's own books — NOT ``readback()``: that is a call into the
+            # QML scene, and nothing but the re-bake itself belongs in the measured loop
+            # (the scene is read back once, after it: ``facts()`` below)
+            tiles.append(len(host.ground.keys()))
         presented = host.frames_presented - presented_before
         image = host.grab(f"{name}_last")  # AFTER the measured loop: what the soak ended on
         out = {**rig.facts(), "cycles": KEEPALIVE_CYCLES, "curve_mb": curve,

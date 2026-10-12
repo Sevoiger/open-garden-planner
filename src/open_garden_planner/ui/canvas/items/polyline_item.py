@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from open_garden_planner.core.item_style import copy_visual_style
+from open_garden_planner.core.item_style import adopt_pen, copy_visual_style
 from open_garden_planner.core.object_types import (
     ObjectType,
     PathFenceStyle,
@@ -129,19 +129,26 @@ class PolylineItem(PolylineVertexEditMixin, RotationHandleMixin, GardenItemMixin
         pen = self.pen()
         pen.setColor(info.stroke_color)
         pen.setWidthF(info.stroke_width)
-        self.setPen(pen)
-        self._stroke_color = info.stroke_color
-        self._stroke_width = info.stroke_width
+        adopt_pen(self, pen)  # the pen AND the stroke attributes (core.item_style)
 
     def _setup_styling(self) -> None:
-        """Configure visual appearance based on object type and style preset."""
+        """Configure visual appearance based on object type and style preset.
+
+        The stroke is the one the item STATES (a type change and its undo set the
+        stroke attributes and call this), else the type's — as the filled shapes
+        do — and the line states the pen it ends up with. A line used to state no
+        stroke until it had been through a project file: undoing a width or dash
+        edit, or a type change, on a freshly drawn line raised on the ``None``.
+        """
         style = get_style(self.object_type)
 
-        pen = QPen(style.stroke_color)
-        pen.setWidthF(style.stroke_width)
+        pen = QPen(self.stroke_color if self.stroke_color is not None else style.stroke_color)
+        pen.setWidthF(self.stroke_width if self.stroke_width is not None else style.stroke_width)
+        if self.stroke_style is not None:  # a line that states none is solid, whatever its type
+            pen.setStyle(self.stroke_style.to_qt_pen_style())
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        self.setPen(pen)
+        adopt_pen(self, pen)  # the pen AND the stroke attributes (core.item_style)
 
         # Polylines typically don't have fill
         self.setBrush(QBrush(QColor(0, 0, 0, 0)))

@@ -4225,10 +4225,12 @@ for every edit, and kept every texture it ever made alive.
   meeting corner of a cut dashed outline is blended twice; a dashed round outline cut by a tile
   is stroked along chords; coarse pixels on plans above 41 × 41 m; ground tiles are not pickable
   (a click on the ground hits no item, as before).
-- **G6 is met, unconditionally** (review round 1): twenty full re-bakes of a 16 MB ground do not
-  grow the process on the hardware adapter — whether its window presents frames or not — nor on
-  WARP. What the first version of this addendum reported as "unmet where no frame is presented"
-  was its own soak calling `grab()` after every re-bake (§11.4.14).
+- **G6 is met in the two cells that were measured** (review rounds 1 and 2): twenty full
+  re-bakes of a 16 MB ground do not grow the process on WARP, whose window presents its frames,
+  nor on the hardware adapter, whose window presented NONE — where nothing is rendered, so that
+  cell shows the process side only. A hardware window that presents is on the story's manual
+  checklist. What the first version of this addendum reported as "unmet where no frame is
+  presented" was its own soak calling `grab()` after every re-bake (§11.4.14).
 
 **Validation.** Default tier — `tests/integration/test_scene3d_ground_bake.py`: G1 parity for the
 25 fill patterns × tinted/untinted × 0° / 33° × two tile-straddling positions (200 cases: not
@@ -4287,7 +4289,8 @@ themselves, with their measurements, are §11.4.14:
   edit first. And "the topmost 256 records of a tile" is replaced by a rule that says what is
   lost: the walk ends at the first record that opaquely covers the tile, and below the cut a tile
   keeps what covers it whole (four underlays, to the first opaque one) — a capped tile loses the
-  records below its topmost 256 that do not cover the whole tile. *Rejected:* dropping from the
+  records below its topmost 256 that do not cover the whole tile. (That rule kept a lawn only
+  when it was the plan rectangle; review round 2, below, replaces it.) *Rejected:* dropping from the
   top (the newest items vanish); a bound on scanline crossings to cap a comb polygon's time (a
   fourth pass over every outline for a shape the 2D canvas cannot paint either — recorded as a
   scan not acted on).
@@ -4304,7 +4307,8 @@ themselves, with their measurements, are §11.4.14:
   alternative — reading the brush back in the snapshot — cannot recover a pattern or a tint from
   a textured brush.
 - **Gate G6 measures what a live view does.** No frame is taken in the soak's loop; the gate is
-  unconditional. The rule that follows from what DID grow the process is for the workspace: no
+  unconditional (which cells it measured, and what the hardware cell cannot see: review round
+  2, below). The rule that follows from what DID grow the process is for the workspace: no
   repeated `grab()` on a live host that is not presenting; a screenshot goes through the
   offscreen path.
 
@@ -4315,3 +4319,63 @@ advances a second a reading; random edit sessions through three bakers; a raisin
 failure, poisoning in a continuation), the 2D suites named in §11.4.14, the render tier's
 budgeted open and five re-texture sequences on the RTX 4070 and on WARP, and 23 mutants of the
 new rules, all killed.
+
+#### Review round 2 (2026-10-12): what the re-check changed
+
+The re-check found the save / load work of round 1 clean, the round-1 rule for a full tile right
+in its wording and wrong in its outcome, and several places where a rule had been guarded by
+the one case its author thought of. What was decided in answer (the findings are §11.4.14):
+
+- **Decision 8, amended again — admission by outcome.** "The topmost 256, and under them what
+  covers the WHOLE tile" kept a lawn only when it was the plan rectangle; 10 cm inside the plan's
+  edge 149,604 px of the first tile were bare. The rule is now stated by what it must achieve:
+  *when a bound bites, a tile loses its smallest records, never a large one.* A tile's members
+  are ranked by how much of the tile their paint box overlaps (box against box; ties to the
+  topmost) and the lowest-ranked go, for the record bound and the vertex bound alike; the kept
+  ones are painted in z order; an opaque cover still ends the walk. `TILE_UNDERLAYS` is gone.
+  *Rejected:* the smaller variant "keep as an underlay any filled record whose paint box covers
+  at least half the tile" — a second threshold with the same kind of edge (a lawn over 30 % of
+  the tile is dropped again), where a ranking has none; ranking by true covered area — it would
+  read vertices for records that are then left out, which the security criterion forbids (no
+  work behind the bound). The price is stated in §8.27.5: the ranking does not know a shape.
+- **Decision 7, amended again — the backlog is owed a tile a pass, and a tile's failure is the
+  tile's.** A call that brings an edit paints the edit's own tiles first and then one tile of
+  the backlog whatever the budget says (a pass: the budget plus two tiles); without it a drag
+  kept 14 of 15 tiles pending for as long as it lasted. And a tile whose paint raises as a whole
+  keeps its picture, is listed (`GroundBaker.tile_failures`), is not pending, and is retried by
+  the next call that brings a change — where clearing the baker made the NEXT edit blank fifteen
+  of sixteen tiles. For a bake that raises anywhere else the seam gains `restart()`: the sync
+  calls it instead of `clear()`, and the baker forgets its books and keeps its pictures until
+  each tile is painted anew — the outcome ("the edit after a failure does not blank the
+  ground") holds for every raise site, not only for the one the review used. *Rejected:*
+  keeping the sink's tiles in the sync for the keys a cleared baker has not painted yet (the
+  sync would need to know WHICH tiles are pending: a wider seam than one method); retrying a
+  failed tile on every pass (a tile that cannot be
+  allocated would be tried sixty times a second); reporting it through `ground_failure` (that
+  is the whole bake's, and it stops all ground work until the plan changes).
+- **One writer for an item's look — and a guard that does not read the source.** The census of
+  derivation sites caught one of six planted forgetful operations. The guard is now a teardown
+  fixture over every integration test: every item of every scene a test built must have style
+  attributes that describe its brush and pen. It found the last writers that set one half —
+  a freshly drawn polyline stated no stroke at all (undoing a width, dash or type edit on it
+  raised, in the shipped app), the panel's undo of a type change — and 31 hand-made pens and
+  brushes in the tests themselves. A sprite's pen is exempt: it says nothing about the picture
+  (`GardenItemMixin.paints_sprite`). *Rejected:* widening the source scan (every new spelling
+  is a new blind spot); scoping the fixture to the 2D suites only (the 3D suites build scenes
+  and drive the same writers — and held 161 of the 167 first findings).
+- **G6, restated by what was measured.** "Met … whether its window presents frames or not"
+  claimed a cell nobody ran: measured are a software rasteriser whose window presents, and the
+  hardware adapter whose window presented none and therefore rendered nothing. The requirement
+  and the test now say so, and the presenting hardware window is a manual check.
+- **The loader reads a preset line's stroke with care.** Reading it at all (round 1) made a
+  hand-made `"stroke_width": null` skip the item, where every such file had loaded at the
+  preset's stroke. A width that is no finite number of at least the panel's minimum (0.5) and a
+  colour Qt cannot read keep the preset's value, each on its own; a fully transparent colour is
+  a colour (the panel's dialog offers the alpha channel) and loads as given. A plain line's
+  stroke is applied as it always was.
+
+Validation of the round: `tests/integration/test_scene3d_ground_rules.py`
+(`TestATileLosesItsSmallestRecords`, `TestATileThatCannotBePainted`, the backlog tests),
+`tests/integration/test_item_style_in_step.py` (the fresh line and its undos, the hand-made
+files, the guard's own teeth), the fixture across the integration folder, and the round's
+mutants.

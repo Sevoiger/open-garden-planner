@@ -23,6 +23,15 @@ rasteriser: the soak takes no frame in its measured loop, as a live view takes
 none. What grows a Direct3D 11 process is something else, and has a control of its
 own here: a ``grab()`` after every re-bake in a window that presents nothing
 (docs §11.4.14) — the reason a live host is never grabbed repeatedly.
+
+WHAT G6's MEMORY HALF CAN SEE — two cells, and one of them is half a gate. On a
+software rasteriser the window presents its frames and the textures are the
+process's own memory: that cell renders, uploads and frees, and the instrument
+sees all of it. On the dev box's own adapter the soak's window presented NO
+frame: nothing is rendered there without a ``grab()``, so nothing is uploaded,
+and the gate cannot fail on the graphics side in that cell. A hardware window
+that DOES present is not automated here. It is the owner's manual checklist item
+"watch Commit size while dragging a lawn with the display on".
 """
 
 from __future__ import annotations
@@ -494,6 +503,9 @@ def test_twenty_full_re_bakes_hold_two_generations_of_textures_at_most(run: Run)
     assert kept["grab"] is False  # no frame is taken in the measured loop
     assert kept["cycles"] == 20 and kept["bytes_per_generation"] == 2048 * 2048 * 4
     assert kept["uploads_per_cycle"] == [16] * 20 and kept["tiles_per_cycle"] == [16] * 20
+    # … per cycle by this side's own books (nothing asks the QML scene inside the
+    # measured loop); the scene itself is read back once, after it
+    assert kept["tiles_in_scene"] == kept["tiles_textured"] == 16
     assert max(kept["alive_per_cycle"]) <= 32 and max(kept["held_per_cycle"]) <= 32
     assert kept["alive_after_clear"] == 0 and kept["state_equals_expected"] is True
     leak = run[0]["scenarios"]["ground_keepalive_leak"]
@@ -514,7 +526,8 @@ def _said(kept: dict[str, Any], adapter: str) -> tuple[float, str]:
 def _judge_memory(kept: dict[str, Any], adapter: str) -> None:
     """The memory half of gate G6 for one soak — UNCONDITIONAL: whatever the
     adapter, whether its window presents frames or not, twenty full re-bakes do not
-    grow the process. No expected failure, no escape.
+    grow the process. No expected failure, no escape. (What a cell that presents
+    nothing can show is limited: the module docstring.)
 
     The soak takes no frame in its measured loop. That is what a live view does —
     and it is what the first version of this gate got wrong: it called ``grab()``
@@ -551,8 +564,21 @@ def test_the_leak_gate_sees_a_texture_list_that_only_grows(soak: dict[str, Any])
 
 def test_the_process_does_not_grow_on_the_default_adapter_either(run: Run) -> None:
     """The same twenty re-bakes on the machine's own adapter — whether its window
-    presents or not (``_judge_memory``)."""
-    _judge_memory(run[0]["scenarios"]["ground_keepalive"], str(run[0]["qt_messages"]["adapter"]))
+    presents or not (``_judge_memory``).
+
+    HALF A GATE where the window presents nothing (the dev box: an RTX 4070, 0
+    frames presented in the soak): without a ``grab()`` nothing is rendered there,
+    so no texture is uploaded and nothing on the graphics side can grow — this
+    test then shows that re-baking does not grow the PROCESS side, and no more.
+    The other half is the software-rasteriser soak above (it presents) and, for a
+    hardware window that presents, the owner's manual checklist: "watch Commit
+    size while dragging a lawn with the display on". The cell is printed."""
+    kept = run[0]["scenarios"]["ground_keepalive"]
+    _judge_memory(kept, str(run[0]["qt_messages"]["adapter"]))
+    print("G6 (memory), this cell: " + (
+        f"{kept['frames_presented']} frames presented: it renders, uploads and frees"
+        if kept["frames_presented"] > 1 else
+        "NO frame presented: nothing is rendered here, the graphics side is not measured"))
 
 
 def test_a_grab_after_every_re_bake_does_not_grow_a_software_rasteriser(soak: dict[str, Any]) -> None:

@@ -1261,10 +1261,13 @@ building on.
     and snapshot plus build is 41 ms where the first version took 250. *Moving work to another
     function moves its cost too; re-measure the hot path at the large size after every such
     move.*
-- **A styled polyline does not keep a stroke width across save and load** (observed while
-  generating the edge-case plan; not changed). `core/project.py` restores `stroke_width` only
-  when the polyline has no `path_fence_style` preset, so a fence with a preset comes back at the
-  preset's width whatever was saved. The edge-case plan therefore uses fences without a preset.
+- **A styled polyline did not keep a stroke width across save and load** (observed while
+  generating the edge-case plan). `core/project.py` restored `stroke_width` only when the
+  polyline had no `path_fence_style` preset, so a fence with a preset came back at the preset's
+  width whatever was saved; the edge-case plan therefore uses fences without a preset. *Changed
+  by L1.5* (§11.4.14): the loader restores the saved stroke of a preset line too — a file saved
+  by a version that did not, with a stroke that differs from the preset's, now shows the saved
+  one.
 
 ### 11.4.9 What the plant builders taught (Phase 17 L1.7, #385)
 
@@ -2185,21 +2188,72 @@ was a defect nobody saw on the canvas:
 | the project saver, polylines | no `stroke_style` written | **a dashed line came back solid** (`DashDotLine` → `SolidLine`; its colour and width survive) |
 | the project loader, polylines with a style preset | the saved stroke read for style NONE only | **a restyled path's own colour and width came back as the preset's** — a gravel path saved with `#dc1e50c8`, 7.5 loads as `#ffb4aa96`, 8.0, and the next save writes that |
 | the offset tool (polygons, polylines), the chamfer and fillet tools, `PolylineItem.clone_with_points`, the trim tool's results | brush and pen copied, the attributes at the type's defaults | **the copy changed colour and pattern on save** (an offset copy of a blue brick terrace: default wood); in 3D it was baked as the default at once |
+| `PolylineItem.__init__` / `_setup_styling` (found by review 2) | the pen built, the stroke attributes `None` until the line had been through a project file | **undo raised on a freshly drawn line** — in the shipped app: a stroke-width edit undone `TypeError: setWidthF(NoneType)` (the pen stays at the new width), a dash edit undone `AttributeError` (the pen stays dashed), a type change in the properties panel undone `TypeError` (the type goes back, the pen stays the new type's). The same line behaved after a reopen |
+| the properties panel's `_apply_item_state` (the undo and redo of a type change) | the attributes set, overwritten by `apply_style_preset`, then the pen built from the state | a re-stroked preset line after the undo of a type change: pen 12.0, stated 8.0 |
+| `GardenItemMixin._dispatch_change_type` on a line (the context menu) | the attributes set from the state, the pen built from the TYPE | **undoing a context-menu type change reset a re-stroked line's pen to its type's** — a fence of 7.5 dashed came back 3.0 solid, stating 7.5 dashed |
+| the project loader, all four filled shapes, for a file with a fill colour and NO fill pattern | the brush the constructor made recoloured — which does nothing to a texture — and the attribute set | **the picture changed across a save**: first the type's texture at the type's tint, after save and reopen at the saved colour (the middle of a lawn: (79, 144, 54) → (111, 97, 44)). On `master` for circles, ellipses and polygons; for rectangles since round 1 of this story |
 
 *Fix:* `core/item_style.py` — `copy_visual_style(source, dest)` carries a look from item to item,
-`adopt_pen(item, pen)` sets a pen together with the attributes that describe it, `style_gaps(item)`
-says where an item's two statements part; every writer above goes through them, and the saver
-writes a polyline's dash style when its pen has one. *Guard for the class, not the instances:*
-`tests/integration/test_item_style_in_step.py` walks every shipped operation that makes an item
-from an item (clipboard / duplicate / the four arrays, mirror, offset, chamfer / fillet, trim,
-`clone_with_points`) for six kinds of source, finds a NEW such operation by its shape in the
-source (a census), and refuses a brush or pen copied past the helper (an AST scan);
+`adopt_pen(item, pen)` sets a pen together with the attributes that describe it, `fill_brush`
+builds a fill in the item's own pattern, `style_gaps(item)` says where an item's two statements
+part; every writer above goes through them — a line states the pen it is built with, and
+`_setup_styling` builds a line's pen from the stroke it STATES, as the filled shapes always did —
+and the saver writes a polyline's dash style when its pen has one.
+
+*Guard for the class, not the instances — and the first guard was not one.* Round 1 guarded the
+class by reading the source: an AST scan for functions that build an item from an item (a
+"census"). A review planted six forgetful operations and the scan saw ONE: it knew the keyword
+spelling `object_type=item.object_type` and two folders, and missed the type through a local, a
+constant type, a `type(item)(…)` factory and a brush held in a variable. Its docstring said a new
+tool "cannot ship without" the rule. The guard is now BEHAVIOUR: a teardown fixture
+(`tests/integration/conftest.py::_every_item_says_what_it_paints`) tracks every `CanvasScene` an
+integration test builds and fails the test if an item in one of them has `style_gaps(item) !=
+[]`. Run over the folder for the first time — the four product writers of the table's last rows
+already fixed — it failed 167 tests, every one for a hand-made `setPen` or `setBrush`: 31 call
+sites in six test files and in the generator of the edge-case plan that built items no user can
+make (a line that states its stroke is put out of step by a bare `setPen`). They go through the
+helper now. Its first PRODUCT finding came with the first test that drove a type change on a
+line: the line then states its new type's fill — a transparent grey — beside the transparent
+black brush every line paints with. Both paint nothing, and the predicate now says so. With any
+one of the four product fixes taken out again, the fixture fails the tests that drive that
+writer (the round's mutants). `tests/integration/test_item_style_in_step.py`
+keeps the operations by name (clipboard / duplicate / the four arrays, mirror, offset, chamfer /
+fillet, trim, `clone_with_points`; the fresh line and its undos; hand-made files) and tests the
+guard's teeth with the six planted operations; the scan is kept as a map of the derivation sites.
 `tests/integration/test_item_roundtrip_matrix.py` pins load → save → load of a recoloured,
-patterned rectangle for eleven object types and of a re-stroked item of every shape. Not changed,
-and inconsistent: an offset copy of a RECTANGLE, CIRCLE or ELLIPSE is a new shape in its type's
-default look, where a polygon's or a line's keeps its source's. *Lesson:* an attribute that
-mirrors a Qt object's state is a second source of truth; a second consumer finds where they
-parted — and the fix is one writer, not one more reader.
+patterned rectangle for eleven object types and of a re-stroked item of every shape.
+
+*One kind of item is exempt in its stroke half:* an item whose picture is a sprite
+(`GardenItemMixin.paints_sprite` — a furniture rectangle, a plant or furniture circle). Its pen
+is `NoPen` when it is built and a solid black 1.0 once it was loaded (the saver writes the pen's
+colour and width, the loader gives the pen the saved `stroke_style`), and neither is painted.
+Round 1 read the stroke attributes off that pen: 200 of the 495 items of the audit's reference
+plan stated `#ff000000` / 1.0 where they had stated their type's stroke. They state their type's
+again.
+
+*Not changed, and inconsistent:* an offset copy of a RECTANGLE, CIRCLE or ELLIPSE is a new shape
+in its type's default look, where a polygon's or a line's keeps its source's. Undoing a preset
+pick in the properties panel returns the style to "none" and leaves the preset's pen (a path of
+`#ffa0522d` 5.0 stays `#ffb4aa96` 8.0). The two ways to change a line's type disagree on a
+preset line — the context menu keeps the preset's stroke, the panel gives the new type's — and
+the context menu's undo gives a re-stroked preset line the preset's stroke back, not its own.
+A type change in the panel builds a new pen: a line's round caps and joins are square and
+bevelled until the plan is reopened. *Lesson:* an attribute that mirrors a Qt object's state is a
+second source of truth; a second consumer finds where they parted — and the fix is one writer,
+not one more reader. *And:* a guard that reads the source knows the spellings its author knew;
+judge the objects a test leaves behind.
+
+**A loader that starts to read a field must say what it does with a value it cannot use.** Round
+1 made the loader restore a preset line's saved stroke; until then that field was not read for
+such a line, so ANY value loaded — at the preset's stroke. Read unvalidated, a hand-made
+`"stroke_width": null`, `"8"` or `[8.0]` and a `"stroke_color": null` raised, and the item was
+skipped — gone after the next save; 0.0, -3.0 and 0.01 loaded as given, `"notacolour"` as black.
+For a preset line a width that is no finite number of at least the panel's minimum (0.5) and a
+colour Qt cannot read now keep the preset's value, each on its own, and nothing raises
+(`TestAFileTheAppDidNotWrite`, 21 cases). A fully transparent colour is a colour — the panel's
+own dialog offers the alpha channel — and loads as given. *Not changed:* a PLAIN line and the
+four filled shapes apply a saved stroke as found, as `master` does: `null`, `"8"`, `[8.0]`, an
+integer of 400 digits and a `null` colour skip the item; 0.0, 0.01 and NaN load as given.
 
 **Qt fills an open path with the brush that happens to be set.** *Symptom:* a bent boardwalk and
 a bent stone wall filled the whole inside of the bend with one colour — over their own planks
@@ -2309,11 +2363,21 @@ frames in the same session, so "the display was asleep" does not explain it.
 *What follows:* (1) **the rule — no repeated `grab()` on a live host that is not presenting; a
 screenshot goes through the offscreen path** (`offscreen.render_records`: a hidden view of its
 own that is closed after its one frame, which gives everything back); (2) gate G6 measures what
-a live view does — no frame in its loop — and is UNCONDITIONAL on the machine's own adapter and
-on WARP; the grabbing soak is its documented control
+a live view does — no frame in its loop, and since review 2 no call into the QML scene either —
+and is UNCONDITIONAL on the machine's own adapter and on WARP; the grabbing soak is its
+documented control
 (`test_a_grab_a_cycle_is_what_grows_a_direct3d_window_that_presents_nothing`). *Lesson:* a soak
 measures everything in its loop; before a growth is blamed on the thing under test, run the loop
 without the instrument.
+
+**… and a gate that cannot fail in one of its cells is half a gate.** "Flat on any adapter,
+whether the window presents or not" was written from two measured cells: WARP, whose window
+presents its frames (it renders, uploads and frees — flat), and the RTX 4070, whose window
+presented NOTHING. Without a grab nothing is rendered in such a window, so nothing is uploaded
+and nothing on the graphics side can grow: that cell shows that re-baking does not grow the
+PROCESS side, and no more. A hardware window that presents its frames is not automated — it is
+the owner's manual checklist item "watch Commit size while dragging a lawn with the display on" —
+and the requirement says which cells were measured (FR-3D-GROUND-05).
 
 **`frameSwapped` may never come.** The replaced textures are released when a frame was presented
 — and, because that signal may never arrive, at the latest on the next ground update. A release
@@ -2322,9 +2386,32 @@ that only waits for the signal is the L0 spike's growing list again.
 **A bound that keeps "the topmost N" drops what everything stands on.** With 256 pavers on a
 lawn in one tile, the record `TILE_RECORDS` left out was the lawn: 138,240 px of a 5.12 m square
 were bare meadow, one log line said so. The counts were all pinned; nothing asked WHAT was
-dropped. The walk now ends at the first record that opaquely covers the tile and keeps what
-covers it whole below the cut (§8.27.5), and the tests compare the capped ground with the same
-records painted without tiles or bounds.
+dropped. The first fix — the walk ends at the first record that opaquely covers the tile, and
+below the cut a tile keeps what covers it WHOLE — was pinned with a lawn that was the plan
+rectangle, the one lawn that covers every tile whole, and passed. Ten centimetres inside the
+plan's edge the same lawn was dropped again: 149,604 px bare, mean 24.4 of 255 against the canvas
+(review 2). The rule is now stated by its outcome — a tile loses its SMALLEST records, ranked by
+how much of the tile their paint box overlaps — and pinned for four lawns, three counts of pavers
+and a real scene against the canvas (§8.27.5). *Lesson:* a rule worded as a mechanism ("keep
+what covers the tile") can be followed to the letter and miss what it was for; state the
+outcome, and test it on a geometry the mechanism was not written for.
+
+**After a failure, "forget everything and start again" is not the safe choice.** A bake that
+raised cleared the baker; the sink kept showing its sixteen painted tiles — until the next edit,
+anywhere, re-baked from an empty baker under the time budget: ONE painted tile, fifteen passes to
+refill, a traceback, and the same again for every edit while the failure lasted. A tile whose
+paint fails now keeps its picture and its place in the books, and nothing else is touched; and
+a bake that raises anywhere else RESTARTS the baker — books forgotten, pictures kept until each
+tile is painted anew (§8.27.5). The first version of this fix covered only the raise site the
+review had used (a tile's paint); the pin for "any other site" raises in the admission walk
+instead. *Lesson:* test a failure path by what the user sees on the edit AFTER it, not by the
+state right after the exception — and inject the failure in more than one place.
+
+**A budget shared between new and old work starves the old.** One tile a pass, nearest to the
+last edit first, and an edit before every pass: the edit's tile was painted, the budget was
+spent, and 14 tiles stayed pending after 1, 5, 10, 20 and 40 edits — a drag over a just-opened
+plan kept the rest of the ground bare for as long as it lasted. A call that brings an edit now
+owes the backlog one tile.
 
 **A painter that raises between `save()` and `restore()` poisons the next record.** A
 stepping-stones path that raised at its third stone left the painter two levels deep, moved and
@@ -2338,7 +2425,7 @@ painted cleanly in the next was reported as fine.
 orders of magnitude (0.7 µs a vertex for a wavy ring, 1.2 ms for a comb: 19 s for one record in
 one tile). The first delivery stated "a tile at its bounds: 0.2 to 2.65 s" from the shapes it had
 thought of. Only a time budget between tiles holds a pass to something, and it holds it to the
-budget plus ONE tile (§8.11, §8.27.5).
+budget plus ONE tile — two when an edit arrives over a backlog (§8.11, §8.27.5).
 
 **Qt paints the last row of a rectangle clipped to a narrow image one step lighter.** A lawn
 over a 1100 × 700 cm plan, tile by tile, against the same lawn in one image: 76 values of the

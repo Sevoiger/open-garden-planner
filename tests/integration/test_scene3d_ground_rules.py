@@ -1,15 +1,17 @@
 """The ground bake's rules for a tile that cannot have everything, and for a bake
-that cannot finish at once (Phase 17 L1.5, #385 — the findings of its first review).
+that cannot finish at once (Phase 17 L1.5, #385 — the findings of its two reviews).
 
 By COUNTS, with hand-made records and a clock the test owns — what Qt needs to
 paint a tile is not asserted anywhere here:
 
-- what lies under everything: a tile that is full still shows the lawn under its
-  pavers, an opaque cover ends a tile's walk, and what a capped tile loses is
-  stated (``GroundBaker._admit``);
+- a tile that cannot hold all its records loses the SMALLEST, never a large one
+  (ranked by how much of the tile each record's paint box overlaps): a lawn
+  under any number of pavers stays, wherever its edge runs; and an opaque cover
+  ends a tile's walk (``GroundBaker._admit``);
 - the time budget: a ``bake`` paints at least one tile, leaves the rest PENDING
   as the objects they were, and every later call goes on — to the tiles one
-  unbudgeted bake gives;
+  unbudgeted bake gives; an edit a pass does not starve the backlog; a tile
+  whose paint fails keeps its picture and takes nothing else with it;
 - a painter that raises: the records painted after it are painted as if it had
   not been there, and its failure is a failure of the item whichever tile it
   happened in.
@@ -31,6 +33,7 @@ from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QTransform
 
 from open_garden_planner.core.fill_patterns import FillPattern
+from open_garden_planner.core.item_style import adopt_pen
 from open_garden_planner.core.object_types import ObjectType, PathFenceStyle
 from open_garden_planner.core.scene3d import (
     MEADOW_RGB,
@@ -50,7 +53,6 @@ from open_garden_planner.ui.view3d import ground_bake
 from open_garden_planner.ui.view3d.ground_bake import (
     BAKE_BUDGET_S,
     TILE_RECORDS,
-    TILE_UNDERLAYS,
     TILE_VERTICES,
     GroundBaker,
     WalkBudget,
@@ -130,99 +132,250 @@ def apart(image: np.ndarray, whole: np.ndarray) -> np.ndarray:
     return np.abs(image[..., :3] - whole[..., :3]).max(axis=2) > 1
 
 
-# ── what lies under everything (review P1-2) ──────────────────────────────────
+# ── a tile loses its smallest records (reviews 1 and 2, P1) ───────────────────
+
+#: Lawns for the review's plan (1100 x 700 cm; the pavers lie in the first tile):
+#: name → (half sizes, centre). The first round's rule kept a lawn only when it
+#: covered the WHOLE tile — and its test lawn was the plan rectangle.
+LAWNS: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
+    "the plan rectangle": ((550.0, 350.0), (550.0, 350.0)),
+    "10 cm inside the plan's edge": ((540.0, 340.0), (550.0, 350.0)),
+    "half a centimetre inside": ((549.5, 349.5), (550.0, 350.0)),
+    "30 % of the tile": ((140.25, 140.25), (170.25, 170.25)),  # 280.5 cm square: 0.300 of 512 x 512
+}
 
 
-class TestWhatLiesUnderEverything:
+def lawn_of(name: str) -> Record:
+    half, at = LAWNS[name]
+    return surface("lawn", half, at)
+
+
+def lawn_pixels(lawn: Record) -> np.ndarray:
+    """Where the lawn paints at all, alone on the plan."""
+    return np.any(unbounded({"lawn": lawn}, 1100.0, 700.0)[..., :3] != BARE, axis=2)
+
+
+class TestATileLosesItsSmallestRecords:
+    """The rule by its OUTCOME (review 2): when a bound bites, a tile loses its
+    smallest records, never a large one. Ranked by how much of the tile each
+    record's paint box overlaps; ties to the topmost; the kept ones in z order."""
+
     @pytest.mark.parametrize("count", [255, 256, 2000])
-    def test_a_lawn_under_any_number_of_pavers_is_on_the_ground(self, qtbot: Any, count: int) -> None:
-        """The review's plan: a lawn over 1100 x 700 cm and pavers of 20 cm in one
-        tile. With 256 pavers the tile's topmost 256 records were the pavers, the
-        lawn was the record a bound left out, and 138,240 px of a 5.12 m square
-        were bare meadow. The lawn covers the whole tile: it is never what a tile
-        loses — at 255, at 256 and at 2,000 pavers not one pixel is bare."""
-        records = {"lawn": surface("lawn", (550.0, 350.0), (550.0, 350.0)), **pavers(count)}
+    @pytest.mark.parametrize("lawn", sorted(LAWNS))
+    def test_no_pixel_of_the_lawn_is_bare(self, qtbot: Any, lawn: str, count: int) -> None:
+        """A lawn and pavers of 20 cm in one tile. Measured before: with the lawn 10
+        cm inside the plan's edge and 256 pavers, 149,604 lawn pixels of the first
+        tile were bare meadow (158,721 at half a centimetre; 138,240 for the plan
+        rectangle in the first delivery); more pavers did not help. Now: zero, for
+        every lawn, at 255, 256 and 2,000 pavers — and what is missing is pavers."""
+        under = lawn_of(lawn)
+        records = {"lawn": under, **pavers(count)}
         baker, image = baked(records)
-        assert bare_pixels(image) == 0
+        bare = np.all(image[..., :3] == BARE, axis=2)
+        assert int((bare & lawn_pixels(under)).sum()) == 0
         whole = unbounded(records, 1100.0, 700.0)
-        if count <= TILE_RECORDS:
-            # nothing is left out: the lawn is taken although the tile is full at 256,
-            # and a tile that lost nothing is not capped
-            assert baker.capped == frozenset() and baker.capped_tiles == 0
-            assert baker.records_painted == (count + 1) + 5  # the lawn alone in five tiles
-            assert not apart(image, whole).any()
-            return
-        # 2,000: the tile shows its topmost 256 pavers and the lawn under them — and
-        # says that it holds less than the plan
-        assert baker.capped == frozenset({(0, 0)}) and baker.capped_tiles == 1
-        assert baker.records_painted == (TILE_RECORDS + 1) + 5
-        # what is missing is PAVERS: wherever the ground differs from the unbounded
-        # picture, the unbounded picture has a paver and the ground has lawn
         differs = apart(image, whole)
-        assert int(differs.sum()) > 1000
-        assert np.all(whole[differs][:, :3] == np.array(GREY[:3]))
-        assert np.all(image[differs][:, :3] == np.array(GREEN[:3]))
-        # the topmost 256 are the last 256 drawn: places 144 … 399 of the grid
-        lost = {((int(x) - 10) // 24, (699 - int(y) - 10) // 24)
-                for y, x in zip(*np.nonzero(differs), strict=True)}
-        assert lost == {(place % 20, place // 20) for place in range(144)}
+        if count + 1 <= TILE_RECORDS:
+            assert baker.capped == frozenset() and not differs.any()
+            return
+        # the tile holds 256: the lawn and its 255 topmost pavers (they are all one
+        # size: of equals the lower ones go) — and says that it holds less than the plan
+        assert baker.capped == frozenset({(0, 0)}) and baker.capped_tiles == 1
+        kept = baker._order[(0, 0)]  # noqa: SLF001 - what the tile was painted with, bottom to top
+        assert len(kept) == TILE_RECORDS and kept[0] == "lawn"
+        assert kept[1:] == tuple(f"p{k}" for k in range(count - 255, count))
+        # what is missing is PAVERS: wherever the ground is not the unbounded picture,
+        # that picture has a paver
+        assert differs.any() and np.all(whole[differs][:, :3] == np.array(GREY[:3]))
 
-    @pytest.mark.parametrize("count", [255, 256, 300])
-    def test_the_reviews_plan_as_a_real_scene_against_the_canvas(self, qtbot: Any, count: int) -> None:
-        """The same through the product's pipeline, judged by the 2D canvas's own
-        render: a LAWN rectangle over the plan and ``count`` pavers drawn on it."""
+    def test_the_smallest_goes_first_even_when_it_is_the_topmost(self, qtbot: Any) -> None:
+        """255 pavers of 20 cm, ONE of 12 cm drawn last — on top of everything — and
+        the lawn: 257 members, one too many. The one left out is the small paver."""
+        records = {"lawn": lawn_of("10 cm inside the plan's edge"), **pavers(255)}
+        records["small"] = surface("small", (6.0, 6.0), (500.0, 500.0), (200, 30, 30, 255),
+                                   kind="TERRACE_PATIO")
+        baker, image = baked(records)
+        assert baker.capped == frozenset({(0, 0)})
+        kept = baker._order[(0, 0)]  # noqa: SLF001
+        assert len(kept) == TILE_RECORDS and "small" not in kept and kept[0] == "lawn"
+        differs = apart(image, unbounded(records, 1100.0, 700.0))
+        rows, columns = np.nonzero(differs)
+        assert 100 <= len(rows) <= 144  # the 12 cm square, and nothing else
+        assert columns.min() >= 494 and columns.max() <= 506
+        assert 699 - rows.max() >= 494 and 699 - rows.min() <= 506
+
+    def test_the_lowest_of_equals_is_left_out_and_the_tile_says_so(self, qtbot: Any) -> None:
+        """257 pavers of one size and nothing else: the lowest is left out — it
+        outranks nothing the tile holds — and the tile is capped. (With a lawn under
+        them the lawn's arrival says so too; here nothing else does.) The same for
+        a SMALLER paver under 256 others."""
+        baker, _image = baked(pavers(257))
+        assert baker._order[(0, 0)] == tuple(f"p{k}" for k in range(1, 257))  # noqa: SLF001
+        assert baker.capped == frozenset({(0, 0)}) and baker.capped_tiles == 1
+        under = {"small": surface("small", (6.0, 6.0), (500.0, 500.0), (200, 30, 30, 255),
+                                  kind="TERRACE_PATIO"), **pavers(256)}
+        baker, _image = baked(under)
+        assert "small" not in baker._order[(0, 0)] and len(baker._order[(0, 0)]) == TILE_RECORDS  # noqa: SLF001
+        assert baker.capped == frozenset({(0, 0)})
+
+    def test_a_record_ranks_by_what_it_covers_of_the_tile_not_by_its_size(self, qtbot: Any) -> None:
+        """A terrace of 6 m in the NEXT tiles whose corner reaches half a centimetre
+        into this one, and 256 pavers here: 257 members. The terrace is by far the
+        largest record — and covers the least of this tile: it is the one this tile
+        leaves out (the tiles it lies in paint it whole)."""
+        records = dict(pavers(256))
+        records["neighbour"] = surface("neighbour", (300.5, 94.5), (812.0, 606.0), (200, 30, 30, 255),
+                                       kind="TERRACE_PATIO")
+        baker, image = baked(records)
+        kept = baker._order[(0, 0)]  # noqa: SLF001
+        assert kept == tuple(f"p{k}" for k in range(256)) and baker.capped == frozenset({(0, 0)})
+        assert "neighbour" in baker._order[(1, 1)]  # noqa: SLF001
+        differs = apart(image, unbounded(records, 1100.0, 700.0))
+        assert int(differs.sum()) <= 4  # the corner of the terrace in this tile: half a centimetre
+
+    def test_of_two_sizes_the_large_ones_are_kept(self, qtbot: Any) -> None:
+        """2,000 pavers, every fourth one 12 cm instead of 20: the tile keeps the lawn
+        and 255 pavers of 20 cm — the topmost of them — and not one small paver."""
+        records: dict[str, Record] = {"lawn": lawn_of("half a centimetre inside")}
+        for k in range(2000):
+            half = 6.0 if k % 4 == 0 else 10.0
+            records[f"p{k}"] = surface(f"p{k}", (half, half),
+                                       (20.0 + 24.0 * (k % 20), 20.0 + 24.0 * ((k // 20) % 20)),
+                                       GREY, kind="TERRACE_PATIO")
+        baker, _image = baked(records)
+        kept = baker._order[(0, 0)]  # noqa: SLF001
+        large = [f"p{k}" for k in range(2000) if k % 4 != 0]
+        assert kept == ("lawn", *large[-255:])
+        assert baker.capped == frozenset({(0, 0)})
+
+    @pytest.mark.parametrize("count", [256, 2000])
+    def test_a_real_scene_against_the_canvas(self, qtbot: Any, count: int) -> None:
+        """Through the product's pipeline, judged by the 2D canvas's own render: a
+        LAWN rectangle 10 cm inside the plan's edge and pavers drawn on it (400
+        places; beyond 400 pavers they lie on one another). Measured before, at
+        256 pavers: mean 24.4 of 255, 130,129 px off by more than 8. Now no lawn
+        pixel is bare, and what differs are the pavers the tile could not hold: 1
+        place of 256 at 256 pavers (mean 0.032, 484 px — one paver with its
+        outline), 145 places of 400 at 2,000 (mean 4.88, 71,200 px)."""
         from open_garden_planner.ui.canvas.items import RectangleItem
         from tests.integration.test_scene3d_ground_bake import compare
 
         scene = CanvasScene(width_cm=1100.0, height_cm=700.0)
         with scene.suspend_z_refresh(renumber=True):  # as a plan file is loaded
-            scene.addItem(RectangleItem(0.0, 0.0, 1100.0, 700.0, object_type=ObjectType.LAWN))
+            lawn = RectangleItem(10.0, 10.0, 1080.0, 680.0, object_type=ObjectType.LAWN)
+            scene.addItem(lawn)
             for k in range(count):
-                scene.addItem(RectangleItem(10.0 + 24.0 * (k % 20), 10.0 + 24.0 * (k // 20), 20.0, 20.0,
-                                            object_type=ObjectType.TERRACE_PATIO))
-        mean, worst, bake = compare(scene)
-        assert not np.any(np.all(bake.image()[..., :3] == np.array(canvas_rgb()), axis=2))  # no bare pixel
-        if count <= TILE_RECORDS:
-            assert bake.baker.capped == frozenset() and worst <= 1, (mean, worst)
-        else:
-            # 44 pavers are missing from the first tile — and it says so
-            assert bake.baker.capped == frozenset({(0, 0)}) and mean > 0.0
-            assert bake.baker.records_painted == (TILE_RECORDS + 1) + 5
+                scene.addItem(RectangleItem(10.0 + 24.0 * (k % 20), 10.0 + 24.0 * ((k // 20) % 20),
+                                            20.0, 20.0, object_type=ObjectType.TERRACE_PATIO))
+        mean, _worst, bake = compare(scene)
+        reference = canvas_render(scene, bake.grid)
+        image = bake.image()
+        background = np.array(canvas_rgb())
+        bare = np.all(image[..., :3] == background, axis=2)
+        assert int((bare & ~np.all(reference[..., :3] == background, axis=2)).sum()) == 0  # no lawn pixel bare
+        assert bake.baker.capped == frozenset({(0, 0)})
+        assert str(lawn.item_id) in bake.baker._order[(0, 0)]  # noqa: SLF001
+        off = np.abs(image[..., :3] - reference[..., :3]).max(axis=2) > 8
+        # the places whose pavers are all among the ones the tile could not hold
+        missing = len({k % 400 for k in range(count)} - {k % 400 for k in range(count - 255, count)})
+        assert missing == (1 if count == 256 else 145)
+        assert missing * 20 * 20 <= int(off.sum()) <= missing * 23 * 23 and mean < 6.0
 
+    def test_members_that_overlap_the_tile_equally_keep_the_topmost(self, qtbot: Any) -> None:
+        """Ties go to the topmost. Six translucent lawns under 300 pavers: all six
+        are kept (the first rule kept four "underlays"). 300 translucent lawns:
+        the topmost 256 — and the tile is asked about no further record."""
+        veils = {f"veil{k}": surface(f"veil{k}", (550.0, 350.0), (550.0, 350.0), (60, 200, 60, 40))
+                 for k in range(6)}
+        baker, _image = baked({**veils, **pavers(300)})
+        kept = baker._order[(0, 0)]  # noqa: SLF001
+        assert kept[:6] == tuple(veils) and kept[6:] == tuple(f"p{k}" for k in range(50, 300))
+        many = {f"veil{k}": surface(f"veil{k}", (550.0, 350.0), (550.0, 350.0), (60, 200, 60, 40))
+                for k in range(300)}
+        baker, _image = baked(many)
+        assert all(baker._order[key] == tuple(f"veil{k}" for k in range(44, 300))  # noqa: SLF001
+                   for key in baker.grid.tile_keys())
+        # a tile is asked about 256 members, and about one more that shows it is capped
+        assert baker.admission_checks == 6 * (TILE_RECORDS + 1) and len(baker.capped) == 6
+
+    def test_what_the_ranking_does_not_know_is_a_shape(self, qtbot: Any) -> None:
+        """The stated limit of ranking box against box: a thin line's paint box is its
+        bounding box. 256 diagonal lines across the tile rank with the lawn under
+        them — equals — and the lawn, the lowest, is the one left out."""
+        records = {"lawn": surface("lawn", (256.0, 256.0), (256.0, 256.0))}
+        for k in range(256):
+            records[f"line{k}"] = Record(
+                item_id=f"line{k}", kind="PATH", shape="polyline", footprints=(),
+                transform=Transform(256.0, 256.0), path=((-300.0 + 0.1 * k, -300.0), (300.0 + 0.1 * k, 300.0)),
+                path_width_cm=1.0, material=Material("PATH", stroke_rgba=(20, 20, 20, 255), paint=Paint()),
+                params=Params({"seed": f"line{k}"}))
+        baker, image = baked(records, 512.0, 512.0)
+        assert baker.capped == frozenset({(0, 0)}) and "lawn" not in baker._order[(0, 0)]  # noqa: SLF001
+        assert bare_pixels(image) > 100_000
+
+    def test_the_vertex_bound_loses_the_smallest_too(self, qtbot: Any) -> None:
+        """Forty lawns of 8,192 vertices and one of 16,384, all over the whole tile, on
+        a small terrace: 344,068 vertices, and the vertex bound holds 262,144. What
+        goes are the lowest-ranked: the terrace (it overlaps least) and, of the
+        lawns — equals — the ten lowest."""
+        def wavy(vertices: int) -> tuple[tuple[float, float], ...]:
+            return tuple((700.0 * (1.0 + 0.02 * (k % 2)) * math.cos(2.0 * math.pi * k / vertices),
+                          700.0 * (1.0 + 0.02 * (k % 2)) * math.sin(2.0 * math.pi * k / vertices))
+                         for k in range(vertices))
+
+        records = {"terrace": surface("terrace", (50.0, 50.0), (256.0, 256.0), (200, 30, 30, 255))}
+        for k in range(40):
+            records[f"lawn{k}"] = surface(f"lawn{k}", (0.0, 0.0), (256.0, 256.0), (60, 140, 60, 40),
+                                          shape="polygon", ring=wavy(8192))
+        records["big"] = surface("big", (0.0, 0.0), (256.0, 256.0), (60, 140, 60, 40), shape="polygon",
+                                 ring=wavy(16_384))
+        baker = GroundBaker(budget_s=None)
+        baker.bake(records, None, (), 512.0, 512.0)
+        kept = baker._order[(0, 0)]  # noqa: SLF001
+        assert kept == (*(f"lawn{k}" for k in range(10, 40)), "big")
+        assert sum(len(records[item_id].footprints[0]) for item_id in kept) == TILE_VERTICES
+        assert baker.capped == frozenset({(0, 0)})
+
+
+# ── an opaque cover ends a tile's walk ────────────────────────────────────────
+
+
+class TestAnOpaqueCoverEndsTheWalk:
     @pytest.mark.parametrize("lawn", ["polygon", "polygon to the plan's edge", "turned rectangle",
                                       "circle", "ellipse", "textured"])
     def test_a_lawn_of_any_shape_that_covers_the_tile(self, qtbot: Any, lawn: str) -> None:
+        """What lies under a record that opaquely covers the tile is not painted —
+        whatever the cover's shape: under each of these lawns lies a red terrace
+        that must cost nothing."""
         if lawn == "polygon":  # an L with its inner corner far outside the first tile
             ring = ((-600.0, -400.0), (600.0, -400.0), (600.0, 100.0), (300.0, 100.0), (300.0, 400.0),
                     (-600.0, 400.0))
-            under = surface("lawn", (0.0, 0.0), (550.0, 350.0), shape="polygon", ring=ring)
+            cover = surface("lawn", (0.0, 0.0), (550.0, 350.0), shape="polygon", ring=ring)
         elif lawn == "polygon to the plan's edge":  # its edges lie ON the tile's borders
-            under = surface("lawn", (550.0, 350.0), (550.0, 350.0), shape="polygon")
+            cover = surface("lawn", (550.0, 350.0), (550.0, 350.0), shape="polygon")
         elif lawn == "turned rectangle":
-            under = surface("lawn", (900.0, 900.0), (400.0, 300.0), turn=33.0)
+            cover = surface("lawn", (900.0, 900.0), (400.0, 300.0), turn=33.0)
         elif lawn == "circle":
             round_ring = tuple((900.0 * math.cos(math.radians(15.0 * k)),
                                 900.0 * math.sin(math.radians(15.0 * k))) for k in range(24))
-            under = surface("lawn", (0.0, 0.0), (256.0, 256.0), shape="circle", ring=round_ring,
+            cover = surface("lawn", (0.0, 0.0), (256.0, 256.0), shape="circle", ring=round_ring,
                             radius_cm=900.0)
         elif lawn == "ellipse":
             oval = tuple((1200.0 * math.cos(math.radians(15.0 * k)),
                           700.0 * math.sin(math.radians(15.0 * k))) for k in range(24))
-            under = surface("lawn", (0.0, 0.0), (300.0, 250.0), shape="ellipse", ring=oval)
+            cover = surface("lawn", (0.0, 0.0), (300.0, 250.0), shape="ellipse", ring=oval)
         else:
-            under = surface("lawn", (550.0, 350.0), (550.0, 350.0), (90, 160, 70, 255), pattern="GRASS")
-        records = {"lawn": under, **pavers(600)}
+            cover = surface("lawn", (550.0, 350.0), (550.0, 350.0), (90, 160, 70, 255), pattern="GRASS")
+        under = surface("under", (200.0, 200.0), (256.0, 256.0), (200, 30, 30, 255), kind="TERRACE_PATIO")
+        records = {"under": under, "lawn": cover, **pavers(12)}
         baker, image = baked(records)
-        assert bare_pixels(image[-512:, :512]) == 0  # the first tile (the image is north up)
-        assert (0, 0) in baker.capped  # 344 pavers are missing, and the tile says so
-        whole = unbounded(records, 1100.0, 700.0)
-        differs = apart(image, whole)
-        assert differs.any() and np.all(whole[differs][:, :3] == np.array(GREY[:3]))
+        assert baker._order[(0, 0)] == ("lawn", *(f"p{k}" for k in range(12)))  # noqa: SLF001
+        assert baker.capped == frozenset()  # nothing that could be seen was left out
+        assert not apart(image, unbounded(records, 1100.0, 700.0)).any()
 
-    def test_a_translucent_lawn_is_taken_with_what_shows_through_it(self, qtbot: Any) -> None:
-        """Below the cut a tile takes what covers it WHOLE, down to the first opaque
-        record: a translucent lawn, the soil that shows through it — and not the
-        gravel under the soil, which nothing could show."""
+    def test_a_translucent_lawn_is_painted_with_what_shows_through_it(self, qtbot: Any) -> None:
+        """A translucent lawn ends nothing: the soil under it is a member too — and
+        the walk ends at the soil, so the gravel under the soil is not."""
         records = {
             "gravel": surface("gravel", (550.0, 350.0), (550.0, 350.0), (200, 200, 200, 255)),
             "soil": surface("soil", (550.0, 350.0), (550.0, 350.0), (120, 80, 40, 255)),
@@ -231,18 +384,35 @@ class TestWhatLiesUnderEverything:
         }
         baker, image = baked(records)
         assert baker.capped == frozenset({(0, 0)})
-        # per tile: lawn + soil (the walk ends at the soil); the first: 256 pavers on top
-        assert baker.records_painted == (TILE_RECORDS + 2) + 5 * 2
+        # per tile: soil + lawn; in the first one 254 pavers beside them
+        assert baker.records_painted == TILE_RECORDS + 5 * 2
+        assert baker._order[(0, 0)][:2] == ("soil", "lawn")  # noqa: SLF001
         assert tuple(image[10, 1000, :3]) == (90, 140, 50)  # the lawn over the soil, not over gravel
         assert tuple(image[667, 32, :3]) == (90, 140, 50)  # … and between the pavers of the first tile
         whole = unbounded(records, 1100.0, 700.0)
         differs = apart(image, whole)
         assert np.all(whole[differs][:, :3] == np.array(GREY[:3]))
 
-    def test_an_opaque_cover_ends_the_walk_wherever_it_lies(self, qtbot: Any) -> None:
-        """The cost saving: what lies under a record that opaquely covers a tile is
-        not looked at, not charged and not painted — 50,000 lawns over the whole
-        plan are one record a tile and twenty comparisons in all."""
+    def test_an_item_at_half_opacity_ends_nothing_either(self, qtbot: Any) -> None:
+        """Translucent by the ITEM's opacity, in an opaque colour: what is under it is
+        painted too — the soil; and the walk ends there."""
+        records = {
+            "gravel": surface("gravel", (550.0, 350.0), (550.0, 350.0), (200, 200, 200, 255)),
+            "soil": surface("soil", (550.0, 350.0), (550.0, 350.0), (120, 80, 40, 255)),
+            "lawn": surface("lawn", (550.0, 350.0), (550.0, 350.0), (60, 200, 60, 255), opacity=0.5),
+        }
+        baker, image = baked(records)
+        assert all(baker._order[key] == ("soil", "lawn") for key in baker.grid.tile_keys())  # noqa: SLF001
+        assert baker.capped == frozenset()
+        assert not apart(image, unbounded(records, 1100.0, 700.0)).any()
+        assert tuple(image[10, 1000, :3]) != (60, 200, 60)  # the soil shows through
+
+    def test_fifty_thousand_lawns_over_the_whole_plan(self, qtbot: Any) -> None:
+        """The counts the ranking costs. OPAQUE lawns: the topmost ends every tile's
+        walk — one record a tile, 21 comparisons in all. TRANSLUCENT ones: a tile is
+        closed once it holds 256 members that overlap it whole and one more has
+        shown that it is capped — 257 comparisons a tile (258 where the small
+        square on top is a member too), never 50,000."""
         count = 50_000
         records = {f"r{k}": surface(f"r{k}", (1300.0, 900.0), (1200.0, 800.0), (k % 256, 120, 60, 255))
                    for k in range(count)}
@@ -262,37 +432,24 @@ class TestWhatLiesUnderEverything:
         assert baker.last_repainted == () and baker.admission_checks - checks == 20 + 1
         assert all(mine is theirs for mine, theirs in zip(tiles, baker.tiles(), strict=True))
 
-    def test_a_tile_takes_four_underlays_and_no_more(self, qtbot: Any) -> None:
-        veils = {f"veil{k}": surface(f"veil{k}", (550.0, 350.0), (550.0, 350.0), (60, 200, 60, 40))
-                 for k in range(6)}
-        records = {**veils, **pavers(300)}
-        baker, image = baked(records)
-        assert TILE_UNDERLAYS == 4 and baker.capped == frozenset({(0, 0)})
-        assert baker.records_painted == (TILE_RECORDS + TILE_UNDERLAYS) + 5 * 6
-        # four veils under the first tile's pavers, six everywhere else: a shade apart
-        assert tuple(image[350, 250, :3]) != tuple(image[10, 1000, :3])
-        # … and with five veils in all, the fifth is the only thing the tile loses
-        fewer = dict(list(veils.items())[:4])
-        records = {**fewer, **pavers(256)}
-        baker, image = baked(records)
-        assert baker.capped == frozenset() and not apart(image, unbounded(records, 1100.0, 700.0)).any()
-
-    def test_what_a_capped_tile_loses_is_what_does_not_cover_it(self, qtbot: Any) -> None:
-        """The stated loss: below a tile's topmost 256, a record whose fill does NOT
-        cover the whole tile is left out — here a lawn that ends inside the tile.
-        The tile is capped, and says so."""
-        records = {"lawn": surface("lawn", (200.0, 350.0), (200.0, 350.0)), **pavers(300)}  # east 0 … 400
-        baker, image = baked(records)
-        assert baker.capped == frozenset({(0, 0)})
-        assert bare_pixels(image[-512:, :512]) > 100_000  # the lawn is not in the first tile
-        assert bare_pixels(image[:188, :400]) == 0  # … and is in the tile north of it
-        assert baker.records_painted == TILE_RECORDS + 1
+        veils = {key: surface(key, (1300.0, 900.0), (1200.0, 800.0), (40, 120, 60, 40))
+                 for key in records if key != "top"}
+        veils["top"] = records["top"]
+        baker = GroundBaker(budget_s=None)
+        baker.bake(veils, None, (), 2400.0, 1600.0)
+        # 256 members and the one that shows the tile is capped; where "top" lies, "top" as well
+        assert baker.admission_checks == 20 * (TILE_RECORDS + 1) + 1 == 5_141
+        assert baker.records_painted == 20 * TILE_RECORDS
+        assert baker.entries_held() == count + 1 + 20 * TILE_RECORDS == 55_121
+        assert baker.capped == frozenset(baker.grid.tile_keys())
+        assert "top" not in baker._order[(1, 1)]  # noqa: SLF001 - the smallest is what that tile lost
 
     def test_the_search_for_a_cover_reads_no_more_than_a_tiles_vertices(self, qtbot: Any) -> None:
         """A polygon's rings are READ to see whether it covers a tile. Forty opaque
         rings of 16,384 vertices lie AROUND the tile — it is inside their box and
-        inside their hole: the tile takes the sixteen its vertex bound holds, reads
-        each once — and reads nothing of the twenty-four it does not take."""
+        inside their hole: the tile keeps the sixteen its vertex bound holds (the
+        topmost: they all overlap it equally), reads sixteen once — and reads
+        nothing of the rest."""
         vertices = 16_384
         half = vertices // 2
         around = (tuple((900.0 * math.cos(2.0 * math.pi * k / (half - 1)),
@@ -304,6 +461,7 @@ class TestWhatLiesUnderEverything:
         baker = GroundBaker(budget_s=None)
         baker.bake(records, None, (), 512.0, 512.0)
         assert baker.records_painted == TILE_VERTICES // vertices == 16
+        assert baker._order[(0, 0)] == tuple(f"z{k}" for k in range(24, 40))  # noqa: SLF001
         assert baker.cover_vertices_read == TILE_VERTICES and baker.capped == frozenset({(0, 0)})
 
     def test_a_hole_or_an_edge_through_the_tile_is_no_cover(self, qtbot: Any) -> None:
@@ -484,7 +642,9 @@ class TestTheTimeBudget:
         # ONE record is looked at; its ONE tile is asked about each of the 16 records —
         # and none of the fourteen tiles that are still pending is admitted again
         assert baker.last_examined == 1 and baker.admission_checks - checks == 16
-        assert baker.last_repainted == ((0, 3),) and baker.pending == 14
+        # the edit's tile first — and one tile of the backlog, so that it cannot starve
+        assert baker.last_repainted[0] == (0, 3) and len(baker.last_repainted) == 2
+        assert baker.pending == 13
         assert tiles[(0, 3)].pixels == finished(moved)[(0, 3)].pixels
 
     def test_a_record_that_goes_while_its_tile_is_pending(self, qtbot: Any) -> None:
@@ -516,6 +676,59 @@ class TestTheTimeBudget:
             tiles = bake16(baker, swapped, SceneDiff())
         want = finished(swapped)
         assert all(tiles[key].pixels == want[key].pixels for key in want)
+
+    def test_an_edit_a_pass_does_not_starve_the_backlog(self, qtbot: Any) -> None:
+        """Review 2: with one tile a pass and an edit before every pass, the edit's
+        tile was painted and the budget was spent — pending stayed at 14 after 1,
+        5, 10, 20 and 40 edits. A call that brings an edit while older tiles wait
+        paints the edit's tiles AND one tile of the backlog: the budget plus two
+        tiles a pass, and the backlog is gone after as many passes as it has tiles."""
+        baker = GroundBaker(budget_s=0.0, clock=Ticks())
+        records: dict[str, Record] = sixteen()
+        bake16(baker, records)
+        assert baker.pending == 15 and baker.last_repainted == ((1, 1),)
+        left = []
+        for edit in range(1, 16):
+            new = dict(records)
+            # the square of the tile painted first, moved a little: an edit that is not backlog
+            new["t11"] = surface("t11", (60.0, 60.0), (700.0 + edit, 700.0), (255, 0, 0, 255))
+            tiles = bake16(baker, new, diff(records, new))
+            records = new
+            assert baker.last_examined == 1
+            assert baker.last_repainted[0] == (1, 1) and len(baker.last_repainted) == 2
+            left.append(baker.pending)
+            assert tiles[(1, 1)].pixels == finished(records)[(1, 1)].pixels  # the edit itself is shown
+        assert left == list(range(14, -1, -1))
+        want = finished(records)
+        assert all(tile.pixels == want[tile.key].pixels for tile in baker.tiles())
+
+    def test_an_edit_in_a_pending_tile_is_no_backlog(self, qtbot: Any) -> None:
+        """… and the edit's own tile does not count as the backlog's turn."""
+        baker = GroundBaker(budget_s=0.0, clock=Ticks())
+        records: dict[str, Record] = sixteen()
+        bake16(baker, records)
+        new = dict(records)
+        new["t33"] = surface("t33", (60.0, 60.0), (1800.0, 1800.0), (255, 0, 0, 255))  # still pending
+        bake16(baker, new, diff(records, new))
+        assert baker.last_repainted[0] == (3, 3) and len(baker.last_repainted) == 2
+        assert baker.pending == 13
+
+    def test_an_edits_own_tiles_come_before_the_backlog(self, qtbot: Any) -> None:
+        """An edit that touches two tiles far apart has its middle BETWEEN them —
+        where an older pending tile may lie. Sorted by distance alone, that tile was
+        painted first, the budget was spent, and the edit was not shown in its own
+        pass. This call's tiles come first; the backlog's one tile after them."""
+        baker = GroundBaker(budget_s=0.0, clock=Ticks())
+        records: dict[str, Record] = sixteen()
+        bake16(baker, records)
+        assert baker.pending == 15 and baker.last_repainted == ((1, 1),)
+        new = dict(records)
+        new["t00"] = surface("t00", (60.0, 60.0), (250.0, 250.0), (255, 0, 0, 255))
+        new["t22"] = surface("t22", (60.0, 60.0), (1290.0, 1290.0), (255, 0, 0, 255))
+        tiles = bake16(baker, new, diff(records, new))
+        first, second = baker.last_repainted  # the middle of the edit is tile (1, 1)
+        assert first in ((0, 0), (2, 2)) and second not in ((0, 0), (2, 2))
+        assert tiles[first].pixels == finished(new)[first].pixels and baker.pending == 13
 
     def test_clear_drops_the_pending_work_with_the_tiles(self, qtbot: Any) -> None:
         baker = GroundBaker(budget_s=0.0, clock=Ticks())
@@ -617,6 +830,225 @@ class TestTheTimeBudget:
         whole = Bake(scene, registry=production_registry())
         whole.step()
         assert all(mine.pixels == theirs.pixels for mine, theirs in zip(bake.tiles, whole.tiles, strict=True))
+
+
+# ── a tile that cannot be painted (review 2, P2-1) ────────────────────────────
+
+
+class Brittle(GroundBaker):
+    """A baker that has no image for the tiles in ``broken`` — and counts what it tried."""
+
+    def __init__(self, **settings: Any) -> None:
+        super().__init__(**settings)
+        self.broken: set[tuple[int, int]] = set()
+        self.attempts: list[tuple[int, int]] = []
+
+    def _paint_tile(self, grid: Any, key: tuple[int, int], records: Any, capped: bool) -> GroundTile:
+        self.attempts.append(key)
+        if key in self.broken and records:
+            raise MemoryError(f"no image for ground tile {key}")
+        return super()._paint_tile(grid, key, records, capped)
+
+
+def painted_tiles(tiles: Any) -> int:
+    """Tiles that show something: not all bare ground."""
+    return sum(1 for tile in tiles
+               if np.any(np.frombuffer(tile.pixels, np.uint8).reshape(-1, 4)[:, :3] != BARE))
+
+
+class TestATileThatCannotBePainted:
+    def test_it_keeps_its_picture_and_takes_nothing_else_with_it(
+            self, qtbot: Any, caplog: pytest.LogCaptureFixture) -> None:
+        """Review 2: sixteen tiles, one tile a pass, no image for tile (3, 3). The
+        failing bake left the sink its sixteen painted tiles — and the NEXT edit,
+        in tile (0, 0), took it to ONE: the baker had been cleared, and every edit
+        after it cost sixteen tile paints, fifteen passes and a traceback. Now the
+        bake does not raise: the tile keeps the picture it had, is listed, is not
+        pending, and is tried once more by a call that brings a change."""
+        from open_garden_planner.core.scene3d import GroundSpec, RecordingSink, SceneSync
+
+        baker = Brittle(budget_s=0.0, clock=Ticks())
+        sink = RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        plan = GroundSpec(2048.0, 2048.0)
+        records: dict[str, Record] = sixteen()
+        sync.apply(records, ground=plan)
+        while sync.ground_pending:
+            sync.continue_ground()
+        shown = {tile.key: tile for tile in sink.ground.tiles}
+        assert painted_tiles(sink.ground.tiles) == 16
+
+        baker.broken = {(3, 3)}
+        baker.attempts.clear()
+        edited = {**records, "t33": surface("t33", (60.0, 60.0), (1792.0, 1792.0), (255, 0, 0, 255))}
+        with caplog.at_level("ERROR"):
+            sync.apply(edited)
+        assert baker.attempts == [(3, 3)]
+        assert baker.tile_failures == {(3, 3): ("MemoryError", "no image for ground tile (3, 3)")}
+        assert sync.ground_failure is None and not sync.poisoned  # the bake did not raise
+        assert not sync.ground_pending and baker.pending == 0  # … and no pass retries it on its own
+        assert all(tile is shown[tile.key] for tile in sink.ground.tiles)  # stale there, the same elsewhere
+        assert painted_tiles(sink.ground.tiles) == 16
+        assert caplog.text.count("could not be painted") == 1
+
+        # the next edit, in tile (0, 0): its tile, and one more try for the broken one
+        baker.attempts.clear()
+        moved = {**edited, "t00": surface("t00", (60.0, 60.0), (250.0, 250.0), (0, 0, 255, 255))}
+        with caplog.at_level("ERROR"):
+            sync.apply(moved)
+        assert sorted(baker.attempts) == [(0, 0), (3, 3)] and not sync.ground_pending
+        assert painted_tiles(sink.ground.tiles) == 16  # 1 before
+        now = {tile.key: tile for tile in sink.ground.tiles}
+        assert now[(3, 3)] is shown[(3, 3)] and now[(0, 0)] is not shown[(0, 0)]
+        assert all(now[key] is shown[key] for key in shown if key not in ((0, 0),))
+
+        # ten edits elsewhere: two tile paints each (16 before), one pass (15), no further log line
+        records = moved
+        for edit in range(10):
+            baker.attempts.clear()
+            new = {**records, "t11": surface("t11", (60.0, 60.0), (700.0 + edit, 700.0), (0, 255, 0, 255))}
+            with caplog.at_level("ERROR"):
+                sync.apply(new)
+            records = new
+            assert sorted(baker.attempts) == [(1, 1), (3, 3)] and not sync.ground_pending
+            assert painted_tiles(sink.ground.tiles) == 16
+        assert caplog.text.count("could not be painted") == 1
+        # an idle tick and a continuation try nothing
+        baker.attempts.clear()
+        assert sync.apply(records).is_empty and sync.continue_ground() is False
+        assert baker.attempts == []
+
+        # the tile can be painted again: the next change heals it, and the ground is whole
+        baker.broken = set()
+        healed = {**records, "t22": surface("t22", (60.0, 60.0), (1290.0, 1290.0), (0, 255, 255, 255))}
+        sync.apply(healed)
+        assert baker.tile_failures == {} and not sync.ground_pending
+        assert sink.state() == sync.expected_state()
+
+    def test_a_bake_that_raises_anywhere_else_does_not_blank_the_ground_either(
+            self, qtbot: Any, caplog: pytest.LogCaptureFixture) -> None:
+        """The same sixteen tiles, and a bake that raises OUTSIDE a tile's paint — in
+        the walk that hands tiles their records. Its books cannot be trusted any
+        more, so the sync RESTARTS the baker: the books are forgotten, the pictures
+        kept. (It used to clear it: the edit after the failure showed ONE painted
+        tile.) Every tile is painted anew over the passes that follow; one the
+        baker has not reached is the very object the sink shows — and a tile whose
+        record went away in the meantime is bare at once."""
+        from open_garden_planner.core.scene3d import GroundSpec, RecordingSink, SceneSync
+
+        class Flaky(Brittle):
+            fail_next = False
+
+            def _admit(self, grid: Any, records: Any, dirty: Any) -> Any:
+                if self.fail_next:
+                    self.fail_next = False
+                    raise MemoryError("no memory for the walk")
+                return super()._admit(grid, records, dirty)
+
+        baker = Flaky(budget_s=0.0, clock=Ticks())
+        sink = RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        records: dict[str, Record] = sixteen()
+        sync.apply(records, ground=GroundSpec(2048.0, 2048.0))
+        while sync.continue_ground():
+            pass
+        shown = {tile.key: tile for tile in sink.ground.tiles}
+        assert painted_tiles(sink.ground.tiles) == 16
+
+        baker.fail_next = True
+        edited = {**records, "t33": surface("t33", (60.0, 60.0), (1792.0, 1792.0), (255, 0, 0, 255))}
+        with caplog.at_level("ERROR"):
+            sync.apply(edited)
+        assert sync.ground_failure == ("MemoryError", "no memory for the walk")
+        assert all(tile is shown[tile.key] for tile in sink.ground.tiles)  # the ground stays
+        assert baker.entries_held() == 0 and baker.pending == 0  # the books are gone …
+
+        # the edit after the failure: the square of tile (2, 2) is deleted
+        baker.attempts.clear()
+        gone = {key: record for key, record in edited.items() if key != "t22"}
+        sync.apply(gone)
+        assert sync.ground_failure is None
+        now = {tile.key: tile for tile in sink.ground.tiles}
+        assert painted_tiles(sink.ground.tiles) == 15  # … the pictures are not (1 before)
+        assert np.all(np.frombuffer(now[(2, 2)].pixels, np.uint8).reshape(-1, 4)[:, :3] == BARE)
+        assert all(now[key] is shown[key] for key in shown if key != (2, 2))
+        assert baker.pending == 14 and sync.ground_pending
+        passes = 1
+        while sync.ground_pending:
+            sync.continue_ground()
+            passes += 1
+        final = {tile.key: tile for tile in sink.ground.tiles}
+        assert passes == 15 and sorted(baker.attempts) == sorted(shown)  # every tile once: one a pass
+        assert sink.state() == sync.expected_state()
+        # the same picture again is the same tile: only the two edited tiles are new objects
+        assert {key for key in shown if final[key] is not shown[key]} == {(2, 2), (3, 3)}
+
+    def test_a_hole_in_the_books_is_not_a_tile_that_could_not_be_painted(self, qtbot: Any) -> None:
+        """Only a tile's PAINT is contained. A pending tile that names a record the
+        baker no longer holds is a hole in the books — a bug: it raises (and the sync
+        restarts the baker); it is not parked as if its image could not be made."""
+        baker = GroundBaker(budget_s=0.0, clock=Ticks())
+        records = sixteen()
+        bake16(baker, records)
+        assert baker.pending == 15
+        del baker._painted["t33"]  # noqa: SLF001 - the hole
+        with pytest.raises(KeyError, match="t33"):
+            while baker.pending:
+                bake16(baker, records, SceneDiff())
+        assert baker.tile_failures == {}
+
+    def test_a_restart_on_another_plan_drops_the_pictures_and_so_does_clear(self, qtbot: Any) -> None:
+        def drained(baker: GroundBaker) -> None:
+            while True:
+                bake16(baker, records)
+                if not baker.pending:
+                    return
+
+        records = sixteen()
+        baker = GroundBaker(budget_s=0.0, clock=Ticks())
+        drained(baker)
+        baker.restart()
+        assert baker.tiles() == () and baker.entries_held() == 0
+        assert painted_tiles(bake16(baker, records).values()) == 16  # the pictures were kept …
+        drained(baker)
+        baker.restart()
+        baker.clear()  # … clear() after a restart forgets them: a new plan starts bare
+        assert painted_tiles(bake16(baker, records).values()) == 1
+        drained(baker)
+        baker.restart()
+        tiles = baker.bake(records, None, (), 1024.0, 1024.0)  # another plan rectangle: its own grid
+        assert len(tiles) == 4 and painted_tiles(tiles) == 1 and baker.pending == 3
+
+    def test_a_tile_that_was_never_painted_is_bare_until_it_can_be(self, qtbot: Any) -> None:
+        baker = Brittle(budget_s=None)
+        baker.broken = {(2, 1)}
+        records = sixteen()
+        tiles = bake16(baker, records)
+        want = finished(records)
+        assert baker.tile_failures.keys() == {(2, 1)} and baker.pending == 0
+        assert painted_tiles(tiles.values()) == 15
+        assert all(tiles[key].pixels == want[key].pixels for key in want if key != (2, 1))
+        again = bake16(baker, records, SceneDiff())  # no change: not tried, the same objects
+        assert baker.attempts.count((2, 1)) == 1 and all(again[key] is tiles[key] for key in tiles)
+        baker.broken = set()
+        healed = bake16(baker, records, None)  # a caller that cannot say what changed: tried again
+        assert baker.tile_failures == {} and healed[(2, 1)].pixels == want[(2, 1)].pixels
+        baker.clear()
+        assert baker.tile_failures == {} and baker.entries_held() == 0
+
+    def test_a_reorder_reaches_a_tile_that_waits_after_a_failure(self, qtbot: Any) -> None:
+        """What a failed tile waits to be painted with is kept like a pending tile's —
+        and found again when the records swap places."""
+        below = surface("below", (200.0, 200.0), (1800.0, 1800.0), (200, 0, 0, 255))
+        above = surface("above", (150.0, 150.0), (1800.0, 1800.0), (0, 0, 200, 255))
+        first = {**sixteen(), "below": below, "above": above}
+        baker = Brittle(budget_s=None)
+        baker.broken = {(3, 3)}
+        bake16(baker, first)
+        swapped = {key: record for key, record in first.items() if key != "below"} | {"below": below}
+        baker.broken = set()
+        tiles = bake16(baker, swapped, diff(first, swapped))
+        assert tiles[(3, 3)].pixels == finished(swapped)[(3, 3)].pixels and baker.tile_failures == {}
 
 
 # ── a painter that raises (review P2-2, P2-3) ─────────────────────────────────
@@ -739,7 +1171,7 @@ class TestTheTipOfAHairpin:
                             path_fence_style=PathFenceStyle.PAVED_PATH)
         pen = item.pen()
         pen.setWidthF(45.0)
-        item.setPen(pen)
+        adopt_pen(item, pen)
         scene.addItem(item)
         bake = Bake(scene, bare_rgb=canvas_rgb())
         bake.step()

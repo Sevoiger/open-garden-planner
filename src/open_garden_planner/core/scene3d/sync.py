@@ -60,8 +60,11 @@ made a solid for it.
   continuation poisons the sync like any other sink call.
 - A BAKER THAT RAISES is contained like a builder: the failure is logged and kept
   in ``ground_failure``, the ground the sink shows stays (bare, if the plan's
-  rectangle changed), the baker is cleared — pending work with it — and the rest
-  of the scene is applied. And like a builder's, the failure is REMEMBERED: the
+  rectangle changed), the baker is RESTARTED (``GroundBaking.restart``: it
+  forgets what its tiles were painted with — pending work too — and keeps handing
+  out their pictures until each is painted anew, so the edit after a failure does
+  not blank the ground) and the rest of the scene is applied. And like a
+  builder's, the failure is REMEMBERED: the
   bake is not tried again until something it depends on changes — a record, the
   set of items with a solid, the plan's rectangle — so an idle tick neither
   bakes nor logs again.
@@ -432,7 +435,9 @@ class SceneSync:
             if not self._quiet:
                 _log.error("the 3D ground could not be baked; it stays as it was",
                            exc_info=error)
-            baker.clear()  # whatever it holds is not the ground of these records
+            # its books are not the ground of these records — its pictures are what
+            # the sink shows, and stay until the baker has painted each tile anew
+            baker.restart()
             return self._stale_ground(plan)
         self._ground_failure = None
         self._ground_failed_for = None

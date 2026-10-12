@@ -275,10 +275,13 @@ class GroundBaking(Protocol):
         A baker MAY STOP EARLY (a time budget): a tile it has not re-painted yet is
         handed out as the object it was — a stale picture there, never a wrong one
         elsewhere — and ``pending`` says how many such tiles there are. Every later
-        call, whatever its ``changes`` (an empty diff too), goes on with them.
-        The promise: once ``pending`` is 0, the tiles are those ONE call on an
-        empty baker gives for the same records, solids and plan — with a diff or
-        without one.
+        call, whatever its ``changes`` (an empty diff too), goes on with them —
+        and a call that BRINGS changes while tiles are pending does not spend its
+        whole budget on the new ones: it also paints at least one tile that was
+        already waiting (work that keeps arriving must not starve the work that
+        waits). The promise: once ``pending`` is 0, the tiles are those ONE call
+        on an empty baker gives for the same records, solids and plan — with a
+        diff or without one.
         """
 
     @property
@@ -288,7 +291,18 @@ class GroundBaking(Protocol):
 
     def clear(self) -> None:
         """Forget every tile and all pending work: the next ``bake`` paints the
-        whole ground anew."""
+        whole ground anew (a new plan: its tiles are bare until they are painted)."""
+
+    def restart(self) -> None:
+        """Forget what the tiles were painted WITH — the records, their order, the
+        pending work — and KEEP THE PICTURES: the calls that follow paint every
+        tile anew, and until a tile is painted it is handed out as the object it
+        was (on the same plan rectangle; on another one the pictures are dropped).
+
+        For a caller whose last ``bake`` raised: the books cannot be trusted any
+        more, the pictures are what the user sees. Starting over from bare tiles
+        instead would blank the ground on the next edit — stale, never wrong, also
+        after a failure."""
 
     def fresh(self) -> GroundBaking:
         """An empty baker with this one's settings that bakes a whole ground in ONE

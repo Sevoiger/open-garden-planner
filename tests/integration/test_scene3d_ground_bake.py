@@ -27,6 +27,7 @@ from PyQt6.QtTest import QSignalSpy
 from open_garden_planner.core import ProjectManager
 from open_garden_planner.core.commands import DeleteItemsCommand, MoveItemsCommand
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
+from open_garden_planner.core.item_style import adopt_pen
 from open_garden_planner.core.object_types import ObjectType, PathFenceStyle, StrokeStyle
 from open_garden_planner.core.scene3d import (
     MEADOW_RGB,
@@ -191,7 +192,7 @@ def _path(style: PathFenceStyle, position: str = "border", width: float | None =
     if width is not None:
         pen = item.pen()
         pen.setWidthF(width)
-        item.setPen(pen)
+        adopt_pen(item, pen)
     return item
 
 
@@ -266,7 +267,7 @@ class TestParityPerShape:
         pen.setColor(QColor(20, 60, 160))
         pen.setWidthF(7.5)
         pen.setStyle(stroke.to_qt_pen_style())
-        item.setPen(pen)
+        adopt_pen(item, pen)
         scene.addItem(item)
         item._apply_rotation(33.0)
         # in ONE tile the bake is the canvas's own call: the same dashes, bit for bit
@@ -316,7 +317,7 @@ class TestParityPerShape:
         pen.setColor(QColor(20, 60, 160, 220))
         pen.setWidthF(7.5)
         pen.setStyle(stroke.to_qt_pen_style())
-        item.setPen(pen)  # the pen alone, as the project loader sets it
+        adopt_pen(item, pen)
         scene.addItem(item)
         if angle:
             item._apply_rotation(angle)
@@ -865,7 +866,7 @@ class TestAnEditSession:
         assert bake.last_diff == SceneDiff(reordered=True)  # no record changed: two swapped places
         pen = gravel.pen()
         pen.setWidthF(pen.widthF() * 2.0)
-        gravel.setPen(pen)
+        adopt_pen(gravel, pen)
         tick("widen a path", ground=True)
         pond.metadata["object_height_cm"] = 35.0  # a height: now a solid, no longer ground
         tick("give the pond a height", ground=True)
@@ -914,7 +915,7 @@ def _long_path(points: int) -> Any:
                         path_fence_style=PathFenceStyle.PAVED_PATH)
     pen = item.pen()
     pen.setWidthF(100.0)
-    item.setPen(pen)
+    adopt_pen(item, pen)
     return item
 
 
@@ -1055,6 +1056,8 @@ class TestWhatTheCanvasReallyPaintsWith:
         ProjectManager().save(loaded, tmp_path / "again.ogp")
         assert "#ffc81e78" in (tmp_path / "again.ogp").read_text(encoding="utf-8").lower()
 
+    @pytest.mark.style_gaps_allowed(
+        "sets a stroke attribute apart from the pen on purpose: the snapshot paints the pen")
     def test_the_stroke_is_the_live_pens_after_a_load(self, qtbot: Any, tmp_path: Path) -> None:
         """The record — and the ground — follow the PEN, whatever the attribute says.
         (No loader branch set ``stroke_color`` when the bake was built; since its
@@ -1065,8 +1068,7 @@ class TestWhatTheCanvasReallyPaintsWith:
         pen = item.pen()
         pen.setColor(QColor(1, 2, 3))
         pen.setWidthF(6.0)
-        item.setPen(pen)
-        item.stroke_color = QColor(1, 2, 3)
+        adopt_pen(item, pen)
         scene.addItem(item)
         ProjectManager().save(scene, tmp_path / "plan.ogp")
         loaded = CanvasScene()
@@ -1133,8 +1135,7 @@ class TestAnItemMadeFromAnItem:
         pen = original.pen()
         pen.setColor(QColor(200, 30, 30))
         pen.setWidthF(5.0)
-        original.setPen(pen)
-        original.stroke_color, original.stroke_width = QColor(200, 30, 30), 5.0
+        adopt_pen(original, pen)
         derived = how(original)
         scene = new_scene()
         scene.addItem(derived)
@@ -1237,7 +1238,7 @@ class TestHostilePlans:
                             object_type=ObjectType.PATH, path_fence_style=path_style)
         pen = item.pen()
         pen.setWidthF(30.0)
-        item.setPen(pen)
+        adopt_pen(item, pen)
         scene.addItem(item)
         mean, _worst, bake = compare(scene, production_registry())
         assert bake.baker.painted_ids() == (str(item.item_id),)
@@ -1271,7 +1272,7 @@ class TestHostilePlans:
         pen = item.pen()
         pen.setWidthF(0.5)
         pen.setStyle(stroke.to_qt_pen_style())
-        item.setPen(pen)
+        adopt_pen(item, pen)
         scene.addItem(item)
         mean, _worst, bake = compare(scene, production_registry())
         assert bake.baker.records_painted == 5 and bake.baker.elements_generated == 0
@@ -1371,16 +1372,16 @@ class TestHostilePlans:
         assert bake.baker.painted_ids() == (str(near.item_id),) and bake.baker.failures == {}
 
     def test_two_thousand_surfaces_over_the_whole_plan(self, qtbot: Any) -> None:
-        """The SUM. A tile's cost is the sum over its records, so a tile paints only
-        its topmost ``TILE_RECORDS`` — and, of what lies below them, the first
-        ``TILE_UNDERLAYS`` that cover the whole tile (these lawns are translucent:
-        none of them ends the walk). One small edit on such a plan is still at most
-        four tiles of that."""
-        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS, TILE_UNDERLAYS
+        """The SUM. A tile's cost is the sum over its records, so a tile paints at
+        most ``TILE_RECORDS`` — the ones that overlap it most; of equals the
+        topmost (these lawns are translucent: none of them ends the walk). The
+        small pond on top of them is the SMALLEST member of its tile, and is what
+        that tile loses."""
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
 
-        assert (TILE_RECORDS, TILE_UNDERLAYS) == (256, 4)
-        per_tile = TILE_RECORDS + TILE_UNDERLAYS
+        assert TILE_RECORDS == 256
         scene = _hostile_scene()
+        lawns: list[Any] = []
 
         def add_surfaces(first: int, last: int) -> None:
             # as a plan file is loaded: the scene's stacking is settled once, at the end
@@ -1390,6 +1391,7 @@ class TestHostilePlans:
                     item = RectangleItem(-10.0, -10.0, 2420.0, 1620.0, object_type=ObjectType.LAWN)
                     style(item, FillPattern.SOLID, QColor(index % 256, 120, 60, 40))
                     scene.addItem(item)
+                    lawns.append(item)
 
         add_surfaces(0, 200)
         bake = Bake(scene)
@@ -1402,21 +1404,30 @@ class TestHostilePlans:
         bake.step()
         assert len(bake.records) == 2001 and len(bake.baker.painted_ids()) == 2001
         assert bake.baker.tiles_painted == 20
-        assert bake.baker.records_painted == 20 * per_tile and bake.baker.capped_tiles == 20
+        assert bake.baker.records_painted == 20 * TILE_RECORDS and bake.baker.capped_tiles == 20
         # what a workspace can show the user: WHERE the ground holds less than the plan
         assert bake.baker.capped == frozenset(bake.grid.tile_keys())
+        topmost = tuple(str(item.item_id) for item in lawns[-TILE_RECORDS:])
+        assert all(bake.baker._order[key] == topmost for key in bake.grid.tile_keys())  # noqa: SLF001
         # The books: ONE entry a record (not one a record and tile: 40,020) and the ids
-        # a tile is painted with; the comparisons that found them: 261 a tile (the last
-        # one is the record that finds the tile closed to it).
-        assert bake.baker.entries_held() == 2001 + 20 * per_tile
-        assert bake.baker.admission_checks == 20 * (per_tile + 1) == 5_220
+        # a tile is painted with; the comparisons that found them: 257 a tile (256
+        # members, and the one that shows the tile is capped) — and the pond in its tile.
+        assert bake.baker.entries_held() == 2001 + 20 * TILE_RECORDS
+        assert bake.baker.admission_checks == 20 * (TILE_RECORDS + 1) + 1 == 5_141
+        # the pond is moved: ONE record looked at, its tile asked again — and nothing to
+        # paint, because the pond is not among what that tile holds
         painted, checks = bake.baker.records_painted, bake.baker.admission_checks
         MoveItemsCommand([pond], QPointF(35.0, -20.0)).execute()
         assert bake.step() == SceneDiff(transform=(str(pond.item_id),))
-        assert 1 <= len(bake.baker.last_repainted) <= 4 and bake.baker.last_examined == 1
-        assert bake.baker.records_painted - painted == len(bake.baker.last_repainted) * per_tile
-        assert bake.baker.admission_checks - checks <= len(bake.baker.last_repainted) * (per_tile + 2)
-        assert bake.baker.entries_held() == 2001 + 20 * per_tile
+        assert bake.baker.last_examined == 1 and bake.baker.last_repainted == ()
+        assert bake.baker.records_painted == painted
+        assert bake.baker.admission_checks - checks == TILE_RECORDS + 2
+        # the topmost lawn is recoloured: ONE record looked at, every tile painted with its 256
+        style(lawns[-1], FillPattern.SOLID, QColor(250, 10, 10, 40))
+        assert bake.step() == SceneDiff(material=(str(lawns[-1].item_id),))
+        assert bake.baker.last_examined == 1 and len(bake.baker.last_repainted) == 20
+        assert bake.baker.records_painted - painted == 20 * TILE_RECORDS
+        assert bake.baker.entries_held() == 2001 + 20 * TILE_RECORDS
         assert bake.sink.state().ground == bake.sync.expected_state().ground
 
     def test_a_tile_generates_no_more_than_its_share_of_elements(self, qtbot: Any) -> None:
@@ -1556,7 +1567,7 @@ class TestHostilePlans:
         pen = item.pen()
         pen.setWidthF(6.0)
         pen.setStyle(StrokeStyle.DASHED.to_qt_pen_style())
-        item.setPen(pen)
+        adopt_pen(item, pen)
         scene.addItem(item)
         bake = Bake(scene, registry=production_registry(), bare_rgb=canvas_rgb())
         bake.step()
@@ -1593,7 +1604,7 @@ class TestHostilePlans:
         item = _path(PathFenceStyle.NONE, "corner", width=6.0)
         pen = item.pen()
         pen.setStyle(StrokeStyle.DASHED.to_qt_pen_style())
-        item.setPen(pen)
+        adopt_pen(item, pen)
         scene.addItem(item)
         if angle:
             item._apply_rotation(angle)
@@ -1617,7 +1628,7 @@ class TestHostilePlans:
             pen = item.pen()
             pen.setWidthF(2.0)
             pen.setStyle(StrokeStyle.DOTTED.to_qt_pen_style())
-            item.setPen(pen)
+            adopt_pen(item, pen)
             scene.addItem(item)
             bake = Bake(scene, registry=production_registry())
             bake.step()
@@ -1653,7 +1664,7 @@ class TestHostilePlans:
         pen = item.pen()
         pen.setWidthF(4.0)
         pen.setStyle(StrokeStyle.DASHED.to_qt_pen_style())
-        item.setPen(pen)
+        adopt_pen(item, pen)
         scene.addItem(item)
 
         mean, worst, one = compare(scene, tile_px=2048)
@@ -1681,13 +1692,13 @@ class TestHostilePlans:
         """Fifty thousand rectangles, each over the whole plan (records by hand — the
         2D scene needs minutes to hold that many). What the baker HOLDS is one entry
         a record and the ids a tile is painted with; what it COMPARES to find them
-        is 261 a tile — its topmost 256, four translucent lawns under them, and the
-        record that finds it closed — for a full bake, and for an edit the tiles it
-        touches."""
+        is 257 a tile — the 256 it keeps (they all overlap it whole: of equals the
+        topmost) and the record that shows it is capped — for a full bake, and for
+        an edit the tiles it touches."""
         from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
-        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS, TILE_UNDERLAYS
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
 
-        per_tile = TILE_RECORDS + TILE_UNDERLAYS
+        per_tile = TILE_RECORDS
 
         def surface(item_id: str, half: tuple[float, float], at: tuple[float, float],
                     fill: tuple[int, int, int, int] = (40, 120, 60, 40)) -> Record:
@@ -1703,19 +1714,23 @@ class TestHostilePlans:
         baker = GroundBaker(budget_s=None)
         baker.bake(records, None, (), 2400.0, 1600.0)
         assert len(baker.painted_ids()) == count + 1 and baker.last_examined == count + 1
-        assert baker.entries_held() == count + 1 + 20 * per_tile  # not 20 x 50,000
-        assert baker.admission_checks == 20 * (per_tile + 1) == 5_220
+        assert baker.entries_held() == count + 1 + 20 * per_tile == 55_121  # not 20 x 50,000
+        # … and one more in the tile of "top": the small square is a member too — the
+        # smallest, and so the one that tile loses
+        assert baker.admission_checks == 20 * (per_tile + 1) + 1 == 5_141
         assert baker.records_painted == 20 * per_tile
         assert baker.capped == frozenset(baker.grid.tile_keys())
+        assert "top" not in baker._order[(1, 1)]  # noqa: SLF001
 
         # one small item moved: one record looked at, one tile's records found again
         checks, painted = baker.admission_checks, baker.records_painted
         moved = dict(records)
         moved["top"] = surface("top", (50.0, 50.0), (735.0, 680.0), (200, 30, 30, 255))
         baker.bake(moved, SceneDiff(transform=("top",)), (), 2400.0, 1600.0)
-        assert baker.last_examined == 1 and baker.last_repainted == ((1, 1),)
-        assert baker.admission_checks - checks == per_tile + 1
-        assert baker.records_painted - painted == per_tile
+        # … its tile's records are found again, and are the same: nothing is painted
+        assert baker.last_examined == 1 and baker.last_repainted == ()
+        assert baker.admission_checks - checks == per_tile + 2
+        assert baker.records_painted == painted
         assert baker.entries_held() == count + 1 + 20 * per_tile
 
         # a record no tile shows (the lowest of 50,000) changes: every tile's records
@@ -1724,7 +1739,7 @@ class TestHostilePlans:
         recoloured = dict(moved)
         recoloured["r0"] = surface("r0", (1300.0, 900.0), (1200.0, 800.0), (250, 250, 0, 255))
         tiles = baker.bake(recoloured, SceneDiff(material=("r0",)), (), 2400.0, 1600.0)
-        assert baker.admission_checks - checks == 5_220
+        assert baker.admission_checks - checks == 5_141
         assert baker.last_repainted == () and baker.tiles_painted == painted_tiles
         assert all(mine is theirs for mine, theirs in zip(tiles, baker.tiles(), strict=True))
 
@@ -1733,7 +1748,7 @@ class TestHostilePlans:
         over HALF the tiles, so that the other half stays open and every record is
         asked about. One look-up per record and tile it reaches — never more."""
         from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
-        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS, TILE_UNDERLAYS
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
 
         ring = ((-505.0, -900.0), (505.0, -900.0), (505.0, 900.0), (-505.0, 900.0))
         material = Material("LAWN", fill_rgba=(40, 120, 60, 40), paint=Paint())
@@ -1745,10 +1760,11 @@ class TestHostilePlans:
         baker = GroundBaker(budget_s=None)
         baker.bake(records, None, (), 2400.0, 1600.0)  # 5 x 4 tiles: the west 2 columns
         assert baker.capped == frozenset((c, r) for c in range(2) for r in range(4))
-        # they end at east 1005: the first column's tiles are covered whole (and take
-        # their four underlays), the second column's are not — their topmost 256, no more
-        painted = 4 * (TILE_RECORDS + TILE_UNDERLAYS) + 4 * TILE_RECORDS
-        assert baker.records_painted == painted == 2_064
+        # they end at east 1009 (their paint box): the first column's tiles are overlapped
+        # whole and are closed after 257 records; the second column's are not, and every
+        # record is a member that is ranked — 256 kept, the rest left out, none closed
+        painted = 8 * TILE_RECORDS
+        assert baker.records_painted == painted == 2_048
         assert baker.admission_checks == count * 8  # each record: the 8 tiles it reaches
         assert baker.entries_held() == count + painted
 

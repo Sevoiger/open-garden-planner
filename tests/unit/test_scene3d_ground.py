@@ -290,6 +290,7 @@ class FakeBaker:
         self.calls: list[tuple[tuple[str, ...], SceneDiff | None, frozenset[str],
                                tuple[float, float]]] = []
         self.cleared = 0
+        self.restarted = 0
         self.pending = 0
         self.fail: Exception | None = None
         self.log = log if log is not None else []
@@ -316,6 +317,11 @@ class FakeBaker:
         self.pending = 0
         self._held = None
 
+    def restart(self) -> None:
+        self.restarted += 1
+        self.pending = 0
+        self._held = None
+
     def fresh(self) -> FakeBaker:
         return FakeBaker()
 
@@ -329,6 +335,7 @@ class SlowBaker:
         self.per_call = per_call
         self.calls = 0
         self.cleared = 0
+        self.restarted = 0
         self.fail: Exception | None = None
         self._shown: list[GroundTile] = []
         self._behind: list[int] = []
@@ -361,6 +368,11 @@ class SlowBaker:
     def clear(self) -> None:
         self.cleared += 1
         self._shown, self._behind, self._count = [], [], -1
+
+    def restart(self) -> None:
+        """Forgets what it painted; keeps the pictures until each is painted anew."""
+        self.restarted += 1
+        self._behind, self._count = [], -1
 
     def fresh(self) -> SlowBaker:
         return SlowBaker(per_call=3)  # a reference: the whole ground in one call
@@ -449,10 +461,37 @@ class TestSyncWithAGroundBaker:
         assert sync.ground_failure == ("RuntimeError", "no memory for a tile")
         assert "could not be baked" in caplog.text
         assert not sync.poisoned and set(sink.item_ids()) == {"lawn", "shed"}  # the scene went on
-        assert sink.ground == shown and baker.cleared == 1  # the old ground stays; the baker forgot
+        # the old ground stays; the baker forgets its books and keeps its pictures
+        assert sink.ground == shown and (baker.restarted, baker.cleared) == (1, 0)
         baker.fail = None
         sync.apply({"lawn": flat("lawn", 20.0), "shed": solid("shed", 300.0)})
         assert sync.ground_failure is None and sink.ground != shown
+
+    def test_the_edit_after_a_failed_bake_does_not_blank_the_ground(self) -> None:
+        """Review 2: a baker that raised was CLEARED, so the next edit re-baked from
+        nothing under the baker's budget — one painted tile, the rest bare (16 → 1
+        on a real ground). It is RESTARTED now: it forgets its books and keeps its
+        pictures, and a tile it has not painted anew is the very object the sink
+        already shows."""
+        baker, sink = SlowBaker(), RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        while sync.continue_ground():
+            pass
+        shown = sink.ground.tiles
+        assert [tile.pixels[0] for tile in shown] == [1, 1, 1]
+        baker.fail = MemoryError("no image")
+        sync.apply({"lawn": flat("lawn", 10.0)})  # the failing edit: the ground stays
+        assert sink.ground.tiles == shown and (baker.restarted, baker.cleared) == (1, 0)
+        baker.fail = None
+        sync.apply({"lawn": flat("lawn", 20.0), "path": flat("path", 500.0)})  # the edit after it
+        after = sink.ground.tiles
+        assert [tile.pixels[0] for tile in after] == [2, 1, 1]  # cleared, it was [2, 0, 0]
+        assert after[1] is shown[1] and after[2] is shown[2] and sync.ground_pending
+        while sync.continue_ground():
+            pass
+        assert [tile.pixels[0] for tile in sink.ground.tiles] == [2, 2, 2]
+        assert sink.state() == sync.expected_state()
 
     def test_a_bake_that_failed_is_not_tried_again_until_something_it_depends_on_changes(
             self, caplog: pytest.LogCaptureFixture) -> None:
@@ -475,7 +514,7 @@ class TestSyncWithAGroundBaker:
                 assert sync.apply(moved, ground=PLAN).is_empty  # the same plan, given again
                 assert sync.set_ground(PLAN) is False and sync.continue_ground() is False
         assert len(baker.calls) == calls and caplog.text.count("could not be baked") == 1
-        assert sink.calls == [] and sink.ground == shown and baker.cleared == 1
+        assert sink.calls == [] and sink.ground == shown and (baker.restarted, baker.cleared) == (1, 0)
         assert sync.ground_failure == ("MemoryError", "no image for the third tile")
         # … a record changes: tried again (and it fails again: one more log, one more clear)
         with caplog.at_level("ERROR"):
@@ -561,6 +600,8 @@ class TestSyncWithAGroundBaker:
                 return ()
 
             def clear(self) -> None: ...
+
+            def restart(self) -> None: ...
 
             def fresh(self) -> NoPending:
                 return self
@@ -650,9 +691,9 @@ class TestSyncWithAGroundBaker:
         sync.apply({"lawn": flat("lawn")}, ground=PLAN)
         shown = sink.ground
         baker.fail = MemoryError("no image")
-        assert sync.continue_ground() is False  # contained: cleared, nothing pending
+        assert sync.continue_ground() is False  # contained: restarted, nothing pending
         assert sync.ground_failure == ("MemoryError", "no image") and not sync.poisoned
-        assert sink.ground == shown and baker.cleared == 1
+        assert sink.ground == shown and (baker.restarted, baker.cleared) == (1, 0)
 
     def test_without_a_baker_the_ground_is_the_callers(self) -> None:
         sink = RecordingSink()

@@ -68,11 +68,12 @@ AMPLIFICATION: a small file that buys superlinear or unbounded work or memory;
 and no bound may sit BEHIND the work it bounds.
 
 What it holds: one entry per painted record — the record (the snapshot's own
-object), the block of tiles its paint bounds reach (four integers), the box of
-its geometry (four numbers), its cost and whether its fill can cover a tile —
-and per tile the ids it was last painted with and, while it is pending, the ids
-it is to be painted with (each at most ``TILE_RECORDS + TILE_UNDERLAYS``). Not
-one entry per record AND tile: a record that covers the whole plan is one entry.
+object), its paint bounds (four numbers) and the block of tiles they reach
+(four integers), the box of its geometry (four numbers), its cost and whether
+its fill is opaque — and per tile the ids it was last painted with and, while
+it is pending, the ids it is to be painted with (each at most
+``TILE_RECORDS``). Not one entry per record AND tile: a record that covers the
+whole plan is one entry.
 
 What it does per ``bake``: one look at every record the diff names (all of
 them, without a diff); ONE walk down the records, topmost first, that hands
@@ -84,30 +85,27 @@ tile, each taken before the work it bounds:
 =====================  =======  ================================================
 bound                  a tile   what it stops, and where it is checked
 =====================  =======  ================================================
-``TILE_RECORDS``       256      records painted into a tile: the TOPMOST ones.
-                                A tile that is full takes nothing further but
-                                its underlays — nothing of a record left out is
-                                touched. What a full tile LOSES: the records
-                                below its topmost 256 that do not cover the
-                                whole tile.
-``TILE_UNDERLAYS``     4        … and under them the records whose fill covers
-                                the WHOLE tile — the lawn under a field of
-                                pavers — down to the first opaque one. (A
-                                record that opaquely covers the tile ends its
-                                walk wherever it lies: what is under it is
-                                neither looked at nor painted.)
+``TILE_RECORDS``       256      records painted into a tile. Beyond it a tile
+                                LOSES ITS SMALLEST: it keeps the 256 that
+                                overlap it most (paint box against tile, ties
+                                to the topmost) and paints them in z order — a
+                                lawn under any number of pavers stays, wherever
+                                its edge runs. A record that opaquely covers the
+                                whole tile ends the tile's walk: what is under
+                                it is neither looked at nor painted. Nothing of
+                                a record left out is touched.
 ``TILE_VERTICES``      262,144  outline vertices × passes of the records of a
-                                tile (same place): what every painter does
-                                BEFORE it draws — points converted, a path
-                                built, a styled path's two offset lines and its
-                                base stroke. A styled path counts 8 times, a
-                                dashed stroke 3 (points, path, cut to the tile).
-                                The topmost record is always painted: an outline
-                                is at most the snapshot's ``MAX_ITEM_VERTICES``
-                                (16,384), styled 131,072. And ONCE MORE for a
-                                tile's cover tests (a polygon's rings are read
-                                to see whether it covers the tile) and its
-                                underlays together.
+                                tile (same place, same ranking): what every
+                                painter does BEFORE it draws — points converted,
+                                a path built, a styled path's two offset lines
+                                and its base stroke. A styled path counts 8
+                                times, a dashed stroke 3 (points, path, cut to
+                                the tile). The highest-ranked record is always
+                                painted: an outline is at most the snapshot's
+                                ``MAX_ITEM_VERTICES`` (16,384), styled 131,072.
+                                And ONCE MORE for a tile's cover tests (a
+                                polygon's rings are read to see whether it
+                                covers the tile).
 ``TILE_ELEMENTS``      16,384   the ELEMENTS of path styles — stones, planks,
                                 posts, dots; as many as a line is LONG, whatever
                                 its vertex count. Generated only inside the tile
@@ -153,6 +151,7 @@ imports no Qt Quick module and nothing of the engine package.
 
 from __future__ import annotations
 
+import heapq
 import logging
 import math
 import time
@@ -196,8 +195,8 @@ from open_garden_planner.ui.canvas.items.path_style_paint import (
 )
 
 __all__ = ["BAKE_BUDGET_S", "SPRITE_MAX_PIXELS", "TILE_DASHES", "TILE_ELEMENTS", "TILE_RECORDS",
-           "TILE_UNDERLAYS", "TILE_VERTICES", "TILE_WALK_STEPS", "GroundBaker", "WalkBudget",
-           "paint_bounds", "paint_record", "tile_budget"]
+           "TILE_VERTICES", "TILE_WALK_STEPS", "GroundBaker", "WalkBudget", "paint_bounds",
+           "paint_record", "tile_budget"]
 
 _log = logging.getLogger(__name__)
 
@@ -248,10 +247,6 @@ _ELEMENT_REACH: Final = (2.5, 8.0)
 #: 13 ms and 69 ms. No count here bounds Qt's time for a scanline that crosses
 #: 16,000 edges; ``BAKE_BUDGET_S`` holds a CALL to one such tile, no more.
 TILE_RECORDS: Final = 256
-#: … and below them, the records that lie under everything: a tile that is full
-#: still takes this many records whose fill covers the WHOLE tile (the lawn under
-#: a field of pavers), and ends at the first opaque one.
-TILE_UNDERLAYS: Final = 4
 TILE_VERTICES: Final = 262_144
 TILE_ELEMENTS: Final = 16_384
 TILE_WALK_STEPS: Final = 16_384
@@ -276,15 +271,13 @@ _ELLIPSE_MAX_CHORDS: Final = 2048
 #: gate 10 ms for one small edit on the bench plans — an edit that fits the gate
 #: is one pass (measured: the bench plans open in 2 and 8 passes, the longest
 #: 13.4 ms). A pass paints at least one tile and looks at the clock after each: it
-#: costs at most the budget plus ONE tile — and what one tile can cost is above:
-#: milliseconds on a plan somebody drew, 0.2 to 2.65 s at the bounds for the
-#: shapes measured there, 19 s and more under a comb.
+#: costs at most the budget plus ONE tile — plus one more when it brings an edit
+#: while older tiles are pending (``GroundBaker``: the backlog cannot starve) —
+#: and what one tile can cost is above: milliseconds on a plan somebody drew, 0.2
+#: to 2.65 s at the bounds for the shapes measured there, 19 s and more under a
+#: comb.
 BAKE_BUDGET_S: Final = 0.010
 
-#: Whether a record's fill can cover a whole tile (``_Painted.cover``).
-_NEVER: Final = 0  # a line, a sprite, a shape without a fill
-_TRANSLUCENT: Final = 1  # where it covers a tile, what lies under it still shows
-_OPAQUE: Final = 2  # where it covers a tile, nothing under it can be seen
 
 
 def tile_budget() -> WalkBudget:
@@ -836,37 +829,38 @@ def _pattern_is_opaque(name: str | None) -> bool:
     return opaque
 
 
-def _cover_kind(record: Record) -> int:
-    """Whether the record's FILL can cover a whole tile, and whether it hides what
-    lies under it there (``_NEVER`` / ``_TRANSLUCENT`` / ``_OPAQUE``)."""
+def _fill_is_opaque(record: Record) -> bool:
+    """Whether the record's FILL hides what lies under it wherever it is: a filled
+    shape that is no sprite, in an opaque colour, at full opacity, with a texture
+    that has no translucent pixel."""
     if record.shape == SHAPE_POLYLINE:
-        return _NEVER
+        return False
     material = record.material
     fill = material.fill_rgba
-    if fill is None or fill[3] == 0:
-        return _NEVER
+    if fill is None or fill[3] != 255:
+        return False
     object_type = _object_type(record.kind)
     if object_type is not None and is_furniture_type(object_type):
-        return _NEVER  # a sprite, or no brush at all (``_paint_filled``)
+        return False  # a sprite, or no brush at all (``_paint_filled``)
     paint = material.paint or _PLAIN_PAINT
-    if fill[3] == 255 and paint.opacity >= 1.0 and _pattern_is_opaque(material.pattern):
-        return _OPAQUE
-    return _TRANSLUCENT
+    return paint.opacity >= 1.0 and _pattern_is_opaque(material.pattern)
 
 
 @dataclass(frozen=True, slots=True)
 class _Painted:
-    """A record that is on the ground: the block of tiles its paint bounds reach
-    (first and last column, first and last row — four integers, however many
-    tiles that is), what it costs a tile, the box of its geometry in its own
-    frame (four numbers) and whether its fill can cover a whole tile (``cover``)."""
+    """A record that is on the ground: its paint bounds in the scene (four numbers)
+    and the block of tiles they reach (first and last column, first and last row
+    — four integers, however many tiles that is), what it costs a tile, the box
+    of its geometry in its own frame (four numbers) and whether its fill is
+    opaque."""
 
     record: Record
     columns: tuple[int, int]
     rows: tuple[int, int]
     cost: int
+    bounds: tuple[float, float, float, float]
     box: tuple[float, float, float, float]
-    cover: int
+    opaque: bool
 
     @property
     def count(self) -> int:
@@ -875,6 +869,14 @@ class _Painted:
     def reaches(self, key: TileKey) -> bool:
         return (self.columns[0] <= key[0] <= self.columns[1]
                 and self.rows[0] <= key[1] <= self.rows[1])
+
+    def overlap(self, tile: tuple[float, float, float, float]) -> float:
+        """How much of a tile's box ``(east0, north0, east1, north1)`` the record's
+        paint box overlaps, in cm² — box against box: no vertex is read. What a
+        tile RANKS its members by when it cannot hold them all."""
+        width = min(self.bounds[2], tile[2]) - max(self.bounds[0], tile[0])
+        depth = min(self.bounds[3], tile[3]) - max(self.bounds[1], tile[1])
+        return width * depth if width > 0.0 and depth > 0.0 else 0.0
 
     def fill_covers(self, box: tuple[float, float, float, float], allowance: list[int]) -> bool:
         """Whether the record's FILL covers every point of the scene-space box
@@ -979,9 +981,25 @@ class GroundBaker:
     stale picture there, never a wrong one elsewhere; bare ground where there was
     none yet). ``pending`` says how many; every later ``bake`` — whatever it is
     told — goes on with them, nearest to the last edit first, and re-admits only
-    the tiles the new changes touch. Once ``pending`` is 0 the tiles are exactly
-    those of one unbudgeted ``bake`` of the same records. A baker for a still
-    picture, and ``fresh()``, have no budget.
+    the tiles the new changes touch. THE BACKLOG CANNOT STARVE: a call that
+    brings an edit while older tiles are pending paints the edit's own tiles
+    first (as many as the budget allows, at least one) and then at least ONE tile
+    of the backlog, budget or not — so a pass costs at most the budget plus two
+    tiles, and an edit a pass still drains the backlog.
+    Once ``pending`` is 0 the tiles are exactly those of one unbudgeted ``bake``
+    of the same records. A baker for a still picture, and ``fresh()``, have no
+    budget.
+
+    A TILE WHOSE PAINT FAILS (no image for it: ``MemoryError``) keeps the picture
+    it had — the same object — and everything else goes on: the bake does not
+    raise and nothing is forgotten. The tile is listed in ``tile_failures``, is
+    NOT pending (no pass retries it on its own), and is tried again by the next
+    call that brings a change. The promise above holds for every tile but those.
+
+    A BAKE THAT RAISES ANYWHERE ELSE leaves books nobody can trust; its caller
+    calls ``restart()``: the books are forgotten, the pictures are kept, and the
+    bakes that follow paint every tile anew — a tile they have not reached is
+    the object it was, never a bare one.
 
     Instruments, for tests and diagnostics: ``last_repainted`` (the tiles the
     last ``bake`` painted anew), ``last_changed`` (those of them whose picture
@@ -1017,6 +1035,14 @@ class GroundBaker:
         self._capped: set[TileKey] = set()
         #: the tiles that still show an older picture: what each is to be painted with
         self._pending: dict[TileKey, tuple[tuple[str, ...], bool]] = {}
+        #: … and those whose paint failed: kept as they are until a change comes
+        self._parked: dict[TileKey, tuple[tuple[str, ...], bool]] = {}
+        self._tile_failures: dict[TileKey, tuple[str, str]] = {}
+        #: ``restart()``: the grid and the pictures of a ground whose books are gone …
+        self._kept: tuple[GroundGrid, dict[TileKey, GroundTile]] | None = None
+        #: … and, once the next ``bake`` took them over, the tiles that still show
+        #: one: each is painted anew whatever its records turn out to be
+        self._stale: set[TileKey] = set()
         self._focus: tuple[float, float] | None = None  # the middle of the last edit, in tiles
         self._failed: dict[TileKey, dict[str, tuple[str, str]]] = {}
         self._bare_pixels: dict[tuple[int, int], bytes] = {}
@@ -1072,6 +1098,13 @@ class GroundBaker:
         return self._budget_s
 
     @property
+    def tile_failures(self) -> dict[TileKey, tuple[str, str]]:
+        """``{tile: (error type, message)}`` for every tile whose paint failed as a
+        whole and that therefore still shows its older picture (class docstring).
+        Plain data for whoever tells the user."""
+        return dict(self._tile_failures)
+
+    @property
     def failures(self) -> dict[str, tuple[str, str]]:
         """``{item id: (error type, message)}`` for every item on the ground whose
         paint raised in ANY tile as that tile is painted now. A tile that was
@@ -1086,9 +1119,10 @@ class GroundBaker:
     def entries_held(self) -> int:
         """What the bookkeeping holds: one entry per painted record and, per tile,
         one per record it was last painted with and one per record it is still
-        to be painted with (each at most ``TILE_RECORDS + TILE_UNDERLAYS``)."""
+        to be painted with (each at most ``TILE_RECORDS``)."""
         return (len(self._painted) + sum(len(order) for order in self._order.values())
-                + sum(len(order) for order, _capped in self._pending.values()))
+                + sum(len(order) for order, _capped in self._pending.values())
+                + sum(len(order) for order, _capped in self._parked.values()))
 
     def tiles(self) -> tuple[GroundTile, ...]:
         """Every tile of the ground as it was last baked, row by row from the
@@ -1128,10 +1162,27 @@ class GroundBaker:
         self._tiles = {}
         self._capped = set()
         self._pending = {}
+        self._parked = {}
+        self._tile_failures = {}
+        self._kept = None
+        self._stale = set()
         self._focus = None
         self._failed = {}
         self.last_repainted = ()
         self.last_changed = ()
+
+    def restart(self) -> None:
+        """Forget what the tiles were painted with — records, order, pending and
+        parked work, failures — and keep their PICTURES: the next ``bake`` on the
+        same plan rectangle starts from them, paints every tile anew (for its
+        time budget a call, like any other bake), and hands a tile it has not
+        reached out as the object it was. On another plan rectangle the pictures
+        are dropped. (``core.scene3d.GroundBaking.restart``: what ``SceneSync``
+        calls after a ``bake`` that raised.)"""
+        grid, tiles = self._grid, self._tiles
+        self.clear()
+        if grid is not None:
+            self._kept = (grid, tiles)
 
     def fresh(self) -> GroundBaker:
         """An empty baker with this one's grid settings and colour — and NO time
@@ -1150,10 +1201,16 @@ class GroundBaker:
         grid = self._grid
         dirty: set[TileKey] = set()
         if grid is None or (grid.width_cm, grid.depth_cm) != (width_cm, depth_cm):
+            kept = self._kept
             self.clear()
             grid = GroundGrid.for_plan(width_cm, depth_cm, tile_px=self._tile_px,
                                        max_pixels=self._max_pixels)
             self._grid = grid
+            if kept is not None and kept[0] == grid:
+                # after ``restart()``, the same plan: its pictures are what the user
+                # sees, and stay until each tile is painted anew
+                self._tiles = dict(kept[1])
+                self._stale = set(self._tiles)
             dirty.update(grid.tile_keys())
             changes = None
         candidates: Iterable[str]
@@ -1183,27 +1240,33 @@ class GroundBaker:
             box = _local_box(record)
             bounds = paint_bounds(record, grid.px_per_cm)
             block = grid.tile_block(*bounds) if bounds is not None else None
-            if block is None or box is None:
+            if block is None or box is None or bounds is None:
                 continue  # nothing to paint, or beside the plan: not on the ground
             entry = _Painted(record, (block[0], block[2]), (block[1], block[3]),
-                             _cost(record, grid.px_per_cm), box, _cover_kind(record))
+                             _cost(record, grid.px_per_cm), bounds, box, _fill_is_opaque(record))
             self._painted[item_id] = entry
             touched.add(item_id)
             dirty.update(entry.tiles())
         self.last_examined = examined
-        pending = self._pending
+        pending, parked = self._pending, self._parked
+        if changes is None or not changes.is_empty:
+            # a call that brings a change: a tile whose paint failed is tried once more
+            for key in list(parked):
+                pending[key] = parked.pop(key)
         if changes is None or changes.reordered:
             # records that swapped places: every tile that holds records — or waits to
             # be painted with some — is looked at again (and re-painted only if its list
             # came out different)
             dirty.update(key for key, order in self._order.items() if order)
             dirty.update(pending)
+        backlog = set(pending) - dirty  # what earlier calls left, and this one does not look at again
         if dirty:
             for key, (order, capped) in self._admit(grid, records, dirty).items():
-                if (key not in pending and key in self._tiles
-                        and order == self._order.get(key, ())
+                if (key not in pending and key not in parked and key in self._tiles
+                        and key not in self._stale and order == self._order.get(key, ())
                         and capped == (key in self._capped) and touched.isdisjoint(order)):
                     continue  # the same records, none of them changed: the same picture
+                parked.pop(key, None)
                 pending[key] = (order, capped)
             # the middle of this edit: what is painted first, now and in the passes after
             self._focus = (sum(key[0] for key in dirty) / len(dirty),
@@ -1212,18 +1275,33 @@ class GroundBaker:
         changed: list[TileKey] = []
         if pending:
             east, north = self._focus if self._focus is not None else (0.0, 0.0)
-            queue = sorted(pending, key=lambda key: ((key[0] - east) ** 2 + (key[1] - north) ** 2,
+            # this call's own tiles first, then what earlier calls left — each nearest
+            # to the middle of the last edit first
+            queue = sorted(pending, key=lambda key: (key in backlog,
+                                                     (key[0] - east) ** 2 + (key[1] - north) ** 2,
                                                      key[1], key[0]))
             budget, clock = self._budget_s, self._clock
             started = clock() if budget is not None else 0.0
             spent = False
+            backlog_served = not backlog  # … or there is none to serve
             for key in queue:
                 order, capped = pending[key]
-                if spent and order:
+                owed = not backlog_served and key in backlog
+                if spent and order and not owed:
                     continue  # stays pending (a tile without records is painted: it is free)
                 del pending[key]
-                tile = self._paint_tile(grid, key, [self._painted[item_id].record
-                                                    for item_id in order], capped)
+                if key in backlog and order:
+                    backlog_served = True  # one tile of the backlog a call, whatever the budget
+                # outside the ``try``: a record a tile names and the books do not hold
+                # is a hole in the books, not a tile that could not be painted
+                members = [self._painted[item_id].record for item_id in order]
+                try:
+                    tile = self._paint_tile(grid, key, members, capped)
+                except Exception as error:  # one tile must not take the ground with it
+                    self._park(key, order, capped, error)
+                    continue
+                self._tile_failures.pop(key, None)
+                self._stale.discard(key)
                 self._order[key] = order
                 repainted.append(key)
                 previous = self._tiles.get(key)
@@ -1232,9 +1310,9 @@ class GroundBaker:
                     changed.append(key)
                 if budget is not None and not spent and order:
                     spent = clock() - started >= budget
-            for key in pending:
-                if key not in self._tiles:  # never painted yet: bare ground until it is
-                    self._tiles[key] = self._bare_tile(grid, key)
+        for key in (*pending, *parked):
+            if key not in self._tiles:  # never painted yet: bare ground until it is
+                self._tiles[key] = self._bare_tile(grid, key)
         self.last_repainted = tuple(repainted)
         self.last_changed = tuple(changed)
         return tuple(self._tiles[key] for key in grid.tile_keys())
@@ -1246,58 +1324,58 @@ class GroundBaker:
         """For every dirty tile: the ids it is painted with, bottom to top, and
         whether a bound left any out — ONE walk down the records, topmost first.
 
-        WHAT A TILE IS PAINTED WITH, AND WHAT A CAPPED TILE LOSES.
+        WHAT A TILE IS PAINTED WITH — the rule is its OUTCOME: **when a bound
+        bites, a tile loses its SMALLEST records, never a large one.**
 
-        1. A tile takes the records that reach it, topmost first, while it has
-           room: fewer than ``TILE_RECORDS`` taken, and the next one would not take
-           its cost beyond ``TILE_VERTICES`` (the topmost record of a tile is
-           always taken).
-        2. A record whose fill OPAQUELY COVERS THE WHOLE TILE ends the tile's walk:
-           nothing below it can be seen, so nothing below it is looked at, charged
-           or painted. (A lawn under twelve pavers: thirteen records, wherever the
-           lawn was drawn; whatever lies under the lawn costs nothing.)
-        3. Once a tile has no room — the CUT — it takes only what lies under
-           everything: records whose fill covers the whole tile, the first
-           ``TILE_UNDERLAYS`` of them, ending at the first opaque one. A record
-           below the cut that does NOT cover the whole tile is left out, and the
-           tile is ``capped``: what a capped tile loses are the SMALL records in
-           the middle — below its topmost ``TILE_RECORDS``, above its underlays —
-           and whatever lies below its last underlay when that one is translucent.
-           A record that covers the whole tile is never one of them, short of the
-           two bounds of this search: ``TILE_UNDERLAYS``, and the vertices below.
+        - The MEMBERS of a tile are the records whose paint reaches it, from the
+          topmost down to the first one whose fill OPAQUELY COVERS THE WHOLE TILE:
+          nothing under that one can be seen, so nothing under it is looked at,
+          charged or painted (a lawn under twelve pavers: thirteen members,
+          whatever lies under the lawn).
+        - A tile keeps ALL its members while they are at most ``TILE_RECORDS`` and
+          cost at most ``TILE_VERTICES``.
+        - Beyond a bound it keeps the members that overlap it MOST. A member's
+          rank is how much of the tile its PAINT BOX overlaps — box against box,
+          no vertex is read — and ties go to the topmost; the lowest-ranked
+          members are left out until both bounds hold. The tile is ``capped``.
+        - What is kept is painted in z order, bottom to top.
 
-        The work. One test per record and dirty tile (``admission_checks``), and
-        none for a tile that is closed: by an opaque cover, by its last underlay,
-        or by the end of the records. "Covers the whole tile" is four comparisons
-        a corner for most records (``_Painted.fill_covers``); a polygon's rings
-        are read once per test, and the cover tests and underlays of ONE tile may
-        read ``TILE_VERTICES`` vertices in all (``cover_vertices_read``) — a
-        polygon beyond that is not known to cover, and is treated as one that
-        does not. What a bound leaves out is never sorted, summed or painted.
+        So a tile under 2,000 pavers on a lawn shows the lawn and its 255 largest
+        pavers, wherever the lawn's edge runs. What the rule does NOT know is a
+        shape: a thin line's paint box is its bounding box, so a long diagonal line
+        ranks with a lawn; and of members that overlap the tile equally — 300
+        lawns over the whole tile — the LOWER ones are left out.
+
+        The work — one pass over a tile's members: per member one overlap (four
+        ``min`` / ``max`` and a product) and at most one push and one pop on a heap
+        of ``TILE_RECORDS`` (``admission_checks`` counts the members asked). A
+        tile is CLOSED — asked about no further record — by an opaque cover, by the
+        end of the records, or once it holds ``TILE_RECORDS`` members that each
+        overlap it whole: nothing below can outrank one of them, so the next
+        member only shows that the tile is capped, and closes it. "Opaquely
+        covers the whole tile" is asked only of a member whose paint box contains
+        the tile and whose fill is opaque; it is exact (``_Painted.fill_covers``),
+        and a polygon's rings are read once per test, at most ``TILE_VERTICES``
+        vertices a tile (``cover_vertices_read``) — beyond that a polygon is not
+        known to cover, and the walk goes on under it. What a bound leaves out is
+        never sorted, summed or painted.
         """
-        open_tiles: dict[TileKey, _Open] = {key: _Open() for key in dirty}
+        open_tiles: dict[TileKey, _Open] = {}
+        for key in dirty:
+            east, north, width, depth = grid.tile_cm_rect(key)
+            open_tiles[key] = _Open((east, north, east + width, north + depth))
         done: dict[TileKey, tuple[tuple[str, ...], bool]] = {}
         painted = self._painted
-        boxes: dict[TileKey, tuple[float, float, float, float]] = {}
-
-        def covered(entry: _Painted, key: TileKey, state: _Open) -> bool:
-            box = boxes.get(key)
-            if box is None:
-                east, north, width, depth = grid.tile_cm_rect(key)
-                box = boxes[key] = (east, north, east + width, north + depth)
-            before = state.search[0]
-            result = entry.fill_covers(box, state.search)
-            self.cover_vertices_read += before - state.search[0]
-            return result
 
         def close(key: TileKey, state: _Open) -> None:
-            state.ids.reverse()
-            done[key] = (tuple(state.ids), state.capped)
+            # the kept members in z order: the lowest (walked last) first
+            done[key] = (tuple(item_id for _overlap, _depth, item_id, _cost in
+                               sorted(state.heap, key=lambda member: member[1])), state.capped)
             del open_tiles[key]
 
         # a dict is walked backwards in place; another mapping through a copy of its keys
-        for item_id in (reversed(records) if isinstance(records, dict)
-                        else reversed(list(records))):
+        for depth_in_stack, item_id in enumerate(reversed(records) if isinstance(records, dict)
+                                                 else reversed(list(records))):
             if not open_tiles:
                 break
             entry = painted.get(item_id)
@@ -1311,33 +1389,45 @@ class GroundBaker:
                 self.admission_checks += len(open_tiles)
             for key in keys:
                 state = open_tiles[key]
-                ids = state.ids
-                if state.room and ids and (len(ids) >= TILE_RECORDS
-                                           or state.cost + entry.cost > TILE_VERTICES):
-                    state.room = False  # the cut
-                if state.room:
-                    ids.append(item_id)
+                if state.sealed:  # nothing can outrank what it holds: this one is left out
+                    state.capped = True
+                    close(key, state)
+                    continue
+                heap = state.heap
+                overlap = entry.overlap(state.box)
+                # the rank: the smaller overlap is the lower; of equals, the lower in the stack
+                if len(heap) >= TILE_RECORDS and overlap <= heap[0][0]:
+                    state.capped = True  # it outranks nothing the tile holds: left out
+                else:
+                    heapq.heappush(heap, (overlap, -depth_in_stack, item_id, entry.cost))
                     state.cost += entry.cost
-                    if entry.cover == _OPAQUE and covered(entry, key, state):
+                    while len(heap) > TILE_RECORDS or (state.cost > TILE_VERTICES and len(heap) > 1):
+                        state.cost -= heapq.heappop(heap)[3]  # the lowest rank goes
+                        state.capped = True
+                if entry.opaque and overlap >= state.area:
+                    before = state.search[0]
+                    covered = entry.fill_covers(state.box, state.search)
+                    self.cover_vertices_read += before - state.search[0]
+                    if covered:
                         close(key, state)  # nothing below it can be seen
-                    continue
-                # below the cut: only what lies under everything — when the tile's search
-                # allowance covers painting it, before the test and after what the test read
-                if (state.underlays < TILE_UNDERLAYS and entry.cover != _NEVER
-                        and entry.cost <= state.search[0] and covered(entry, key, state)
-                        and entry.cost <= state.search[0]):
-                    state.search[0] -= entry.cost  # what painting it reads
-                    ids.append(item_id)
-                    state.underlays += 1
-                    if entry.cover == _OPAQUE:
-                        close(key, state)
-                    continue
-                state.capped = True  # this record is what the tile loses
-                if state.underlays >= TILE_UNDERLAYS:
-                    close(key, state)  # … and nothing further could be taken
+                        continue
+                if len(heap) >= TILE_RECORDS and heap[0][0] >= state.area:
+                    state.sealed = True  # full of members that overlap it whole
         for key, state in list(open_tiles.items()):
             close(key, state)
         return done
+
+    def _park(self, key: TileKey, order: tuple[str, ...], capped: bool, error: Exception) -> None:
+        """A tile whose paint failed as a whole: it keeps the picture it has, is listed
+        in ``tile_failures`` and waits — not pending — for the next call that brings
+        a change (class docstring). Logged once per tile and kind of error."""
+        self._parked[key] = (order, capped)
+        self._tile_failures[key] = (type(error).__name__, str(error))
+        seen = (f"tile {key}", type(error).__name__)
+        if seen not in self._reported and len(self._reported) < 256:
+            self._reported.add(seen)
+            _log.error("3D ground: tile %s could not be painted; it keeps the picture it had",
+                       key, exc_info=error)
 
     def _bare_tile(self, grid: GroundGrid, key: TileKey) -> GroundTile:
         """A tile of bare ground: the bytes are shared by all bare tiles of its size."""
@@ -1352,13 +1442,15 @@ class GroundBaker:
     def _paint_tile(self, grid: GroundGrid, key: TileKey, records: list[Record],
                     capped: bool) -> GroundTile:
         """One tile, from scratch: bare ground, then its records bottom to top —
-        within the tile's budget (module docstring)."""
+        within the tile's budget (module docstring). Nothing of the baker's books
+        is changed before the picture exists: a tile that cannot be painted
+        (``MemoryError``) leaves them as they were."""
         x0, y0, width, height = grid.tile_px_rect(key)
         east, north, width_cm, depth_cm = grid.tile_cm_rect(key)
         self.tiles_painted += 1
-        self._capped.discard(key)
-        self._failed.pop(key, None)
         if not records:
+            self._capped.discard(key)
+            self._failed.pop(key, None)
             return self._bare_tile(grid, key)
         image = QImage(width, height, _TILE_FORMAT)
         if image.isNull():
@@ -1398,6 +1490,14 @@ class GroundBaker:
         finally:
             if painter.isActive():
                 painter.end()
+        bits = image.constBits()
+        if bits is None:
+            raise MemoryError(f"ground tile {key} has no pixel data")
+        tile = GroundTile(key[0], key[1], east, north, width_cm, depth_cm, width, height,
+                          bits.asstring(image.sizeInBytes()))
+        # the picture exists: now the books
+        self._capped.discard(key)
+        self._failed.pop(key, None)
         if failed:
             self._failed[key] = failed
         if capped:
@@ -1408,14 +1508,10 @@ class GroundBaker:
                 _log.warning(
                     "3D ground: tile %s holds more than one tile is painted with (%d records, "
                     "%d outline vertices and passes, %d path-style elements, %d dashes); the "
-                    "rest is left out of the ground. Further tiles are only counted "
+                    "smallest are left out of the ground. Further tiles are only counted "
                     "(GroundBaker.capped)", key, TILE_RECORDS, TILE_VERTICES, TILE_ELEMENTS,
                     TILE_DASHES)
-        bits = image.constBits()
-        if bits is None:
-            raise MemoryError(f"ground tile {key} has no pixel data")
-        return GroundTile(key[0], key[1], east, north, width_cm, depth_cm, width, height,
-                          bits.asstring(image.sizeInBytes()))
+        return tile
 
     def _report(self, record: Record, error: Exception) -> tuple[str, str]:
         seen = (record.item_id, type(error).__name__)
@@ -1429,12 +1525,14 @@ class GroundBaker:
 class _Open:
     """A dirty tile while the admission walk fills it (``GroundBaker._admit``)."""
 
-    __slots__ = ("capped", "cost", "ids", "room", "search", "underlays")
+    __slots__ = ("area", "box", "capped", "cost", "heap", "sealed", "search")
 
-    def __init__(self) -> None:
-        self.ids: list[str] = []  # topmost first, until the tile is closed
+    def __init__(self, box: tuple[float, float, float, float]) -> None:
+        self.box = box  # the tile in scene cm: east0, north0, east1, north1
+        self.area = (box[2] - box[0]) * (box[3] - box[1])
+        #: the members it keeps, lowest rank first: (overlap, −depth in the stack, id, cost)
+        self.heap: list[tuple[float, int, str, int]] = []
         self.cost = 0
-        self.room = True  # False below the cut
-        self.underlays = 0
-        self.search = [TILE_VERTICES]  # the vertices its cover tests and underlays may read
+        self.search = [TILE_VERTICES]  # the vertices its cover tests may still read
         self.capped = False
+        self.sealed = False  # it holds TILE_RECORDS members that each overlap it whole

@@ -49,6 +49,7 @@ from open_garden_planner.core.commands import (
     RotateItemCommand,
 )
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
+from open_garden_planner.core.item_style import adopt_pen
 from open_garden_planner.core.object_height import METADATA_KEY, effective_height_cm
 from open_garden_planner.core.object_types import ObjectType, PathFenceStyle
 from open_garden_planner.core.scene3d import (
@@ -151,7 +152,7 @@ def _polyline() -> Any:
     item = PolylineItem(points, object_type=ObjectType.WALL)
     pen = item.pen()
     pen.setWidthF(24.5)
-    item.setPen(pen)
+    adopt_pen(item, pen)
     return item
 
 
@@ -238,7 +239,7 @@ def _restroke(item: Any, color: QColor) -> ChangePropertyCommand:
         target.stroke_color = value
         pen = target.pen()
         pen.setColor(value)
-        target.setPen(pen)
+        adopt_pen(target, pen)
 
     return ChangePropertyCommand(item, "stroke color", QColor(item.pen().color()), color, apply)
 
@@ -389,7 +390,7 @@ class TestDiffMatrix:
         stage = Stage(canvas, "polyline")  # only a polyline's footprint depends on its stroke
         pen = stage.item.pen()
         pen.setWidthF(40.0)
-        stage.item.setPen(pen)
+        adopt_pen(stage.item, pen)
         assert stage.step() == SceneDiff(geometry=(stage.id,))
         assert stage.record.path_width_cm == 40.0
 
@@ -1006,7 +1007,7 @@ class TestRecordContent:
         canvas.scene().addItem(fence)
         pen = fence.pen()
         pen.setWidthF(3.0e6)
-        fence.setPen(pen)
+        adopt_pen(fence, pen)
         assert fence.pen().widthF() < 32768.0  # Qt kept the old width
         real = snapshot_module.item_outline
         monkeypatch.setattr(snapshot_module, "item_outline", lambda item, at_date=None:
@@ -1049,7 +1050,7 @@ def _fence(points: list[tuple[float, float]], width_cm: float = 10.0) -> Any:
     item = PolylineItem([QPointF(x, y) for x, y in points], object_type=ObjectType.FENCE)
     pen = item.pen()
     pen.setWidthF(width_cm)
-    item.setPen(pen)
+    adopt_pen(item, pen)
     return item
 
 

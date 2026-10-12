@@ -18,13 +18,24 @@ a defect nobody saw on the canvas:
 
 So: whoever gives an item a pen calls ``adopt_pen``; whoever gives an item the
 look of another item calls ``copy_visual_style``. ``style_gaps`` says where an
-item's two statements part — the predicate
-``tests/integration/test_item_style_in_step.py`` holds every operation that
-makes an item out of an item to.
+item's two statements part — the predicate a teardown fixture holds EVERY item
+of every scene the 2D integration suites build to
+(``tests/integration/conftest.py``), and
+``tests/integration/test_item_style_in_step.py`` every operation that makes an
+item out of an item.
+
+ONE KIND OF ITEM IS LEFT OUT OF THE STROKE HALF: an item whose picture is a
+sprite (``GardenItemMixin.paints_sprite`` — a furniture rectangle, a plant or
+furniture circle). Its ``paint`` never asks the pen for the picture; its pen is
+``NoPen`` when it is built and a solid black 1.0 once it was loaded (the saver
+writes the pen's colour and width, the loader gives the pen the saved
+``stroke_style``), while its stroke attributes are its TYPE's. Neither says
+anything about what is painted, so neither is corrected by the other.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from PyQt6.QtCore import Qt
@@ -33,7 +44,21 @@ from PyQt6.QtGui import QBrush, QColor, QPen
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
 from open_garden_planner.core.object_types import StrokeStyle
 
-__all__ = ["adopt_pen", "copy_visual_style", "stroke_style_of", "style_gaps"]
+__all__ = [
+    "MIN_STROKE_WIDTH",
+    "adopt_pen",
+    "copy_visual_style",
+    "fill_brush",
+    "paints_sprite",
+    "saved_stroke_colour",
+    "saved_stroke_width",
+    "stroke_style_of",
+    "style_gaps",
+]
+
+#: The narrowest stroke the properties panel and the properties dialog can set
+#: (both spin boxes start here).
+MIN_STROKE_WIDTH = 0.5
 
 
 def stroke_style_of(pen: QPen) -> StrokeStyle | None:
@@ -46,14 +71,53 @@ def stroke_style_of(pen: QPen) -> StrokeStyle | None:
     return None
 
 
+def paints_sprite(item: Any) -> bool:
+    """Whether ``item``'s picture is a sprite and not its brush and pen — the item
+    says so itself (``GardenItemMixin.paints_sprite``)."""
+    return bool(getattr(item, "paints_sprite", False))
+
+
+def saved_stroke_width(value: object) -> float | None:
+    """A stroke width read from a file, if it is one the app could have written: a
+    finite number not below ``MIN_STROKE_WIDTH`` — else None. Never raises."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        width = float(value)
+    except OverflowError:  # an integer of 400 digits
+        return None
+    return width if math.isfinite(width) and width >= MIN_STROKE_WIDTH else None
+
+
+def saved_stroke_colour(value: object) -> QColor | None:
+    """A stroke colour read from a file, if it is a colour: a string Qt can read
+    (``#aarrggbb``, ``#rrggbb``, a colour name) — else None. Never raises. A fully
+    transparent colour IS one: the panel's colour dialog offers the alpha channel."""
+    if not isinstance(value, str):
+        return None
+    colour = QColor(value)
+    return colour if colour.isValid() else None
+
+
+def fill_brush(item: Any, colour: QColor) -> QBrush:
+    """The brush that paints ``colour`` in ``item``'s OWN pattern — the
+    ``fill_pattern`` it states (plain for an item that states none). What
+    ``style_gaps`` expects of an item whose ``fill_color`` is ``colour``."""
+    pattern = getattr(item, "fill_pattern", None) or FillPattern.SOLID
+    return create_pattern_brush(pattern, QColor(colour))
+
+
 def adopt_pen(item: Any, pen: QPen) -> None:
     """Give ``item`` the pen — and say so in its stroke attributes.
 
-    A pen that draws nothing (``NoPen``: a furniture sprite's) is set and leaves
-    the attributes alone: they describe the stroke the item would have.
+    Two cases set the pen and leave the attributes alone: a pen that draws
+    nothing (``NoPen`` states no stroke), and an item whose picture is a sprite
+    (``paints_sprite`` — see the module docstring: its attributes stay its
+    type's, as they were before this helper existed).
     """
     item.setPen(QPen(pen))
-    if pen.style() == Qt.PenStyle.NoPen or not hasattr(item, "stroke_color"):
+    if (pen.style() == Qt.PenStyle.NoPen or paints_sprite(item)
+            or not hasattr(item, "stroke_color")):
         return
     item.stroke_color = QColor(pen.color())
     item.stroke_width = pen.widthF()
@@ -92,10 +156,12 @@ def copy_visual_style(source: Any, dest: Any) -> None:
 def style_gaps(item: Any) -> list[str]:
     """Where ``item``'s style attributes do NOT describe its live brush and pen —
     [] when they are in step. An attribute that is None states nothing and is
-    not held against anything (a plain polyline states no stroke of its own)."""
+    not held against anything; a pen that draws nothing is not held against the
+    stroke attributes, and neither is the pen of an item that paints a sprite
+    (``paints_sprite``)."""
     gaps: list[str] = []
     pen = item.pen()
-    if pen.style() != Qt.PenStyle.NoPen:
+    if pen.style() != Qt.PenStyle.NoPen and not paints_sprite(item):
         colour = getattr(item, "stroke_color", None)
         if colour is not None and QColor(colour) != pen.color():
             gaps.append(f"stroke_color {QColor(colour).name(QColor.NameFormat.HexArgb)} "
@@ -121,9 +187,13 @@ def style_gaps(item: Any) -> list[str]:
 def _same_brush(first: QBrush, second: QBrush) -> bool:
     """Two brushes paint the same: style and transform, and the colour of a plain
     one or the PIXELS of a textured one (``QBrush.__eq__`` compares cache keys —
-    the same texture made twice is two keys)."""
+    the same texture made twice is two keys). Two plain brushes that are both
+    fully transparent paint the same — nothing — whatever their colours: a line
+    states its type's fill, ``#00808080`` for a wall, and paints with
+    ``#00000000``."""
     if first.style() != second.style() or first.transform() != second.transform():
         return False
     if first.style() == Qt.BrushStyle.TexturePattern:
         return bool(first.textureImage() == second.textureImage())
-    return bool(first.color() == second.color())
+    mine, theirs = first.color(), second.color()
+    return bool(mine == theirs or (mine.alpha() == 0 and theirs.alpha() == 0))
