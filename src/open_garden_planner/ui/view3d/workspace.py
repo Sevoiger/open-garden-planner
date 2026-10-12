@@ -125,6 +125,17 @@ RELEASE_NOW_RETIRED: Final = 512
 #: Where the floating mode switch sits over the canvas: clear of the rulers' corner.
 _FLOAT_OFFSET: Final = 28
 _SPLITTER_KEY: Final = "workspace"
+#: The status line's notices, most pressing first. One is shown at a time, and each
+#: stays until what it says is over: "building" and "the update failed" until a pass
+#: went through, "the engine reported a problem" until that engine is gone.
+_NOTICE_BUILDING: Final = "building"
+_NOTICE_SYNC: Final = "sync"
+_NOTICE_ENGINE: Final = "engine"
+_NOTICE_ORDER: Final = (_NOTICE_BUILDING, _NOTICE_SYNC, _NOTICE_ENGINE)
+#: The problems list shows at most this many rows (and says how many more there are):
+#: a plan can refuse thousands of items — a duplicated id is a reason — and the list
+#: is filled on the GUI thread, again whenever the problems change while it is open.
+MAX_PROBLEM_ROWS: Final = 200
 
 
 class WorkspaceMode(enum.Enum):
@@ -210,7 +221,14 @@ class ModeSwitch(QFrame):
 
 class _Pane3D(QWidget):
     """The 3D side: a strip of controls and notices above the view — or, when there
-    is no view, a message in its place. Says when it is shown and hidden."""
+    is no view, a message in its place. Says when it is shown and hidden.
+
+    The strip has TWO parts, one above the other: a row of controls
+    (``strip_layout`` — the mode switch, "Reset 3D View") and, below it, the notices
+    (``notice_layout``), one per line, each wrapping its words. One row for all of it
+    needed 785 px, and in Split a 1366 px window gives the pane 455: the last
+    sentence was cut, with no ellipsis and no tooltip. ``notices`` is hidden while it
+    has nothing to say, so the strip is one row high on a healthy machine."""
 
     showing_changed = pyqtSignal(bool)
 
@@ -221,9 +239,20 @@ class _Pane3D(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         self.strip = QWidget(self)
-        self.strip_layout = QHBoxLayout(self.strip)
-        self.strip_layout.setContentsMargins(4, 2, 4, 2)
+        rows = QVBoxLayout(self.strip)
+        rows.setContentsMargins(4, 2, 4, 2)
+        rows.setSpacing(2)
+        controls = QWidget(self.strip)
+        self.strip_layout = QHBoxLayout(controls)
+        self.strip_layout.setContentsMargins(0, 0, 0, 0)
         self.strip_layout.setSpacing(6)
+        rows.addWidget(controls)
+        self.notices = QWidget(self.strip)
+        self.notice_layout = QVBoxLayout(self.notices)
+        self.notice_layout.setContentsMargins(0, 0, 0, 0)
+        self.notice_layout.setSpacing(2)
+        rows.addWidget(self.notices)
+        self.notices.hide()
         outer.addWidget(self.strip)
         self.body = QStackedWidget(self)
         outer.addWidget(self.body, 1)
@@ -310,6 +339,9 @@ class Workspace(QWidget):
         self._build_pending = False   # a first pass waits for its notice to be painted
         self._retired = 0             # items that lost their Models since the last release
         self._applied_at = 0.0        # when the pipeline last worked (``_now``)
+        #: What the status line has to say, by kind (``_NOTICE_ORDER``); the first kind
+        #: that has a text is shown. A notice stays until what it says is over.
+        self._notices: dict[str, str] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -470,8 +502,14 @@ class Workspace(QWidget):
         if mode is self._mode:
             return
         if self._mode is WorkspaceMode.SPLIT:
+            # leaving Split: its position is remembered for this session AND kept for
+            # the next one, now — while the splitter still has both sides (it used to
+            # be saved only by an app that was closed in Split)
             self._remember_split()
+            self.save_state()
         self._mode = mode
+        if mode is WorkspaceMode.VIEW3D:
+            self.clear_selection_hidden_by_3d_mode()
         if mode is not WorkspaceMode.PLAN:
             self._ensure_pane()
         pane = self._pane
@@ -487,6 +525,19 @@ class Workspace(QWidget):
             self._apply_split()
         self._place_floating()
         self.mode_changed.emit(mode)
+
+    def clear_selection_hidden_by_3d_mode(self) -> None:
+        """3D mode hides the canvas — the one place a selection is SHOWN — and keeps
+        every shortcut: Delete, Ctrl+X and Ctrl+D would act on items nobody can see.
+        So entering 3D mode clears the selection.
+
+        A STOPGAP WITH AN OWNER: the selection story (L1.8) shows the selection in the
+        3D view itself; when its ring exists it removes this function (and its one
+        call, in ``set_mode``) or replaces it. Split is not touched: there the canvas
+        still shows what is selected."""
+        scene = self._scene
+        if scene is not None:
+            scene.clearSelection()
 
     def set_chrome_visible(self, visible: bool) -> None:
         """Fullscreen preview hides the workspace's own controls with the rest of the UI."""
@@ -526,7 +577,10 @@ class Workspace(QWidget):
             self._split_sizes = self._splitter.sizes()
 
     def save_state(self) -> None:
-        """Keep the Split position for the next session (only a real Split is kept)."""
+        """Keep the Split position for the next session. Only a real Split is kept:
+        called while the mode IS Split — when it is left (``set_mode``) and when the
+        app closes in it — and a no-op in the other two modes, whose splitter has one
+        side hidden."""
         if (self._ui_state is not None and self._pane is not None
                 and self._mode is WorkspaceMode.SPLIT):
             self._ui_state.save_splitter(_SPLITTER_KEY, self._splitter)
@@ -541,6 +595,7 @@ class Workspace(QWidget):
 
     def _build_pane(self) -> None:
         pane = _Pane3D(self._splitter)
+        # the row of controls
         strip = pane.strip_layout
         self._pane_switch = ModeSwitch(self.mode_actions(), pane.strip)
         strip.addWidget(self._pane_switch)
@@ -549,29 +604,39 @@ class Workspace(QWidget):
         self._reset_button.setAutoRaise(True)
         self._reset_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         strip.addWidget(self._reset_button)
-        status = QLabel("", pane.strip)
-        status.setTextFormat(Qt.TextFormat.PlainText)
-        status.installEventFilter(self)  # its paint starts a held first pass
-        strip.addWidget(status)
-        self._status_label = status
         strip.addStretch(1)
-        self._problems_button = QToolButton(pane.strip)
+        # the notices, one per line; every sentence wraps (class docstring of the pane)
+        notices = pane.notice_layout
+        status = QLabel("", pane.notices)
+        status.setTextFormat(Qt.TextFormat.PlainText)
+        status.setWordWrap(True)
+        status.installEventFilter(self)  # its paint starts a held first pass
+        status.hide()
+        notices.addWidget(status)
+        self._status_label = status
+        self._problems_button = QToolButton(pane.notices)
         self._problems_button.setAutoRaise(True)
         self._problems_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._problems_button.setToolTip(self.tr("Show which objects are missing from the 3D view"))
         self._problems_button.clicked.connect(self.show_problems)
         self._problems_button.hide()
-        strip.addWidget(self._problems_button)
-        self._compat_label = QLabel("", pane.strip)
+        notices.addWidget(self._problems_button, 0, Qt.AlignmentFlag.AlignLeft)
+        compat_row = QWidget(pane.notices)
+        compat = QHBoxLayout(compat_row)
+        compat.setContentsMargins(0, 0, 0, 0)
+        compat.setSpacing(6)
+        self._compat_label = QLabel("", compat_row)
         self._compat_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._compat_label.setWordWrap(True)
         self._compat_label.hide()
-        strip.addWidget(self._compat_label)
-        self._compat_button = QToolButton(pane.strip)
+        compat.addWidget(self._compat_label, 1)
+        self._compat_button = QToolButton(compat_row)
         self._compat_button.setAutoRaise(True)
         self._compat_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._compat_button.clicked.connect(self._on_compat_button)
         self._compat_button.hide()
-        strip.addWidget(self._compat_button)
+        compat.addWidget(self._compat_button, 0, Qt.AlignmentFlag.AlignTop)
+        notices.addWidget(compat_row)
         pane.message_button.clicked.connect(self._on_message_button)
         pane.showing_changed.connect(self._on_pane_showing)
         pane.strip.setVisible(self._chrome_visible)
@@ -591,7 +656,18 @@ class Workspace(QWidget):
             _LOG.error("The 3D workspace was asked for 3D before connect_plan() gave it a plan")
             return
         guard = self.guard
-        software = guard.begin() is RenderMode.SOFTWARE
+        mode = guard.begin()
+        if mode is RenderMode.OFF:
+            # a start in software mode died too: nothing is left to fall back to, and
+            # trying again would be the same death. The way back is in the strip.
+            self._set_state(View3DState.UNAVAILABLE)
+            pane.show_message(self.tr(
+                "3D is switched off on this computer: it did not start, not even in "
+                "compatibility mode (software rendering). The rest of the application is "
+                "not affected."))
+            self._update_compat_notice()
+            return
+        software = mode is RenderMode.SOFTWARE
         host: EngineHost | None = None
         orbit: OrbitInput | None = None
         try:
@@ -615,6 +691,9 @@ class Workspace(QWidget):
                 self.tr("The 3D view could not be started. The rest of the application "
                         "is not affected.\n\nDetails: {error}").format(error=clip_text(error)),
                 self.tr("Try Again"))
+            # "Try Again" asks for the same mode again. When that mode is compatibility
+            # mode, the way back to the graphics card must be on screen here too.
+            self._update_compat_notice()
             return
         self._host, self._controller, self._input = host, controller, orbit
         orbit.moved.connect(self._start_camera)
@@ -654,7 +733,14 @@ class Workspace(QWidget):
             controller.set_active(False)
             self._health_timer.stop()
             self._camera_timer.stop()
+            if not self._first_frame_seen:
+                # The poll that confirms the first frame has just stopped. A start
+                # marker left on disk now would be read as a death by a second
+                # instance ten minutes from here (``init_guard``): take it away …
+                self.guard.abandon()
             return
+        if not self._first_frame_seen:
+            self.guard.mark_again()  # … and put it back while a first frame is awaited
         self._health_timer.start(HEALTH_SLOW_MS if self._first_frame_seen else HEALTH_FAST_MS)
         self._apply_camera()
         self._start_camera()
@@ -671,8 +757,8 @@ class Workspace(QWidget):
         controller = self._controller
         if controller is None or self._build_pending:
             return
+        self._say(_NOTICE_BUILDING, self.tr("Building the 3D view…"))
         label = self._status_label
-        label.setText(self.tr("Building the 3D view…"))
         if not label.isVisible():
             # the controls are hidden (fullscreen preview): there is no notice to wait for
             controller.set_active(True)
@@ -693,6 +779,31 @@ class Workspace(QWidget):
     def _drop_held_build(self) -> None:
         self._build_pending = False
         self._build_timer.stop()
+
+    # ── the status line: one notice at a time, each until what it says is over ──
+
+    def _say(self, kind: str, text: str) -> None:
+        """Set one notice of the status line — or, with an empty text, withdraw it."""
+        if text:
+            self._notices[kind] = text
+        else:
+            self._notices.pop(kind, None)
+        self._refresh_notices()
+
+    def _refresh_notices(self) -> None:
+        """Show the first notice that has something to say (``_NOTICE_ORDER``), and the
+        notices' part of the strip only while anything in it does."""
+        pane = self._pane
+        if pane is None:
+            return
+        text = next((self._notices[kind] for kind in _NOTICE_ORDER if kind in self._notices), "")
+        label = self._status_label
+        if label.text() != text:
+            label.setText(text)
+        label.setVisible(bool(text))
+        pane.notices.setVisible(bool(text) or not (
+            self._problems_button.isHidden() and self._compat_label.isHidden()
+            and self._compat_button.isHidden()))
 
     def _watch_window(self) -> None:
         window = self.window()
@@ -795,7 +906,12 @@ class Workspace(QWidget):
             self._controller.refresh_sun()
 
     def _on_applied(self, report: TickReport) -> None:
-        self._status_label.setText("")
+        # A pass went through: the build is over, and so is a failed update. What the
+        # ENGINE reported is not: that notice stays until the engine is gone (it used
+        # to be erased by the next pass — one edit, and the only sign of it was lost).
+        self._notices.pop(_NOTICE_BUILDING, None)
+        self._notices.pop(_NOTICE_SYNC, None)
+        self._refresh_notices()
         self._applied_at = _now()
         self._retired += report.retired
         if self._retired >= RELEASE_NOW_RETIRED:
@@ -815,7 +931,7 @@ class Workspace(QWidget):
             _log_failure("The 3D view could not release its cached graphics state", error)
 
     def _on_sync_failed(self, _message: str) -> None:
-        self._status_label.setText(self.tr(
+        self._say(_NOTICE_SYNC, self.tr(
             "The 3D view could not be updated. It will try again with the next change."))
 
     def _update_problems(self) -> None:
@@ -828,6 +944,7 @@ class Workspace(QWidget):
                     else self.tr("{count} objects are not shown in 3D").format(count=count))
             self._problems_button.setText(text)
             self._problems_button.show()
+        self._refresh_notices()
         dialog = self._problems_dialog
         if dialog is not None and dialog.isVisible():
             self._fill_problems(dialog)
@@ -850,13 +967,28 @@ class Workspace(QWidget):
         return self._problems_dialog
 
     def _fill_problems(self, dialog: View3DProblemsDialog) -> None:
+        """Fill the list: at most ``MAX_PROBLEM_ROWS`` rows, and ONE walk over the scene
+        for all their names. (It looked every row's item up by walking the scene: rows
+        x items on the GUI thread, again on every change while the list was open —
+        3,000 rows over 3,000 items took 3.1 s, and one plan with duplicated ids is
+        enough to get them.)"""
         from .problems_dialog import problems_of
 
         controller = self._controller
         if controller is None:
-            dialog.set_problems((), self._item_name)
+            dialog.set_problems((), lambda _item_id: "")
             return
-        dialog.set_problems(problems_of(controller.skipped, controller.failures), self._item_name)
+        problems = problems_of(controller.skipped, controller.failures)
+        wanted = {problem.item_id for problem in problems[:MAX_PROBLEM_ROWS]}
+        names: dict[str, str] = {}
+        scene = self._scene
+        if scene is not None and wanted:
+            for item in scene.items():
+                item_id = str(getattr(item, "item_id", ""))
+                if item_id in wanted and item_id not in names:  # the topmost of a duplicated id
+                    names[item_id] = str(getattr(item, "name", "") or "")
+        dialog.set_problems(problems, lambda item_id: names.get(item_id, ""),
+                            max_rows=MAX_PROBLEM_ROWS)
 
     def _find_item(self, item_id: str) -> Any:
         scene = self._scene
@@ -867,14 +999,15 @@ class Workspace(QWidget):
                 return item
         return None
 
-    def _item_name(self, item_id: str) -> str:
-        return str(getattr(self._find_item(item_id), "name", "") or "")
-
     def select_item(self, item_id: str) -> None:
         """Select the item on the plan (a row of the problems list was activated)."""
         scene, item = self._scene, self._find_item(item_id)
         if scene is None or item is None:
             return
+        if self._mode is WorkspaceMode.VIEW3D:
+            # the plan is hidden in 3D mode, and a selection nobody can see is what
+            # ``clear_selection_hidden_by_3d_mode`` exists to prevent: show the plan
+            self.set_mode(WorkspaceMode.SPLIT)
         scene.clearSelection()
         item.setSelected(True)
         center_on = getattr(self._canvas, "centerOn", None)
@@ -901,7 +1034,7 @@ class Workspace(QWidget):
         warnings = int(getattr(health, "qml_warning_count", 0))
         if warnings > self._qml_warnings_seen:
             self._qml_warnings_seen = warnings
-            self._status_label.setText(self.tr(
+            self._say(_NOTICE_ENGINE, self.tr(
                 "The 3D view reported a problem. Details are in the log file."))
         if (self._retired >= RELEASE_AFTER_RETIRED and self._pane_is_showing()
                 and _now() - self._applied_at >= RELEASE_IDLE_S):
@@ -922,32 +1055,58 @@ class Workspace(QWidget):
             self.tr("3D is unavailable on this graphics device. The rest of the application "
                     "is not affected.\n\nDetails: {error}").format(error=clip_text(error)),
             self.tr("Use Compatibility Mode Next Time") if offer else "")
-        self._hide_compat_notice()
+        self._update_compat_notice()
 
     def _update_compat_notice(self) -> None:
+        """The compatibility line of the strip, and "Try Hardware Next Time".
+
+        Shown in EVERY state of the pane — running, failed to start, no graphics
+        device, switched off — whenever this session does not render on the graphics
+        card or the next one will not (the compat flag is on). The button is there
+        whenever the flag is: a machine that cannot start in software mode either had
+        no way back otherwise (only "Try Again", which asked for software again)."""
+        if self._pane is None:
+            return
         guard = self.guard
-        if guard.mode is not RenderMode.SOFTWARE:
+        flagged = guard.software_requested()
+        died = guard.reason is ModeReason.PREVIOUS_START_DIED
+        running = self._state in (View3DState.STARTING, View3DState.RUNNING)
+        if guard.mode is RenderMode.SOFTWARE and running:
+            text = (self.tr("3D is running in compatibility mode (software rendering) because "
+                            "it did not start properly last time.") if died
+                    else self.tr("3D is running in compatibility mode (software rendering)."))
+        elif guard.mode is RenderMode.SOFTWARE:  # … and it did not get as far as running
+            text = self.tr("Compatibility mode (software rendering) is switched on.")
+        elif guard.mode is RenderMode.OFF:
+            text = self.tr("3D is switched off: it did not start in compatibility mode "
+                           "(software rendering) either.")
+        elif flagged:  # this session is on the graphics card; the next one will not be
+            text = self.tr("Compatibility mode will be used the next time the application starts.")
+        else:
             self._hide_compat_notice()
             return
-        if guard.reason is ModeReason.PREVIOUS_START_DIED:
-            text = self.tr("3D is running in compatibility mode (software rendering) because "
-                           "it did not start properly last time.")
-        else:
-            text = self.tr("3D is running in compatibility mode (software rendering).")
         self._compat_label.setText(text)
         self._compat_label.show()
         self._compat_button.setText(self.tr("Try Hardware Next Time"))
-        self._compat_button.setVisible(guard.software_requested())
+        self._compat_button.setVisible(flagged)
+        self._refresh_notices()
 
     def _hide_compat_notice(self) -> None:
         self._compat_label.hide()
         self._compat_button.hide()
+        self._refresh_notices()
 
     def _on_compat_button(self) -> None:
-        self.guard.try_hardware_next_time()
-        self._compat_button.hide()
-        self._compat_label.setText(self.tr(
-            "Hardware rendering will be tried the next time the application starts."))
+        """"Try Hardware Next Time": say what really happened to the flag."""
+        if self.guard.try_hardware_next_time():
+            self._compat_button.hide()
+            self._compat_label.setText(self.tr(
+                "Hardware rendering will be tried the next time the application starts."))
+        else:  # the flag is still there (a folder that cannot be written): the button stays
+            self._compat_label.setText(self.tr(
+                "The setting could not be changed. Details are in the log file."))
+        self._compat_label.show()
+        self._refresh_notices()
 
     def _on_message_button(self) -> None:
         pane = self._pane
@@ -957,10 +1116,15 @@ class Workspace(QWidget):
             self._set_state(View3DState.NOT_STARTED)
             self._start_engine()
         elif self._state is View3DState.UNAVAILABLE:
-            self.guard.use_software_next_time()
-            pane.message_button.setEnabled(False)
-            pane.message_button.setText(self.tr(
-                "Compatibility mode will be used the next time the application starts."))
+            if self.guard.use_software_next_time():
+                pane.message_button.setEnabled(False)
+                pane.message_button.setText(self.tr(
+                    "Compatibility mode will be used the next time the application starts."))
+            else:
+                pane.message_button.setText(self.tr(
+                    "The setting could not be changed. Details are in the log file."))
+            # the strip says it too — with the way back ("Try Hardware Next Time")
+            self._update_compat_notice()
 
     # ── teardown ─────────────────────────────────────────────────────────────
 
@@ -975,6 +1139,8 @@ class Workspace(QWidget):
         self._health_timer.stop()
         self._drop_held_build()
         self._retired = 0  # the host goes, and what it cached with it
+        self._notices.clear()  # … and whatever the status line said about it
+        self._refresh_notices()
         controller, self._controller = self._controller, None
         if controller is not None:
             controller.shutdown()

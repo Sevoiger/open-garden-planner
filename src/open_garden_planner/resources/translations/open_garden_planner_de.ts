@@ -12618,6 +12618,22 @@ Details: {error}</translation>
             <source>Compatibility mode will be used the next time the application starts.</source>
             <translation>Beim nächsten Start der Anwendung wird der Kompatibilitätsmodus verwendet.</translation>
         </message>
+        <message>
+            <source>Compatibility mode (software rendering) is switched on.</source>
+            <translation>Der Kompatibilitätsmodus (Software-Rendering) ist eingeschaltet.</translation>
+        </message>
+        <message>
+            <source>3D is switched off: it did not start in compatibility mode (software rendering) either.</source>
+            <translation>3D ist ausgeschaltet: Es ist auch im Kompatibilitätsmodus (Software-Rendering) nicht gestartet.</translation>
+        </message>
+        <message>
+            <source>3D is switched off on this computer: it did not start, not even in compatibility mode (software rendering). The rest of the application is not affected.</source>
+            <translation>3D ist auf diesem Computer ausgeschaltet: Es ist nicht gestartet, auch nicht im Kompatibilitätsmodus (Software-Rendering). Der Rest der Anwendung ist nicht betroffen.</translation>
+        </message>
+        <message>
+            <source>The setting could not be changed. Details are in the log file.</source>
+            <translation>Die Einstellung konnte nicht geändert werden. Details stehen in der Protokolldatei.</translation>
+        </message>
     </context>
     <context>
         <name>View3DProblemsDialog</name>
@@ -12631,7 +12647,7 @@ Details: {error}</translation>
         </message>
         <message>
             <source>its shape could not be worked out</source>
-            <translation>seine Form konnte nicht ermittelt werden</translation>
+            <translation>die Form konnte nicht ermittelt werden</translation>
         </message>
         <message>
             <source>another object on the plan has the same internal id</source>
@@ -12639,23 +12655,23 @@ Details: {error}</translation>
         </message>
         <message>
             <source>its outline cannot be turned into a solid</source>
-            <translation>sein Umriss lässt sich nicht in einen Körper umsetzen</translation>
+            <translation>der Umriss lässt sich nicht in einen Körper umsetzen</translation>
         </message>
         <message>
             <source>its outline has too many points for the 3D view</source>
-            <translation>sein Umriss hat zu viele Punkte für die 3D-Ansicht</translation>
+            <translation>der Umriss hat zu viele Punkte für die 3D-Ansicht</translation>
         </message>
         <message>
             <source>one of its sizes is outside what the 3D view can show</source>
-            <translation>eine seiner Abmessungen liegt außerhalb dessen, was die 3D-Ansicht zeigen kann</translation>
+            <translation>eine der Abmessungen liegt außerhalb dessen, was die 3D-Ansicht zeigen kann</translation>
         </message>
         <message>
             <source>its 3D model could not be built</source>
-            <translation>sein 3D-Modell konnte nicht gebaut werden</translation>
+            <translation>das 3D-Modell konnte nicht gebaut werden</translation>
         </message>
         <message>
             <source>it could not be shown</source>
-            <translation>es konnte nicht angezeigt werden</translation>
+            <translation>die Anzeige ist nicht möglich</translation>
         </message>
         <message>
             <source>{name} ({kind}): {reason}</source>
@@ -12664,6 +12680,10 @@ Details: {error}</translation>
         <message>
             <source>{kind}: {reason}</source>
             <translation>{kind}: {reason}</translation>
+        </message>
+        <message>
+            <source>… and {count} more</source>
+            <translation>… und {count} weitere</translation>
         </message>
     </context>
 </TS>
