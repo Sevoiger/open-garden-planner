@@ -2133,6 +2133,12 @@ class ProjectManager(QObject):
                 item._item_id = UUID(obj["item_id"])
             # Restore custom colors if saved
             if "fill_color" in obj:
+                # Store the base color in the item, as the circle, ellipse and polygon
+                # branches do. Without it a loaded rectangle kept its TYPE's default
+                # here while its brush had the saved colour: the next save wrote the
+                # default back, and the 3D view tinted and baked the wrong colour.
+                if hasattr(item, "fill_color"):
+                    item.fill_color = QColor(obj["fill_color"])
                 # If we have a pattern, recreate the brush with both color and pattern
                 if fill_pattern:
                     brush = create_pattern_brush(fill_pattern, QColor(obj["fill_color"]))
