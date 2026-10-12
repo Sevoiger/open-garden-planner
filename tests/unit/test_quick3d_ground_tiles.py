@@ -86,6 +86,14 @@ class TestTilesInTheEngineFrame:
         assert scene.ground is None and sink.ground is None  # clear() releases the tiles
 
 
+def test_the_frozen_exe_ships_the_baker_and_the_tile_module() -> None:
+    """Nothing imports the baker until the workspace wires it (L1.3), and the engine
+    modules are loaded lazily: both are named to PyInstaller."""
+    spec = (SCENE.parents[6] / "installer" / "ogp.spec").read_text(encoding="utf-8")
+    assert '"open_garden_planner.ui.view3d.ground_bake",' in spec
+    assert '"open_garden_planner.ui.view3d.quick3d.ground_tiles",' in spec
+
+
 # ── Garden.qml, read as text ──────────────────────────────────────────────────
 
 CODE = strip_comments(SCENE.read_text(encoding="utf-8"))

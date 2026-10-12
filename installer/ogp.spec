@@ -169,6 +169,7 @@ a = Analysis(
         "PyQt6.Qt3DAnimation",
         "open_garden_planner.ui.view3d",
         "open_garden_planner.ui.view3d.snapshot",
+        "open_garden_planner.ui.view3d.ground_bake",
         "open_garden_planner.ui.view3d.qt3d_adapter",
         "open_garden_planner.ui.view3d.view3d_window",
         # Qt Quick 3D engine (ADR-048, L1.2): ui/view3d/quick3d/ is the ONE
