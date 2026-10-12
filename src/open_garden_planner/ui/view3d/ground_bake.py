@@ -204,13 +204,16 @@ _SPILL_PX: Final = 2.0
 #: one more element — the chain-link mesh is drawn from each element to the next.
 _ELEMENT_REACH: Final = (2.5, 8.0)
 
-#: The bounds of ONE tile (module docstring, the table). Measured on the
-#: development box: a record costs 0.02–0.15 ms to paint into a tile (1.3 ms when
-#: it fills the tile with a turned texture), an outline 1 µs a vertex and pass, a
-#: style element 2–5 µs, a step of the exact walk 0.15 µs, a dash 3 µs — so a tile
-#: at every bound costs about half a second and a full bake of the largest ground
-#: (64 tiles) about half a minute; a plan that is not built to reach them is three
-#: orders of magnitude below.
+#: The bounds of ONE tile (module docstring, the table). They bound COUNTS; what a
+#: count costs is Qt's to say. Measured on the development box, one 512-px tile at
+#: a bound: 256 turned textured rectangles 196 ms (solid: 39 ms); 262,144 polygon
+#: vertices 172 ms; five plain 20 cm lines of 16,384 points folded into the tile
+#: 509 ms (a stroke that crosses a tile costs about 6 µs a segment, not the 0.7 µs
+#: of a polygon's vertex); two gravel paths of 16,384 points — the styled vertex
+#: bound, with the elements and the walk at theirs — 2.65 s. A plan BUILT for it,
+#: two such paths zigzagging over a 16-tile plan, bakes in 12.6 s (0.8 s a tile)
+#: and again whenever that item is edited; the 2D canvas repaints the same item
+#: with every one of its elements. The two bench plans: 18 ms and 83 ms.
 TILE_RECORDS: Final = 256
 TILE_VERTICES: Final = 262_144
 TILE_ELEMENTS: Final = 16_384

@@ -4241,7 +4241,12 @@ stroke or a sprite that reaches far beyond a tile costs the tile's pixels: `QPai
 the image. Memory: the largest ground is 64 MB, held once — the baker's tiles are the very
 objects the sync and the sink hold. Measured for 50,000 whole-plan rectangles: 55,121 entries
 held (one per record and tile would be 1,000,001), 5,140 comparisons for a full bake, 257 for a
-one-item edit.
+one-item edit. The bounds are on COUNTS; what a count costs is the rasteriser's. One tile at a
+bound, measured: 256 turned textured rectangles 196 ms; 262,144 polygon vertices 172 ms; five
+plain lines of 16,384 points folded into the tile 509 ms; two gravel paths of 16,384 points 2.65 s.
+A plan built for it — two such paths zigzagging over a 16-tile plan — bakes in 12.6 s and again
+on every edit of that item (the canvas repaints the same item with all of its elements); the
+bench plans take 18 ms and 83 ms. Bounded and linear, not small.
 
 **In the engine** (`quick3d/ground_tiles.py`, `Garden.qml`): one quad per tile in the plan's
 plane with its own texture. `flipV: true` (rows are north-up); `ClampToEdge` on both axes (a
