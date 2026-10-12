@@ -13,8 +13,9 @@ The gates of the story that need pixels, a device or a clock:
 - **G5** the app closes clean with 3D visible, hidden, and never opened;
 - **G6** (twin) a start that died → compatibility mode with its notice, on the
   software adapter by Qt's own account → "try hardware" → hardware again;
-- **G7** the leak half of ADR-048 criterion 10: the A/B memory soak with its
-  positive control, and DXGI's reading of dedicated GPU memory;
+- **G7** the leak half of ADR-048 criterion 10: the A/B memory soak — no readback in
+  its measured loop; once with the view presenting and once with its frames withheld —
+  with its positive control, and DXGI's reading of dedicated GPU memory;
 - **G8** Qt WebEngine renders before AND after the 3D host exists;
 - **G11** the 2D pan step beside the live 3D view costs at most 1.3 times what it
   costs alone.
@@ -265,17 +266,22 @@ def test_no_edit_moves_the_real_cameras_and_a_new_document_does_once(scratch: Pa
 
 
 # ── G7: the memory soak ──────────────────────────────────────────────────────
+#
+# The measured loop takes NO frame from the host (``grabs="none"``, the scenario's
+# default): a readback renders a frame that is never presented, and a soak that reads
+# back every cycle measures the readback. One frame before the loop and one after it
+# prove the picture. The gate is judged twice: with the view PRESENTING and with its
+# frames WITHHELD (shown, exposed, nothing draws it — the display asleep).
 
 
 def _soak(scratch: Path, variant: str, **options: Any) -> dict[str, Any]:
-    # frames must be PRESENTED (run_gate's default): what a destroyed Model's mesh held is
-    # freed at the end of a presented frame, and with the display asleep Windows presents none
     run = _clean(run_gate(scratch, "soak", variant=variant, reloads=RELOADS, **options))
     step = run.step("soak")
-    keys = ("variant", "release", "reloads", "curve_mb", "slope_second_half_mb_per_reload",
-            "slope_all_mb_per_reload", "growth_mb", "geometry_uploads", "kept_mb", "parts",
-            "cache_releases", "same_image_after_release", "frames_presented_per_reload",
-            "gpu_curve_mb", "gpu_slope_second_half_mb_per_reload")
+    keys = ("variant", "frames", "grabs", "release", "reloads", "start_mb", "curve_mb",
+            "slope_second_half_mb_per_reload", "slope_all_mb_per_reload", "growth_mb",
+            "after_the_last_frame_mb", "geometry_uploads", "kept_mb", "parts", "parts_after",
+            "cache_releases", "in_the_loop", "frames_presented_per_reload", "presented_again",
+            "same_image_at_the_end", "gpu_curve_mb", "gpu_slope_second_half_mb_per_reload")
     numbers = {key: step.get(key) for key in keys}
     numbers["adapter"] = run.qt["adapter"]
     numbers["gpu_before_mb"] = step["gpu_before"].get("process_dedicated_mb")
@@ -283,9 +289,16 @@ def _soak(scratch: Path, variant: str, **options: Any) -> dict[str, Any]:
     numbers["gpu_reading"] = ("IDXGIAdapter3::QueryVideoMemoryInfo, local segment, this process"
                               if step["gpu_before"].get("available") else
                               step["gpu_before"].get("why", "not available"))
-    suffix = f"_release_{options['release']}" if "release" in options else ""
-    MEASURED.setdefault("G7", {})[f"{variant}{suffix}"] = numbers
+    name = "/".join([variant, *(f"{key}={options[key]}" for key in ("frames", "grabs", "release")
+                                if key in options)])
+    MEASURED.setdefault("G7", {})[name] = numbers
     return numbers
+
+
+def _took_no_frame(soak: dict[str, Any]) -> None:
+    assert soak["grabs"] == "none" and soak["in_the_loop"]["frames_read_back"] == 0
+    assert soak["same_image_at_the_end"] is True, "the ONE frame after the loop is the one before it"
+    assert soak["parts_after"] == soak["parts"]
 
 
 @pytest.fixture(scope="module")
@@ -295,11 +308,12 @@ def soak_rebuild_on(scratch: Path) -> dict[str, Any]:
 
 def test_twenty_rebuilds_of_the_engine_scene_stay_under_the_leak_bound(
         soak_rebuild_on: dict[str, Any]) -> None:
-    """ADR-048 criterion 10's leak half, in the production host: every reload tears the
-    engine scene down and builds every Model and geometry again."""
+    """ADR-048 criterion 10's leak half, in the production host, the view PRESENTING:
+    every reload tears the engine scene down and builds every Model and geometry again."""
     soak = soak_rebuild_on
+    _took_no_frame(soak)
     assert soak["geometry_uploads"] == RELOADS * soak["parts"], "every reload rebuilt everything"
-    assert min(soak["frames_presented_per_reload"]) >= 1, "frames were presented, not only read back"
+    assert min(soak["frames_presented_per_reload"]) >= 1, "every rebuild was drawn and presented"
     assert soak["slope_second_half_mb_per_reload"] < LEAK_BOUND_MB_PER_RELOAD, soak["curve_mb"]
 
 
@@ -307,8 +321,7 @@ def test_the_workspace_released_the_engines_caches_after_every_rebuild(
         soak_rebuild_on: dict[str, Any]) -> None:
     soak = soak_rebuild_on
     assert soak["cache_releases"] == RELOADS
-    assert soak["same_image_after_release"] and all(soak["same_image_after_release"]), (
-        "a release changed a pixel")
+    assert soak["same_image_at_the_end"] is True, "twenty releases changed a pixel"
 
 
 def test_dedicated_gpu_memory_does_not_grow_with_the_rebuilds(soak_rebuild_on: dict[str, Any]) -> None:
@@ -320,8 +333,25 @@ def test_dedicated_gpu_memory_does_not_grow_with_the_rebuilds(soak_rebuild_on: d
     assert soak["gpu_slope_second_half_mb_per_reload"] < LEAK_BOUND_MB_PER_RELOAD, soak["gpu_curve_mb"]
 
 
+def test_the_same_rebuilds_stay_under_the_bound_in_a_view_that_presents_nothing(
+        scratch: Path) -> None:
+    """The second slope of the gate: the same twenty rebuilds while the view presents no
+    frame (the display asleep, a session that does not present — made on purpose: the
+    view's expose, update and paint events are eaten). The pipeline goes on applying;
+    nothing draws; and when the view presents again it shows the plan as it is."""
+    soak = _soak(scratch, "rebuild_on", frames="withheld")
+    _took_no_frame(soak)
+    spell = soak["in_the_loop"]
+    assert spell["frames_presented"] == 0 and spell["paint_events_eaten"] > 0, "the device"
+    assert soak["geometry_uploads"] == RELOADS * soak["parts"], "the pipeline was not held back"
+    assert spell["parts_at_the_end"] == soak["parts"]
+    assert soak["slope_second_half_mb_per_reload"] < LEAK_BOUND_MB_PER_RELOAD, soak["curve_mb"]
+    assert soak["presented_again"] is True
+
+
 def test_reloads_that_rebuild_nothing_stay_flat(scratch: Path) -> None:
     soak = _soak(scratch, "rebuild_off")
+    _took_no_frame(soak)
     assert soak["geometry_uploads"] == 0, "the same plan again: no Model is rebuilt"
     assert soak["slope_second_half_mb_per_reload"] < LEAK_BOUND_MB_PER_RELOAD, soak["curve_mb"]
 
@@ -330,18 +360,19 @@ def test_the_positive_control_fails_on_exactly_that_gate(scratch: Path) -> None:
     """25 MB kept alive per reload, on the same machine, through the same measurement:
     the gate must see it — or a pass above means nothing."""
     soak = _soak(scratch, "control")
-    assert soak["kept_mb"] == 25 * RELOADS
+    assert soak["kept_mb"] == 25 * RELOADS and soak["in_the_loop"]["frames_read_back"] == 0
     assert soak["slope_second_half_mb_per_reload"] >= LEAK_BOUND_MB_PER_RELOAD, soak["curve_mb"]
 
 
 def test_what_the_soak_reads_without_the_release_is_reported(scratch: Path) -> None:
-    """The A of the A/B, never judged: the same soak with the workspace's release out
-    of reach. On Direct3D 11 with a hardware adapter it read 28 to 38 MB per reload
-    (ADR-057); on another device it may read anything — which is why it is a number
-    in the report and not a bound. If it ever reads like the run WITH the release,
-    Qt has stopped keeping what it kept, and the release can go."""
+    """The A of the A/B, never judged: the same soak — presenting, no readback — with
+    the workspace's release out of reach. On Direct3D 11 with a hardware adapter it
+    read 19 MB per reload (ADR-057); on another device it may read anything — which
+    is why it is a number in the report and not a bound. If it ever reads like the
+    run WITH the release, Qt has stopped keeping what it kept, and the release can go."""
     soak = _soak(scratch, "rebuild_on", release="off")
     assert soak["cache_releases"] == 0 and soak["geometry_uploads"] == RELOADS * soak["parts"]
+    assert soak["in_the_loop"]["frames_read_back"] == 0
 
 
 def test_a_release_inside_the_pass_holds_on_a_real_device_too(scratch: Path) -> None:
@@ -349,53 +380,22 @@ def test_a_release_inside_the_pass_holds_on_a_real_device_too(scratch: Path) -> 
     pipeline's pass, right after Models were destroyed and created. Here every
     rebuild is such a flood (the threshold set to 1): no poll, no quiet moment."""
     soak = _soak(scratch, "rebuild_on", release="flood")
+    _took_no_frame(soak)
     assert soak["cache_releases"] >= RELOADS, "every rebuild released with its pass"
     assert soak["geometry_uploads"] == RELOADS * soak["parts"]
     assert soak["slope_second_half_mb_per_reload"] < LEAK_BOUND_MB_PER_RELOAD, soak["curve_mb"]
 
 
-# ── G7, second half: a view that presents nothing ────────────────────────────
-
-
-def _dark(scratch: Path, pacing: str) -> dict[str, Any]:
-    run = _clean(run_gate(scratch, "dark", reloads=RELOADS, pacing=pacing))
-    step = run.step("dark")
-    keys = ("pacing", "reloads", "curve_mb", "slope_second_half_mb_per_reload",
-            "slope_all_mb_per_reload", "growth_mb", "parts", "in_the_dark", "recovered",
-            "held_after_each_reload", "parts_after", "same_image_as_before",
-            "frames_presented_after")
-    numbers = {key: step[key] for key in keys}
-    numbers["adapter"] = run.qt["adapter"]
-    MEASURED.setdefault("G7_dark", {})[pacing] = numbers
-    return numbers
-
-
-def test_a_view_that_presents_nothing_is_given_one_generation(scratch: Path) -> None:
-    """The same twenty rebuilds while the view presents no frame (the display asleep, a
-    session that does not present — here made on purpose: the view's paint events are
-    eaten). A window in that state keeps every byte uploaded to it; the pipeline's
-    rule is that it is uploaded ONE generation and no more."""
-    dark = _dark(scratch, "product")
-    spell = dark["in_the_dark"]
-    assert spell["frames_presented"] == 0, "the device: nothing was presented"
-    assert spell["paint_events_eaten"] > 0
-    assert spell["geometry_uploads"] == dark["parts"], "ONE generation the view has not shown"
-    assert all(dark["held_after_each_reload"][1:]), "every later rebuild waited"
-    assert spell["parts_at_the_end"] == 0, "the engine was cleared and given nothing more"
-    assert dark["slope_second_half_mb_per_reload"] < LEAK_BOUND_MB_PER_RELOAD, dark["curve_mb"]
-    # … and when it presents again the pipeline catches up by itself, to the same picture
-    assert dark["recovered"] is True and dark["parts_after"] == dark["parts"]
-    assert dark["frames_presented_after"] >= 1 and dark["same_image_as_before"] is True
-
-
-def test_what_the_dark_soak_reads_without_the_pacing_is_reported(scratch: Path) -> None:
-    """The A of that A/B, never judged: the controller's frame counter taken away, so
-    that every reload is uploaded into a view that presents nothing."""
-    dark = _dark(scratch, "off")
-    spell = dark["in_the_dark"]
-    assert spell["frames_presented"] == 0
-    assert spell["geometry_uploads"] == RELOADS * dark["parts"], "every reload was uploaded"
-    assert not any(dark["held_after_each_reload"])
+def test_what_a_readback_per_rebuild_costs_a_view_that_presents_nothing_is_reported(
+        scratch: Path) -> None:
+    """Why nothing takes a frame from the live view, as a number in the report and never
+    a bound: the same rebuilds with frames withheld AND one readback per rebuild. A
+    readback renders a frame that is never presented; what it holds waits for a
+    presented frame, and here none comes."""
+    soak = _soak(scratch, "rebuild_on", frames="withheld", grabs="every")
+    spell = soak["in_the_loop"]
+    assert spell["frames_presented"] == 0 and spell["frames_read_back"] == RELOADS
+    assert soak["presented_again"] is True and soak["same_image_at_the_end"] is True
 
 
 # ── G8: Qt WebEngine beside the 3D host ──────────────────────────────────────

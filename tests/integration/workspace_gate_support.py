@@ -99,10 +99,10 @@ def run_gate(scratch: Path, scenario: str, *, plan: Path | None = PLANS / "bench
     Qt asks a display-vblank thread for its update requests, and with the display
     asleep that thread is silent: a visible window presents its first frame and no
     more. With the switch Qt paces them by timer, so frames are PRESENTED whatever
-    the display does — the ordinary render path. Every scenario needs that: the
-    pipeline applies no second pass before the view has presented the first (a
-    machine whose display went to sleep would hold every scenario after its first
-    edit), and the memory soak measures what the end of a presented frame releases.
+    the display does — the ordinary render path, and what no scenario may depend
+    on is whether this machine's display happens to be awake. The memory soak needs
+    it most: what a destroyed Model held is given back at the end of a PRESENTED
+    frame (its ``frames="withheld"`` variant takes the frames away on purpose).
     ``False`` runs the child as the product starts: paced by the display.
     """
     spec, out, name = write_spec(scratch, scenario, store=store, **arguments)

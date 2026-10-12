@@ -55,7 +55,7 @@ from open_garden_planner.ui.view3d.workspace import View3DState, Workspace, Work
 from tests.integration.quick3d_render_support import isolated_env
 from tests.integration.test_scene3d_plants import drop
 from tests.integration.test_scene3d_snapshot import _recolour as recolour_fill
-from tests.integration.test_view3d_workspace_widget import FakeHost, fake_engine
+from tests.integration.test_view3d_workspace_widget import FakeHost
 
 REPO = Path(__file__).resolve().parents[2]
 PLANS = REPO / "tests" / "fixtures" / "plans"
@@ -73,14 +73,11 @@ class Engines:
         self.calls: list[bool] = []
         self.hosts: list[FakeHost] = []
         self.sinks: list[RecordingSink] = []
-        #: Whether the next engine presents frames (a visible view does: ``FakeHost``).
-        self.presenting = True
 
     def factory(self, prefer_software: bool) -> tuple[FakeHost, RecordingSink]:
         self.calls.append(prefer_software)
-        host, sink = fake_engine(prefer_software, presenting=self.presenting)
-        self.hosts.append(host)
-        self.sinks.append(sink)
+        self.hosts.append(FakeHost(prefer_software))
+        self.sinks.append(RecordingSink())
         return self.hosts[-1], self.sinks[-1]
 
     @property
@@ -306,7 +303,6 @@ def test_the_workflow_plan_split_edit_pause_clock_new_open_close(
     assert engines.calls == [] and workspace.controller is None
 
     # ── Split, from the View menu: the engine is built once, the plan appears ─
-    engines.presenting = False                   # the view has presented nothing yet
     split_action.trigger()
     assert workspace.mode is SPLIT and engines.calls == [False]
     assert canvas.isVisible() and workspace.pane.isVisible()
@@ -316,8 +312,7 @@ def test_the_workflow_plan_split_edit_pause_clock_new_open_close(
     sink, controller = engines.sink, workspace.controller
     assert sink.ground == GroundSpec(5000.0, 3000.0) and sink.sun == NO_LOCATION_SUN
     assert workspace.view3d_state is View3DState.STARTING
-    engines.host.presenting = True               # from here on it presents what it is given
-    engines.host.present()
+    engines.host.health_now.frames_presented = 1
     qtbot.waitUntil(lambda: workspace.view3d_state is View3DState.RUNNING, timeout=3000)
     framed = workspace.camera.pose
     assert framed == frame_pose(controller.plan_bounds(), 800.0 / 500.0)

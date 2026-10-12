@@ -335,8 +335,7 @@ def workspace_facts(window: Any) -> dict[str, Any]:
     if controller is not None:
         facts.update({"records": len(controller.sync.records), "snapshots": controller.snapshot_count,
                       "applies": controller.apply_count, "recoveries": controller.recovery_count,
-                      "last_error": controller.last_error, "active": controller.active,
-                      "held": controller.held, "held_count": controller.held_count})
+                      "last_error": controller.last_error, "active": controller.active})
     directory = workspace.guard._directory if workspace._guard else None
     if directory is not None and Path(directory).is_dir():
         facts["guard_files"] = sorted(p.name for p in Path(directory).iterdir()

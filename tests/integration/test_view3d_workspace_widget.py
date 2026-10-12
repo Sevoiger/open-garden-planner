@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
@@ -78,18 +78,27 @@ class FakeHost:
         self.closed = False
         self.releases = 0
         self.release_error: Exception | None = None
-        #: A visible view PRESENTS what it is given: every transaction its sink commits
-        #: moves the frame counter (``ShownSink``). False: a view that presents nothing —
-        #: not shown yet, the display asleep, a session that does not present.
-        self.presenting = True
-
-    def present(self, frames: int = 1) -> None:
-        self.health_now.frames_presented += frames
+        #: Every call that would take a FRAME from the live view. The workspace makes
+        #: none by itself (the memory rule, ADR-057); the real host has all four.
+        self.frames_taken: list[str] = []
 
     def release_cached_resources(self) -> None:
         self.releases += 1
         if self.release_error is not None:
             raise self.release_error
+
+    def grab(self) -> None:
+        self.frames_taken.append("grab")
+
+    def wait_ready(self, _timeout_s: float = 1.0) -> bool:
+        self.frames_taken.append("wait_ready")
+        return True
+
+    def pick(self, _x: float, _y: float) -> None:
+        self.frames_taken.append("pick")
+
+    def project(self, _point: Any) -> None:
+        self.frames_taken.append("project")
 
     def container(self, parent: QWidget | None = None) -> QWidget:
         self.widget = QWidget(parent)
@@ -113,40 +122,12 @@ class FakeHost:
             self.widget.deleteLater()
 
 
-class ShownSink(RecordingSink):
-    """The recording sink of a stand-in host: a committed transaction becomes a presented
-    frame while that host presents — a moment LATER, with the next turn of the event
-    loop, as on a real view (Qt reports a presented frame to the GUI thread through a
-    queued signal; the counter never moves inside a pass)."""
-
-    def __init__(self, host: FakeHost) -> None:
-        super().__init__()
-        self.host = host
-
-    def commit(self) -> None:
-        super().commit()
-        QTimer.singleShot(0, self._presented)
-
-    def _presented(self) -> None:
-        if self.host.presenting:
-            self.host.present()
-
-
-def fake_engine(prefer_software: bool, *, presenting: bool = True) -> tuple[FakeHost, ShownSink]:
-    """What ``Workspace.engine_factory`` returns in the GPU-less tests."""
-    host = FakeHost(prefer_software)
-    host.presenting = presenting
-    return host, ShownSink(host)
-
-
 class Bench:
     """A window with the workspace in it, the engine replaced at the seam."""
 
     def __init__(self, view: CanvasView, qtbot: Any, folder: Path, *,
                  fail_first: Exception | None = None, ui_state: Any = None) -> None:
         self.view, self.qtbot, self.folder = view, qtbot, folder
-        #: Whether the NEXT engine this bench builds presents frames (see ``FakeHost``).
-        self.presenting = True
         self.scene, self.commands = view.scene(), view.command_manager
         self.clock = SimClock(NOON)
         self.hosts: list[FakeHost] = []
@@ -170,7 +151,7 @@ class Bench:
         if self.fail_next is not None:
             error, self.fail_next = self.fail_next, None
             raise error
-        host, sink = fake_engine(prefer_software, presenting=self.presenting)
+        host, sink = FakeHost(prefer_software), RecordingSink()
         self.hosts.append(host)
         self.sinks.append(sink)
         return host, sink
@@ -575,72 +556,80 @@ def test_a_host_that_cannot_release_is_one_log_line_and_no_loop(
     assert bench.workspace.view3d_state is not View3DState.FAILED, "the view goes on"
 
 
-# ── uploads are paced by presented frames ────────────────────────────────────
+# ── nothing takes a frame from the live view (the memory rule) ───────────────
+
+#: The host calls that render a frame of their own. Measured (ADR-048 addendum
+#: "L1.3"): a frame rendered for a readback is never presented, and what it holds
+#: stays until a presented frame ends — in a view that presents nothing, for good.
+FRAME_TAKERS = frozenset({"grab", "grabWindow", "grabFramebuffer", "wait_ready", "pick", "project"})
+WORKSPACE_MODULES = ("workspace.py", "sync_controller.py", "orbit_input.py",
+                     "problems_dialog.py", "init_guard.py")
 
 
-def test_a_view_that_presents_nothing_is_given_one_generation_and_keeps_its_camera(
+def test_no_steady_path_takes_a_frame_from_the_live_view(
         bench: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The display goes to sleep with 3D visible and something edits the plan (an agent
-    over the API, all night). The engine is given ONE generation the view has not shown;
-    the rest is a flag — and when the view presents again, one catch-up pass, which is
-    an edit like any other: it does not move the camera."""
-    # the held pass stops looking for a frame quickly: what lets it go below is the POLL
-    monkeypatch.setattr(sync_controller, "PACE_DELAYS_MS", (5, 5))
-    workspace = bench.workspace
-    bed = bench.bed()
-    workspace.set_mode(SPLIT)
-    bench.settle()
-    controller, host, camera = workspace.controller, bench.host, workspace.camera
-    assert controller is not None
-    camera.orbit(33.0, 9.0)
-    camera.zoom(0.7)
-    camera.snap()
-    workspace._apply_camera()
-    pose, sent = camera.pose, len(host.cameras)
-
-    host.presenting = False                      # nothing is presented from here on
-    applies = controller.apply_count
-    bench.sink.clear_calls()
-    for index in range(40):
-        bench.commands.execute(MoveItemsCommand([bed], QPointF(1.0 + index, 0.0)))
-        bench.settle(5)
-    bench.settle(150)
-    assert controller.apply_count == applies + 1, "one generation, however many edits"
-    assert bench.sink.ops() == [("begin", None), ("update_transform", str(bed.item_id)),
-                                ("commit", None)]
-    assert controller.held is True and controller.dirty is True
-    bench.poll()                                 # the poll looks: still nothing presented
-    bench.settle(40)
-    assert controller.apply_count == applies + 1
-    assert controller._pace_timer.isActive() is False, "no timer spins for a dark view"
-
-    host.presenting = True                       # the display is back …
-    host.present()
-    bench.settle(60)
-    assert controller.apply_count == applies + 1, "nobody has looked yet"
-    bench.poll()                                 # … and the health poll notices
-    bench.settle()
-    assert controller.apply_count == applies + 2 and controller.held is False
-    assert bench.sink.state() == controller.sync.expected_state()
-    assert camera.pose is pose and camera.moving is False
-    assert len(host.cameras) == sent, "the catch-up pass did not touch the camera"
-
-
-def test_the_first_pass_is_not_held_and_the_second_waits_for_the_first_frame(
-        bench: Bench) -> None:
-    """Opening 3D on a machine whose view presents nothing: the garden is built once
-    (so that the first frame, when it comes, shows it) and that is all."""
-    bench.presenting = False
-    bed = bench.bed()
-    workspace = bench.workspace
-    workspace.set_mode(SPLIT)
-    bench.settle()
+    """What the workspace does BY ITSELF — the pass, the health poll, the camera's
+    timer, a resize, the splitter, a release, a document change, hiding and showing —
+    asks the host for no frame: no ``grab()``, no ``wait_ready()``, no ``pick()`` /
+    ``project()``. (A click that picks is a user's own action and another story's.)"""
+    rig = Releases(bench, monkeypatch, after=2)
+    workspace, host = bench.workspace, bench.host
     controller = workspace.controller
-    assert controller is not None and bench.sink.item_ids() == (str(bed.item_id),)
-    assert workspace.view3d_state is View3DState.STARTING, "no frame was presented yet"
-    bench.commands.execute(MoveItemsCommand([bed], QPointF(5.0, 0.0)))
+    assert controller is not None
+    bed = rig.beds[-1]
+    passes = controller.apply_count
+    for index in range(12):                                  # the pass, again and again
+        bench.commands.execute(MoveItemsCommand([bed], QPointF(2.0 + index, 1.0)))
+        bench.settle(10)
+        bench.poll()                                         # the health poll
+    assert controller.apply_count >= passes + 12
+    bench.clock.set_time_of_day(time(9, 30))                 # the light
+    bench.clock.set_date(date(2027, 5, 2))
+    rig.delete(2)                                            # … a release of the caches
+    rig.idle()
+    bench.poll()
+    assert host.releases == 1
+    host.filters[0].eventFilter(None, _wheel(2))             # the camera's timer
+    bench.qtbot.waitUntil(lambda: not workspace.camera.moving, timeout=5000)
+    bench.window.resize(900, 520)                            # a resize
+    bench.settle(40)
+    sizes = workspace.splitter.sizes()                       # the splitter
+    workspace.splitter.setSizes([sizes[0] - 120, sizes[1] + 120])
+    workspace.splitter.splitterMoved.emit(sizes[0] - 120, 1)
+    bench.settle(40)
+    for mode in (PLAN, SPLIT, VIEW3D, SPLIT):                # hiding and showing
+        workspace.set_mode(mode)
+        bench.settle(40)
+    bench.scene.clear()                                      # a new document
+    bench.bed(100.0, 100.0)
+    workspace.document_changed()
     bench.settle(150)
-    assert controller.apply_count == 1 and controller.held is True
+    host.health_now.frames_presented = 3
+    bench.poll()
+    workspace.reset_view()
+    bench.qtbot.waitUntil(lambda: not workspace.camera.moving, timeout=5000)
+    assert len(host.cameras) > 3 and not controller.dirty, "all of it really ran"
+    assert host.frames_taken == []
+
+
+def test_the_workspaces_modules_never_ask_a_host_for_a_frame() -> None:
+    """The same rule, read from the source: not one call of a frame-taking method in the
+    five modules of the workspace. The story that adds the click (picking) allows
+    ``pick`` for ``orbit_input.py`` here, by name — and for nothing that runs by itself."""
+    import ast
+
+    folder = Path(workspace_module.__file__).resolve().parent
+    found = []
+    for name in WORKSPACE_MODULES:
+        tree = ast.parse((folder / name).read_text(encoding="utf-8"), filename=name)
+        found += [f"{name}:{node.lineno} .{node.func.attr}()" for node in ast.walk(tree)
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                  and node.func.attr in FRAME_TAKERS]
+    assert found == []
+    # the control: the scan sees such a call where there is one (the engine's own driver)
+    offscreen = (folder / "quick3d" / "offscreen.py").read_text(encoding="utf-8")
+    assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+               and node.func.attr in FRAME_TAKERS for node in ast.walk(ast.parse(offscreen)))
 
 
 # ── gate G3: edits never move the camera ─────────────────────────────────────
@@ -788,13 +777,12 @@ def test_reset_view_and_home_frame_the_plan_again(bench: Bench) -> None:
 
 
 def test_the_first_presented_frame_clears_the_marker(bench: Bench) -> None:
-    bench.presenting = False                     # built and given its scene, nothing shown yet
     workspace = bench.workspace
     workspace.set_mode(VIEW3D)
     bench.settle()
     bench.poll()
     assert workspace.view3d_state is View3DState.STARTING and bench.files() == [marker_name(ME)]
-    bench.host.present()
+    bench.host.health_now.frames_presented = 1
     bench.poll()
     assert workspace.view3d_state is View3DState.RUNNING and bench.files() == []
     assert workspace.compat_text() == "" and workspace.message_text() == ""

@@ -38,17 +38,24 @@ that hopes the paint came first; a label that is never painted releases the
 pipeline after ``BUILD_NOTICE_WAIT_MS``. The same for a new document while 3D is
 shown.
 
-UPLOADS ARE PACED BY PRESENTED FRAMES. The controller is handed this host's
-presented-frame counter (``health().frames_presented``) and applies no second pass
-before the view has presented the first (its docstring; ADR-057 decision 17). The
-health poll calls ``controller.resume()``, which is how a pass that waited through
-a dark spell is let go when the view presents again.
+NOTHING HERE TAKES A FRAME FROM THE LIVE VIEW (ADR-057 decision 17, measured). A
+readback of the host (``grab()``, and ``wait_ready()`` / ``pick()`` / ``project()``,
+which need a frame) renders a frame of its own that is never presented, and what
+such a frame holds is given back only when a PRESENTED frame ends — in a view that
+presents nothing (the display asleep), never. So the pass, the health poll, the
+timers, a resize and the splitter ask the host for none of them: the workspace
+tells the engine what the plan is, and Qt draws it when it draws. A picture of the
+3D view for a file or a thumbnail goes through ``quick3d/offscreen.py`` (a host of
+its own that gives everything back when it closes), never through the shown host.
+A click that picks (L1.8) is a user's own action, once. Pinned by a scan of this
+package's five modules and by a stand-in host that records such calls.
 
 WHAT A DESTROYED MODEL LEAVES BEHIND (ADR-057, measured). Qt Quick 3D keeps
-graphics state for every Model it once drew — 0.1 to 0.35 MB each on Direct3D 11
+graphics state for every Model it once drew — about 0.2 MB each on Direct3D 11
 with the sun's shadow passes — until ``QQuickWindow.releaseResources()`` is
-called; nothing else gives it back (20 reloads of the small bench plan: 34.6
-MB per reload without, 2.3 with). The pipeline's passes say how many items lost
+called; nothing else gives it back (20 rebuilds of the small bench plan in a
+presenting view, no readback: 19 MB per rebuild without, 2 with). The
+pipeline's passes say how many items lost
 their Models (``TickReport.retired``); the workspace counts them and tells the
 host to let go — when the pipeline has been quiet for a moment
 (``RELEASE_AFTER_RETIRED``), or at once when a flood of them piles up
@@ -108,7 +115,7 @@ HEALTH_SLOW_MS: Final = 2000
 BUILD_NOTICE_WAIT_MS: Final = 250
 #: The engine's cached graphics state is released once this many items lost their
 #: Models AND the pipeline has been quiet for ``RELEASE_IDLE_S`` (the health poll
-#: looks) — at 0.1 to 0.35 MB per Model that is 6 to 22 MB.
+#: looks) — at about 0.2 MB per Model that is some 13 MB.
 RELEASE_AFTER_RETIRED: Final = 64
 RELEASE_IDLE_S: Final = 0.5
 #: … and at once, with the pass, when this many piled up: a pipeline that is never
@@ -582,11 +589,7 @@ class Workspace(QWidget):
             container = host.container(pane)
             orbit = OrbitInput(self._camera, self._view_height, parent=self)
             host.install_event_filter(orbit)
-            frames = host.health  # bound once: the counter of THIS host
-            controller = Scene3DController(
-                scene, clock, self._location, sink, parent=self,
-                # uploads are paced by presented frames (the controller's docstring)
-                presented_frames=lambda: int(frames().frames_presented))
+            controller = Scene3DController(scene, clock, self._location, sink, parent=self)
         except Exception as error:  # noqa: BLE001 - an import, the scene file, anything
             guard.init_failed()
             _log_failure("The 3D view could not be started", error)
@@ -883,9 +886,6 @@ class Workspace(QWidget):
             self._qml_warnings_seen = warnings
             self._status_label.setText(self.tr(
                 "The 3D view reported a problem. Details are in the log file."))
-        controller = self._controller
-        if controller is not None:
-            controller.resume()  # a pass that waited for a presented frame: has one come?
         if (self._retired >= RELEASE_AFTER_RETIRED and self._pane_is_showing()
                 and _now() - self._applied_at >= RELEASE_IDLE_S):
             self._release_engine_caches()

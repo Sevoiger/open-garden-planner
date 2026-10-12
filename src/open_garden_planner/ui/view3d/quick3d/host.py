@@ -974,16 +974,19 @@ class Quick3DHost:
         a release identical to the one before it, every time it was looked at).
 
         WHY (L1.3, ADR-057): Qt Quick 3D keeps per-draw-call state for every Model
-        it ever DREW — and keeps it after the Model was destroyed. 0.1 to 0.35 MB
-        per Model with the sun's shadow passes on, independent of the mesh's size;
-        nothing but this call gives it back (20 rebuilds of the small bench plan:
-        29 to 38 MB per rebuild without it, 3.9 to 4.9 with one call per rebuild).
-        The call takes 2 to 10 ms on the GUI thread and the next frame as much
-        again. WHEN to call it is the caller's policy (``ui/view3d/workspace.py``).
+        it ever DREW — and keeps it after the Model was destroyed. About 0.2 MB per
+        Model with the sun's shadow passes on, independent of the mesh's size;
+        nothing but this call gives it back (20 rebuilds of the small bench plan in
+        a presenting view, no readback: 19 MB per rebuild without it, 2 with one
+        call per rebuild). The call takes 2 to 10 ms on the GUI thread and the next
+        frame as much again. WHEN to call it is the caller's policy
+        (``ui/view3d/workspace.py``).
 
         What it does NOT do: it frees no mesh buffer of a destroyed Model — Qt does
         that itself at the END OF A PRESENTED FRAME, and a readback (``grab()``) is
-        not one.
+        not one: a frame rendered for a readback is never presented, and what it
+        holds waits for the next frame that is. Which is why nothing takes a frame
+        from a live, shown host on its own (the workspace's rule, ADR-057).
         """
         self._open("release_cached_resources")
         self._view.releaseResources()
