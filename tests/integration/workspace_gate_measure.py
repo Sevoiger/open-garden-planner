@@ -539,20 +539,23 @@ def scenario_soak(window: Any, args: dict[str, Any]) -> Iterator[Any]:
             _pump_until(lambda: not controller.dirty and len(controller.sync.records) > 0, 30.0)
         if variant == "control":
             kept.append(b"\x01" * (25 * 1024 * 1024))
-        _grab(host)
+        # the frame right after the pass — before the workspace can have released
+        # anything (it waits for the pipeline to be quiet for a moment first)
+        releases_seen = host.cache_releases
+        owed.append(workspace._retired)
+        before_release = _grab(host)[1]
         # two PRESENTED frames after the readback: what a destroyed Model held is
         # released at the end of a presented frame, never by a readback (measured)
         wanted = host.health().frames_presented + 2
         _pump_until(lambda wanted=wanted: host.health().frames_presented >= wanted, 2.0)
         _pump(30)
-        owed.append(workspace._retired)
-        if release == "product" and workspace._retired >= workspace_module.RELEASE_AFTER_RETIRED:
+        if release == "product" and owed[-1] >= workspace_module.RELEASE_AFTER_RETIRED:
             # the workspace releases at its next health poll once the pipeline was
-            # quiet for a moment: wait for exactly that, and look at the frame
-            # before and after — a release must not change a pixel
-            before_release = _grab(host)[1]
-            _pump_until(lambda: workspace._retired == 0, 10.0)
-            same.append(before_release == _grab(host)[1])
+            # quiet: wait for exactly that, as a user who opened a plan and looks at
+            # it gives it the time — and a release must not change a pixel
+            _pump_until(lambda seen=releases_seen: host.cache_releases > seen, 10.0)
+            if host.cache_releases > releases_seen:
+                same.append(before_release == _grab(host)[1])
             wanted = host.health().frames_presented + 2
             _pump_until(lambda wanted=wanted: host.health().frames_presented >= wanted, 2.0)
         presented.append(host.health().frames_presented - frames)
@@ -649,24 +652,46 @@ def scenario_coexist(window: Any, _args: dict[str, Any]) -> Iterator[Any]:
 
 # ── G11: the 2D pan cost beside the live 3D view ─────────────────────────────
 
+_PAN_STEP_PX = 9
+_PAN_TURN_AFTER = 20
+
 
 def _pan_steps(window: Any, steps: int) -> list[float]:
+    """``steps`` pan steps along ONE fixed path: from the middle of the scroll range,
+    20 steps right, 20 left, and so on. Every block walks the same pixels — what a
+    step costs depends on what it uncovers (3 ms over lawn, 30 ms over a dense bed),
+    so blocks that walked different stretches of the plan compared the plan with
+    itself (measured: ratios per round between 0.16 and 7.2)."""
     from PyQt6.QtCore import QCoreApplication
 
     canvas = window.canvas_view
     bar = canvas.horizontalScrollBar()
+    reach = _PAN_STEP_PX * _PAN_TURN_AFTER
+    middle = (bar.minimum() + bar.maximum()) // 2
+    assert bar.minimum() <= middle <= middle + reach <= bar.maximum(), (
+        f"nothing to pan: scroll range {bar.minimum()}..{bar.maximum()}")
+    bar.setValue(middle)
+    QCoreApplication.processEvents()
     times: list[float] = []
     for index in range(steps):
-        target = bar.value() + (9 if (index // 20) % 2 == 0 else -9)
+        target = bar.value() + (_PAN_STEP_PX if (index // _PAN_TURN_AFTER) % 2 == 0 else -_PAN_STEP_PX)
         started = time.perf_counter()
         bar.setValue(target)
         QCoreApplication.processEvents()
         times.append((time.perf_counter() - started) * 1000.0)
+        assert bar.value() == target, "a pan step did not scroll"
     return times
 
 
 def scenario_pan(window: Any, args: dict[str, Any]) -> Iterator[Any]:
-    steps = int(args.get("steps", 300))
+    """Gate G11. ``rounds`` times: ``steps`` pan steps in Split, then ``steps`` in Plan
+    with the canvas at the SAME size (the window shrinks by the 3D pane's width).
+    Short alternating blocks along the same path (``_pan_steps``), so that what else
+    the machine is doing lands on both sides alike — two long blocks one after the
+    other measured the machine's drift as much as the 3D view (1.10 to 1.28 for the
+    same build on a busy box)."""
+    steps = int(args.get("steps", 60))
+    rounds = int(args.get("rounds", 6))
     window.showNormal()
     window.resize(int(args.get("width", 2200)), int(args.get("height", 1100)))
     yield 300
@@ -676,30 +701,35 @@ def scenario_pan(window: Any, args: dict[str, Any]) -> Iterator[Any]:
     for _ in range(4):
         canvas.zoom_in()      # so that the plan is wider than the view: there is something to pan
     yield 300
-    split_size = (canvas.width(), canvas.height())
-    _pan_steps(window, 40)     # warm
-    split = _pan_steps(window, steps)
     pane_width = workspace.pane.width() + workspace.splitter.handleWidth()
-    hook._enter(window, "plan")
-    window.resize(window.width() - pane_width, window.height())   # the canvas keeps its size
-    yield 400
-    plan_size = (canvas.width(), canvas.height())
-    _pan_steps(window, 40)
-    plan = _pan_steps(window, steps)
-    # and once more in Split, so that an ordering effect would show
-    window.resize(window.width() + pane_width, window.height())
-    hook._enter(window, "split")
-    yield 500
-    _live(window)
-    _pan_steps(window, 40)
-    split_again = _pan_steps(window, steps)
+    split: list[float] = []
+    plan: list[float] = []
+    sizes: set[tuple[str, int, int]] = set()
+    per_round: list[float] = []
+    for _round in range(rounds):
+        sizes.add(("split", canvas.width(), canvas.height()))
+        _pan_steps(window, 15)     # warm
+        in_split = _pan_steps(window, steps)
+        hook._enter(window, "plan")
+        window.resize(window.width() - pane_width, window.height())   # the canvas keeps its size
+        yield 350
+        sizes.add(("plan", canvas.width(), canvas.height()))
+        _pan_steps(window, 15)
+        in_plan = _pan_steps(window, steps)
+        window.resize(window.width() + pane_width, window.height())
+        hook._enter(window, "split")
+        yield 350
+        _live(window)
+        split += in_split
+        plan += in_plan
+        per_round.append(round(statistics.median(in_split) / statistics.median(in_plan), 3))
     surface = window.windowHandle().surfaceType().name if window.windowHandle() else "?"
-    step("pan", steps=steps, split_ms=_summary(split), plan_ms=_summary(plan),
-         split_again_ms=_summary(split_again), canvas_px_split=split_size,
-         canvas_px_plan=plan_size, top_level_surface=surface,
+    step("pan", steps=steps, rounds=rounds, split_ms=_summary(split), plan_ms=_summary(plan),
+         canvas_px=sorted(sizes), top_level_surface=surface,
          ratio=round(statistics.median(split) / statistics.median(plan), 3),
-         ratio_again=round(statistics.median(split_again) / statistics.median(plan), 3),
-         facts=facts(window))
+         # the same comparison where other processes disturb least: the fastest tenth
+         ratio_of_p10=round(_percentile(split, 0.10) / _percentile(plan, 0.10), 3),
+         ratio_per_round=per_round, facts=facts(window))
     yield 100
 
 

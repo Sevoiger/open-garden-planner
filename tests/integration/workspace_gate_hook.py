@@ -313,6 +313,8 @@ def workspace_facts(window: Any) -> dict[str, Any]:
     if workspace is None:
         return {"workspace": None}
     facts: dict[str, Any] = {
+        # what of Qt Quick this process has imported so far: nothing before 3D is asked for
+        "quick_modules": sorted(name for name in sys.modules if name.startswith("PyQt6.QtQuick")),
         "mode": workspace.mode.value, "state": workspace.view3d_state.value,
         "guard_mode": getattr(workspace.guard.mode, "value", None) if workspace._guard else None,
         "guard_reason": workspace.guard.reason.value if workspace._guard else None,
