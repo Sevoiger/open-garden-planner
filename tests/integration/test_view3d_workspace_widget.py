@@ -1158,22 +1158,30 @@ def test_closing_without_ever_opening_3d_touches_nothing(bench: Bench) -> None:
 def test_the_split_position_is_kept_for_the_next_session(canvas: CanvasView, qtbot,
                                                          tmp_path: Path) -> None:
     from open_garden_planner.app.ui_state import UiStateStore
+    from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 
-    store = UiStateStore()
-    bench = Bench(canvas, qtbot, tmp_path, ui_state=store)
+    bench = Bench(canvas, qtbot, tmp_path, ui_state=UiStateStore())
     bench.workspace.set_mode(SPLIT)
     bench.settle()
     bench.workspace.splitter.setSizes([800, 400])
     bench.workspace._remember_split()
     kept = bench.workspace.splitter.sizes()
+    assert kept[0] - kept[1] > 300, "a position nobody would take for the half-and-half default"
     bench.workspace.shutdown()
 
-    restored = bench.workspace.splitter.__class__(Qt.Orientation.Horizontal)
-    restored.addWidget(QWidget())
-    restored.addWidget(QWidget())
-    restored.resize(bench.workspace.splitter.size())
-    assert UiStateStore().restore_splitter("workspace", restored) is True
-    assert restored.sizes() == kept
+    # The next session: another window, another workspace, the same settings store —
+    # the product's own path (``_apply_split``). Not a bare splitter that is never
+    # shown: such a widget is not polished, and under an application style sheet (a
+    # theme left by an earlier test) its handle has another width than a shown one's.
+    folder = tmp_path / "next-session"
+    folder.mkdir()
+    second_view = CanvasView(CanvasScene(width_cm=5000, height_cm=3000))
+    qtbot.addWidget(second_view)
+    again = Bench(second_view, qtbot, folder, ui_state=UiStateStore())
+    assert again.window.size() == bench.window.size()
+    again.workspace.set_mode(SPLIT)
+    again.settle()
+    assert again.workspace.splitter.sizes() == kept
 
 
 def test_a_plan_mode_close_does_not_overwrite_a_kept_split_position(

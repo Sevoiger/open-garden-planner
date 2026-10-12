@@ -147,9 +147,14 @@ def test_a_dead_subscription_never_stands_in_for_a_new_receiver(qtbot) -> None: 
     clock of its own; a long session rebuilds controllers): each new one subscribes,
     whatever is left of the ones before it, and the books do not grow."""
     channel: Channel[int] = Channel()
+    # The books are the process's: a receiver some EARLIER test left alive is in them
+    # too (seen in the whole suite: two). Hold those for the length of this test, so
+    # that "do not grow" is an exact count and not a guess about other tests.
+    others = list(sim_clock_subscription._GUARDS.keys())
     for round_number in range(50):
         listener = _Listener()
         connect_qobject(channel, listener.on_value)
+        assert len(sim_clock_subscription._GUARDS) == len(others) + 1, "this receiver is booked"
         channel.emit(round_number)
         assert listener.seen == [round_number]
         if round_number % 2:
@@ -158,7 +163,8 @@ def test_a_dead_subscription_never_stands_in_for_a_new_receiver(qtbot) -> None: 
         gc.collect()
     channel.emit(-1)  # the Qt-destroyed ones leave at this delivery
     assert channel.receiver_count() == 0
-    assert len(sim_clock_subscription._GUARDS) == 0
+    assert len(sim_clock_subscription._GUARDS) == len(others), "not one of the fifty is left"
+    del others
 
 
 @pytest.mark.parametrize("bad", ["function", "lambda", "plain_object", "builtin"])

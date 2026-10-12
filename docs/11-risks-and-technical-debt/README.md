@@ -2312,6 +2312,19 @@ about measuring it.
 12. **A test that waits for a memory to shrink must use shapes that differ.** The record
     layer remembers outlines by shape: three identical hedges are one entry, and "fewer entries
     after the plan changed" compared 4 with 4.
+13. **Two tests were green in every run of the story's own files and red in the whole suite.**
+    *(a)* "The Split position is kept for the next session" restored the saved state into a
+    bare `QSplitter` that was never shown and compared its sizes with the workspace's: equal —
+    until an earlier test (a theme test) had left an application style sheet behind. A widget
+    that was never shown is not polished, so its handle kept the platform's 4 px while the
+    shown one's had the theme's 1 px: `[797, 399] != [799, 400]`. *Fix:* the test restores
+    into a second real workspace in a second window, the product's own path. *(b)* "The
+    subscription books do not grow" asserted that the process-wide table of clock subscribers
+    was EMPTY at its end; in the suite two receivers of earlier tests were still alive.
+    *Fix:* the test holds what was there before it and compares against that. **A test owns
+    no process-wide state: compare with what was there before, never with zero. Compare a
+    widget only with one in the same state (shown, polished). And run the whole suite in its
+    own order before a story's files are believed — the order is part of the test.**
 
 ### 11.4.8 Guild boundaries found by independent review (F1/F2)
 

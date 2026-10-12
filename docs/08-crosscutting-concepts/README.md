@@ -1359,6 +1359,14 @@ thread once the main window exists.
 source — one text mutant at a time, the story's tests run, the file restored — and a mutant that
 survived got a test (the sets are listed in ADR-057, Validation).
 
+**A test owns no process-wide state, and the suite's order is part of the test** (§11.4.13 item
+13: two tests of this story were green in every run of its own files and red in the whole
+suite). Compare a process-wide table with what was in it BEFORE the test — hold those entries
+for the test's length — never with zero. Compare a widget only with one in the same state: a
+widget that was never shown is not polished, and under an application style sheet an earlier
+test left behind it measures differently from a shown one. Run the whole default tier in its
+own order before a story's files are believed.
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
