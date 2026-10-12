@@ -18,11 +18,11 @@ The bounds were written down BEFORE the first run of each gate:
 - G7: the gate's own number — a luma dip below 2 (of 255) across a tile border.
 
 Measured on the L1.5 dev box (RTX 4070, Direct3D 11), 2026-10-12: next to each
-bound. G6 is met in objects everywhere and in memory wherever frames are presented
-(WARP, OpenGL, and the hardware adapter: +0.04 MB a cycle); it is NOT met in memory
-in a Direct3D 11 window on the hardware adapter that presents no frame (the display
-asleep: +16.0 MB a cycle) — ``_judge_memory`` says what was measured, and docs
-§11.4.14 what follows from it.
+bound. G6 is an UNCONDITIONAL gate, on the machine's own adapter and on a software
+rasteriser: the soak takes no frame in its measured loop, as a live view takes
+none. What grows a Direct3D 11 process is something else, and has a control of its
+own here: a ``grab()`` after every re-bake in a window that presents nothing
+(docs §11.4.14) — the reason a live host is never grabbed repeatedly.
 """
 
 from __future__ import annotations
@@ -58,8 +58,8 @@ pytestmark = render_tier
 DRIVER = Path(driver.__file__).resolve()
 Run = tuple[dict[str, Any], Path]
 #: Scenarios with a SHOWN window (Qt's messages are read from the driver's stderr) …
-SHOWN = ("ground_plan", "ground_seams", "ground_seams_gap", "ground_keepalive",
-         "ground_keepalive_leak")
+SHOWN = ("ground_plan", "ground_retexture", "ground_seams", "ground_seams_gap", "ground_keepalive",
+         "ground_keepalive_leak", "ground_keepalive_grab")
 #: … and the one through ``render_records`` (a hidden view records its own messages).
 SCENARIOS = ("ground_offscreen", *SHOWN)
 
@@ -189,6 +189,69 @@ def test_clearing_the_scene_takes_the_tiles_with_it(run: Run) -> None:
     cleared = run[0]["scenarios"]["ground_plan"]["cleared"]
     assert cleared == {"tiles_in_scene": 0, "textures_held": 0, "ground_tiled": False,
                        "ground_visible": False}
+
+
+def _tile_colours(run: Run, info: dict[str, Any]) -> list[np.ndarray]:
+    """The mean colour of each of the two tiles of ``RETEXTURE_TOP`` in a frame — a box
+    of 40 x 40 cm around each tile's middle, found with this file's own projection."""
+    frame, dpr = _frame(run, info)
+    height, width = frame.shape[:2]
+    colours = []
+    for east in (256.0, 768.0):
+        x, y = top_down_pixel(east, 256.0, driver.RETEXTURE_TOP, (width, height), dpr)
+        reach = int(20.0 * driver.RETEXTURE_TOP.px_per_cm * dpr)
+        box = frame[int(y) - reach:int(y) + reach, int(x) - reach:int(x) + reach]
+        colours.append(box.reshape(-1, 3).mean(axis=0))
+    return colours
+
+
+@pytest.mark.parametrize("sequence", sorted(driver.RETEXTURE_SEQUENCES))
+def test_a_re_textured_tile_keeps_its_picture(run: Run, sequence: str) -> None:
+    """Found by the time budget's first run on a real engine: tiles painted in passes
+    came out WHITE. A ``Texture`` element that is pointed at a second texture forgets
+    it when the first one is destroyed — Qt resets its ``textureData`` — so a tile
+    re-textured before another one was, or one frame before its replaced texture was
+    let go, was drawn without a texture. A re-baked tile is now a new Model. Every
+    sequence here ends in the colours it asked for, right after the last update and
+    again after the replaced textures were let go."""
+    scenario = run[0]["scenarios"]["ground_retexture"]
+    reference = {name: _tile_colours(run, info)[0] for name, info in scenario["reference"].items()}
+    assert float(np.abs(reference["red"] - reference["blue"]).max()) > 100  # the colours ARE apart
+    row = scenario["sequences"][sequence]
+    for moment in ("after", "again"):
+        seen = _tile_colours(run, row[moment])
+        for tile, name in enumerate(row["want"]):
+            apart = float(np.abs(seen[tile] - reference[name]).max())
+            assert apart <= 12.0, (sequence, moment, tile, name, seen[tile].tolist())
+            assert float(seen[tile].min()) < 240.0  # … and never the white of a tile without a texture
+    assert row["tiles_in_scene"] == 2 and row["textures_held"] == 2 and row["alive"] == 2
+
+
+def test_a_ground_that_arrives_over_several_passes_ends_as_the_same_ground(run: Run) -> None:
+    """The time budget on a real engine (a baker that paints ONE tile a pass): the
+    first transaction lays every tile — bare where the bake has not been yet —
+    each further pass uploads the tile it painted and nothing else, never more
+    than one replaced texture waits, and the ground ends as the ground of the one
+    unbudgeted bake, bit for bit."""
+    plan = run[0]["scenarios"]["ground_plan"]
+    budgeted, first = plan["budgeted"], plan["budgeted"]["first_pass"]
+    tiles = 20
+    assert first["tiles_in_scene"] == first["tiles_textured"] == tiles and first["uploads"] == tiles
+    assert first["pending"] >= 3 and first["state_equals_expected"] is False  # behind, and says so
+    assert budgeted["passes"] == 1 + first["pending"]
+    assert budgeted["pending"] == list(range(first["pending"], -1, -1))  # one tile a pass
+    assert set(budgeted["uploads_per_pass"]) <= {0, 1} and sum(budgeted["uploads_per_pass"]) >= 3
+    assert budgeted["uploads"] == tiles + sum(budgeted["uploads_per_pass"])
+    assert budgeted["textures_held_max"] <= tiles + 1
+    assert budgeted["tiles_in_scene"] == tiles and budgeted["state_equals_expected"] is True
+    assert budgeted["digest_equals_first"] is True
+    assert budgeted["capped"] == 0 and budgeted["bake_failures"] == 0
+    stale, _dpr = _frame(run, first["frame"])
+    done, _dpr = _frame(run, budgeted["frame"])
+    whole, _dpr = _frame(run, plan["back"])
+    assert float(np.abs(stale - done).mean()) > 0.3  # the first pass shows less ground …
+    assert float(np.abs(done - whole).mean()) < 0.05  # … the last one what one bake shows
+    print(f"\nbudgeted open: {budgeted['passes']} passes, pending {budgeted['pending']}")
 
 
 def test_the_offscreen_path_shows_the_baked_ground(run: Run) -> None:
@@ -410,11 +473,12 @@ SOFTWARE = {"QSG_RHI_PREFER_SOFTWARE_RENDERER": "1"} if sys.platform == "win32" 
 
 @pytest.fixture(scope="module")
 def soak(run: Run, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
-    """The two keep-alive scenarios on a software rasteriser."""
+    """The three keep-alive scenarios on a software rasteriser."""
     if not SOFTWARE:
         return dict(run[0]["scenarios"])
     out = tmp_path_factory.mktemp("ground_soak")
-    proc, result = run_ground_driver(out, "ground_keepalive,ground_keepalive_leak", **SOFTWARE)
+    proc, result = run_ground_driver(
+        out, "ground_keepalive,ground_keepalive_leak,ground_keepalive_grab", **SOFTWARE)
     assert proc.returncode == 0 and result.get("status") == "ok", failure_report(proc, out)
     assert "Basic Render" in str(result["qt_messages"]["adapter"]), result["qt_messages"]["adapter"]
     return dict(result["scenarios"])
@@ -423,10 +487,11 @@ def soak(run: Run, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 def test_twenty_full_re_bakes_hold_two_generations_of_textures_at_most(run: Run) -> None:
     """Gate G6, the rule itself, counted on the C++ side (Qt's ``destroyed`` signal
     counts a texture down, not Python's books): twenty times every tile of a 16-tile
-    ground is re-baked, uploaded and shown — sixteen uploads and sixteen Models a
-    cycle, and never more than the shown generation plus the one it replaced. The
+    ground is re-baked and handed to the scene — sixteen uploads and sixteen Models
+    a cycle, and never more than the shown generation plus the one it replaced. The
     control keeps every replaced texture: the same count reads 320."""
     kept = run[0]["scenarios"]["ground_keepalive"]
+    assert kept["grab"] is False  # no frame is taken in the measured loop
     assert kept["cycles"] == 20 and kept["bytes_per_generation"] == 2048 * 2048 * 4
     assert kept["uploads_per_cycle"] == [16] * 20 and kept["tiles_per_cycle"] == [16] * 20
     assert max(kept["alive_per_cycle"]) <= 32 and max(kept["held_per_cycle"]) <= 32
@@ -437,35 +502,37 @@ def test_twenty_full_re_bakes_hold_two_generations_of_textures_at_most(run: Run)
           f"{leak['alive_per_cycle'][-1]} after 20")
 
 
-def _judge_memory(kept: dict[str, Any], adapter: str) -> None:
-    """The memory half of gate G6 for one soak: the slope bound — where the window
-    PRESENTS its frames.
-
-    KNOWN UNMET in a Direct3D 11 window that presents no frame (the display asleep,
-    the session locked: such a window presents one frame and no more). Direct3D
-    destroys what was released when a frame is presented, so there every upload stays
-    committed until the view closes. Measured on the dev box (RTX 4070, display
-    asleep): +16.0 MB per re-bake of a 16 MB ground — one upload's worth — while
-    every replaced texture object IS destroyed (counted above), and all of it is
-    given back when the view closes; flat on WARP (41 frames presented) and on
-    OpenGL (45) in the same session, and on the same adapter later that day, when
-    its window presented (38 frames: +0.04 MB). Reported as an expected failure
-    with its numbers where no frame is presented; in a window that presents, this
-    is the gate (docs §11.4.14)."""
+def _said(kept: dict[str, Any], adapter: str) -> tuple[float, str]:
     slope = driver.tail_slope(kept["curve_mb"])
-    said = (f"{kept['graphics_api']} on {adapter}: {kept['frames_presented']} frames presented in "
-            f"20 cycles; {kept['metric']} {kept['curve_mb'][0]} -> {kept['curve_mb'][-1]} MB, slope "
-            f"{slope:+.3f} MB/cycle; {kept['mb_after_clear']} MB once the tiles are cleared")
+    return slope, (
+        f"{kept['graphics_api']} on {adapter}, {'a grab() a cycle' if kept['grab'] else 'no grab'}: "
+        f"{kept['frames_presented']} frames presented in 20 cycles; {kept['metric']} "
+        f"{kept['curve_mb'][0]} -> {kept['curve_mb'][-1]} MB, slope {slope:+.3f} MB/cycle; "
+        f"{kept['mb_after_clear']} MB once the tiles are cleared")
+
+
+def _judge_memory(kept: dict[str, Any], adapter: str) -> None:
+    """The memory half of gate G6 for one soak — UNCONDITIONAL: whatever the
+    adapter, whether its window presents frames or not, twenty full re-bakes do not
+    grow the process. No expected failure, no escape.
+
+    The soak takes no frame in its measured loop. That is what a live view does —
+    and it is what the first version of this gate got wrong: it called ``grab()``
+    after every re-bake, and in a Direct3D 11 window that presents nothing (the
+    display asleep) each grabbed frame leaves what it uploaded committed. Measured
+    by the story's review on this box (RTX 4070, 0 frames presented): no grab
+    +0.000 MB a cycle; a grab every fifth cycle +3.2; a grab every cycle +16.1 —
+    the growth belongs to the grabbed frame, not to the re-bake."""
+    slope, said = _said(kept, adapter)
     print(f"\nG6 (memory): {said}")
-    if slope >= SLOPE_BOUND_MB and kept["graphics_api"] == "Direct3D11" and kept["frames_presented"] <= 1:
-        pytest.xfail(f"G6 unmet in a Direct3D 11 window that presents no frame — {said}")
+    assert kept["grab"] is False
     assert slope < SLOPE_BOUND_MB, said
 
 
 def test_twenty_full_re_bakes_do_not_grow_the_process(soak: dict[str, Any]) -> None:
     """Gate G6, in memory: the second half of the curve is flat (Theil-Sen slope) on
-    a renderer whose textures the instrument can see (measured on WARP: +0.03 MB a
-    cycle over twenty, 41 frames presented)."""
+    a renderer whose textures the instrument can see — a software rasteriser keeps
+    them in the process's own memory."""
     kept = soak["ground_keepalive"]
     assert kept["uploads_per_cycle"] == [16] * 20 and max(kept["alive_per_cycle"]) <= 32
     _judge_memory(kept, "a software rasteriser" if SOFTWARE else "the tier's default")
@@ -483,5 +550,41 @@ def test_the_leak_gate_sees_a_texture_list_that_only_grows(soak: dict[str, Any])
 
 
 def test_the_process_does_not_grow_on_the_default_adapter_either(run: Run) -> None:
-    """The same twenty re-bakes on the machine's own adapter (``_judge_memory``)."""
+    """The same twenty re-bakes on the machine's own adapter — whether its window
+    presents or not (``_judge_memory``)."""
     _judge_memory(run[0]["scenarios"]["ground_keepalive"], str(run[0]["qt_messages"]["adapter"]))
+
+
+def test_a_grab_after_every_re_bake_does_not_grow_a_software_rasteriser(soak: dict[str, Any]) -> None:
+    """The grabbing twin of the soak, where frames are presented and released
+    textures are freed: flat (measured on WARP: all three variants)."""
+    grabbed = soak["ground_keepalive_grab"]
+    slope, said = _said(grabbed, "a software rasteriser" if SOFTWARE else "the tier's default")
+    print(f"\nG6 (a grab a cycle): {said}")
+    assert grabbed["grab"] is True and max(grabbed["alive_per_cycle"]) <= 32
+    assert slope < SLOPE_BOUND_MB, said
+
+
+def test_a_grab_a_cycle_is_what_grows_a_direct3d_window_that_presents_nothing(run: Run) -> None:
+    """THE CONTROL of the rule "no repeated ``grab()`` on a live host that is not
+    presenting" (docs §11.4.14). Direct3D 11 frees what was released when a frame
+    is PRESENTED; a frame rendered by ``grab()`` is never presented. On a hardware
+    adapter whose window presents nothing, the twenty re-bakes with a grab after
+    each must show the growth the grab-free soak does not (measured: +16.0 MB a
+    cycle, one generation of the ground, with every replaced texture object
+    destroyed). Where the window presents — or on another backend — there is
+    nothing to control: the grabbing soak must be flat there, and the control is
+    reported as not run."""
+    adapter = str(run[0]["qt_messages"]["adapter"])
+    grabbed = run[0]["scenarios"]["ground_keepalive_grab"]
+    slope, said = _said(grabbed, adapter)
+    print(f"\nG6 control (a grab a cycle): {said}")
+    assert grabbed["grab"] is True and max(grabbed["alive_per_cycle"]) <= 32  # the objects DO go
+    starved = (grabbed["graphics_api"] == "Direct3D11" and "Basic Render" not in adapter
+               and grabbed["frames_presented"] <= 1)
+    if not starved:
+        assert slope < SLOPE_BOUND_MB, said
+        pytest.skip(f"the control needs a Direct3D 11 hardware window that presents nothing — {said}")
+    assert slope > CONTROL_SLOPE_MB, said
+    plain = driver.tail_slope(run[0]["scenarios"]["ground_keepalive"]["curve_mb"])
+    assert plain < SLOPE_BOUND_MB < slope  # the same window, the same re-bakes, no grab: flat

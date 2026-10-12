@@ -37,6 +37,7 @@ from open_garden_planner.core.scene3d import (
     changed_tiles,
     prism_mesh,
 )
+from open_garden_planner.core.scene3d.sync import SyncStateError
 
 SQUARE = ((-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0))
 
@@ -225,15 +226,17 @@ class TestPaint:
         paint = Paint()
         assert (paint.stroke_style, paint.stroke_cap, paint.stroke_join) == (
             "SolidLine", "SquareCap", "BevelJoin")
-        assert paint.opacity == 1.0 and paint.stroke_width_cm == 0.0
+        assert paint.opacity == 1.0 and paint.stroke_width_cm == 0.0 and paint.rotation_deg == 0.0
         assert hash(Paint()) == hash(paint) and Paint(stroke_width_cm=2.0) != paint
         assert {f.name for f in dataclasses.fields(Paint)} == {
-            "stroke_width_cm", "stroke_style", "stroke_cap", "stroke_join", "opacity"}
+            "stroke_width_cm", "stroke_style", "stroke_cap", "stroke_join", "opacity",
+            "rotation_deg"}
 
     @pytest.mark.parametrize("changes", [
         {"stroke_style": "Wavy"}, {"stroke_cap": "round"}, {"stroke_join": "Mitre"},
         {"stroke_width_cm": -1.0}, {"stroke_width_cm": float("nan")}, {"opacity": 1.5},
         {"opacity": float("nan")}, {"opacity": -0.1},
+        {"rotation_deg": float("nan")}, {"rotation_deg": float("inf")},
     ])
     def test_what_no_painter_could_use_is_refused(self, changes: dict[str, object]) -> None:
         with pytest.raises(ValueError):
@@ -250,7 +253,8 @@ class TestPaint:
         tiles and never rebuilds a mesh."""
         base = flat("a")
         for paint in (Paint(stroke_width_cm=3.0), Paint(2.0, "DashLine"), Paint(2.0, opacity=0.5),
-                      Paint(2.0, stroke_cap="RoundCap"), Paint(2.0, stroke_join="MiterJoin")):
+                      Paint(2.0, stroke_cap="RoundCap"), Paint(2.0, stroke_join="MiterJoin"),
+                      Paint(2.0, rotation_deg=33.0)):  # a turned circle: paint, not geometry
             other = dataclasses.replace(base, material=dataclasses.replace(base.material, paint=paint))
             assert not base.same_material(other)
             assert base.same_geometry(other) and base.same_transform(other)
@@ -286,6 +290,7 @@ class FakeBaker:
         self.calls: list[tuple[tuple[str, ...], SceneDiff | None, frozenset[str],
                                tuple[float, float]]] = []
         self.cleared = 0
+        self.pending = 0
         self.fail: Exception | None = None
         self.log = log if log is not None else []
         self._held: tuple[tuple[str, ...], GroundTile] | None = None
@@ -308,10 +313,57 @@ class FakeBaker:
 
     def clear(self) -> None:
         self.cleared += 1
+        self.pending = 0
         self._held = None
 
     def fresh(self) -> FakeBaker:
         return FakeBaker()
+
+
+class SlowBaker:
+    """A ``GroundBaking`` double with a budget of ONE tile a call: a ground of three
+    1 x 1 px tiles, each showing how many records are painted. A call re-paints the
+    first tile that is behind and leaves the others as the objects they were."""
+
+    def __init__(self, per_call: int = 1) -> None:
+        self.per_call = per_call
+        self.calls = 0
+        self.cleared = 0
+        self.fail: Exception | None = None
+        self._shown: list[GroundTile] = []
+        self._behind: list[int] = []
+        self._count = -1
+
+    @property
+    def pending(self) -> int:
+        return len(self._behind)
+
+    def bake(self, records: Mapping[str, Record], changes: SceneDiff | None,
+             solid: Collection[str], width_cm: float, depth_cm: float
+             ) -> tuple[GroundTile, ...]:
+        self.calls += 1
+        if self.fail is not None:
+            raise self.fail
+        count = sum(1 for item_id, record in records.items()
+                    if record.material.paint is not None and item_id not in solid)
+        if not self._shown:
+            self._shown = [GroundTile(column, 0, column * 10.0, 0.0, 10.0, 10.0, 1, 1,
+                                      bytes([0, 0, 0, 255])) for column in range(3)]
+        if count != self._count:
+            self._count = count
+            self._behind = [0, 1, 2]
+        for column in self._behind[:self.per_call]:
+            self._shown[column] = GroundTile(column, 0, column * 10.0, 0.0, 10.0, 10.0, 1, 1,
+                                             bytes([count, 0, 0, 255]))
+        del self._behind[:self.per_call]
+        return tuple(self._shown)
+
+    def clear(self) -> None:
+        self.cleared += 1
+        self._shown, self._behind, self._count = [], [], -1
+
+    def fresh(self) -> SlowBaker:
+        return SlowBaker(per_call=3)  # a reference: the whole ground in one call
 
 
 class LoggingSink(RecordingSink):
@@ -402,6 +454,60 @@ class TestSyncWithAGroundBaker:
         sync.apply({"lawn": flat("lawn", 20.0), "shed": solid("shed", 300.0)})
         assert sync.ground_failure is None and sink.ground != shown
 
+    def test_a_bake_that_failed_is_not_tried_again_until_something_it_depends_on_changes(
+            self, caplog: pytest.LogCaptureFixture) -> None:
+        """Review P2-1: three idle ticks after a failing bake were three bakes and
+        three ERROR logs with tracebacks. A bake failure is remembered like a
+        builder's — until a record, the solids or the plan's rectangle change."""
+        baker, sink = FakeBaker(), RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        records = {"lawn": flat("lawn")}
+        sync.apply(records, ground=PLAN)
+        shown = sink.ground
+        baker.fail = MemoryError("no image for the third tile")
+        moved = {"lawn": flat("lawn", 10.0)}
+        with caplog.at_level("ERROR"):
+            sync.apply(moved)
+            calls = len(baker.calls)
+            sink.clear_calls()
+            for _tick in range(3):
+                assert sync.apply(moved).is_empty
+                assert sync.apply(moved, ground=PLAN).is_empty  # the same plan, given again
+                assert sync.set_ground(PLAN) is False and sync.continue_ground() is False
+        assert len(baker.calls) == calls and caplog.text.count("could not be baked") == 1
+        assert sink.calls == [] and sink.ground == shown and baker.cleared == 1
+        assert sync.ground_failure == ("MemoryError", "no image for the third tile")
+        # … a record changes: tried again (and it fails again: one more log, one more clear)
+        with caplog.at_level("ERROR"):
+            sync.apply({"lawn": flat("lawn", 20.0)})
+        assert len(baker.calls) == calls + 1 and caplog.text.count("could not be baked") == 2
+        # … the set of solids changes with no record changing: tried again
+        registry = sync.registry
+
+        def slab(record: Record) -> tuple[MeshPart, ...]:
+            return (MeshPart(prism_mesh(record.footprints, 5.0), "vc"),)
+
+        registry.register("LAWN", slab)
+        sync.apply({"lawn": flat("lawn", 20.0)})
+        assert len(baker.calls) == calls + 2
+        # … the plan's rectangle changes: tried again — and it heals when the baker does
+        assert sync.apply({"lawn": flat("lawn", 20.0)}).is_empty and len(baker.calls) == calls + 2
+        baker.fail = None
+        assert sync.set_ground(GroundSpec(1000.0, 1000.0)) is True
+        assert sync.ground_failure is None and len(baker.calls) == calls + 3
+
+    def test_reset_forgets_the_remembered_failure(self) -> None:
+        baker, sink = FakeBaker(), RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        baker.fail = ValueError("boom")
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        assert sync.ground_failure is not None
+        sync.reset()
+        assert sync.ground_failure is None
+        baker.fail = None
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        assert sync.ground_failure is None and sink.ground.tiles[0].pixels[0] == 1
+
     def test_a_failed_bake_on_another_plan_rectangle_shows_bare_ground(self) -> None:
         baker, sink = FakeBaker(), RecordingSink()
         sync = SceneSync(sink, ground_baker=baker)
@@ -446,6 +552,107 @@ class TestSyncWithAGroundBaker:
         assert sync.set_ground(PLAN) is False  # the same ground again: no call
         assert sync.set_ground(GroundSpec(1000.0, 1000.0)) is True
         assert sink.ground.plan == GroundSpec(1000.0, 1000.0)
+
+    def test_the_doubles_are_ground_bakers(self) -> None:
+        assert isinstance(SlowBaker(), GroundBaking)
+
+        class NoPending:
+            def bake(self, *args: object) -> tuple[GroundTile, ...]:
+                return ()
+
+            def clear(self) -> None: ...
+
+            def fresh(self) -> NoPending:
+                return self
+
+        assert not isinstance(NoPending(), GroundBaking)  # ``pending`` is part of the seam
+
+    def test_pending_ground_work_is_reported_and_continued(self) -> None:
+        """Review P1-4, the sync's half. A baker that stops early leaves tiles
+        pending: the ground sent holds the old tiles for those — the SAME objects —
+        ``ground_pending`` says so, and each further pass is one bake and, when a
+        tile changed, one transaction with nothing in it but the ground."""
+        baker, sink = SlowBaker(), RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        records = {"lawn": flat("lawn"), "shed": solid("shed", 300.0)}
+        sync.apply(records, sun=SunState(40.0, 180.0), ground=PLAN)
+        assert sync.ground_pending and baker.pending == 2
+        first = sink.ground
+        assert [t.pixels[0] for t in first.tiles] == [1, 0, 0]  # one tile done, two still bare
+        # everything that is not ground is finished at once, and equal to the reference
+        reference = sync.expected_state()
+        assert sink.state().items == reference.items and sink.state().sun == reference.sun
+        assert sink.state().ground != reference.ground
+        behind = [mine is not theirs and mine != theirs
+                  for mine, theirs in zip(sink.ground.tiles, reference.ground.tiles, strict=True)]
+        assert behind == [False, True, True]  # behind in exactly the pending tiles
+        sink.clear_calls()
+        assert sync.continue_ground() is True  # more to do
+        assert [op for op, _ in sink.ops()] == ["begin", "set_ground", "commit"]
+        assert sink.ground.tiles[0] is first.tiles[0] and sink.ground.tiles[2] is first.tiles[2]
+        assert sync.continue_ground() is False and not sync.ground_pending
+        assert sink.state() == sync.expected_state()  # once nothing is pending: the invariant
+        calls = baker.calls
+        sink.clear_calls()
+        assert sync.continue_ground() is False  # nothing pending: no bake, no call
+        assert baker.calls == calls and sink.calls == []
+
+    def test_an_apply_goes_on_with_pending_work_and_an_edit_restarts_it(self) -> None:
+        baker, sink = SlowBaker(), RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        assert sync.apply({"lawn": flat("lawn")}).is_empty and baker.pending == 1  # an idle tick
+        assert [t.pixels[0] for t in sink.ground.tiles] == [1, 1, 0]
+        sync.apply({"lawn": flat("lawn"), "path": flat("path", 500.0)})  # an edit: all behind again
+        assert sync.ground_pending and [t.pixels[0] for t in sink.ground.tiles] == [2, 1, 0]
+        while sync.ground_pending:
+            sync.continue_ground()
+        assert [t.pixels[0] for t in sink.ground.tiles] == [2, 2, 2]
+        assert sink.state() == sync.expected_state()
+
+    def test_reset_drops_pending_work_with_the_tiles(self) -> None:
+        baker, sink = SlowBaker(), RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        assert sync.ground_pending
+        sync.reset()
+        assert not sync.ground_pending and baker.cleared == 1 and sink.ground is None
+        assert sync.continue_ground() is False and baker.calls == 1
+
+    def test_a_sink_that_raises_in_a_continuation_poisons_the_sync(self) -> None:
+        class Failing(RecordingSink):
+            fail = False
+
+            def set_ground(self, ground: GroundSpec) -> None:
+                if self.fail:
+                    raise RuntimeError("device lost")
+                super().set_ground(ground)
+
+        baker, sink = SlowBaker(), Failing()
+        sync = SceneSync(sink, ground_baker=baker)
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        sink.fail = True
+        with pytest.raises(RuntimeError, match="device lost"):
+            sync.continue_ground()
+        assert sync.poisoned
+        with pytest.raises(SyncStateError):
+            sync.continue_ground()
+        sink.fail = False
+        sync.reset()
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        while sync.ground_pending:
+            sync.continue_ground()
+        assert sink.state() == sync.expected_state()
+
+    def test_a_baker_that_raises_in_a_continuation_is_contained(self) -> None:
+        baker, sink = SlowBaker(), RecordingSink()
+        sync = SceneSync(sink, ground_baker=baker)
+        sync.apply({"lawn": flat("lawn")}, ground=PLAN)
+        shown = sink.ground
+        baker.fail = MemoryError("no image")
+        assert sync.continue_ground() is False  # contained: cleared, nothing pending
+        assert sync.ground_failure == ("MemoryError", "no image") and not sync.poisoned
+        assert sink.ground == shown and baker.cleared == 1
 
     def test_without_a_baker_the_ground_is_the_callers(self) -> None:
         sink = RecordingSink()

@@ -46,10 +46,26 @@ builders are run from and the ids the scene holds a solid for, and the tiles it
 returns travel as the ground of the same transaction — one edit, one snapshot,
 one diff, builders and bake. A record is painted on the ground when the snapshot
 gave it a paint description (it has no height and is not a plant) AND no builder
-made a solid for it. A baker that raises is contained like a builder: the
-failure is logged and kept in ``ground_failure``, the ground the sink shows stays
-(bare, if the plan's rectangle changed), the baker starts over at the next
-``apply``, and the rest of the scene is applied. ``reset()`` clears the baker too.
+made a solid for it.
+
+- PENDING GROUND WORK. A baker may stop before every tile is painted (its time
+  budget): the ground sent then holds the tiles it had for the rest — a stale
+  picture there, never a wrong one elsewhere. ``ground_pending`` says so. Every
+  ``apply`` goes on with the pending tiles; ``continue_ground()`` is the pass for
+  a caller that has nothing new to apply (no diff, no builder: one bake, and one
+  transaction when a tile changed). While ground work is pending, the sink's
+  ground is BEHIND ``expected_state()`` in exactly the pending tiles and equal to
+  it in everything else; once it is not, the invariant above holds in full. The
+  failure rules do not change while work is pending: a sink that raises in a
+  continuation poisons the sync like any other sink call.
+- A BAKER THAT RAISES is contained like a builder: the failure is logged and kept
+  in ``ground_failure``, the ground the sink shows stays (bare, if the plan's
+  rectangle changed), the baker is cleared — pending work with it — and the rest
+  of the scene is applied. And like a builder's, the failure is REMEMBERED: the
+  bake is not tried again until something it depends on changes — a record, the
+  set of items with a solid, the plan's rectangle — so an idle tick neither
+  bakes nor logs again.
+- ``reset()`` clears the baker too: tiles, pending work and the remembered failure.
 
 Qt-free and thread-agnostic: call it from the thread that owns the sink.
 """
@@ -125,6 +141,9 @@ class SceneSync:
         self._baker = ground_baker
         self._solid: frozenset[str] = frozenset()
         self._ground_failure: tuple[str, str] | None = None
+        #: what the bake that failed was asked for (plan rectangle, solids): while it
+        #: is asked for the same again, it is not run again
+        self._ground_failed_for: tuple[GroundSpec, frozenset[str]] | None = None
         self._records: dict[str, Record] = {}
         self._built_with: dict[str, Builder] = {}
         self._failures: dict[str, BuildFailure] = {}
@@ -189,8 +208,16 @@ class SceneSync:
     @property
     def ground_failure(self) -> tuple[str, str] | None:
         """``(error type, message)`` when the ground baker raised at the last bake
-        (the ground shown is then stale or bare), else None."""
+        (the ground shown is then stale or bare), else None. It stays — and the
+        bake is not run again — until a record, the solids or the plan change."""
         return self._ground_failure
+
+    @property
+    def ground_pending(self) -> bool:
+        """True while the ground baker has tiles left to paint for what was last
+        applied (module docstring): run another pass — ``continue_ground()``, or
+        the next ``apply``."""
+        return self._baker is not None and self._baker.pending > 0
 
     def expected_state(self) -> SinkState:
         """What a sink that honours the protocol holds right now: the state ONE
@@ -200,6 +227,10 @@ class SceneSync:
         a sink that ignores a call (``clear()`` above all) — compare it with the
         sink's own account of itself: ``assert sink.state() == sync.expected_state()``.
         It runs every builder again, so it belongs in tests and diagnostics.
+
+        The reference's GROUND is the finished one. While ``ground_pending`` is
+        true the sink's ground is behind it in the pending tiles (and equal in
+        every other tile, and in everything that is not ground).
 
         Precondition: nothing was registered in the registry since the last
         ``apply``. The reference is built with the registry as it is NOW; between
@@ -215,6 +246,8 @@ class SceneSync:
         if ground is not None and baker is not None:
             ground = ground.plan  # the tiles are the reference baker's to make, from scratch
         reference.apply(self._records, sun=self._sun, ground=ground)
+        while reference.ground_pending:  # a reference baker with a budget of its own
+            reference.continue_ground()
         return empty_sink.state()
 
     # ── driving the sink ────────────────────────────────────────────────────
@@ -326,6 +359,20 @@ class SceneSync:
         self._ground = baked
         return True
 
+    def continue_ground(self) -> bool:
+        """One more pass of pending ground work, for the records last applied: one
+        ``bake`` — no diff, no builder — and, when a tile changed, one transaction
+        that sends the ground. Returns ``ground_pending``: True while there is
+        more to do. Without pending work it does nothing and returns False."""
+        self._require_usable()
+        if not self.ground_pending:
+            return False
+        baked = self._bake(self._records, _NO_CHANGE, self._solid, None)
+        if baked is not None and baked != self._ground:
+            self._transact(lambda: self._sink.set_ground(baked))
+            self._ground = baked
+        return self.ground_pending
+
     def reset(self) -> None:
         """Start over: ``sink.clear()``, then forget everything.
 
@@ -344,6 +391,7 @@ class SceneSync:
         self._ground = None
         self._solid = frozenset()
         self._ground_failure = None
+        self._ground_failed_for = None
         if self._baker is not None:
             self._baker.clear()
         try:
@@ -372,20 +420,31 @@ class SceneSync:
         baker = self._baker
         if baker is None or plan is None:
             return ground
+        asked_for = (plan.plan, solid)
+        if (self._ground_failure is not None and self._ground_failed_for == asked_for
+                and changes is not None and changes.is_empty):
+            return self._stale_ground(plan)  # it failed for exactly this: not tried again
         try:
             tiles = baker.bake(records, changes, solid, plan.width_cm, plan.depth_cm)
         except Exception as error:  # a ground that cannot be baked must not stop the scene
             self._ground_failure = (type(error).__name__, str(error))
+            self._ground_failed_for = asked_for
             if not self._quiet:
                 _log.error("the 3D ground could not be baked; it stays as it was",
                            exc_info=error)
             baker.clear()  # whatever it holds is not the ground of these records
-            shown = self._ground
-            same_plan = shown is not None and shown.plan == plan.plan
-            return GroundSpec(plan.width_cm, plan.depth_cm,
-                              shown.tiles if shown is not None and same_plan else ())
+            return self._stale_ground(plan)
         self._ground_failure = None
+        self._ground_failed_for = None
         return GroundSpec(plan.width_cm, plan.depth_cm, tiles)
+
+    def _stale_ground(self, plan: GroundSpec) -> GroundSpec:
+        """The ground to show when the bake failed: the tiles the sink has, on the
+        same plan rectangle; bare on another (the old tiles lie on another grid)."""
+        shown = self._ground
+        same_plan = shown is not None and shown.plan == plan.plan
+        return GroundSpec(plan.width_cm, plan.depth_cm,
+                          shown.tiles if shown is not None and same_plan else ())
 
     def _build(self, builder: Builder, record: Record) -> tuple[MeshPart, ...]:
         self._build_count += 1

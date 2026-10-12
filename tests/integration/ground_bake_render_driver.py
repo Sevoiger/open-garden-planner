@@ -10,7 +10,10 @@ the frames with a projection of its own::
 
 The scene definitions below are plain, engine-free functions both halves import.
 Every frame is taken with ``host.grab()`` — a FINISHED frame; nothing here waits
-for a swap signal.
+for a swap signal. The keep-alive soak takes NONE in its measured loop: a live
+view does not grab, and a ``grab()`` on a window that presents nothing is what
+grows a Direct3D 11 process (docs §11.4.14 — the soak's ``_grab`` twin is the
+control that shows it).
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ if __name__ == "__main__":  # run as a script: make this checkout's code importa
 from open_garden_planner.core.scene3d import (  # noqa: E402
     BuilderRegistry,
     GroundSpec,
+    GroundTile,
     Material,
     Paint,
     Params,
@@ -70,6 +74,34 @@ SEAM_SHOTS = {"top": SEAM_TOP, "zoom": SEAM_ZOOM, "zoom_east": SEAM_ZOOM_EAST,
 KEEPALIVE_PLAN = GroundSpec(width_cm=2048.0, depth_cm=2048.0)   # 16 tiles, 16 MB of RGBA8
 KEEPALIVE_CYCLES = 20
 KEEPALIVE_TOP = TopDownShot(center=(1024.0, 1024.0), px_per_cm=0.1)
+
+
+#: Two tiles side by side, and the colours they are re-textured with (hand-made tiles:
+#: the bake is not what this scenario is about).
+RETEXTURE_TOP = TopDownShot(center=(512.0, 256.0), px_per_cm=0.25)
+RETEXTURE_VIEW = (320, 240)
+TILE_COLOURS = {"red": (200, 30, 30), "green": (30, 200, 30), "blue": (30, 30, 200),
+                "pink": (220, 90, 200), "grey": (120, 120, 120)}
+#: name → the grounds shown one after another WITHOUT a frame between them ("frame": one
+#: is rendered there, and the replaced textures are let go as after a presented frame),
+#: starting from (red, grey) and a frame. The last pair is what must be seen.
+RETEXTURE_SEQUENCES: dict[str, tuple[Any, ...]] = {
+    "one tile, twice": (("green", "grey"), ("blue", "grey")),
+    "one tile, five times": (("green", "grey"), ("blue", "grey"), ("pink", "grey"), ("green", "grey"),
+                             ("blue", "grey")),
+    "two tiles in turn": (("green", "grey"), ("green", "blue"), ("pink", "blue")),
+    "a frame between": (("green", "grey"), "frame", ("blue", "grey")),
+    "the other tile after a frame": (("green", "grey"), "frame", ("green", "blue"), "frame",
+                                     ("pink", "blue")),
+}
+
+
+def retexture_ground(first: str, second: str) -> GroundSpec:
+    def tile(column: int, name: str) -> GroundTile:
+        return GroundTile(column, 0, column * 512.0, 0.0, 512.0, 512.0, 64, 64,
+                          bytes((*TILE_COLOURS[name], 255)) * (64 * 64))
+
+    return GroundSpec(1024.0, 512.0, tiles=(tile(0, first), tile(1, second)))
 
 
 def surface(item_id: str, east0: float, north0: float, east1: float, north1: float,
@@ -180,12 +212,14 @@ def _textures_alive() -> int:
 class _Rig:
     """The product's wiring on a shown host: SceneSync → GroundBaker + Quick3DSink."""
 
-    def __init__(self, host: Any, registry: BuilderRegistry | None = None, *, baked: bool = True) -> None:
+    def __init__(self, host: Any, registry: BuilderRegistry | None = None, *, baked: bool = True,
+                 budget_s: float | None = None) -> None:
         from open_garden_planner.ui.view3d.ground_bake import GroundBaker
         from open_garden_planner.ui.view3d.quick3d.adapter import Quick3DSink
 
         self.host = host
-        self.baker = GroundBaker() if baked else None
+        # no time budget unless a scenario asks for one: a frame is judged after ONE apply
+        self.baker = GroundBaker(budget_s=budget_s) if baked else None
         self.sink = Quick3DSink(host)
         self.sync = SceneSync(self.sink, registry, ground_baker=self.baker)
         self.bake_ms: list[float] = []
@@ -340,6 +374,33 @@ def scenario_ground_plan(ctx: base.Context) -> dict[str, Any]:
                           "textures_held": host.ground.textures_held(),
                           "ground_tiled": bool(host.scene_property("groundTiled")),
                           "ground_visible": bool(host.scene_property("groundVisible"))}
+
+        # THE TIME BUDGET on a real engine: a baker that paints ONE tile a pass. The
+        # ground arrives over several transactions — each uploads the tile it painted —
+        # and ends as the ground of the one unbudgeted bake above, bit for bit.
+        slow = _Rig(host, production_registry(), budget_s=0.0)
+        uploads = _tile_uploads()
+        slow.sync.apply(records, sun=HIGH_SUN, ground=ground)
+        first_pass = {"pending": slow.baker.pending,  # type: ignore[union-attr]
+                      "uploads": _tile_uploads() - uploads,
+                      "frame": ctx.save("ground_plan_first_pass", host.grab("ground_plan_first_pass")),
+                      **slow.facts()}
+        pending: list[int] = [slow.baker.pending]  # type: ignore[union-attr]
+        per_pass: list[int] = []
+        held: list[int] = []
+        while slow.sync.ground_pending:
+            before = _tile_uploads()
+            slow.sync.continue_ground()
+            per_pass.append(_tile_uploads() - before)
+            pending.append(slow.baker.pending)  # type: ignore[union-attr]
+            held.append(host.ground.textures_held())
+        out["budgeted"] = {
+            "first_pass": first_pass, "passes": 1 + len(per_pass), "pending": pending,
+            "uploads_per_pass": per_pass, "textures_held_max": max(held, default=0),
+            "uploads": _tile_uploads() - uploads, "digest_equals_first": slow.digest() == first_digest,
+            "frame": ctx.save("ground_plan_budgeted", host.grab("ground_plan_budgeted")),
+            **slow.facts()}
+        slow.sync.reset()
         health = host.health()
         out["health"] = {"ok": health.ok, "qml_warnings": list(health.qml_warnings),
                          "scene_graph_error": health.scene_graph_error}
@@ -448,7 +509,64 @@ def scenario_ground_seams_gap(ctx: base.Context) -> dict[str, Any]:
         ground_tiles.SEAM_OVERLAP_CM = kept  # type: ignore[misc]
 
 
-def _keepalive(ctx: base.Context, name: str, *, leak: bool) -> dict[str, Any]:
+def scenario_ground_retexture(ctx: base.Context) -> dict[str, Any]:
+    """Re-textured tiles keep their picture — whichever tile was re-textured after them,
+    and after the replaced textures were let go. (A ``Texture`` element pointed at a
+    second texture is drawn white once the first one is destroyed: §11.4.14.)"""
+    from open_garden_planner.ui.view3d.quick3d.adapter import Quick3DSink
+
+    def show(sink: Any, first: str, second: str) -> None:
+        sink.begin()
+        sink.set_sun(HIGH_SUN)
+        sink.set_ground(retexture_ground(first, second))
+        sink.commit()
+
+    out: dict[str, Any] = {"reference": {}, "sequences": {}}
+    for name in TILE_COLOURS:  # what each colour looks like in a frame: a fresh host, one ground
+        host = ctx.shown_host(RETEXTURE_VIEW)
+        try:
+            host.set_shot(RETEXTURE_TOP)
+            show(Quick3DSink(host), name, name)
+            out["reference"][name] = ctx.save(f"retexture_reference_{name}", host.grab(f"reference_{name}"))
+        finally:
+            host.close()
+            base._pump()
+    for index, (name, steps) in enumerate(RETEXTURE_SEQUENCES.items()):
+        host = ctx.shown_host(RETEXTURE_VIEW)
+        try:
+            host.set_shot(RETEXTURE_TOP)
+            sink = Quick3DSink(host)
+            uploads, alive = _tile_uploads(), _textures_alive()
+            show(sink, "red", "grey")
+            host.grab(f"retexture_{index}_start")
+            host.ground.frame_presented()  # what a window that presents does after a frame
+            for step in steps:
+                if step == "frame":
+                    host.grab(f"retexture_{index}_between")
+                    host.ground.frame_presented()
+                else:
+                    show(sink, *step)
+            after = ctx.save(f"retexture_{index}_after", host.grab(f"retexture_{index}_after"))
+            host.ground.frame_presented()  # the replaced textures go …
+            again = ctx.save(f"retexture_{index}_again", host.grab(f"retexture_{index}_again"))
+            out["sequences"][name] = {
+                "after": after, "again": again, "want": list(steps[-1]),
+                "uploads": _tile_uploads() - uploads, "tiles_in_scene": len(host.ground.readback()),
+                "textures_held": host.ground.textures_held(),
+                "alive": _textures_alive() - alive}
+        finally:
+            host.close()
+            base._pump()
+    return out
+
+
+def _keepalive(ctx: base.Context, name: str, *, leak: bool = False, grab: bool = False
+               ) -> dict[str, Any]:
+    """Twenty full re-bakes of a 16-tile ground in one shown host. The measured loop
+    takes NO frame unless ``grab`` — a live view does not grab: a window that
+    presents renders the new tiles on its own while the loop pumps events, and one
+    that does not renders nothing. ``grab=True`` is the control of §11.4.14: a
+    ``grab()`` after every re-bake."""
     host = ctx.shown_host((320, 240))
     try:
         kept: list[Any] = []
@@ -467,17 +585,20 @@ def _keepalive(ctx: base.Context, name: str, *, leak: bool) -> dict[str, Any]:
         for cycle in range(KEEPALIVE_CYCLES):
             before = _tile_uploads()
             rig.sync.apply(keepalive_records(cycle), sun=HIGH_SUN, ground=KEEPALIVE_PLAN)
-            image = host.grab(f"{name}_{cycle}")  # a finished frame: the new tiles were shown
-            base._pump(20)                        # … and what was destroyed is deleted
+            if grab:
+                host.grab(f"{name}_{cycle}")  # a frame that is rendered and not presented
+            base._pump(20)  # a presenting window shows the tiles; what was destroyed is deleted
             curve.append(round(process_mb(), 2))
             held.append(host.ground.textures_held() + len(kept))
             alive.append(_textures_alive() - alive_before)
             uploads.append(_tile_uploads() - before)
             tiles.append(len(host.ground.readback()))
+        presented = host.frames_presented - presented_before
+        image = host.grab(f"{name}_last")  # AFTER the measured loop: what the soak ended on
         out = {**rig.facts(), "cycles": KEEPALIVE_CYCLES, "curve_mb": curve,
                "held_per_cycle": held, "alive_per_cycle": alive, "uploads_per_cycle": uploads,
-               "tiles_per_cycle": tiles, "leak": leak,
-               "frames_presented": host.frames_presented - presented_before,
+               "tiles_per_cycle": tiles, "leak": leak, "grab": grab,
+               "frames_presented": presented,
                "graphics_api": host.graphics_api(),
                "last_frame": ctx.save(f"{name}_last", image),
                "bytes_per_generation": sum(len(tile.pixels) for tile in rig.baker.tiles()),  # type: ignore[union-attr]
@@ -495,8 +616,9 @@ def _keepalive(ctx: base.Context, name: str, *, leak: bool) -> dict[str, Any]:
 
 def scenario_ground_keepalive(ctx: base.Context) -> dict[str, Any]:
     """G6: twenty full re-bakes of a 16-tile ground in one shown host — the memory
-    curve, the textures held and the uploads of every cycle."""
-    return _keepalive(ctx, "keepalive", leak=False)
+    curve, the textures held and the uploads of every cycle. No frame is grabbed
+    in the loop."""
+    return _keepalive(ctx, "keepalive")
 
 
 def scenario_ground_keepalive_leak(ctx: base.Context) -> dict[str, Any]:
@@ -505,13 +627,23 @@ def scenario_ground_keepalive_leak(ctx: base.Context) -> dict[str, Any]:
     return _keepalive(ctx, "keepalive_leak", leak=True)
 
 
+def scenario_ground_keepalive_grab(ctx: base.Context) -> dict[str, Any]:
+    """The control of §11.4.14: the same twenty re-bakes with a ``grab()`` after each.
+    On Direct3D 11 with a hardware adapter, in a window that presents nothing, every
+    grabbed frame leaves what it uploaded committed — the rule "no repeated grab on
+    a host that is not presenting" exists because of this curve."""
+    return _keepalive(ctx, "keepalive_grab", grab=True)
+
+
 base.SCENARIOS.update({
     "ground_offscreen": scenario_ground_offscreen,
     "ground_plan": scenario_ground_plan,
+    "ground_retexture": scenario_ground_retexture,
     "ground_seams": scenario_ground_seams,
     "ground_seams_gap": scenario_ground_seams_gap,
     "ground_keepalive": scenario_ground_keepalive,
     "ground_keepalive_leak": scenario_ground_keepalive_leak,
+    "ground_keepalive_grab": scenario_ground_keepalive_grab,
 })
 
 

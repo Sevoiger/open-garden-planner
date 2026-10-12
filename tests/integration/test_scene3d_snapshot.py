@@ -302,20 +302,33 @@ class TestDiffMatrix:
         before = stage.record
         stage.commands.execute(RotateItemCommand(stage.item, 0.0, angle, apply_rotation))
         result = stage.step()
-        assert result.geometry == () and result.material == ()
+        assert result.geometry == ()
         assert result.added == () and result.removed == () and not result.reordered
         after = stage.record
         assert after.footprints == before.footprints and after.path == before.path
-        if stage.shape in ROUND:
+        if stage.shape == "plant":
             # A circle's footprint does not turn with its item (`item_footprints`
             # polygonises it around the mapped centre), so its record keeps rotation
             # 0 — and a turn about its own centre, which is the app's rotation
             # gesture, changes nothing at all: "transform only" with nothing in it.
             assert result == SceneDiff()
             assert after == before
+        elif stage.shape == "circle":
+            # … for a circle the canvas PAINTS, one thing does turn: what is painted in
+            # its coordinates — a fill texture, a dash pattern, a sprite (the ground
+            # bake, L1.5). That turn is a fact of its PAINT: a material change, which
+            # no builder sees. Geometry and transform are what they were — the solid
+            # of a circle does not turn.
+            assert result == SceneDiff(material=(stage.id,))
+            assert after.transform == before.transform and after.transform.rotation_deg == 0.0
+            assert after.same_geometry(before) and after.params == before.params
+            assert before.material.paint is not None and after.material.paint is not None
+            assert before.material.paint.rotation_deg == 0.0
+            assert after.material.paint.rotation_deg == angle
         else:
             assert result == SceneDiff(transform=(stage.id,))
             assert after.transform.rotation_deg == angle
+            assert after.material == before.material
 
     def test_a_rotated_item_still_moves_as_transform_only(self, stage: Stage) -> None:
         stage.commands.execute(RotateItemCommand(stage.item, 0.0, 213.5, apply_rotation))
@@ -866,8 +879,10 @@ class TestRecordContent:
     def test_a_circle_turned_about_another_pivot_moves_and_still_does_not_rotate(
         self, canvas: CanvasView
     ) -> None:
-        """Only a pivot away from the centre makes a circle's rotation visible — as a
-        new position. Its record still carries rotation 0."""
+        """Only a pivot away from the centre makes a circle's rotation visible in its
+        GEOMETRY — as a new position. Its record still carries rotation 0; the
+        turn itself is a fact of its paint (L1.5: what is painted in a circle
+        turns with it), a material change."""
         item = _circle()
         canvas.scene().addItem(item)
         before = snapshot_records(canvas.scene())
@@ -875,8 +890,10 @@ class TestRecordContent:
         item.setRotation(90.0)
         after = snapshot_records(canvas.scene())
         item_id = str(item.item_id)
-        assert diff(before, after) == SceneDiff(transform=(item_id,))
+        assert diff(before, after) == SceneDiff(transform=(item_id,), material=(item_id,))
         assert after[item_id].transform == Transform(-220.25, 310.5, 0.0)  # (x, y) → (−y, x)
+        assert after[item_id].material.paint.rotation_deg == 90.0
+        assert after[item_id].same_geometry(before[item_id])
 
     @pytest.mark.parametrize("height", [1e300, 1.0000001e6, float("inf")],
                              ids=["1e300", "just over the bound", "infinite"])

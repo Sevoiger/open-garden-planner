@@ -241,6 +241,14 @@ class Paint:
       and join, by Qt's names (``PEN_STYLES`` …). Its colour is
       ``Material.stroke_rgba``.
     - ``opacity``: the item's effective opacity, its layer's included.
+    - ``rotation_deg``: the turn of the item's own coordinates that the record's
+      ``Transform`` does NOT carry — a CIRCLE's. A circle turned about its centre
+      is the same footprint and the same solid (its transform stays unturned,
+      its geometry too: no builder runs, nothing is posed anew), but what the
+      canvas paints in the circle's coordinates turns with it: a fill texture, a
+      dash pattern, a sprite. So that turn is a fact of the PAINT — a material
+      change, which re-bakes ground tiles and never rebuilds a mesh. 0.0 for
+      every other shape (their transform carries the turn).
 
     Where the canvas anchors a fill texture is not here either: that is the
     item's own coordinate origin, a fact of its GEOMETRY
@@ -252,6 +260,7 @@ class Paint:
     stroke_cap: str = "SquareCap"
     stroke_join: str = "BevelJoin"
     opacity: float = 1.0
+    rotation_deg: float = 0.0
 
     def __post_init__(self) -> None:
         if self.stroke_style not in PEN_STYLES:
@@ -265,6 +274,8 @@ class Paint:
         _check_length("a stroke width", self.stroke_width_cm)
         if not 0.0 <= self.opacity <= 1.0:  # also False for a NaN
             raise ValueError(f"Paint.opacity lies in 0..1, got {self.opacity!r}")
+        if not math.isfinite(self.rotation_deg):
+            raise ValueError(f"Paint.rotation_deg must be finite, got {self.rotation_deg!r}")
 
 
 @dataclass(frozen=True, slots=True)

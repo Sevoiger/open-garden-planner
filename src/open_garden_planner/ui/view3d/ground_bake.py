@@ -36,9 +36,11 @@ fill texture is anchored at the item's coordinate origin (not at its centre) and
 a sprite is aligned to whole centimetres there. A record's geometry is centred
 on its anchor, so ``paint_record`` shifts it back by the record's
 ``paint_origin`` param and poses the painter with the record's transform —
-which reproduces the item's scene transform, and with it the texture's phase.
-Known limit: a circle's record does not turn (scene contract), so the fill
-texture of a ROTATED circle is painted unturned.
+which reproduces the item's scene transform, and with it the texture's phase. A
+circle's record does not turn (scene contract: its footprint and its solid are
+the same whatever its rotation); the turn of what is PAINTED in it — a texture,
+a dash pattern, a sprite — travels in the paint (``Paint.rotation_deg``) and is
+added to the painter's pose here.
 
 Tiles and dirty tiles
 ---------------------
@@ -52,6 +54,12 @@ re-paints those whose list DID change, or holds a record that did. Every other
 tile is handed out as the SAME object as before — which is how the sink knows
 not to upload it.
 
+One call does not have to finish: ``bake`` paints for a TIME BUDGET
+(``BAKE_BUDGET_S``) and leaves the tiles it has not reached PENDING — still the
+objects they were — for the calls after it (``GroundBaker``, "the time budget").
+Painting is the one part of a bake whose cost Qt decides and a plan can drive
+up; only the baker can stop between two tiles.
+
 What a bake may cost (a plan file is untrusted input, §8.11)
 ------------------------------------------------------------
 THE CRITERION. The bake may cost what the plan file holds, times a stated
@@ -60,25 +68,34 @@ AMPLIFICATION: a small file that buys superlinear or unbounded work or memory;
 and no bound may sit BEHIND the work it bounds.
 
 What it holds: one entry per painted record — the record (the snapshot's own
-object), the block of tiles its paint bounds reach (four integers) and its
-cost — and per tile the ids it was last painted with (at most
-``TILE_RECORDS``). Not one entry per record AND tile: a record that covers the
-whole plan is one entry.
+object), the block of tiles its paint bounds reach (four integers), the box of
+its geometry (four numbers), its cost and whether its fill can cover a tile —
+and per tile the ids it was last painted with and, while it is pending, the ids
+it is to be painted with (each at most ``TILE_RECORDS + TILE_UNDERLAYS``). Not
+one entry per record AND tile: a record that covers the whole plan is one entry.
 
 What it does per ``bake``: one look at every record the diff names (all of
 them, without a diff); ONE walk down the records, topmost first, that hands
-each dirty tile its records until the tile is full — at most one comparison per
-record and dirty tile, and none once every dirty tile is full; then the dirty
-tiles are painted. The bounds of ONE tile, each taken before the work it
-bounds:
+each dirty tile its records until the tile is closed (``GroundBaker._admit``
+says by what) — at most one comparison per record and dirty tile, and none for
+a closed tile; then tiles are painted, for the time budget. The bounds of ONE
+tile, each taken before the work it bounds:
 
 =====================  =======  ================================================
 bound                  a tile   what it stops, and where it is checked
 =====================  =======  ================================================
-``TILE_RECORDS``       256      records painted into a tile: the TOPMOST ones
-                                (the walk above stops handing a full tile
-                                records — nothing of a record left out is
-                                touched)
+``TILE_RECORDS``       256      records painted into a tile: the TOPMOST ones.
+                                A tile that is full takes nothing further but
+                                its underlays — nothing of a record left out is
+                                touched. What a full tile LOSES: the records
+                                below its topmost 256 that do not cover the
+                                whole tile.
+``TILE_UNDERLAYS``     4        … and under them the records whose fill covers
+                                the WHOLE tile — the lawn under a field of
+                                pavers — down to the first opaque one. (A
+                                record that opaquely covers the tile ends its
+                                walk wherever it lies: what is under it is
+                                neither looked at nor painted.)
 ``TILE_VERTICES``      262,144  outline vertices × passes of the records of a
                                 tile (same place): what every painter does
                                 BEFORE it draws — points converted, a path
@@ -87,7 +104,10 @@ bound                  a tile   what it stops, and where it is checked
                                 dashed stroke 3 (points, path, cut to the tile).
                                 The topmost record is always painted: an outline
                                 is at most the snapshot's ``MAX_ITEM_VERTICES``
-                                (16,384), styled 131,072.
+                                (16,384), styled 131,072. And ONCE MORE for a
+                                tile's cover tests (a polygon's rings are read
+                                to see whether it covers the tile) and its
+                                underlays together.
 ``TILE_ELEMENTS``      16,384   the ELEMENTS of path styles — stones, planks,
                                 posts, dots; as many as a line is LONG, whatever
                                 its vertex count. Generated only inside the tile
@@ -135,7 +155,8 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Collection, Iterable, Iterator, Mapping
+import time
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Final
@@ -174,9 +195,9 @@ from open_garden_planner.ui.canvas.items.path_style_paint import (
     segment_inside,
 )
 
-__all__ = ["SPRITE_MAX_PIXELS", "TILE_DASHES", "TILE_ELEMENTS", "TILE_RECORDS", "TILE_VERTICES",
-           "TILE_WALK_STEPS", "GroundBaker", "WalkBudget", "paint_bounds", "paint_record",
-           "tile_budget"]
+__all__ = ["BAKE_BUDGET_S", "SPRITE_MAX_PIXELS", "TILE_DASHES", "TILE_ELEMENTS", "TILE_RECORDS",
+           "TILE_UNDERLAYS", "TILE_VERTICES", "TILE_WALK_STEPS", "GroundBaker", "WalkBudget",
+           "paint_bounds", "paint_record", "tile_budget"]
 
 _log = logging.getLogger(__name__)
 
@@ -188,14 +209,21 @@ _PLAIN_PAINT: Final = Paint()
 #: ms against 0.22 ms); and as the ground is opaque everywhere its bytes ARE
 #: plain RGBA8 — no conversion on the way out.
 _TILE_FORMAT: Final = QImage.Format.Format_RGBA8888_Premultiplied
+#: How far a mitred join can reach from its corner, in pen widths: the limit the pens
+#: painted with here really have — Qt's default, which no painter changes (2.0).
+_MITRE_LIMIT: Final = float(QPen().miterLimit())
 #: How far a record's paint can reach beyond its geometry, in cm, as a multiple of
-#: its pen width plus a constant: a styled path draws bars, bumps and soft edges
-#: to 1.25 widths beside its centre line; an outline's square caps and mitred
-#: joins stay within one pen width. Generous on purpose — a record listed for a
-#: tile it does not reach costs a clipped paint call, one that is NOT listed for a
-#: tile it reaches is cut off at the tile's edge.
-_PATH_REACH: Final = (1.5, 4.0)
+#: its pen width plus a constant. A styled path draws bars, bumps and soft edges
+#: to 1.25 widths beside its centre line — and the paved path and the stone wall
+#: stroke their base with a MITRED join, whose tip at a hairpin lies up to the
+#: mitre limit from the corner (1.5 widths cut 26 px off such a tip, at 45 cm). An
+#: outline's square caps stay within one pen width, its mitred joins within the
+#: mitre limit. Generous on purpose — a record listed for a tile it does not
+#: reach costs a clipped paint call, one that is NOT listed for a tile it reaches
+#: is cut off at the tile's edge.
+_PATH_REACH: Final = (max(1.5, _MITRE_LIMIT), 4.0)
 _OUTLINE_REACH: Final = (1.0, 2.0)
+_MITRED_OUTLINE_REACH: Final = (max(1.0, _MITRE_LIMIT), 2.0)
 #: … and the pixels an antialiased edge and a sprite's whole-centimetre alignment
 #: can spill, whatever the resolution.
 _SPILL_PX: Final = 2.0
@@ -215,6 +243,10 @@ _ELEMENT_REACH: Final = (2.5, 8.0)
 #: and again whenever that item is edited; the 2D canvas repaints the same item
 #: with every one of its elements. The two bench plans: 18 ms and 83 ms.
 TILE_RECORDS: Final = 256
+#: … and below them, the records that lie under everything: a tile that is full
+#: still takes this many records whose fill covers the WHOLE tile (the lawn under
+#: a field of pavers), and ends at the first opaque one.
+TILE_UNDERLAYS: Final = 4
 TILE_VERTICES: Final = 262_144
 TILE_ELEMENTS: Final = 16_384
 TILE_WALK_STEPS: Final = 16_384
@@ -232,6 +264,20 @@ _DASHED_PASSES: Final = 3
 #: crosses as a nearly straight line).
 _CHORD_TOLERANCE_PX: Final = 0.02
 _ELLIPSE_MAX_CHORDS: Final = 2048
+
+#: What ONE ``bake`` call spends painting tiles before it hands the rest back as
+#: PENDING, in seconds (``GroundBaker(budget_s=…)``; None: no budget). The edit
+#: gate of the 3D workspace is 50 ms from an edit to its frame, the bake's own
+#: gate 10 ms for one small edit on the bench plans — an edit that fits the gate
+#: is one pass. A pass paints at least one tile and looks at the clock after each:
+#: it costs at most the budget plus ONE tile — and a tile at its bounds was
+#: measured at 0.2 to 2.65 s (above).
+BAKE_BUDGET_S: Final = 0.010
+
+#: Whether a record's fill can cover a whole tile (``_Painted.cover``).
+_NEVER: Final = 0  # a line, a sprite, a shape without a fill
+_TRANSLUCENT: Final = 1  # where it covers a tile, what lies under it still shows
+_OPAQUE: Final = 2  # where it covers a tile, nothing under it can be seen
 
 
 def tile_budget() -> WalkBudget:
@@ -344,11 +390,13 @@ def paint_bounds(record: Record, px_per_cm: float = 1.0
         factor, constant = _PATH_REACH
         width = record.path_width_cm or 0.0
     else:
-        factor, constant = _OUTLINE_REACH
+        mitred = paint.stroke_join in ("MiterJoin", "SvgMiterJoin")
+        factor, constant = _MITRED_OUTLINE_REACH if mitred else _OUTLINE_REACH
         width = paint.stroke_width_cm
     reach = factor * width + constant + _SPILL_PX / px_per_cm
     transform = record.transform
-    cos, sin = cos_sin(transform.rotation_deg)
+    # a circle's sprite is a square that turns with the paint (``Paint.rotation_deg``)
+    cos, sin = cos_sin(transform.rotation_deg + paint.rotation_deg)
     x0, y0, x1, y1 = box
     east = [cos * x - sin * y for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
     north = [sin * x + cos * y for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
@@ -697,7 +745,9 @@ def paint_record(painter: QPainter, record: Record, *, budget: WalkBudget | None
     for a north-up image, north to −y). The record is painted in the item's own
     coordinate frame (module docstring); the painter is left as it was found.
     Antialiasing and smooth pixmap transforms are the caller's to switch on — the
-    canvas and its exports paint with both.
+    canvas and its exports paint with both. Pose and opacity are the found ones
+    again when it returns OR RAISES; a painter that raised may leave saved levels
+    on the painter's stack (the caller of a failing record ends the painter).
 
     ``budget``: what a styled path's walk and a dashed pen's dashes may cost
     (``WalkBudget``) — the caller's when several records share one image (a
@@ -714,7 +764,9 @@ def paint_record(painter: QPainter, record: Record, *, budget: WalkBudget | None
         if isinstance(first, float) and isinstance(second, float):
             ox, oy = first, second
     transform = record.transform
-    cos, sin = cos_sin(transform.rotation_deg)
+    # the turn of the item's own coordinates: the record's, and a circle's paint turn
+    cos, sin = cos_sin(transform.rotation_deg + paint.rotation_deg)
+    found, found_opacity = painter.worldTransform(), painter.opacity()
     painter.save()
     try:
         # the item's scene transform: scene = T + R · (item − origin)
@@ -723,36 +775,173 @@ def paint_record(painter: QPainter, record: Record, *, budget: WalkBudget | None
             transform.east_cm - (cos * ox - sin * oy),
             transform.north_cm - (sin * ox + cos * oy)), True)
         if paint.opacity < 1.0:
-            painter.setOpacity(painter.opacity() * paint.opacity)
+            painter.setOpacity(found_opacity * paint.opacity)
         if record.shape == SHAPE_POLYLINE:
             _paint_polyline(painter, record, paint, ox, oy, budget)
         elif record.shape in (SHAPE_CIRCLE, SHAPE_ELLIPSE, SHAPE_RECTANGLE, SHAPE_POLYGON):
             _paint_filled(painter, record, paint, ox, oy, budget)
     finally:
         painter.restore()
+        # … and ABSOLUTELY: a painter that raised between a ``save()`` and its
+        # ``restore()`` leaves levels on the stack, and the one ``restore()`` above
+        # then pops the wrong one — the next record would be painted in the pose of
+        # the stone this one failed at
+        painter.setWorldTransform(found)
+        painter.setOpacity(found_opacity)
 
 
 # ── the baker ─────────────────────────────────────────────────────────────────
+
+
+# ── what lies under everything: a fill that covers a whole tile ───────────────
+
+_OPAQUE_PATTERNS: dict[str, bool] = {}  # at most one entry per fill pattern
+#: How far inside a tile's box a polygon's edge must run to count as running THROUGH it.
+_EDGE_HAIR_CM: Final = 1e-6
+
+
+def _pattern_is_opaque(name: str | None) -> bool:
+    """Whether a fill of that pattern, in an opaque colour, hides what lies under
+    it: its texture has no pixel with an alpha below 255 (tinting keeps a
+    texture's alpha). Read ONCE per pattern, off the brush the canvas makes."""
+    if name is None:
+        return True
+    known = _OPAQUE_PATTERNS.get(name)
+    if known is not None:
+        return known
+    try:
+        pattern = FillPattern[name]
+    except KeyError:
+        return True  # painted as the plain colour (``_brush``)
+    brush = create_pattern_brush(pattern, QColor(255, 255, 255))
+    opaque = True
+    if brush.style() == Qt.BrushStyle.TexturePattern:
+        image = brush.textureImage()
+        if image.hasAlphaChannel():
+            alpha = image.convertToFormat(QImage.Format.Format_Alpha8)
+            bits = alpha.constBits()
+            width, stride = alpha.width(), alpha.bytesPerLine()
+            data = bits.asstring(alpha.sizeInBytes()) if bits is not None else b""
+            opaque = bool(data) and all(
+                data[row * stride:row * stride + width].count(0xFF) == width
+                for row in range(alpha.height()))
+    _OPAQUE_PATTERNS[name] = opaque
+    return opaque
+
+
+def _cover_kind(record: Record) -> int:
+    """Whether the record's FILL can cover a whole tile, and whether it hides what
+    lies under it there (``_NEVER`` / ``_TRANSLUCENT`` / ``_OPAQUE``)."""
+    if record.shape == SHAPE_POLYLINE:
+        return _NEVER
+    material = record.material
+    fill = material.fill_rgba
+    if fill is None or fill[3] == 0:
+        return _NEVER
+    object_type = _object_type(record.kind)
+    if object_type is not None and is_furniture_type(object_type):
+        return _NEVER  # a sprite, or no brush at all (``_paint_filled``)
+    paint = material.paint or _PLAIN_PAINT
+    if fill[3] == 255 and paint.opacity >= 1.0 and _pattern_is_opaque(material.pattern):
+        return _OPAQUE
+    return _TRANSLUCENT
 
 
 @dataclass(frozen=True, slots=True)
 class _Painted:
     """A record that is on the ground: the block of tiles its paint bounds reach
     (first and last column, first and last row — four integers, however many
-    tiles that is) and what it costs a tile."""
+    tiles that is), what it costs a tile, the box of its geometry in its own
+    frame (four numbers) and whether its fill can cover a whole tile (``cover``)."""
 
     record: Record
     columns: tuple[int, int]
     rows: tuple[int, int]
     cost: int
+    box: tuple[float, float, float, float]
+    cover: int
 
     @property
     def count(self) -> int:
         return (self.columns[1] - self.columns[0] + 1) * (self.rows[1] - self.rows[0] + 1)
 
-    def covers(self, key: TileKey) -> bool:
+    def reaches(self, key: TileKey) -> bool:
         return (self.columns[0] <= key[0] <= self.columns[1]
                 and self.rows[0] <= key[1] <= self.rows[1])
+
+    def fill_covers(self, box: tuple[float, float, float, float], allowance: list[int]) -> bool:
+        """Whether the record's FILL covers every point of the scene-space box
+        ``(east0, north0, east1, north1)`` — as ``_paint_filled`` draws it: the
+        rectangle, the true ellipse, the polygon under its fill rule.
+
+        Four comparisons a corner settle most records (the box of the geometry).
+        A polygon's rings are then read once — charged to ``allowance[0]``, the
+        vertices the cover tests of a tile may still read; a polygon it does not
+        cover is NOT known to cover (False), and nothing of it is read.
+        """
+        record = self.record
+        transform = record.transform
+        cos, sin = cos_sin(transform.rotation_deg)
+        corners = []
+        for east, north in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])):
+            dx, dy = east - transform.east_cm, north - transform.north_cm
+            corners.append((cos * dx + sin * dy, cos * dy - sin * dx))  # into the record's frame
+        x0, y0, x1, y1 = self.box
+        if not all(x0 <= x <= x1 and y0 <= y <= y1 for x, y in corners):
+            return False
+        shape = record.shape
+        if shape == SHAPE_CIRCLE:
+            radius = record.params.get(PARAM_RADIUS_CM)
+            return isinstance(radius, float) and all(
+                x * x + y * y <= radius * radius for x, y in corners)
+        if shape in (SHAPE_RECTANGLE, SHAPE_ELLIPSE) and len(record.footprints) == 1:
+            ring = record.footprints[0]
+            if shape == SHAPE_RECTANGLE:
+                if _axis_rect(ring, 0.0, 0.0) is not None:
+                    return True  # its box IS the rectangle
+            elif abs(ring[0][1]) < 1e-6:  # the upright ellipse ``drawEllipse`` draws
+                a, b = (x1 - x0) / 2.0, (y1 - y0) / 2.0
+                cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+                return a > 0.0 and b > 0.0 and all(
+                    ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 <= 1.0 for x, y in corners)
+        rings: tuple[tuple[tuple[float, float], ...], ...]
+        if record.outline:
+            rings = (record.outline,)
+        else:
+            rings = tuple(ring for outer, holes in record.regions for ring in (outer, *holes))
+        vertices = sum(len(ring) for ring in rings)
+        if not vertices or vertices > allowance[0]:
+            return False
+        allowance[0] -= vertices
+        # No edge may run through the box (then every point of it lies on the same side
+        # of the outline), and its centre must be filled: odd-even for the one ring
+        # ``drawPolygon`` fills, non-zero winding for the path of several. An edge ON
+        # the box's border — a lawn drawn to the plan's edge — runs through nothing:
+        # the box is taken a hair smaller (a millionth of a pixel's coverage at most).
+        xs, ys = [x for x, _y in corners], [y for _x, y in corners]
+        bx0, by0 = min(xs) + _EDGE_HAIR_CM, min(ys) + _EDGE_HAIR_CM
+        bx1, by1 = max(xs) - _EDGE_HAIR_CM, max(ys) - _EDGE_HAIR_CM
+        if not (bx0 < bx1 and by0 < by1):
+            return False
+        mx, my = (bx0 + bx1) / 2.0, (by0 + by1) / 2.0
+        winding = len(rings) > 1
+        number = 0
+        for ring in rings:
+            px, py = ring[-1]
+            for qx, qy in ring:
+                if not ((px < bx0 and qx < bx0) or (px > bx1 and qx > bx1)
+                        or (py < by0 and qy < by0) or (py > by1 and qy > by1)):
+                    length = math.hypot(qx - px, qy - py)
+                    if length > 0.0:
+                        if segment_inside(px, py, (qx - px) / length, (qy - py) / length, length,
+                                          (bx0, by0, bx1, by1)) is not None:
+                            return False
+                    elif bx0 <= px <= bx1 and by0 <= py <= by1:
+                        return False
+                if (py > my) != (qy > my) and px + (my - py) * (qx - px) / (qy - py) > mx:
+                    number += (1 if qy > py else -1) if winding else 1
+                px, py = qx, qy
+        return number != 0 if winding else number % 2 == 1
 
     def tiles(self) -> Iterator[TileKey]:
         for row in range(self.rows[0], self.rows[1] + 1):
@@ -776,36 +965,56 @@ class GroundBaker:
     (``ground.check_grid_settings``): they can make a ground coarser, never
     larger than the stated bounds.
 
+    THE TIME BUDGET. ``budget_s`` (default ``BAKE_BUDGET_S``, 10 ms; None: no
+    budget) is what ONE ``bake`` call spends painting: it paints at least one
+    tile, looks at ``clock`` after each, and when the budget is spent leaves the
+    tiles it has not reached PENDING — handed out as the objects they were (a
+    stale picture there, never a wrong one elsewhere; bare ground where there was
+    none yet). ``pending`` says how many; every later ``bake`` — whatever it is
+    told — goes on with them, nearest to the last edit first, and re-admits only
+    the tiles the new changes touch. Once ``pending`` is 0 the tiles are exactly
+    those of one unbudgeted ``bake`` of the same records. A baker for a still
+    picture, and ``fresh()``, have no budget.
+
     Instruments, for tests and diagnostics: ``last_repainted`` (the tiles the
     last ``bake`` painted anew), ``last_changed`` (those of them whose picture
     came out different — what a sink uploads), ``last_examined`` (the records it
     looked at), ``tiles_painted``, ``records_painted``, ``elements_generated``,
-    ``steps_walked``, ``dashes_charged`` and ``admission_checks`` (running
-    totals), ``entries_held()``, ``capped`` (the tiles that ARE painted with a
-    bound of the module docstring in force — records left out, a style's elements
-    cut short, a dashed run stroked solid: the user sees less than the plan
-    there) with ``capped_tiles`` (how often that happened) and ``failures``
-    (items whose paint raised: such an item is left out of the tile, the rest of
-    it is painted, the failure is logged once).
+    ``steps_walked``, ``dashes_charged``, ``admission_checks`` and
+    ``cover_vertices_read`` (running totals), ``entries_held()``,
+    ``pending_tiles``, ``capped`` (the tiles that ARE painted with a bound of the
+    module docstring in force — records left out, a style's elements cut short,
+    a dashed run stroked solid: the user sees less than the plan there) with
+    ``capped_tiles`` (how often that happened) and ``failures`` (items whose
+    paint raised in a tile as it is painted now: the item is cut off where it
+    failed, everything else of the tile is painted, the failure is logged once).
     """
 
     def __init__(self, *, bare_rgb: tuple[int, int, int] = MEADOW_RGB, tile_px: int = TILE_PX,
-                 max_pixels: int = MAX_GROUND_PIXELS) -> None:
+                 max_pixels: int = MAX_GROUND_PIXELS, budget_s: float | None = BAKE_BUDGET_S,
+                 clock: Callable[[], float] = time.perf_counter) -> None:
         if len(bare_rgb) != 3 or not all(type(c) is int and 0 <= c <= 255 for c in bare_rgb):
             raise ValueError(f"bare_rgb is three ints in 0..255, got {bare_rgb!r}")
         check_grid_settings(tile_px, max_pixels)  # before anything is allocated with them
+        if budget_s is not None and not (math.isfinite(budget_s) and budget_s >= 0.0):
+            raise ValueError(f"budget_s is a duration in seconds or None, got {budget_s!r}")
         self._bare_rgb = (bare_rgb[0], bare_rgb[1], bare_rgb[2])
         self._tile_px = tile_px
         self._max_pixels = max_pixels
+        self._budget_s = budget_s
+        self._clock = clock
         self._grid: GroundGrid | None = None
         self._painted: dict[str, _Painted] = {}
         self._order: dict[TileKey, tuple[str, ...]] = {}
         self._tiles: dict[TileKey, GroundTile] = {}
         self._capped: set[TileKey] = set()
+        #: the tiles that still show an older picture: what each is to be painted with
+        self._pending: dict[TileKey, tuple[tuple[str, ...], bool]] = {}
+        self._focus: tuple[float, float] | None = None  # the middle of the last edit, in tiles
+        self._failed: dict[TileKey, dict[str, tuple[str, str]]] = {}
         self._bare_pixels: dict[tuple[int, int], bytes] = {}
         self._reported: set[tuple[str, str]] = set()
         self._cap_reported = False
-        self.failures: dict[str, tuple[str, str]] = {}
         self.last_repainted: tuple[TileKey, ...] = ()
         self.last_changed: tuple[TileKey, ...] = ()
         self.last_examined = 0
@@ -815,6 +1024,7 @@ class GroundBaker:
         self.steps_walked = 0
         self.dashes_charged = 0
         self.admission_checks = 0
+        self.cover_vertices_read = 0
         self.capped_tiles = 0
 
     # ── what it holds ────────────────────────────────────────────────────────
@@ -839,10 +1049,39 @@ class GroundBaker:
         the plan is missing from the ground there (module docstring)."""
         return frozenset(self._capped)
 
+    @property
+    def pending(self) -> int:
+        """How many tiles still show an older picture than the records of the last
+        ``bake`` call ask for (the time budget; class docstring). 0: the ground
+        is the ground of those records."""
+        return len(self._pending)
+
+    @property
+    def pending_tiles(self) -> tuple[TileKey, ...]:
+        return tuple(sorted(self._pending))
+
+    @property
+    def budget_s(self) -> float | None:
+        return self._budget_s
+
+    @property
+    def failures(self) -> dict[str, tuple[str, str]]:
+        """``{item id: (error type, message)}`` for every item on the ground whose
+        paint raised in ANY tile as that tile is painted now. A tile that was
+        painted without the failure does not clear what another tile holds."""
+        failed: dict[str, tuple[str, str]] = {}
+        for per_tile in self._failed.values():
+            for item_id, error in per_tile.items():
+                if item_id in self._painted:
+                    failed.setdefault(item_id, error)
+        return failed
+
     def entries_held(self) -> int:
         """What the bookkeeping holds: one entry per painted record and, per tile,
-        one per record it was last painted with (at most ``TILE_RECORDS``)."""
-        return len(self._painted) + sum(len(order) for order in self._order.values())
+        one per record it was last painted with and one per record it is still
+        to be painted with (each at most ``TILE_RECORDS + TILE_UNDERLAYS``)."""
+        return (len(self._painted) + sum(len(order) for order in self._order.values())
+                + sum(len(order) for order, _capped in self._pending.values()))
 
     def tiles(self) -> tuple[GroundTile, ...]:
         """Every tile of the ground as it was last baked, row by row from the
@@ -874,20 +1113,24 @@ class GroundBaker:
     # ── GroundBaking ─────────────────────────────────────────────────────────
 
     def clear(self) -> None:
-        """Forget every tile: the next ``bake`` paints the whole ground anew."""
+        """Forget every tile — and the work that was pending: the next ``bake``
+        paints the whole ground anew."""
         self._grid = None
         self._painted = {}
         self._order = {}
         self._tiles = {}
         self._capped = set()
-        self.failures = {}
+        self._pending = {}
+        self._focus = None
+        self._failed = {}
         self.last_repainted = ()
         self.last_changed = ()
 
     def fresh(self) -> GroundBaker:
-        """An empty baker with this one's settings."""
+        """An empty baker with this one's grid settings and colour — and NO time
+        budget: its first ``bake`` is the whole ground (a from-scratch reference)."""
         return GroundBaker(bare_rgb=self._bare_rgb, tile_px=self._tile_px,
-                           max_pixels=self._max_pixels)
+                           max_pixels=self._max_pixels, budget_s=None)
 
     def bake(self, records: Mapping[str, Record], changes: SceneDiff | None,
              solid: Collection[str], width_cm: float, depth_cm: float
@@ -895,7 +1138,8 @@ class GroundBaker:
         """The ground of ``records`` on a plan of ``width_cm`` × ``depth_cm`` — every
         tile; one that was not re-painted is the object it was
         (``core.scene3d.GroundBaking``). With ``changes`` only the records it names
-        are looked at; without, all of them — the tiles are the same either way."""
+        are looked at; without, all of them — the tiles are the same either way
+        once nothing is ``pending`` (class docstring, the time budget)."""
         grid = self._grid
         dirty: set[TileKey] = set()
         if grid is None or (grid.width_cm, grid.depth_cm) != (width_cm, depth_cm):
@@ -928,29 +1172,49 @@ class GroundBaker:
                 dirty.update(held.tiles())
                 del self._painted[item_id]
             if not wanted or record is None:
-                self.failures.pop(item_id, None)
                 continue
+            box = _local_box(record)
             bounds = paint_bounds(record, grid.px_per_cm)
             block = grid.tile_block(*bounds) if bounds is not None else None
-            if block is None:
+            if block is None or box is None:
                 continue  # nothing to paint, or beside the plan: not on the ground
             entry = _Painted(record, (block[0], block[2]), (block[1], block[3]),
-                             _cost(record, grid.px_per_cm))
+                             _cost(record, grid.px_per_cm), box, _cover_kind(record))
             self._painted[item_id] = entry
             touched.add(item_id)
             dirty.update(entry.tiles())
         self.last_examined = examined
+        pending = self._pending
         if changes is None or changes.reordered:
-            # records that swapped places: every tile that holds records is looked at
-            # again (and re-painted only if its list came out different)
+            # records that swapped places: every tile that holds records — or waits to
+            # be painted with some — is looked at again (and re-painted only if its list
+            # came out different)
             dirty.update(key for key, order in self._order.items() if order)
-        repainted: list[TileKey] = []
-        changed: list[TileKey] = []
+            dirty.update(pending)
         if dirty:
-            for key, (order, capped) in sorted(self._admit(records, dirty).items()):
-                if (key in self._tiles and order == self._order.get(key, ())
+            for key, (order, capped) in self._admit(grid, records, dirty).items():
+                if (key not in pending and key in self._tiles
+                        and order == self._order.get(key, ())
                         and capped == (key in self._capped) and touched.isdisjoint(order)):
                     continue  # the same records, none of them changed: the same picture
+                pending[key] = (order, capped)
+            # the middle of this edit: what is painted first, now and in the passes after
+            self._focus = (sum(key[0] for key in dirty) / len(dirty),
+                           sum(key[1] for key in dirty) / len(dirty))
+        repainted: list[TileKey] = []
+        changed: list[TileKey] = []
+        if pending:
+            east, north = self._focus if self._focus is not None else (0.0, 0.0)
+            queue = sorted(pending, key=lambda key: ((key[0] - east) ** 2 + (key[1] - north) ** 2,
+                                                     key[1], key[0]))
+            budget, clock = self._budget_s, self._clock
+            started = clock() if budget is not None else 0.0
+            spent = False
+            for key in queue:
+                order, capped = pending[key]
+                if spent and order:
+                    continue  # stays pending (a tile without records is painted: it is free)
+                del pending[key]
                 tile = self._paint_tile(grid, key, [self._painted[item_id].record
                                                     for item_id in order], capped)
                 self._order[key] = order
@@ -959,27 +1223,71 @@ class GroundBaker:
                 if previous is None or previous != tile:  # the same picture again is the same tile
                     self._tiles[key] = tile
                     changed.append(key)
+                if budget is not None and not spent and order:
+                    spent = clock() - started >= budget
+            for key in pending:
+                if key not in self._tiles:  # never painted yet: bare ground until it is
+                    self._tiles[key] = self._bare_tile(grid, key)
         self.last_repainted = tuple(repainted)
         self.last_changed = tuple(changed)
         return tuple(self._tiles[key] for key in grid.tile_keys())
 
     # ── internals ────────────────────────────────────────────────────────────
 
-    def _admit(self, records: Mapping[str, Record], dirty: set[TileKey]
+    def _admit(self, grid: GroundGrid, records: Mapping[str, Record], dirty: set[TileKey]
                ) -> dict[TileKey, tuple[tuple[str, ...], bool]]:
         """For every dirty tile: the ids it is painted with, bottom to top, and
         whether a bound left any out — ONE walk down the records, topmost first.
 
-        A tile takes records until it holds ``TILE_RECORDS`` or the next one would
-        take its cost beyond ``TILE_VERTICES`` (the topmost record of a tile is
-        always taken); then it is full and is asked about no further record. The
-        walk ends when every dirty tile is full. So the work is at most one test
-        per record and dirty tile — ``admission_checks`` counts them — and what a
-        bound leaves out is never sorted, summed or touched.
+        WHAT A TILE IS PAINTED WITH, AND WHAT A CAPPED TILE LOSES.
+
+        1. A tile takes the records that reach it, topmost first, while it has
+           room: fewer than ``TILE_RECORDS`` taken, and the next one would not take
+           its cost beyond ``TILE_VERTICES`` (the topmost record of a tile is
+           always taken).
+        2. A record whose fill OPAQUELY COVERS THE WHOLE TILE ends the tile's walk:
+           nothing below it can be seen, so nothing below it is looked at, charged
+           or painted. (A lawn under twelve pavers: thirteen records, wherever the
+           lawn was drawn; whatever lies under the lawn costs nothing.)
+        3. Once a tile has no room — the CUT — it takes only what lies under
+           everything: records whose fill covers the whole tile, the first
+           ``TILE_UNDERLAYS`` of them, ending at the first opaque one. A record
+           below the cut that does NOT cover the whole tile is left out, and the
+           tile is ``capped``: what a capped tile loses are the SMALL records in
+           the middle — below its topmost ``TILE_RECORDS``, above its underlays —
+           and whatever lies below its last underlay when that one is translucent.
+           A record that covers the whole tile is never one of them, short of the
+           two bounds of this search: ``TILE_UNDERLAYS``, and the vertices below.
+
+        The work. One test per record and dirty tile (``admission_checks``), and
+        none for a tile that is closed: by an opaque cover, by its last underlay,
+        or by the end of the records. "Covers the whole tile" is four comparisons
+        a corner for most records (``_Painted.fill_covers``); a polygon's rings
+        are read once per test, and the cover tests and underlays of ONE tile may
+        read ``TILE_VERTICES`` vertices in all (``cover_vertices_read``) — a
+        polygon beyond that is not known to cover, and is treated as one that
+        does not. What a bound leaves out is never sorted, summed or painted.
         """
-        open_tiles: dict[TileKey, tuple[list[str], int]] = {key: ([], 0) for key in dirty}
-        full: dict[TileKey, tuple[tuple[str, ...], bool]] = {}
+        open_tiles: dict[TileKey, _Open] = {key: _Open() for key in dirty}
+        done: dict[TileKey, tuple[tuple[str, ...], bool]] = {}
         painted = self._painted
+        boxes: dict[TileKey, tuple[float, float, float, float]] = {}
+
+        def covered(entry: _Painted, key: TileKey, state: _Open) -> bool:
+            box = boxes.get(key)
+            if box is None:
+                east, north, width, depth = grid.tile_cm_rect(key)
+                box = boxes[key] = (east, north, east + width, north + depth)
+            before = state.search[0]
+            result = entry.fill_covers(box, state.search)
+            self.cover_vertices_read += before - state.search[0]
+            return result
+
+        def close(key: TileKey, state: _Open) -> None:
+            state.ids.reverse()
+            done[key] = (tuple(state.ids), state.capped)
+            del open_tiles[key]
+
         # a dict is walked backwards in place; another mapping through a copy of its keys
         for item_id in (reversed(records) if isinstance(records, dict)
                         else reversed(list(records))):
@@ -992,21 +1300,47 @@ class GroundBaker:
                 keys = [key for key in entry.tiles() if key in open_tiles]
                 self.admission_checks += entry.count
             else:
-                keys = [key for key in open_tiles if entry.covers(key)]
+                keys = [key for key in open_tiles if entry.reaches(key)]
                 self.admission_checks += len(open_tiles)
             for key in keys:
-                ids, cost = open_tiles[key]
-                if ids and (len(ids) >= TILE_RECORDS or cost + entry.cost > TILE_VERTICES):
-                    ids.reverse()
-                    full[key] = (tuple(ids), True)
-                    del open_tiles[key]
-                else:
+                state = open_tiles[key]
+                ids = state.ids
+                if state.room and ids and (len(ids) >= TILE_RECORDS
+                                           or state.cost + entry.cost > TILE_VERTICES):
+                    state.room = False  # the cut
+                if state.room:
                     ids.append(item_id)
-                    open_tiles[key] = (ids, cost + entry.cost)
-        for key, (ids, _cost_so_far) in open_tiles.items():
-            ids.reverse()
-            full[key] = (tuple(ids), False)
-        return full
+                    state.cost += entry.cost
+                    if entry.cover == _OPAQUE and covered(entry, key, state):
+                        close(key, state)  # nothing below it can be seen
+                    continue
+                # below the cut: only what lies under everything — when the tile's search
+                # allowance covers painting it, before the test and after what the test read
+                if (state.underlays < TILE_UNDERLAYS and entry.cover != _NEVER
+                        and entry.cost <= state.search[0] and covered(entry, key, state)
+                        and entry.cost <= state.search[0]):
+                    state.search[0] -= entry.cost  # what painting it reads
+                    ids.append(item_id)
+                    state.underlays += 1
+                    if entry.cover == _OPAQUE:
+                        close(key, state)
+                    continue
+                state.capped = True  # this record is what the tile loses
+                if state.underlays >= TILE_UNDERLAYS:
+                    close(key, state)  # … and nothing further could be taken
+        for key, state in list(open_tiles.items()):
+            close(key, state)
+        return done
+
+    def _bare_tile(self, grid: GroundGrid, key: TileKey) -> GroundTile:
+        """A tile of bare ground: the bytes are shared by all bare tiles of its size."""
+        _x0, _y0, width, height = grid.tile_px_rect(key)
+        east, north, width_cm, depth_cm = grid.tile_cm_rect(key)
+        pixels = self._bare_pixels.get((width, height))
+        if pixels is None:
+            pixels = bytes((*self._bare_rgb, 255)) * (width * height)
+            self._bare_pixels[(width, height)] = pixels
+        return GroundTile(key[0], key[1], east, north, width_cm, depth_cm, width, height, pixels)
 
     def _paint_tile(self, grid: GroundGrid, key: TileKey, records: list[Record],
                     capped: bool) -> GroundTile:
@@ -1016,39 +1350,49 @@ class GroundBaker:
         east, north, width_cm, depth_cm = grid.tile_cm_rect(key)
         self.tiles_painted += 1
         self._capped.discard(key)
+        self._failed.pop(key, None)
         if not records:
-            pixels = self._bare_pixels.get((width, height))
-            if pixels is None:
-                pixels = bytes((*self._bare_rgb, 255)) * (width * height)
-                self._bare_pixels[(width, height)] = pixels
-            return GroundTile(key[0], key[1], east, north, width_cm, depth_cm, width, height, pixels)
+            return self._bare_tile(grid, key)
         image = QImage(width, height, _TILE_FORMAT)
         if image.isNull():
             raise MemoryError(f"no image of {width} x {height} px for ground tile {key}")
         image.fill(QColor(*self._bare_rgb))
+        scale = grid.px_per_cm
+        # scene (east, north) → this tile's pixels, north up: row 0 is its north edge.
+        # Whole-pixel offsets of ONE grid: every tile is a crop of the same image.
+        pose = QTransform(scale, 0.0, 0.0, -scale, float(-x0), float(y0 + height))
+        failed: dict[str, tuple[str, str]] = {}
         painter = QPainter(image)
         try:
             # what the canvas and its exports paint with
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-            scale = grid.px_per_cm
-            # scene (east, north) → this tile's pixels, north up: row 0 is its north edge.
-            # Whole-pixel offsets of ONE grid: every tile is a crop of the same image.
-            painter.setTransform(QTransform(scale, 0.0, 0.0, -scale, float(-x0), float(y0 + height)))
             budget = tile_budget()  # ONE for the whole tile
             for record in records:
                 self.records_painted += 1
-                self.failures.pop(record.item_id, None)
+                # pose and opacity ABSOLUTELY, for every record: nothing a record's
+                # painter did to them reaches the next one
+                painter.setWorldTransform(pose)
+                painter.setOpacity(1.0)
                 try:
                     paint_record(painter, record, budget=budget)
                 except Exception as error:  # one item must not blank a tile
-                    self._report(record, error)
+                    failed[record.item_id] = self._report(record, error)
+                    # … and whatever else that painter left behind — saved levels, a
+                    # brush, a clip — goes with the painter: a new one for the rest
+                    painter.end()
+                    painter.begin(image)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             self.elements_generated += budget.elements_spent
             self.steps_walked += budget.steps_spent
             self.dashes_charged += budget.dashes_spent
             capped = capped or budget.truncated
         finally:
-            painter.end()
+            if painter.isActive():
+                painter.end()
+        if failed:
+            self._failed[key] = failed
         if capped:
             self._capped.add(key)
             self.capped_tiles += 1
@@ -1066,10 +1410,24 @@ class GroundBaker:
         return GroundTile(key[0], key[1], east, north, width_cm, depth_cm, width, height,
                           bits.asstring(image.sizeInBytes()))
 
-    def _report(self, record: Record, error: Exception) -> None:
-        self.failures[record.item_id] = (type(error).__name__, str(error))
+    def _report(self, record: Record, error: Exception) -> tuple[str, str]:
         seen = (record.item_id, type(error).__name__)
         if seen not in self._reported and len(self._reported) < 256:
             self._reported.add(seen)
-            _log.error("3D ground: %s item %r could not be painted; it is left out of the ground",
-                       record.kind, record.item_id, exc_info=error)
+            _log.error("3D ground: %s item %r could not be painted; it is cut off where it "
+                       "failed", record.kind, record.item_id, exc_info=error)
+        return (type(error).__name__, str(error))
+
+
+class _Open:
+    """A dirty tile while the admission walk fills it (``GroundBaker._admit``)."""
+
+    __slots__ = ("capped", "cost", "ids", "room", "search", "underlays")
+
+    def __init__(self) -> None:
+        self.ids: list[str] = []  # topmost first, until the tile is closed
+        self.cost = 0
+        self.room = True  # False below the cut
+        self.underlays = 0
+        self.search = [TILE_VERTICES]  # the vertices its cover tests and underlays may read
+        self.capped = False

@@ -123,7 +123,8 @@ class Bake:
         self.at_date = at_date
         self.sink = RecordingSink()
         if baker is None:
-            baker = GroundBaker() if bare_rgb is None else GroundBaker(bare_rgb=bare_rgb)
+            baker = (GroundBaker(budget_s=None) if bare_rgb is None
+                     else GroundBaker(bare_rgb=bare_rgb, budget_s=None))
         self.baker = baker
         self.sync = SceneSync(self.sink, registry, ground_baker=self.baker)
         self.plan = GroundSpec(float(scene.width_cm), float(scene.height_cm))
@@ -137,6 +138,15 @@ class Bake:
         self.records = snapshot_records(self.scene, self.at_date, skipped=self.skipped)
         self.last_diff = self.sync.apply(self.records, ground=self.plan)
         return self.last_diff
+
+    def finish(self) -> int:
+        """Run passes until no ground work is pending (a baker with a time budget):
+        how many it took."""
+        passes = 0
+        while self.sync.ground_pending:
+            self.sync.continue_ground()
+            passes += 1
+        return passes
 
     @property
     def grid(self) -> GroundGrid:

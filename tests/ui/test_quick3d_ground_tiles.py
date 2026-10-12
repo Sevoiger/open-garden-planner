@@ -89,7 +89,7 @@ class TestTilesInTheScene:
         edited = (first[0], _tile(1, 0, shade=200), first[2], first[3])  # one tile re-baked
         _show(sink, GroundSpec(1024.0, 1024.0, tiles=edited))
         assert _uploads() - before == 5
-        assert len(host.ground.readback()) == 4  # the same four Models: no Model was made for it
+        assert len(host.ground.readback()) == 4  # four tiles still: the re-baked one is a new Model
 
     def test_a_replaced_texture_is_a_new_object_and_the_old_one_is_let_go(self, host: Any) -> None:
         """The keep-alive rule: per tile exactly the texture the scene shows, plus — until
@@ -97,10 +97,16 @@ class TestTilesInTheScene:
         sink = Quick3DSink(host)
         _show(sink, GroundSpec(1024.0, 512.0, tiles=(_tile(0, 0), _tile(1, 0))))
         shown = {key: id(entry.texture) for key, entry in host.ground._shown.items()}  # noqa: SLF001
+        models = {key: entry.model for key, entry in host.ground._shown.items()}  # noqa: SLF001
         assert host.ground.textures_held() == 2 and host.ground.textures_retired() == 0
         _show(sink, GroundSpec(1024.0, 512.0, tiles=(_tile(0, 0, shade=10), _tile(1, 0))))
         now = {key: id(entry.texture) for key, entry in host.ground._shown.items()}  # noqa: SLF001
         assert now[(0, 0)] != shown[(0, 0)] and now[(1, 0)] == shown[(1, 0)]
+        # … and a NEW Model with it: a ``Texture`` element is never pointed at a second
+        # texture (it would be drawn white once the first one is let go — render tier)
+        assert host.ground._shown[(0, 0)].model is not models[(0, 0)]  # noqa: SLF001
+        assert host.ground._shown[(1, 0)].model is models[(1, 0)]  # noqa: SLF001
+        assert len(host.ground.readback()) == 2
         assert host.ground.textures_held() == 3 and host.ground.textures_retired() == 1
         host.ground.frame_presented()  # the scene has shown the successor
         assert host.ground.textures_held() == 2 and host.ground.textures_retired() == 0

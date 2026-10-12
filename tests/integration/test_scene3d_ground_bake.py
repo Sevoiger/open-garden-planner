@@ -50,7 +50,7 @@ from open_garden_planner.ui.canvas.items import (
     PolylineItem,
     RectangleItem,
 )
-from open_garden_planner.ui.view3d.ground_bake import GroundBaker
+from open_garden_planner.ui.view3d.ground_bake import BAKE_BUDGET_S, GroundBaker
 from open_garden_planner.ui.view3d.snapshot import SkipReason
 from tests.integration.ground_bake_support import (
     Bake,
@@ -106,7 +106,7 @@ def compare(scene: CanvasScene, registry: BuilderRegistry | None = None, *,
     ``(mean, max)`` difference, and the bake. ``tile_px=2048`` makes the plan ONE
     tile — the bake without a tile border in it."""
     bake = Bake(scene, registry=registry,
-                baker=GroundBaker(bare_rgb=canvas_rgb(), tile_px=tile_px))
+                baker=GroundBaker(bare_rgb=canvas_rgb(), tile_px=tile_px, budget_s=None))
     bake.step()
     assert bake.skipped == [] and bake.baker.failures == {}
     mean, worst = difference(bake.image(), canvas_render(scene, bake.grid))
@@ -199,6 +199,15 @@ SHAPES_UNDER_TEST = {"rectangle": _rectangle, "polygon": _polygon, "ellipse": _e
                      "circle": _circle, "star": _star}
 
 
+def _only(scene: CanvasScene, *keep: Any) -> CanvasScene:
+    """``scene`` with every other item hidden — the 2D reference of "what is on the
+    ground" when a test's scene also holds items that stand (a scene the TEST owns)."""
+    for item in scene.items():
+        if hasattr(item, "item_id") and item not in keep:
+            item.setVisible(False)
+    return scene
+
+
 class TestParityPerShape:
     @pytest.mark.parametrize("position", sorted(POSITIONS))
     @pytest.mark.parametrize("angle", [0.0, 33.0, 215.0])
@@ -223,36 +232,79 @@ class TestParityPerShape:
         assert (mean, worst) == (0.0, 0)
         assert bake.records[str(item.item_id)].material.pattern == "WATER"
 
-    def test_a_turned_circle_keeps_its_outline_and_a_solid_fill(self, qtbot: Any) -> None:
+    @pytest.mark.parametrize("position", sorted(POSITIONS))
+    @pytest.mark.parametrize("angle", [33.0, 215.0])
+    @pytest.mark.parametrize("pattern", [FillPattern.SOLID, FillPattern.BRICK, FillPattern.WOOD],
+                             ids=lambda p: p.name)
+    def test_what_is_painted_in_a_turned_circle_turns_with_it(
+            self, qtbot: Any, pattern: FillPattern, angle: float, position: str) -> None:
+        """A circle's record does not turn (scene contract: its footprint and its
+        solid are the same whatever its rotation) — what the canvas paints in its
+        coordinates does. The turn travels in the PAINT (``Paint.rotation_deg``)
+        and the bake poses its painter with it: a turned circle is painted like
+        every other turned shape. (Before: its texture, its dash phase and its
+        sprite stayed unturned — all 31 turned circles of a fuzz of 300 items
+        differed from the canvas, by up to 48,822 px.)"""
         scene = new_scene()
-        item = _circle()
-        style(item, FillPattern.SOLID, QColor(40, 90, 200))
+        item = _circle(position)
+        style(item, pattern, TINT)
         scene.addItem(item)
-        item._apply_rotation(33.0)
-        mean, _worst, _bake = compare(scene)
-        # the same disc; the canvas draws its outline's four arcs from another angle,
-        # and the antialiased rim differs by a few steps (measured: mean 0.015)
-        assert mean <= 0.05
+        item._apply_rotation(angle)
+        mean, worst, bake = compare(scene)
+        record = bake.records[str(item.item_id)]
+        assert record.transform.rotation_deg == 0.0  # the contract: the circle does not turn
+        assert record.material.paint is not None and record.material.paint.rotation_deg == angle
+        assert mean <= 0.002 and worst <= 2, (mean, worst)
 
-    def test_known_limit_the_texture_of_a_turned_circle_does_not_turn(self, qtbot: Any) -> None:
-        """A circle's record carries no rotation (scene contract: a circle turned
-        about its centre changes nothing), so the bake paints its fill texture
-        unturned. The SHAPE is exact — every difference lies inside the disc —
-        and the number is what the limit costs for the busiest texture."""
+    @pytest.mark.parametrize("stroke", [StrokeStyle.DASHED, StrokeStyle.DASH_DOT], ids=lambda s: s.name)
+    def test_the_dashes_of_a_turned_circle_start_where_the_canvas_starts_them(
+            self, qtbot: Any, stroke: StrokeStyle) -> None:
         scene = new_scene()
-        item = _circle()
-        style(item, FillPattern.BRICK, None)
+        item = _circle("corner")
+        style(item, FillPattern.SOLID, QColor(250, 240, 180))
+        pen = item.pen()
+        pen.setColor(QColor(20, 60, 160))
+        pen.setWidthF(7.5)
+        pen.setStyle(stroke.to_qt_pen_style())
+        item.setPen(pen)
         scene.addItem(item)
         item._apply_rotation(33.0)
-        bake = Bake(scene, bare_rgb=canvas_rgb())
+        # in ONE tile the bake is the canvas's own call: the same dashes, bit for bit
+        assert compare(scene, tile_px=2048)[:2] == (0.0, 0)
+        # across four tiles the outline is cut along chords, turned or not: the dashes
+        # of a round outline then lie up to a pixel from Qt's (§8.27.5; measured for
+        # this circle, unturned and turned alike: mean 0.018, about 980 px by more
+        # than 8)
+        mean, _worst, _bake = compare(scene)
+        assert mean <= 0.03, mean
+
+    def test_turning_a_circle_is_a_change_of_its_paint_and_of_nothing_else(self, qtbot: Any) -> None:
+        """The diff matrix: no geometry, no transform — one material change. The
+        solid of a round thing is not rebuilt and not posed anew; its ground tiles
+        are re-baked when it is on the ground."""
+        scene = new_scene()
+        pond, barrel = _circle("border"), CircleItem(900.0, 500.0, 40.0, object_type=ObjectType.RAIN_BARREL)
+        style(pond, FillPattern.BRICK, None)
+        scene.addItem(pond)
+        scene.addItem(barrel)
+        barrel.metadata["object_height_cm"] = 90.0
+        bake = Bake(scene, registry=production_registry(), bare_rgb=canvas_rgb())
         bake.step()
-        baked, reference = bake.image(), canvas_render(scene, bake.grid)
-        mean, _worst = difference(baked, reference)
-        assert 0.05 < mean <= PARITY  # measured 0.9 over the plan; the disc is 5 % of it
-        centre = bake.records[str(item.item_id)].transform
-        rows, columns = np.nonzero(np.abs(baked[..., :3] - reference[..., :3]).sum(axis=2))
-        east, north = columns + 0.5, PLAN_D - (rows + 0.5)
-        assert float(np.hypot(east - centre.east_cm, north - centre.north_cm).max()) <= 112.5
+        assert bake.sync.solid_ids == {str(barrel.item_id)}
+        builds, before = bake.sync.build_count, dict(bake.records)
+        bake.sink.clear_calls()
+        pond._apply_rotation(40.0)
+        barrel._apply_rotation(40.0)
+        result = bake.step()
+        assert result == SceneDiff(material=(str(pond.item_id), str(barrel.item_id)))
+        assert bake.sync.build_count == builds  # no builder ran
+        assert [op for op, _ in bake.sink.ops()] == ["begin", "update_material", "update_material",
+                                                    "set_ground", "commit"]
+        for item in (pond, barrel):
+            now, was = bake.records[str(item.item_id)], before[str(item.item_id)]
+            assert now.same_geometry(was) and now.same_transform(was) and not now.same_material(was)
+        assert 1 <= len(bake.baker.last_repainted) <= 2  # the pond's tiles; the barrel stands
+        assert difference(bake.image(), canvas_render(_only(scene, pond), bake.grid))[0] <= 0.002
 
     @pytest.mark.parametrize("angle", [0.0, 33.0])
     @pytest.mark.parametrize("stroke", list(StrokeStyle), ids=lambda s: s.name)
@@ -357,12 +409,10 @@ class TestParityOfSprites:
         mean, worst, bake = compare(scene, production_registry())
         assert bake.baker.painted_ids() == (str(item.item_id),)
         assert bake.image()[..., :3].std() > 5.0  # a picture, not a flat fill
-        if angle and kind != "PERGOLA":
-            assert mean <= PARITY  # a circle's sprite does not turn either (known limit)
-        else:
-            # a sprite is a pixmap drawn through a flip: at a tile's edge its smooth
-            # scaling rounds a value differently now and then
-            assert mean <= (0.01 if angle else 0.002) and worst <= (16 if angle else 2), (mean, worst)
+        # a sprite is a pixmap drawn through a flip: at a tile's edge its smooth
+        # scaling rounds a value differently now and then — a circle's sprite turns
+        # with its item like a rectangle's (``Paint.rotation_deg``)
+        assert mean <= (0.01 if angle else 0.002) and worst <= (16 if angle else 2), (mean, worst)
 
 
 # ── what is on the ground and what is not ─────────────────────────────────────
@@ -522,7 +572,7 @@ class TestTheOrderOfRegionsDoesNotMatter:
                 material=Material("TERRACE_PATIO", fill_rgba=(200, 60, 40, 120),
                                   stroke_rgba=(20, 30, 160, 140), paint=Paint(stroke_width_cm=16.0)),
                 params=Params({"seed": "r"}))
-            baker = GroundBaker()
+            baker = GroundBaker(budget_s=None)
             tiles = baker.bake({"r": record}, None, (), PLAN_W, PLAN_D)
             assert baker.failures == {} and baker.painted_ids() == ("r",)
             return tuple(tile.pixels for tile in tiles), ground_rgba(baker.image())[..., :3]
@@ -597,10 +647,12 @@ class TestTheLiveSceneIsLeftAlone:
 
 
 class TimedBaker(GroundBaker):
-    """The baker, with a stopwatch around ``bake`` alone."""
+    """The baker AS THE PRODUCT MAKES IT — its time budget on — with a stopwatch
+    around ``bake`` alone."""
 
     def __init__(self) -> None:
         super().__init__()
+        assert self.budget_s == BAKE_BUDGET_S == 0.010
         self.milliseconds: list[float] = []
 
     def bake(self, records: Mapping[str, Record], changes: SceneDiff | None,
@@ -639,27 +691,38 @@ class TestOneSmallEdit:
                                                            ("bench_large.ogp", 60, 45)])
     def test_a_move_repaints_at_most_four_tiles_in_ten_milliseconds(
             self, qtbot: Any, plan: str, tiles: int, painted: int) -> None:
-        """G3. Move one flat item of at most 3 m, 31 times: every move re-paints at
-        most four tiles, looks at ONE record, and leaves every other tile the very
-        object it was; the bake alone takes at most 10 ms in the median."""
+        """G3 — with the time budget ON, as in the product. Move one flat item of at
+        most 3 m, 31 times: every move re-paints at most four tiles, looks at ONE
+        record, and leaves every other tile the very object it was; the bake of
+        an edit takes at most 10 ms in the median — and is ONE pass (an edit that
+        fits the gate is not spread over frames)."""
         scene = _loaded(plan)
         baker = TimedBaker()
         bake = Bake(scene, registry=production_registry(), baker=baker)
         bake.step()
+        open_passes = 1 + bake.finish()  # opening the plan may take several
         assert len(bake.tiles) == tiles and len(baker.painted_ids()) == painted
         item = _flat_item_up_to_three_metres(scene, bake)
-        full_ms = baker.milliseconds[-1]
-        baker.milliseconds.clear()
+        full_ms = sum(baker.milliseconds)
         most_tiles = most_records = 0
+        per_edit: list[float] = []
+        passes: list[int] = []
         for index in range(31):
             before = {tile.key: tile for tile in bake.tiles}
             painted_before = baker.records_painted
+            baker.milliseconds.clear()
             delta = QPointF(37.5, -22.25) if index % 2 == 0 else QPointF(-37.5, 22.25)
             MoveItemsCommand([item], delta).execute()
             result = bake.step()
             assert result == SceneDiff(transform=(str(item.item_id),))
             assert baker.last_examined == 1
             repainted = set(baker.last_repainted)
+            while bake.sync.ground_pending:  # a pass the budget cut short (a loaded machine)
+                bake.sync.continue_ground()
+                assert baker.last_examined == 0
+                repainted |= set(baker.last_repainted)
+            passes.append(len(baker.milliseconds))
+            per_edit.append(sum(baker.milliseconds))
             most_tiles = max(most_tiles, len(repainted))
             most_records = max(most_records, baker.records_painted - painted_before)
             assert 1 <= len(repainted) <= 4
@@ -668,11 +731,12 @@ class TestOneSmallEdit:
                     assert tile is before[tile.key]  # untouched: the same object, the same bits
             uploaded, dropped = changed_tiles(tuple(before.values()), bake.tiles)
             assert dropped == () and {tile.key for tile in uploaded} <= repainted
-        median = statistics.median(baker.milliseconds)
-        print(f"\nG3 {plan}: full bake {full_ms:.1f} ms; per move: median {median:.2f} ms, "
-              f"max {max(baker.milliseconds):.2f} ms, at most {most_tiles} tiles and "
-              f"{most_records} record paints")
-        assert median <= 10.0
+        median = statistics.median(per_edit)
+        print(f"\nG3 {plan}: opened in {open_passes} passes, {full_ms:.1f} ms of bake; per move: "
+              f"median {median:.2f} ms, max {max(per_edit):.2f} ms, at most {most_tiles} tiles and "
+              f"{most_records} record paints; passes per move: median "
+              f"{statistics.median(passes)}, max {max(passes)}")
+        assert median <= 10.0 and statistics.median(passes) == 1
         assert bake.sink.state().ground == bake.sync.expected_state().ground
 
 
@@ -812,7 +876,7 @@ class TestAnEditSession:
         tick("nothing", ground=False)
         assert bake.sink.calls[-1].op == "commit" and bake.last_diff.is_empty
 
-        fresh = GroundBaker()
+        fresh = GroundBaker(budget_s=None)
         from_scratch = fresh.bake(bake.records, None, bake.sync.solid_ids,
                                   bake.plan.width_cm, bake.plan.depth_cm)
         assert [tile.pixels for tile in from_scratch] == [tile.pixels for tile in bake.tiles]
@@ -1308,11 +1372,14 @@ class TestHostilePlans:
 
     def test_two_thousand_surfaces_over_the_whole_plan(self, qtbot: Any) -> None:
         """The SUM. A tile's cost is the sum over its records, so a tile paints only
-        its topmost ``TILE_RECORDS`` — and one small edit on such a plan is still at
-        most four tiles of that."""
-        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
+        its topmost ``TILE_RECORDS`` — and, of what lies below them, the first
+        ``TILE_UNDERLAYS`` that cover the whole tile (these lawns are translucent:
+        none of them ends the walk). One small edit on such a plan is still at most
+        four tiles of that."""
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS, TILE_UNDERLAYS
 
-        assert TILE_RECORDS == 256
+        assert (TILE_RECORDS, TILE_UNDERLAYS) == (256, 4)
+        per_tile = TILE_RECORDS + TILE_UNDERLAYS
         scene = _hostile_scene()
 
         def add_surfaces(first: int, last: int) -> None:
@@ -1335,20 +1402,21 @@ class TestHostilePlans:
         bake.step()
         assert len(bake.records) == 2001 and len(bake.baker.painted_ids()) == 2001
         assert bake.baker.tiles_painted == 20
-        assert bake.baker.records_painted == 20 * TILE_RECORDS and bake.baker.capped_tiles == 20
+        assert bake.baker.records_painted == 20 * per_tile and bake.baker.capped_tiles == 20
         # what a workspace can show the user: WHERE the ground holds less than the plan
         assert bake.baker.capped == frozenset(bake.grid.tile_keys())
         # The books: ONE entry a record (not one a record and tile: 40,020) and the ids
-        # a tile is painted with; the comparisons that found them: 257 a tile.
-        assert bake.baker.entries_held() == 2001 + 20 * TILE_RECORDS
-        assert bake.baker.admission_checks == 20 * (TILE_RECORDS + 1) == 5_140
+        # a tile is painted with; the comparisons that found them: 261 a tile (the last
+        # one is the record that finds the tile closed to it).
+        assert bake.baker.entries_held() == 2001 + 20 * per_tile
+        assert bake.baker.admission_checks == 20 * (per_tile + 1) == 5_220
         painted, checks = bake.baker.records_painted, bake.baker.admission_checks
         MoveItemsCommand([pond], QPointF(35.0, -20.0)).execute()
         assert bake.step() == SceneDiff(transform=(str(pond.item_id),))
         assert 1 <= len(bake.baker.last_repainted) <= 4 and bake.baker.last_examined == 1
-        assert bake.baker.records_painted - painted == len(bake.baker.last_repainted) * TILE_RECORDS
-        assert bake.baker.admission_checks - checks <= len(bake.baker.last_repainted) * (TILE_RECORDS + 2)
-        assert bake.baker.entries_held() == 2001 + 20 * TILE_RECORDS
+        assert bake.baker.records_painted - painted == len(bake.baker.last_repainted) * per_tile
+        assert bake.baker.admission_checks - checks <= len(bake.baker.last_repainted) * (per_tile + 2)
+        assert bake.baker.entries_held() == 2001 + 20 * per_tile
         assert bake.sink.state().ground == bake.sync.expected_state().ground
 
     def test_a_tile_generates_no_more_than_its_share_of_elements(self, qtbot: Any) -> None:
@@ -1441,25 +1509,25 @@ class TestHostilePlans:
                           params=Params({"seed": item_id, **more}))
 
         styled = {f"s{k}": line(f"s{k}", 4096, path_style="GRAVEL_PATH") for k in range(40)}
-        baker = GroundBaker()
+        baker = GroundBaker(budget_s=None)
         baker.bake(styled, None, (), 512.0, 512.0)
         assert baker.records_painted == 8 == TILE_VERTICES // (4096 * 8)  # of 40
         assert baker.capped == frozenset({(0, 0)})
 
         dashed = {f"d{k}": line(f"d{k}", 16_384, paint=Paint(stroke_style="DashLine"))
                   for k in range(8)}
-        baker = GroundBaker()
+        baker = GroundBaker(budget_s=None)
         baker.bake(dashed, None, (), 512.0, 512.0)
         assert baker.records_painted == 5 == TILE_VERTICES // (16_384 * 3)  # of 8
         assert baker.capped == frozenset({(0, 0)})
 
         dearest = {f"g{k}": line(f"g{k}", 16_384, path_style="GRAVEL_PATH") for k in range(3)}
-        baker = GroundBaker()
+        baker = GroundBaker(budget_s=None)
         baker.bake(dearest, None, (), 512.0, 512.0)
         assert baker.records_painted == 2 == TILE_VERTICES // (16_384 * 8)  # exactly the bound
 
         plain = {f"p{k}": line(f"p{k}", 1024) for k in range(200)}
-        baker = GroundBaker()
+        baker = GroundBaker(budget_s=None)
         baker.bake(plain, None, (), 512.0, 512.0)
         assert baker.records_painted == 200 and baker.capped == frozenset()  # control
 
@@ -1613,9 +1681,13 @@ class TestHostilePlans:
         """Fifty thousand rectangles, each over the whole plan (records by hand — the
         2D scene needs minutes to hold that many). What the baker HOLDS is one entry
         a record and the ids a tile is painted with; what it COMPARES to find them
-        is 257 a tile — for a full bake, and for an edit the tiles it touches."""
+        is 261 a tile — its topmost 256, four translucent lawns under them, and the
+        record that finds it closed — for a full bake, and for an edit the tiles it
+        touches."""
         from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
-        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS, TILE_UNDERLAYS
+
+        per_tile = TILE_RECORDS + TILE_UNDERLAYS
 
         def surface(item_id: str, half: tuple[float, float], at: tuple[float, float],
                     fill: tuple[int, int, int, int] = (40, 120, 60, 40)) -> Record:
@@ -1628,12 +1700,12 @@ class TestHostilePlans:
         count = 50_000
         records = {f"r{k}": surface(f"r{k}", (1300.0, 900.0), (1200.0, 800.0)) for k in range(count)}
         records["top"] = surface("top", (50.0, 50.0), (700.0, 700.0), (200, 30, 30, 255))
-        baker = GroundBaker()
+        baker = GroundBaker(budget_s=None)
         baker.bake(records, None, (), 2400.0, 1600.0)
         assert len(baker.painted_ids()) == count + 1 and baker.last_examined == count + 1
-        assert baker.entries_held() == count + 1 + 20 * TILE_RECORDS  # not 20 x 50,000
-        assert baker.admission_checks == 20 * (TILE_RECORDS + 1) == 5_140
-        assert baker.records_painted == 20 * TILE_RECORDS
+        assert baker.entries_held() == count + 1 + 20 * per_tile  # not 20 x 50,000
+        assert baker.admission_checks == 20 * (per_tile + 1) == 5_220
+        assert baker.records_painted == 20 * per_tile
         assert baker.capped == frozenset(baker.grid.tile_keys())
 
         # one small item moved: one record looked at, one tile's records found again
@@ -1642,9 +1714,9 @@ class TestHostilePlans:
         moved["top"] = surface("top", (50.0, 50.0), (735.0, 680.0), (200, 30, 30, 255))
         baker.bake(moved, SceneDiff(transform=("top",)), (), 2400.0, 1600.0)
         assert baker.last_examined == 1 and baker.last_repainted == ((1, 1),)
-        assert baker.admission_checks - checks == TILE_RECORDS + 1
-        assert baker.records_painted - painted == TILE_RECORDS
-        assert baker.entries_held() == count + 1 + 20 * TILE_RECORDS
+        assert baker.admission_checks - checks == per_tile + 1
+        assert baker.records_painted - painted == per_tile
+        assert baker.entries_held() == count + 1 + 20 * per_tile
 
         # a record no tile shows (the lowest of 50,000) changes: every tile's records
         # are found again - and are the same, so not one tile is painted
@@ -1652,7 +1724,7 @@ class TestHostilePlans:
         recoloured = dict(moved)
         recoloured["r0"] = surface("r0", (1300.0, 900.0), (1200.0, 800.0), (250, 250, 0, 255))
         tiles = baker.bake(recoloured, SceneDiff(material=("r0",)), (), 2400.0, 1600.0)
-        assert baker.admission_checks - checks == 5_140
+        assert baker.admission_checks - checks == 5_220
         assert baker.last_repainted == () and baker.tiles_painted == painted_tiles
         assert all(mine is theirs for mine, theirs in zip(tiles, baker.tiles(), strict=True))
 
@@ -1661,7 +1733,7 @@ class TestHostilePlans:
         over HALF the tiles, so that the other half stays open and every record is
         asked about. One look-up per record and tile it reaches — never more."""
         from open_garden_planner.core.scene3d import Material, Paint, Params, Transform
-        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS
+        from open_garden_planner.ui.view3d.ground_bake import TILE_RECORDS, TILE_UNDERLAYS
 
         ring = ((-505.0, -900.0), (505.0, -900.0), (505.0, 900.0), (-505.0, 900.0))
         material = Material("LAWN", fill_rgba=(40, 120, 60, 40), paint=Paint())
@@ -1670,12 +1742,15 @@ class TestHostilePlans:
                                    footprints=(ring,), transform=Transform(500.0, 800.0),
                                    material=material, params=Params({"seed": "w"}))
                    for k in range(count)}
-        baker = GroundBaker()
+        baker = GroundBaker(budget_s=None)
         baker.bake(records, None, (), 2400.0, 1600.0)  # 5 x 4 tiles: the west 2 columns
         assert baker.capped == frozenset((c, r) for c in range(2) for r in range(4))
-        assert baker.records_painted == 8 * TILE_RECORDS
+        # they end at east 1005: the first column's tiles are covered whole (and take
+        # their four underlays), the second column's are not — their topmost 256, no more
+        painted = 4 * (TILE_RECORDS + TILE_UNDERLAYS) + 4 * TILE_RECORDS
+        assert baker.records_painted == painted == 2_064
         assert baker.admission_checks == count * 8  # each record: the 8 tiles it reaches
-        assert baker.entries_held() == count + 8 * TILE_RECORDS
+        assert baker.entries_held() == count + painted
 
     def test_a_sprite_of_nine_kilometres_is_rendered_with_a_bounded_image(
             self, qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:

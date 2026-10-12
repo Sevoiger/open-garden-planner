@@ -6,21 +6,28 @@
 
 - a tile the scene already shows — the same ``pixels`` object, or equal bytes —
   is left alone: an edit that re-bakes four tiles uploads four textures;
-- a tile whose picture changed gets a NEW ``TileTexture``. A texture object is
-  never handed to a ``Texture`` twice: detached and attached again, a
-  ``QQuick3DTextureData`` draws its surface white (measured in the L0 spike,
-  ``ogp-3d-renderer`` §5) — the texture twin of "one geometry per Model";
+- a tile whose picture changed gets a NEW MODEL with a new ``TileTexture``, and
+  its old Model is destroyed. ONE TEXTURE PER ``Texture``, FOR LIFE — the texture
+  twin of "one geometry per Model" — because a ``Texture`` element must never be
+  pointed at a second ``QQuick3DTextureData``: when a data object it once held
+  is destroyed, Qt resets the element's ``textureData`` to null, whatever it
+  holds by then, and the tile is drawn WHITE. Measured on the dev box (RTX 4070
+  and WARP, Qt 6.11): tile A re-textured, then tile B, then one frame — A is
+  white; and in a window that presents frames, every re-textured tile was white
+  one frame after its edit (the replaced texture is let go when a frame was
+  presented). Nothing showed it while a re-bake was followed by a frame and the
+  SAME tiles were re-baked next (docs §11.4.14);
 - a tile that is no longer named is destroyed with its Model.
 
 Lifetime — the keep-alive rule. A texture made in Python is owned by Python, so
 something must hold it while the scene shows it: exactly the one shown, per
 tile. The L0 spike's append-only keep-alive list grew the process by one baked
-ground per reload. A REPLACED texture is kept until the scene has shown its
-successor — the next presented frame (``frame_presented``, called on the GUI
-thread) — and, because with the display asleep a window presents one frame and
-no more, at the latest until the next ground update or ``clear``. So at most
-one generation of replaced textures exists beside the shown one, and never a
-growing list.
+ground per reload. A REPLACED texture — its Model is destroyed in the same call
+— is kept until the scene has shown its successor: the next presented frame
+(``frame_presented``, called on the GUI thread), and, because a window may
+present one frame and no more, at the latest until the next ground update or
+``clear``. So at most one generation of replaced textures exists beside the
+shown one, and never a growing list.
 
 Seams. Neighbouring tiles are crops of one pixel grid (``core.scene3d.
 GroundGrid``), so their pictures meet exactly; what the engine must not add is a
@@ -30,12 +37,21 @@ is laid ``SEAM_OVERLAP_CM`` wider than its tile on every side, so that two
 quads whose shared edge is computed twice in float32 can never leave a hairline
 of the meadow below between them.
 
-Known limit. Direct3D 11 destroys what was released when a frame is PRESENTED; in a
-window that presents none (the display asleep) every upload stays committed until
-the view closes — measured +16 MB per re-bake of a 16 MB ground with every
-replaced texture object destroyed, flat once frames are presented (docs
-§11.4.14). Nothing in here can release what the graphics system holds: whoever
-drives the scene should not apply edits faster than frames are presented.
+Known limit — ``grab()`` on a window that presents nothing. Direct3D 11 frees
+what was released when a frame is PRESENTED, and a frame rendered by
+``Quick3DHost.grab()`` is rendered and never presented. In a hardware-adapter
+window that presents no frame, each grabbed frame leaves what was uploaded for
+it committed until the view closes. Measured on the dev box (RTX 4070, 0 frames
+presented, twenty full re-bakes of a 16 MB ground, every replaced texture
+object destroyed): a ``grab()`` after every re-bake +16 MB a cycle, after every
+fifth +3.2, NO ``grab()`` +0.000 — the growth belongs to the grabbed frame, not
+to the edit or the upload (nothing is rendered, so nothing is uploaded); flat
+in every variant on WARP and wherever frames are presented (docs §11.4.14).
+Nothing in here can release what the graphics system holds, and applying edits
+more slowly changes nothing. THE RULE for whoever drives a host: no repeated
+``grab()`` on a live host that is not presenting — a screenshot goes through
+the offscreen path (``offscreen.render_records``: a hidden view of its own,
+closed after its one frame, which gives everything back).
 
 Failures. A function of the scene file that is missing raises in PyQt; one that
 THROWS returns nothing, silently (the QML engine only warns). Both are a
@@ -154,7 +170,7 @@ class GroundTiles:
                 if shown is None:
                     self._create(tile)
                 elif shown.texture.pixels is not tile.pixels and shown.texture.pixels != tile.pixels:
-                    self._replace(shown, tile)
+                    self._replace(tile)
                 elif _moved(shown.placement, tile):
                     self._place(shown.model, tile)
                     shown.placement = tile
@@ -227,18 +243,14 @@ class GroundTiles:
         self._shown[tile.key] = _Shown(model, texture, tile)  # in the books before it can fail
         self._place(model, tile)
 
-    def _replace(self, shown: _Shown, tile: TilePlacement) -> None:
-        texture = TileTexture(tile)  # a NEW object: a texture is never attached twice
-        meta = shown.model.metaObject()
-        if (meta is None or meta.indexOfProperty("tileData") < 0
-                or not shown.model.setProperty("tileData", texture)):
-            raise GroundTileError(f"ground tile {tile.key} has no property 'tileData' "
-                                  "(renamed in Garden.qml?)")
-        self._retire(shown.texture)
-        shown.texture = texture
-        if _moved(shown.placement, tile):
-            self._place(shown.model, tile)
-        shown.placement = tile
+    def _replace(self, tile: TilePlacement) -> None:
+        """A tile whose picture changed: its Model is destroyed and a NEW one made,
+        with a texture of its own (module docstring: one texture per ``Texture``,
+        for life). The old Model goes first, so the books are true whatever fails:
+        a Model the scene did not destroy is still the tile's, and a tile whose new
+        Model could not be made is not in them."""
+        self._drop(tile.key)
+        self._create(tile)
 
     def _place(self, model: QObject, tile: TilePlacement) -> None:
         x, z = float(tile.center[0]), float(tile.center[2])

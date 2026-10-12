@@ -270,12 +270,26 @@ class GroundBaking(Protocol):
         ``solid``: the ids the scene holds a solid for — those are not painted,
         whatever they carry. ``changes``: how ``records`` differ from the records
         of the PREVIOUS call (the diff the geometry path uses), or None when the
-        caller cannot say; a baker may use it to look only at what changed, and
-        must give the same tiles either way.
+        caller cannot say; a baker may use it to look only at what changed.
+
+        A baker MAY STOP EARLY (a time budget): a tile it has not re-painted yet is
+        handed out as the object it was — a stale picture there, never a wrong one
+        elsewhere — and ``pending`` says how many such tiles there are. Every later
+        call, whatever its ``changes`` (an empty diff too), goes on with them.
+        The promise: once ``pending`` is 0, the tiles are those ONE call on an
+        empty baker gives for the same records, solids and plan — with a diff or
+        without one.
         """
 
+    @property
+    def pending(self) -> int:
+        """How many tiles still show an older picture than the last ``bake`` call
+        asked for. 0: nothing is left to do for those records."""
+
     def clear(self) -> None:
-        """Forget every tile: the next ``bake`` paints the whole ground anew."""
+        """Forget every tile and all pending work: the next ``bake`` paints the
+        whole ground anew."""
 
     def fresh(self) -> GroundBaking:
-        """An empty baker with this one's settings (a from-scratch reference)."""
+        """An empty baker with this one's settings that bakes a whole ground in ONE
+        call — a from-scratch reference (no time budget)."""

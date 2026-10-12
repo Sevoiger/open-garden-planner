@@ -173,7 +173,9 @@ def render_records(
     ``sun=None``: no sunlight (fill only). ``ground=None``: the endless meadow
     without a plan rectangle. ``ground_baker``: paints the plan's flat surfaces
     onto that rectangle (``ui.view3d.ground_bake.GroundBaker()``, L1.5); without
-    one the plan ground is bare. ``log``: a ``log(phase, **fields)`` callable
+    one the plan ground is bare. The picture shows the finished ground: a baker
+    with a time budget is run until nothing is pending (``GroundBaker(budget_s=
+    None)`` does it in one pass). ``log``: a ``log(phase, **fields)`` callable
     (``runlog.RenderLog``); without one nothing is written anywhere.
     ``graphics_info=True`` also reports the graphics adapter (it switches Qt's
     ``qt.rhi.general`` debug output on for the duration of the call).
@@ -212,6 +214,8 @@ def render_records(
             sink = Quick3DSink(host)
             sync = SceneSync(sink, registry, ground_baker=ground_baker)
             sync.apply(records, sun=sun, ground=ground)  # one transaction
+            while sync.ground_pending:  # a baker with a time budget: a still picture
+                sync.continue_ground()  # shows the FINISHED ground, however many passes
             host.set_shot(shot)
             breakdown["scene_apply"] = (time.perf_counter() - mark) * 1000.0
             parts = sum(sink.part_count(item_id) for item_id in sink.item_ids())
