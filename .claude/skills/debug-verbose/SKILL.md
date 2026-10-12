@@ -7,6 +7,15 @@ argument: "Optional: short description of the bug or area to instrument"
 
 # Verbose Debug Instrumentation
 
+## Case study: guild names and gallery-click layer assignment (PR #433, 2026-10-11)
+
+**Symptom.** A German guild picker showed Apple Tree/Runner Bean/Borage/Strawberry. With auto-assignment enabled, a gallery-selected blueberry drawn on the canvas still used the active layer.
+**Wrong theories.** No theory adopted before tracing; a failed checkbox or missing shrub trait was ruled out by the runtime values.
+**Evidence.** `[F1] auto=True species=shrub chosen=<active-id> active=<active-id>`; `traceback.format_stack()` identified `CircleTool._finalize_circle -> CanvasView.add_item -> CreateItemCommand.execute`. `[F2] centre=Apple Tree members=['Runner Bean', 'Borage', 'Strawberry']` reproduced the German widget contents.
+**Root cause.** The existing drop test bypassed gallery-click circle creation, which constructed its own plant with the active layer. Guild controls directly displayed catalog common_name values without translation.
+**Fix.** Reuse `build_plant` for circle-based plant placement; translate guild catalog labels at display time in the existing GalleryData context and register all missing bundled common names. Preserve explicit user names and canonical saved species identity. Remove all probe prints before committing.
+**Lesson.** Test each actual creation surface, and assert displayed translated data as well as static labels. A green drop workflow and a complete translation table cannot establish click-placement or data-label behavior.
+
 **Core principle**: stop theorising, start observing. The first step for any non-trivial bug is to instrument the code so the actual runtime sequence is printed to stdout, then reproduce with manual testing and read what happened. Fix from evidence, not assumptions.
 
 ---
@@ -364,7 +373,7 @@ from_dict: ..., nutrient_demand=...,                            raw_data=...
 
 Three brand-new fields were declared on the dataclass (US-12.10d) but never added to either serialization site. So the live data flow `library → plant_database_panel.set_plant_data() → metadata["plant_species"] = data.to_dict() → ... → PlantSpeciesData.from_dict(metadata["plant_species"])` silently dropped every per-nutrient demand value, leaving `n_demand=p_demand=k_demand=None` on the reconstructed spec. The N rule still fired via the `nutrient_demand="heavy"` legacy fallback in `_effective_demand`, but it now used the *fallback* mapping, not the direct field — and any test that set the direct fields would silently no-op.
 
-**Root cause**: `models/plant_data.py:165` `to_dict` and `models/plant_data.py:227` `from_dict` — neither was updated when `n_demand`/`p_demand`/`k_demand` were added to the dataclass.
+**Root cause**: `models/plant_data.py:210` `to_dict` and `models/plant_data.py:275` `from_dict` — neither was updated when `n_demand`/`p_demand`/`k_demand` were added to the dataclass.
 
 **Fix**: Add the three keys to both serialization sites. Add a regression test [tests/unit/test_plant_data_serialization.py](tests/unit/test_plant_data_serialization.py) that iterates over every `dataclasses.fields(PlantSpeciesData)` and asserts presence in `to_dict()` output, plus a full equality round-trip.
 
@@ -726,7 +735,7 @@ Coverage of a supposedly constant-width line fell from full (110) at the top to 
 
 **Symptom.** `pytest tests/` (5,400 tests) died at 13 %: `tests/integration/test_plant_sprite_rendering.py ...........Windows fatal exception: code 0xc0000374` — no assertion, no traceback beyond the faulthandler dump. The same battery had passed twice that day on the sibling branch.
 
-**Wrong theory (2 minutes, discarded on evidence).** "My icon changes to `PlantSearchPanel` broke something in the plant search dialog." The panel and the dialog are different classes; the crashing frame was inside `plant_search_dialog.py:246` `QMessageBox.warning(self, …)` — the *except* branch of `_perform_search` — reached from `pytestqt/plugin.py:220` `_process_events` inside `pytest_runtest_setup` of the sprite test.
+**Wrong theory (2 minutes, discarded on evidence).** "My icon changes to `PlantSearchPanel` broke something in the plant search dialog." The panel and the dialog are different classes; the crashing frame was inside `plant_search_dialog.py` (historical line 246) `QMessageBox.warning(self, …)` — the *except* branch of `_perform_search` — reached from `pytestqt/plugin.py:220` `_process_events` inside `pytest_runtest_setup` of the sprite test.
 
 **Key evidence.** The stack itself: a dialog slot running during the SETUP of an unrelated test means nobody in that test called it — an event did. `grep -n "QTimer()" src/…/plant_search_dialog.py` → `self._search_timer = QTimer()` — no parent. `grep search_input.setText tests/` → six tests type into the box (arming the 500 ms debounce), call `_perform_search()` synchronously themselves and finish in milliseconds. So: dialog closed and deleted by qtbot, Python-owned timer alive, fires 500 ms later into whichever test is then processing events; the real `requests.Session.get` (monkeypatch already undone) raises `PlantAPIError`, and a modal box is opened with a deleted parent → heap corruption. Two new test files (`test_iconography_3c.py`, `test_icon_names_referenced_in_src.py`) had shifted the schedule so the fire landed on a setup `processEvents` instead of a harmless gap.
 
@@ -1788,3 +1797,31 @@ The point moved by 1.8 cm in x AND y. Nothing about the plant's geometry had cha
 **Fix**: the helper (`OverlayWatch.settled`) waits for the recompute count, THEN for a `scene.changed` delivered since that recompute, then for the debounce the echo starts. `tests/integration/test_scene3d_base_stacking.py::TestTheOverlaysOwnEcho` holds both halves of the race still by calling `recompute_now()` directly — the echo is then certainly undelivered — once without waiting for it (exactly one extra recompute) and once through the helper (none). With the old helper the second test fails three times out of three.
 
 **Lesson**: "the timer is idle" is not "nothing is pending". When a system answers its own action with a signal, wait for that signal. And a race is turned into a regression by taking the event loop out of the step that hides it: run that step synchronously, and the bad interleaving is the only one there is.
+
+## Case study: grouped guild navigation test picked a child instead of the group (F1/F2)
+
+**Symptom.** A grouped-centre diagnostic assertion passed alone and failed in a combined run.
+**Wrong theory.** The coordinator had failed to remap the centre to its enclosing group.
+**Evidence.** `[GUILD-GROUP] selected` printed a `GroupItem` plus selected `CircleItem` child wrappers; their order varied. `centre.parentItem()` and the diagnostic agreed.
+**Fix.** Address the group through the centre's actual parent, never `scene.selectedItems()[0]`. A second idempotence assertion printed `[GUILD-REFRESH] changed keys ['metadata']`: serialization stamps `modified` on every call. Compare content after removing only that volatile timestamp.
+**Lesson.** Inspect framework state before changing correct production logic. Keep selection/serialization tests independent of unspecified ordering and wall-clock stamps. All temporary prints were removed.
+
+## Case study: guild previews and deferred navigation outlive a document (F1/F2, 2026-10-11)
+
+**Symptom.** Independent review reproduced a deleted-wrapper exception when a plan was cleared while its guild preview was open. A pending sidebar click selected an object in a newly loaded copy of the plan.
+**Wrong theories.** None adopted; the old branch was exercised directly before changing the lifecycle contract.
+**Evidence.** A temporary probe against the second review snapshot printed `[GUILD-LIFECYCLE] markers_after_clear 4`, followed by `RuntimeError: wrapped C/C++ object of type QGraphicsEllipseItem has been deleted` in `clear_preview()`. The same probe printed `[GUILD-NAVIGATION] selected_after_load 1` when the replacement document reused the original UUIDs. The final regression passes after the fix; all probe prints and files were removed.
+**Root cause.** A UUID guards object identity within a document, not across document replacement. Preview wrappers also outlived the C++ objects owned by the scene.
+**Fix.** Close the picker on `document_replaced` before scene teardown, invalidate its document generation, and tolerate already-destroyed preview wrappers during idempotent cleanup. Stop pending sidebar navigation and discard queued IDs at replacement.
+**Lesson.** Every deferred GUI operation needs both object identity and a document-lifetime boundary. A teardown test must cover a replacement that retains the same object UUIDs, not just an empty scene.
+
+## Case study: the guild coordinator assumed every plant was a circle (F1/F2, 2026-10-11)
+
+**Symptom.** The complete suite reported Qt event-loop errors in existing agent task/soil workflows even though the guild-specific tests passed.
+**Wrong theories.** None adopted; the captured exception identified the accessed property before any lifecycle theory was pursued.
+**Evidence.** The traceback ended at `GuildCoordinator.refresh`, reading `item.radius`: `AttributeError: 'RectangleItem' object has no attribute 'radius'`. A focused regression printed `[GUILD-GEOMETRY] plant RectangleItem has_radius False` and failed both directly and at Qt teardown before the fix.
+**Root cause.** The plant ObjectType predicate is semantic; saved/imported or directly constructed plant records need not use CircleItem. Badge-signature calculation unnecessarily inspected geometry even for unassigned plants.
+**Fix.** Skip badge geometry for plants with neither a missing-role status nor an existing badge. For a badge that needs updating, use the item's rectangle or bounding rectangle, retaining the circle radius where provided. The regression also pins a rectangular centre's badge and unchanged serialized geometry.
+**Lesson.** A semantic type predicate does not prove a concrete graphics-item class. Run the complete suite to exercise representations absent from the new subsystem fixtures. The temporary print was removed.
+
+**Follow-up: imported polygon centres.** Review then exercised the real save/load/picker path, not only badge refresh. A temporary regression printed `[GUILD-CENTRE] loaded_type PolygonItem eligible_index 1`; Insert refused with `PolygonItem object has no attribute rect`. An initial probe omitted a layer and correctly found no eligible centre; the decisive probe persisted a valid visible/unlocked layer. `guild_plant_bounds()` now supplies base-shape bounds to existing-centre placement, whole-layout preflight, preview and badges. Polygon/path bounds exclude painted shadows and cosmetic children. Round-trip insertion and exact undo restoration are pinned at 0?, 45? and 215?, including the centre-relative mature-spacing layout. All probe prints were removed.
