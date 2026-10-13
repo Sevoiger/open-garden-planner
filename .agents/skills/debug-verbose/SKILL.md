@@ -1803,3 +1803,86 @@ The next print failed because the code page could not encode a check mark.
 **Root cause.** Bounding rectangles contain empty space in concave footprints. Evaluation and canopy paths normalized species differently. A weak observer can be pruned during cyclic collection before Qt emits destroyed.
 **Fix.** Fit the complete badge rectangle inside the undecorated QPainterPath, normalize species once for both consumers, and make destruction cleanup idempotent for an already-removed subscription. Preserve navigation and item geometry across grouped save/load.
 **Lesson.** Test actual containment rather than rectangle placement, exercise accepted legacy metadata, and allow both Python collection and Qt destruction to own cleanup without raising.
+
+## Case study: A1 trust boundaries (#453, 2026-10-13)
+
+**Symptoms.** Non-finite JSON reached scene preparation and could overwrite a good
+plan; an image/png header allowed HTML into the cache; duplicate installer assets
+selected the first entry; native Linux Qt 6.11 settings were mode 0644 under umask 022.
+**Wrong theories.** No runtime hypothesis adopted before baseline reproduction.
+The Windows registry sandbox failure was isolated by running the same failing-first
+tests outside the sandbox; it was not treated as product behavior.
+**Evidence.** The failing regression emitted `[A1-NUMERIC] invalid data reached scene
+preparation`, with the load -> _prepare_scene_data stack. The save test reported
+`DID NOT RAISE ValueError`; the image test returned a cached path for HTML; the
+duplicate test returned a download URL. A disposable Linux Qt probe printed
+`{'qt': '6.11.0', 'umask': '022', 'mode': '0o644'}`.
+**Root cause.** Permissive JSON at several independent file paths, content-type-only
+cache validation, unbound updater metadata/download/launch, and reliance on Qt's
+default creation permissions. Conditional angle serialization could also omit NaN.
+**Fix.** Shared strict/atomic plan I/O; detached journal reconciliation; a release-bound
+verified installer result and pre-launch recheck; bounded image streaming plus full
+decode and atomic PNG caches; Linux descriptor protection in the existing settings
+factory and explicit startup refusal. Keep Windows/native stores and existing keys.
+**Lesson.** Pin every bypass, not only the main caller. Finite operands can overflow;
+headers are not data validation; a downloaded path is not a verification result; a
+mocked Windows chmod does not establish Linux permissions. Probe logs are task
+artifacts only. Pins live in the A1 unit/integration safety tests and settings isolation.
+
+## Case study: host ICU DLL contaminates frozen WebEngine (#453, 2026-10-13)
+
+**Symptom.** Source self-test passed, but the frozen self-test opened a missing-
+procedure error while importing QtWebEngineWidgets.
+**Wrong theories.** Qt micro-version mismatch remained unproven; source/frozen Qt
+DLL hashes matched. A PE probe initially reported many missing Qt symbols because
+pefile stopped after 8,192 exports; raising its export limit removed those false hits.
+**Evidence.** Analysis-00.toc collected icuuc.dll from the host Poppler runtime.
+The frozen ICU was 78.3 with suffixed exports; source Qt loaded Windows ICU 72.1.
+Only the Qt6Core -> bundled ICU missing imports remained after correcting the probe.
+**Root cause.** The build inherited an unrelated tool runtime on PATH, which made
+PyInstaller bundle an incompatible ICU DLL ahead of the native Windows library.
+**Fix.** Clean rebuild with a controlled PATH. Detached self-test exited 0 and the
+eight-second smoke exited 124. No dependency pins or packaging spec were changed.
+**Lesson.** Read actual loader paths and collection provenance before upgrading Qt.
+A diagnostic tool's truncation limit can masquerade as a dependency defect.
+
+## Case study: finite operands overflow after Qt geometry composition (#453)
+
+**Symptom.** Independent review loaded finite rectangles/groups and an embedded
+image whose computed scene bounds contained infinity. Opaque metadata value="NaN"
+also failed even though it was ordinary text.
+**Wrong theories.** Raw finite values and individually finite extents were not
+sufficient evidence of finite transformed/grouped geometry.
+**Evidence.** Five regressions failed first: translated group bounds, aggregate
+group bounds, a 45-degree rectangle, a decoded 4x4 image scaled by 1e308, and opaque
+metadata. The four real application tests failed DID NOT RAISE ValueError while
+the metadata test raised PlanValidationError on text.
+**Root cause.** Raw validation omitted derived Qt geometry and propagated numeric-
+string semantics into arbitrary nested metadata.
+**Fix.** Validate Qt-computed local/mapped bounds and transform coefficients across
+the detached graph before active-scene mutation and across live items before saves.
+Check decoded image dimensions before calibration; propagate PlanValidationError
+instead of skipping an item or replacing it with a placeholder. Scope numeric-
+string checks to geometry containers while rejecting actual non-finite numbers
+everywhere. The focused preservation/image/atomicity run passed 63 tests.
+**Lesson.** Finite operands need a checked composition boundary. Let Qt compute
+its own transforms, then validate the detached result before publishing it.
+
+## Case study: an empty Qt bounding rectangle hides an infinite line span (#453)
+
+**Symptom.** A construction line with x1=-1e308 and x2=1e308 passed finite-input
+validation. Qt returned an empty bounding rectangle despite infinite dx and length.
+**Wrong theories.** A finite or empty bounding rectangle does not prove that the
+underlying primitive has finite intermediate geometry.
+**Evidence.** Independent review measured infinite QLineF dx/length. The real
+load-preservation regression failed DID NOT RAISE ValueError before the fix.
+**Root cause.** The raw preflight omitted endpoint spans, and Qt's empty rectangle
+concealed the overflow from the detached bounds check.
+**Fix.** Check both endpoint differences and hypot length before construction,
+including point/anchor/control segments and polygon closing edges. Check arc
+endpoint/midpoint angle sums at the raw boundary; do not construct enormous sweeps
+to test arithmetic. Polyline, polygon and arc regressions also failed first.
+Pure huge-finite Qt path rendering limits preserve the serialized model and stay
+outside A1; no coordinate cap or zero-length rejection was introduced.
+**Lesson.** Validate primitive arithmetic when invalid geometry can collapse to an
+empty bounding rectangle. Keep the detached Qt composition gate as well.

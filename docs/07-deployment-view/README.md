@@ -372,3 +372,22 @@ Repository community files own contributor, conduct, security, and accessibility
 GitHub's private vulnerability reporting setting must be enabled before SECURITY.md goes live.
 Abuse reports to GitHub Support are separate from vulnerability reports to maintainers.
 The community profile and PR-template recognition require post-merge verification.
+
+## In-app installation verification (A1, #453)
+
+The application requires the matching release's `SHA256SUMS.txt` before launching
+the installer. Missing/invalid metadata, unpermitted redirects, byte-count mismatch,
+checksum mismatch or cancellation prevent launch. Manual download remains available
+from the release page. This adds download-integrity verification; installers remain
+unsigned, and build-provenance attestation remains independently verifiable as before.
+Linux settings files from earlier releases migrate to owner-only permissions on startup;
+an unprotectable store causes an actionable startup error instead of insecure persistence.
+
+The A1 frozen self-test also exercises strict plan persistence, all four supported
+image codecs and verified-installer hashing in an isolated temporary directory.
+On the 2026-10-13 local build, PyInstaller collected ICU 78.3 from the host's Poppler
+directory on PATH. That DLL lacks the unsuffixed ICU exports required by Qt and
+caused a frozen WebEngine import error. The source environment loaded Windows'
+native ICU 72.1. A clean rebuild with PATH restricted to the locked environment,
+Windows system directories, Python and Git passed detached `--selftest` (exit 0)
+and the eight-second smoke (exit 124). No dependency pin or spec change was needed.

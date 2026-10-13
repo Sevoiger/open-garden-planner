@@ -2801,3 +2801,37 @@ Owner manual acceptance passed on 12 October 2026. Protected [PR #477](https://g
 Finalization reran 268 focused gesture/gate/context/citation tests, frozen eight-second smoke and `--selftest`, and fresh independent implementation/rebase reviews. The additional full local run without coverage recorded 8160 passed, 34 skipped and one fit-in-view timing miss (16.79 ms against 16.70 ms); unchanged master also missed this budget in the isolated baseline (18.71 ms). CI is green; no timing budget was relaxed.
 
 Owner testing found the pre-existing rotation/constraint interaction, tracked in [#485](https://github.com/cofade/open-garden-planner/issues/485). A real-canvas probe on master and the #406 branch measured a 200 cm corner distance becoming 314.42 cm after rotation and recovering on a nudge. The reported skipped rotation undo was not reproduced in that isolated probe. This follow-up remains separate from #406 and the 73-entry P2/P3 partition.
+
+### Audit package A1 (#453) — implementation awaiting acceptance
+
+Strict numeric `.ogp` ingestion and atomic persistence, release-bound checksum/origin
+verification before installer launch, bounded fully decoded thumbnail/Static Maps
+responses, and owner-only Linux settings with explicit startup failure. One branch
+and one draft PR cover AUD-041/042/044/047. No file-format bump, dependency change,
+credential-key migration, release-right change or renderer change. Epic #392 stays open.
+
+Final validated source: `f0a5d225` (2026-10-13). Locked Linux full-suite coverage:
+8245 passed, 37 skipped; all package/file floors passed. Coverage is 79.9% lines /
+63.5% branches overall, and 85.6% / 74.2% outside UI. Windows full suite:
+8241 passed, 39 skipped, with two repaint timing misses during concurrent gates
+(30.67/23.47 ms against 16.70 ms). Quiet strict repaint reruns passed all three
+tests on both this branch and unchanged master; no thresholds or skips changed.
+Final line/arc/Bezier/preservation tests: 101 passed; translation/interpolation:
+70 passed. Both platform type gates have zero regressions; HIGH Bandit findings:
+zero. Lint, lock/export, secrets, agent parity, citations and offline wiki pass.
+Fresh independent re-review has no outstanding P0/P1. The controlled-PATH frozen
+build passed detached self-test (0) and eight-second startup (124), including
+packaged plan/codecs/hash probes. The real v1.30.2 installer was downloaded and
+verified at 179026922 bytes against its release checksum, without launch.
+Owner manual acceptance, protected merge and wiki publication remain pending.
+
+### A1 docs updated on implementation
+
+| Document | Section |
+|---|---|
+| Building blocks / runtime | Shared ingestion components and refusal flows |
+| Crosscutting concepts | Error preservation, settings, security and test evidence |
+| ADR register | ADR-003, ADR-041 and ADR-044 addenda |
+| Deployment / requirements | Verified installation, Linux migration, FR-SAFETY-01–04 |
+| Risk register / reconciliation | A1 evidence and pending acceptance |
+| Agent context / wiki sources | Current implementation and public behavior |

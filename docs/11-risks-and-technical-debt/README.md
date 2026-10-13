@@ -1098,3 +1098,48 @@ Private vulnerability reporting is enabled. Conduct reports go privately to GitH
 not directly to the maintainer. No contact email or private Discussion channel is promised.
 Repository wiki sources and manual publication follow `docs/wiki/README.md`; publication
 and GitHub community-profile recognition remain pending owner review and merge.
+
+### A1 numeric, download and settings boundaries (#453)
+
+The A1 branch implements AUD-041/042/044/047; owner acceptance and protected merge
+remain pending. TD-025 is resolved in the implementation, not yet a shipped claim.
+
+The original failures were reproduced: non-finite JSON reached scene preparation,
+a non-finite save overwrote a valid file, HTML labeled as PNG was cached, duplicate
+installer assets selected the first entry, and Qt 6.11 Linux settings were mode 0644
+under umask 022. Fixes live at shared ingestion/persistence boundaries rather than
+only one caller. Geometry validation also checks overflow from finite operands and
+live NaN rotation that a conditional serializer would otherwise omit.
+
+Pins: `test_plan_numeric_safety.py`, `test_verified_update.py`, `test_image_download.py`,
+`test_a1_plan_safety.py`, `test_a1_download_safety.py`, `test_settings_isolation.py`
+and `test_settings_security_startup.py`. Linux evidence uses the locked environment
+and real permissions. A successful Windows API mock is never reported as that evidence.
+Separate shutdown #480/#483, rotation #485 and unfinished 3D work remain outside A1.
+
+The frozen run exposed host PATH contamination: PyInstaller bundled Poppler's
+ICU 78.3 instead of using Windows' native ICU 72.1, breaking WebEngine's required
+unsuffixed imports. DLL versions, collection provenance and PE exports identified
+the cause; the PE probe needed an export limit above pefile's default 8,192 to
+avoid false missing-symbol reports. A controlled-PATH clean build passed both
+frozen checks. Match the loader's actual DLL paths before changing Qt pins.
+
+Senior review reproduced four derived-geometry bypasses: translated rectangle
+bounds, combined group bounds, a rotated rectangle and decoded image scaling.
+Each operand was finite but Qt's resulting bounds were infinite. All four real
+load-preservation tests failed before the fix. A fifth regression showed opaque
+metadata text `value="NaN"` being incorrectly treated as geometry. The fix checks
+Qt's detached item graph before scene mutation, checks live geometry before saves,
+checks decoded image extents before scaling and scopes numeric-string validation
+to geometry containers. Numeric non-finite JSON remains invalid everywhere.
+
+The earlier review additionally found that a construction line with opposite
+finite endpoints can have an infinite span while Qt returns an empty bounding
+rectangle. Its real load-preservation test failed first. Raw endpoint differences
+and line length are now checked before construction, alongside the detached bounds
+gate; an empty Qt rectangle is not sufficient evidence that its primitive is valid.
+The same check covers point/anchor/control segments and polygon closing edges.
+Arc endpoint and midpoint angle sums are checked before construction. Polyline,
+polygon and arc regressions failed first, then passed with the shared arithmetic
+guard. Pure huge-finite Qt rendering limits retain their serialized model and remain
+outside A1; no coordinate cap or rejection of zero-length primitives was introduced.
