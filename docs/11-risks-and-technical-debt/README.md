@@ -29,17 +29,26 @@ Dated audit snapshots: [audit-2026-10.md](audit-2026-10.md) (numbers: `audit-202
 | Windows installer blocked by SmartScreen | Medium | Low | Document workaround, investigate signing options. Build provenance attestation shipped (ADR-044) as a verifiable trust signal alongside the checksum; does not itself suppress SmartScreen/Defender (issue #356) or Norton `FileRepMalware[Misc]` (issue #358 — second AV vendor, same unsigned zero-reputation profile). Releases remain unsigned; signing options, including no-cost proposals, are under evaluation in [#375](https://github.com/cofade/open-garden-planner/issues/375). No option has been adopted, and no signed release has established effectiveness against these detections. FP path per vendor: Microsoft file-submission forms (#356), Norton portal `submissions.norton.com/reportfalsepositive` (#358; both portals are CAPTCHA-protected, so submissions are manual, not automatable by the maintainer). |
 | Large bundle size from PyInstaller | Medium | Low | Optimize includes, strip unused Qt modules |
 
-**Build-backend advisory, 2026-10-09.** The first Dependabot scan of uv.lock reported
+**Build-backend advisory, 2026-10-09; updated 2026-10-13 (A2 #454).** The first Dependabot
+scan of uv.lock reported
 [GHSA-h35f-9h28-mq5c](https://github.com/pypa/setuptools/security/advisories/GHSA-h35f-9h28-mq5c)
-against build-only setuptools 82.0.0: a moderate Unicode-normalization bypass of MANIFEST.in
+against setuptools 82.0.0 (also present in the frozen artifact): a moderate Unicode-normalization bypass of MANIFEST.in
 exclusions when publishing macOS source distributions. GitHub identifies 83.0.0 as the first
 patched version. Applicability assessment: current CI uses Linux/Windows editable installs
-and publishes a Windows PyInstaller/NSIS installer; it does not publish macOS sdists.
+and publishes a Windows PyInstaller/NSIS installer; neither that build pipeline nor the app publishes macOS sdists. The waiver concerns the unused affected operation, not absence of setuptools from the executable.
 [Dependabot alert 1](https://github.com/cofade/open-garden-planner/security/dependabot/1)
-remains open for a separately reviewed backend/lock update. This version-sync chore preserves
-the approved dependency selections. The automatic updater also failed because its hosted
-uv support was 0.12.18 while this project requires 0.12.23; the follow-up therefore needs
-a manual dependency PR until hosted support catches up.
+remains open for a separately reviewed backend/lock update. The CI `Dependencies` matrix job
+(Linux and Windows) now runs `pip-audit` against the committed lock export
+(`uv export --locked --all-extras --group build`) on every push, with this single advisory
+recorded as `--ignore-vuln PYSEC-2026-3447`; a new advisory fails the job. Both platforms
+run it because pip-audit evaluates markers for the running interpreter.
+
+Automated dependency PRs remain unavailable: Dependabot's uv ecosystem image ships uv
+**0.12.19** (`uv/Dockerfile` in dependabot-core, read 2026-10-13) while this project pins
+`uv ==0.12.23`, and a `required-version` mismatch makes the updater exit before doing any
+work. `.github/workflows/dependency-review.yml` is the documented monthly manual fallback:
+it reports what `uv lock --upgrade` would change into one issue and never writes to the
+repository. See ADR-050's A2 addendum and `docs/07-deployment-view` §7.4.
 
 ## 11.3 Technical Debt
 
@@ -88,6 +97,33 @@ The living register (ADR-047). Every row has a status; P0/P1 rows link their iss
 | TD-039 | Solver evidence | Selection-scoped historical mutation gaps; fresh sample and geometric oracles, including corrected all-pinned false convergence | P2 / M | completed; owner acceptance, PR #489; v1.30.4 | #457 | AUD-023; ADR-012 addendum; [A5 evidence](audit-2026-10-a5-evidence.md) |
 
 ## 11.4 Known Development Pitfalls
+
+- **Hold a worker in flight when proving GUI responsiveness** (PR #490): the
+  sun-mismatch heartbeat test failed on CI with two ticks instead of three while
+  three other full CI runs and the local suite passed. Tagged worker/timer traces
+  showed that the count depended on compute duration and included post-completion
+  ticks. The test now holds the real computation with an Event, requires three
+  heartbeat ticks while the worker is running/pending on a different thread, then
+  releases it and validates the real result. Failure cleanup always releases the
+  worker; the timer interval and result timeout are unchanged. Pinned by
+  `tests/integration/test_sun_mismatch.py::test_explicit_worker_keeps_gui_responsive`;
+  a synchronous-worker mutation was observed failing its thread assertion.
+
+- **Attribute frozen code from collected files, not only declared dependencies**
+  (PR #490 / #454): the 47-component SBOM check passed while the executable's PYZ
+  contained unreported setuptools, packaging, pytest/mypy dependencies and nested
+  vendored libraries. `Requires-Dist` and a hardcoded hook exception did not describe
+  what PyInstaller collected. `installer/frozen_inventory.py` now maps actual Analysis
+  source paths through wheel RECORDs, with nested vendored precedence, and bundles
+  those owners' metadata/licenses plus a module/file ownership manifest. The checker
+  compares it with the executable PYZ and locks containing-wheel versions for vendored
+  copies; declared license files must exist and their text must reach the notices.
+  Pinned by `tests/unit/test_frozen_inventory.py` and
+  `tests/integration/test_distribution_inventory_pipeline.py::test_frozen_hook_dependencies_are_in_the_inventory`
+  (observed failing on the original artifact). Synthetic fixtures constructed from the
+  expected closure prove orchestration, not complete frozen attribution.
+
+- **A stale `*.egg-info` on `sys.path` silently shrinks anything derived from installed metadata (#454, 2026-10-13).** The runtime-distribution resolver behind the release's third-party notices and SBOM returned **five** distributions (the project + `Pillow` + the three `PyQt6*` wheels) when a test ran it, but the same interpreter returned **48** when the module was run directly. Root cause: a legacy `src/open_garden_planner.egg-info` (version `0.1.0`, written years earlier) was still on disk; the editable install puts `src/` on `sys.path`, and `importlib.metadata.distribution("open-garden-planner")` returns the **first** match — so `Requires-Dist` described a two-year-old project. Two lessons. (1) **Check what `sys.path` order resolves** — when a metadata lookup disagrees with a file a human can read, print the distribution's `_path`; the answer is usually "you got a different distribution than you meant". (2) **Anchor build inputs on the manifest, not on the environment's copy of yourself**: the resolver now reads `[project].dependencies` from `pyproject.toml` and only walks *third parties* through installed metadata, so no stale artefact of the project's own history can change what ships. Related, same task: PyInstaller's `hook-importlib_metadata` bundles setuptools' **vendored** `importlib_metadata` (Apache-2.0) even though nothing declares it — the initial explicit hook exception was superseded in PR #490 by physical RECORD attribution of every collected wheel owner, including vendored copies (see the preceding pitfall).
 
 - **No free solver variables does not imply feasibility** (#457, ADR-012):
   two pinned anchors 100 cm apart with a 200 cm target were reported converged

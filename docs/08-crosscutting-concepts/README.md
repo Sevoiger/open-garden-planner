@@ -190,6 +190,7 @@ No box-shadow, no transitions, no outline focus rings — focus is a 2 px border
 - **Linting**: Code must pass ruff checks
 - **Test coverage**: CI enforces measured per-package line floors; branch coverage is reported separately (ADR-050, ?10.4). Non-UI means every package except `ui`.
 - **Line length**: 100 characters in the Ruff configuration; no formatter CI gate is claimed.
+- **One dependency source of truth (AUD-052)**: `pyproject.toml` plus the committed `uv.lock` / `pylock.toml`. The old top-level `requirements*.txt` mirrors were removed in #454; toolchain pins, build evidence and the dependency-update runbook live in `docs/07-deployment-view` §7.4.
 
 ### Git Workflow
 
@@ -405,6 +406,14 @@ self._reposition()
 Rect-bearing items (`CircleItem`/`RectangleItem`/`EllipseItem`) serialize their position as `pos + rect.center()` with rotation stored as a *separate* angle pivoting on the centre (`core/project.py`). Every geometry mutation on such an item — rotate, programmatic resize, interactive drag-resize, and the undo/redo of any of them — **must end with `transformOriginPoint() == rect().center()`**, or a rotated item's saved centre diverges from its on-screen centre and it drifts on reload / jumps on the next rotation. Do not re-derive this per gesture. **Route every rect-backed resize through `ui/canvas/geometry_apply.py`** (US-D2.2): `apply_rect_like_geometry` is the `apply_func` every `ResizeItemCommand` must be given, and the `build_*_resize` helpers compute the target geometry for either anchor policy. Its module docstring is the authoritative list of callers and exceptions. Below it sit the two lower-level primitives, a coupled pair rather than pick-and-choose: `resize_handle.resize_rect_item_keeping_anchor(item, new_rect, scene_anchor, local_anchor)` (mutating: `prepareGeometryChange()`, apply rect, re-pin origin, reposition so a chosen scene point stays fixed), whose `scene_anchor` must come from the pure forward transform `scene_point_of` — never hand-derived — and `anchored_position`, the inverse form the `geometry_apply` builders solve `pos` through. **Never hand-derive a position beside a re-pin** — `anchored_position` bakes in `O = new_rect.center()`, so a `pos` computed by hand under the *old* origin and then combined with a re-pin is two half-solutions to one transform: that combination slid a rotated rectangle 671 cm out from under the cursor (§11.4). Rotation goes through `geometry_apply.apply_rotation`, the only definition in the codebase (it delegates to `RotationHandleMixin._apply_rotation`, which pivots on `rect().center()`). Note `ResizeItemCommand` accepts **two** callables — `apply_func` and each `partner_resizes` entry's — and both must obey this. For rect-backed items, the interactive `ResizeHandle._apply_resize` takes the fixed corner/edge **authoritatively from the handle position**, never inferred from scene-space, which disagrees with the item frame under rotation. It lets the item normalise the rect (`CircleItem._constrain_resize_size` squares it so the dragged handle tracks the cursor — never `min(w,h)`, which collapses under rotation), then refreshes via `_after_resize_geometry()`. The non-rect fallback (PolygonItem) is exact compensation, not an alignment accident: it rotates the local delta into scene space (`pos_dx * cos_a - pos_dy * sin_a`) before applying it, so the dragged edge tracks the cursor and the opposite edge stays fixed under rotation too. The pivot must come from the *geometric* `rect()`, never the decoration-expanded `boundingRect()` (a runtime-only badge expands the latter asymmetrically); and any shrink of a custom `boundingRect()` must `prepareGeometryChange()` or Qt leaves a stale "ghost". See ADR-028 and §11.4 (#218/#219). Sizing precedence (footprint vs. spacing override vs. DB `max_spread_cm`) likewise has one home: the Qt-free `core/plant_sizing.py` resolver.
 
 ## 8.10 Integration Test Policy
+
+**Worker responsiveness.** Control an in-flight interval instead of counting timer
+ticks over an uncontrolled computation duration. Hold the real worker at an Event,
+assert GUI heartbeat delivery and a different execution thread while the request
+is still pending, then release and verify the real result. Always release in failure
+cleanup. `test_explicit_worker_keeps_gui_responsive` preserves its three-tick assertion,
+10 ms timer interval and 30-second result timeout; its synchronous-worker negative
+control fails. See §11.4 (PR #490).
 
 **Every user story (US) must ship with at least one end-to-end integration test. No merge without it. No exceptions.**
 
@@ -645,6 +654,18 @@ name the platform and locked interpreter, not imply a Windows chmod mock proves 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).
 
 **CI enforcement:** The `security` job in `ci.yml` runs `bandit -r src/ --severity-level high` on every push. CI fails only on HIGH-severity findings. MEDIUM and LOW findings are omitted by this invocation. Use the separate all-findings command below for awareness; no broader scan is claimed.
+
+**Dependency vulnerability scan (AUD-054, #454):** the `Dependencies` matrix job (Linux and
+Windows) also runs `pip-audit` over the committed lock export
+(`uv export --locked --all-extras --group build`, which by default also includes the dev
+group), so a finding is a finding in a shipped artifact, a build tool or a development tool
+that runs in CI; it runs on both platforms because pip-audit evaluates requirement markers
+for the running interpreter (the Windows-only `pywin32` is invisible to a Linux-only scan).
+One advisory is recorded as an explicit exception — the `setuptools` advisory affecting
+unused macOS source-distribution publishing,
+`PYSEC-2026-3447`, which only affects publishing macOS source distributions (justification in
+§11.2); its fix stays reserved for a separately reviewed dependency PR. Any new advisory
+fails the job.
 
 **Local use:**
 ```bash
@@ -1538,8 +1559,9 @@ walks the live scene's badge state directly and was not changed by #338.
 (exempt). Only the Settings UI strings go through `tr()`.
 
 **Packaging.** See §7 deployment view — the `mcp`/`uvicorn`/`starlette` stack
-needs `collect_submodules` + `copy_metadata` in `ogp.spec`, must NOT walk
-`mcp.cli`, and must NOT exclude `multiprocessing` (uvicorn imports it).
+needs `collect_submodules` in `ogp.spec`; its distribution metadata comes from
+the runtime closure (`installer/runtime_closure.py`, AUD-051/#454). The spec must
+NOT walk `mcp.cli`, and must NOT exclude `multiprocessing` (uvicorn imports it).
 
 **US-D2.4/D2.5 — layer addressing and shape/structure creation.** The curated
 schema exposes layers as UUID-addressed records (`layer_id`, name, visibility,

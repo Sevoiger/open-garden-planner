@@ -7,6 +7,113 @@ argument: "Optional: short description of the bug or area to instrument"
 
 # Verbose Debug Instrumentation
 
+## Case study: a fast worker fails a GUI heartbeat count (PR #490, 2026-10-14)
+
+**Symptom.** One CI Test job failed `test_explicit_worker_keeps_gui_responsive`
+with two timer ticks instead of three. The same head passed the other full Test
+job, both Coverage jobs and the Windows full suite.
+
+**Wrong theories.** No product-threading theory was adopted before tracing. A
+fixed tick count over an uncontrolled computation duration was not a responsiveness
+contract, and ticks delivered after completion could inflate the count.
+
+**Evidence.** Tagged worker/timer instrumentation recorded `[490-RESP] worker-start`
+on thread 12492 at 0.003 s, worker-end at 0.057 s, and GUI ticks on thread 5184
+continuing from 0.119 s through 0.181 s. The failed CI assertion recorded `[1, 1]`.
+
+**Root cause.** The test counted timer ticks during however long a small real
+computation and its queued result delivery happened to take. Faster completion
+could legitimately produce fewer ticks; later ticks did not prove an in-flight worker.
+
+**Fix.** Hold the real computation at a thread Event, require three GUI heartbeat
+ticks while the worker is still running/pending, assert a different thread identity,
+release it and verify the real result. Always release on failure. Preserve the
+existing timer interval and result timeout. All 18 sun-mismatch workflows pass;
+a synchronous-worker negative control fails the thread-identity assertion.
+Remove all temporary probe prints before committing.
+
+**Lesson.** Control the in-flight interval when proving responsiveness. Do not
+infer it from the incidental duration of a small fixture or loosen the tick count.
+
+## Case study: frozen code absent from a passing SBOM (#454, 2026-10-14)
+
+**Symptom.** The inventory check passed for 47 components, but an independent review
+of the newly built executable found frozen setuptools/packaging, development dependencies
+and setuptools-vendored copies absent from both the SBOM and notices.
+
+**Wrong theories.** No alternate runtime theory was adopted. The earlier special case
+for vendored importlib-metadata described one observed hook; it was not an inventory.
+
+**Evidence.** Reading the actual executable PYZ and physical collected source paths gave
+`[490-OWNERS] packaging 26.3; setuptools._vendor.packaging 26.0; zipp 3.23.0`.
+The independent artifact regression failed with `frozen setuptools has no inventory component`.
+
+**Root cause.** The metadata collector and synthetic tests both used the same declared
+Requires-Dist closure. PyInstaller's actual code collection independently included hook
+and vendored files, so a check of the declared set could not detect those omissions.
+
+**Fix.** Attribute actual Analysis pure/binary/data/runtime-script paths through wheel
+RECORD ownership, with nested vendored precedence. Bundle those owners' exact metadata
+and declared license texts. Record module/file ownership and verify the manifest against
+the actual executable PYZ; tie vendored versions to their locked containing wheel rather
+than a name-based exemption. Preserve distinct installed/vendored versions. Temporary
+probe output stays out of committed code.
+
+**Lesson.** A fixture generated from the expected inventory cannot prove actual shipped
+composition. Inspect the executable and physical source ownership independently.
+
+
+## Case study: the same metadata query returned 5 distributions under pytest and 48 in the shell (#454, 2026-10-13)
+
+**Symptom.** The runtime-closure resolver behind the release's third-party notices and SBOM
+returned five names (the project, `Pillow`, and the three `PyQt6*` wheels) when a unit test
+called it, but 48 names when the identical module was executed directly with the same
+interpreter. No product code ran at all.
+
+**Wrong theories.** First theory: `importlib.metadata` caching inside pytest. It has no such
+cache. Second: the frozen bundle's `.dist-info` set differing from the environment's. The
+bundle was not involved in the failing call. Third: a marker evaluation difference between
+`evaluate()` calls. The same wrong answer repeated verbatim, which is the tell for "a
+different object, not a different judgement".
+
+**Evidence.** The decisive line was printing the resolved distribution's own location:
+
+```python
+print(metadata.distribution("open-garden-planner")._path)
+# C:\...\open-garden-planner\src\open_garden_planner.egg-info
+```
+
+and then listing every distribution whose name contains "garden":
+
+```python
+[x._path for x in metadata.distributions() if "garden" in x.metadata["Name"].lower()]
+# [ ...\src\open_garden_planner.egg-info,
+#   ...\venv\Lib\site-packages\open_garden_planner-1.30.2.dist-info,
+#   ...\src\open_garden_planner.egg-info ]
+```
+
+Two records for one name; the stale one (version `0.1.0`, two dependencies, written years
+earlier by a legacy editable install) won under pytest because the editable install's `.pth`
+puts `src/` on `sys.path` ahead of site-packages.
+
+**Root cause.** `importlib.metadata.distribution(name)` returns the **first** matching
+distribution on `sys.path`, not the newest — and `sys.path` order differs between a plain
+`python -c` run and pytest (which inserts test paths). The resolver trusted "the project's own
+installed metadata" while an unowned artefact of the project's history shadowed it.
+
+**Fix.** The resolver now anchors on `pyproject.toml`'s `[project].dependencies` and walks
+only *third parties* through installed metadata (`installer/runtime_closure.py`); the stale
+`*.egg-info` was removed from the dev checkout as well, and a test pins the manifest anchor
+with an injected manifest. Same build task, second discovery: PyInstaller's
+`hook-importlib_metadata` bundles setuptools' **vendored** `importlib_metadata` (Apache-2.0)
+although nothing declares it, so the initial fix added an explicit hook exception. PR #490 superseded that exception
+with physical RECORD attribution of actual collected owners (see the preceding case study).
+
+**Lesson.** When a metadata lookup disagrees with a file a human can read, print the
+distribution's `_path` before theorising — the answer is usually "you resolved a different
+distribution than you meant". And an input that must describe what ships has no business
+depending on the environment's copy of yourself: read the manifest.
+
 ## Case study: sun-cache test fails only late at night (#457 gate run, 2026-10-13)
 
 **Symptom.** Full validation and an isolated sun-mismatch workflow failed with
@@ -1801,7 +1908,7 @@ the same uv version as the project runners. **Key log:** `tool_version_not_suppo
 reported detected uv `==0.12.23` and supported uv `0.12.18` in
 [run 37951191628](https://github.com/cofade/open-garden-planner/actions/runs/37951191628).
 **Root cause:** the hosted updater's supported tool version lagged the approved exact pin.
-**Disposition:** retain reproducible installation and keep the moderate build-only advisory
+**Disposition:** retain reproducible installation and keep the moderate setuptools advisory
 open for a separately reviewed manual setuptools/lock update; no remediation is claimed.
 **Lesson:** check updater compatibility when introducing a lock/tool pin. A green project
 workflow does not prove automatic security updates work. See risks sections 11.2 and 11.4.

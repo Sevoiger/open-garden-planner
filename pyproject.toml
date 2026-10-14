@@ -68,6 +68,9 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.8.0",
     "bandit>=1.7.0",
+    # Lock-based vulnerability scan (AUD-054). Runs in the Dependencies CI
+    # matrix (Linux and Windows); see docs/07-deployment-view §7.4.
+    "pip-audit>=2.9.0",
 ]
 
 [project.scripts]

@@ -197,7 +197,7 @@ Running it locally is what makes it a merge gate rather than a post-mortem.
 
 | Trap | Rule | Why (source) |
 |---|---|---|
-| MCP stack dynamic imports | `collect_submodules(...)` + `copy_metadata(...)` for `mcp.server`/`mcp.shared`/`mcp.types`, `uvicorn`, `starlette`, `anyio`, `sse_starlette`, `pydantic`, `pydantic_settings`, `httpx_sse` (+ metadata for `pydantic_core`, `mcp`) | uvicorn/anyio/starlette load protocol/loop/lifespan submodules dynamically and read distribution metadata at import; without both, the frozen Agent API fails while dev runs pass (docs/07 §7.6) |
+| MCP stack dynamic imports | `collect_submodules(...)` for `mcp.server`/`mcp.shared`/`mcp.types`, `uvicorn`, `starlette`, `anyio`, `sse_starlette`, `pydantic`, `pydantic_settings`, `httpx_sse`; distribution metadata is bundled for the required runtime closure by `installer/runtime_closure.py`, plus actual collected wheel owners via `installer/frozen_inventory.py` (including hooks and distinct vendored copies) | uvicorn/anyio/starlette load protocol/loop/lifespan submodules dynamically and read distribution metadata at import; without both, the frozen Agent API fails while dev runs pass (docs/07 §7.6). Do not hand-type a per-stack metadata list — a new dependency would silently leave the notices/SBOM inventory (AUD-051/#454) |
 | Never walk top-level `mcp` | Collect the concrete subpackages, NOT `collect_submodules("mcp")` | Walking `mcp` imports `mcp.cli`, which `sys.exit(1)`s without the unbundled `typer` extra and aborts the build; the spec wraps collection in `_safe_collect_submodules` |
 | Never exclude `multiprocessing` | It is deliberately absent from the spec `excludes` (comment in spec) | uvicorn imports it eagerly (`uvicorn.supervisors → basereload → _subprocess`) even single-process; excluding it → GUI runs, embedded server silently dies with `ModuleNotFoundError` |
 | UPX vs pydantic_core | `upx_exclude=["pydantic_core*.pyd"]` | UPX can corrupt that compiled extension, killing the Agent API at runtime |
@@ -222,7 +222,7 @@ Expected outcome: `dist/OpenGardenPlanner-v{VERSION}-Setup.exe` (v1.29.6 release
 The script writes `src/open_garden_planner/_version.py` before freezing (the
 update checker reads it), cleans the previous `dist/OpenGardenPlanner/`, runs
 PyInstaller with `--clean`, then `makensis` on `installer/ogp_installer.nsi`.
-Default version without `--version` is a stale `1.0.0` constant — real releases
+Default version without `--version` comes from `pyproject.toml` — real releases
 come from CI (`release.yml`, windows-latest), which passes the computed version.
 Release/versioning policy itself → **ogp-change-control**.
 

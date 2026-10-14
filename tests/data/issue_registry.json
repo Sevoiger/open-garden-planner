@@ -784,6 +784,11 @@
     "state": "CLOSED",
     "title": "Audit A1: Imported data, downloads and credential storage safety (epic #392)"
   },
+  "454": {
+    "is_pr": false,
+    "state": "OPEN",
+    "title": "Audit A2: Dependency maintenance, build reproducibility and distribution inventory (epic #392)"
+  },
   "457": {
     "is_pr": false,
     "state": "CLOSED",
@@ -813,5 +818,10 @@
     "is_pr": true,
     "state": "MERGED",
     "title": "fix(457): constraint descriptors and stronger solver assertions"
+  },
+  "490": {
+    "is_pr": true,
+    "state": "OPEN",
+    "title": "chore(454): pin the build toolchain, publish the frozen inventory, finish the dependency path"
   }
 }

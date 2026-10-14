@@ -259,8 +259,8 @@ If "a feature seems disabled", check this table before debugging.
 | `mcp>=1.23,<2.0` | "Pinned to mcp v1 — v2 renames `FastMCP` -> `MCPServer`." uvicorn/starlette/pydantic/anyio/sse-starlette come transitively but are listed where used. |
 | `uvicorn>=0.30`, `starlette>=0.37`, `pydantic>=2.11` | Agent API server stack |
 
-**Deprecated:** the top-level `requirements.txt` lists only `PyQt6` + `Pillow`
-— it is stale; `pyproject.toml` is the dependency source of truth.
+**Removed (AUD-052, #454):** the stale top-level requirement mirrors were deleted;
+`pyproject.toml` (locked by `uv.lock` + `pylock.toml`) is the dependency source of truth.
 
 ### installer/ogp.spec knobs (verified; see docs/07 + §8.19 for narrative)
 
@@ -269,8 +269,11 @@ If "a feature seems disabled", check this table before debugging.
   sse_starlette, pydantic, pydantic_settings, httpx_sse) — **never top-level
   `mcp`**: walking it imports `mcp.cli`, which `sys.exit(1)`s without the
   unbundled `typer` extra and aborts the build.
-- `copy_metadata` for the same stack (they read distribution metadata at
-  import time in the frozen exe).
+- Metadata: the spec bundles the whole **runtime closure** via
+  `installer/runtime_closure.py` (`copy_metadata` per resolved distribution; the
+  same resolver is read back by `scripts/generate_distribution_inventory.py`).
+  Never add a hand-typed per-stack metadata list: a new dependency would silently
+  leave the notices/SBOM inventory.
 - `excludes` = tkinter/unittest/pydoc/doctest — with an explicit NOTE: **do NOT
   exclude `multiprocessing`** (uvicorn imports it eagerly; excluding it breaks
   the embedded Agent API).
