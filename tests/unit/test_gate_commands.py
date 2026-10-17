@@ -788,42 +788,58 @@ class TestCheckNoSecrets:
         ("doc placeholder", 'url = "http://127.0.0.1:8765/mcp?token=<token>"'),
     ]
 
-    def _scan_with_canary(self, tag: str, line: str):
-        """Stage a canary file, scan, then unstage and delete it.
+    def _scan_with_canary(self, tmp_path: Path, tag: str, line: str) -> list[str]:
+        """Scan an ISOLATED git repo that contains nothing but the canary.
 
         The checker deliberately reads only git-TRACKED files, so an untracked
-        scratch file must not be able to fail a build. That makes this test
-        stage the canary, which is also what a real leak would be.
-        """
-        import subprocess
-        from pathlib import Path
+        scratch file must not be able to fail a build. That is why this stages the
+        canary at all — staging is what a real leak would look like.
 
+        It used to stage it in the REAL working tree at
+        ``scripts/_canary_<tag>.py``, which made this the only test in the whole
+        suite that mutated shared state, and serial execution hid what that cost.
+        Measured under ``pytest -n 8`` (#509): another worker's
+        ``root.rglob("*.py")`` in ``test_settings_chokepoint.py`` could list the
+        canary inside the window between this test's write and its unlink, and then
+        die with ``FileNotFoundError`` on the read — three failures in one run. The
+        same window worked the other way too: this file's own whole-repo
+        ``check_repo(_REPO_ROOT)`` assertion could read a *sibling worker's* staged
+        canary and report a credential that was never committed anywhere.
+
+        Both are properties of sharing one working tree, not of the scheduler, so
+        they also applied to the two-concurrent-process case ``conftest.py`` already
+        documents for QSettings (§11.4, 2026-08-17). Building the repo under
+        ``tmp_path`` removes the cause instead of scheduling around it: nothing
+        outside the temp directory is ever created, staged or deleted, under any
+        scheduler and including serial runs.
+        """
         from scripts.check_no_secrets import check_repo
 
-        root = Path(__file__).resolve().parents[2]
+        root = tmp_path / f"repo_{tag}"
+        (root / "scripts").mkdir(parents=True)
+        # Not check=True: if git were unavailable, `_tracked_files` falls back to
+        # walking the directory, which still finds the canary — the assertion this
+        # method serves is about detection, not about git being installed.
+        subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True)
         canary = root / "scripts" / f"_canary_{tag}.py"
         canary.write_text(line + "\n", encoding="utf-8")
-        subprocess.run(["git", "add", "--", str(canary)], cwd=root, capture_output=True)
-        try:
-            return [f for f in check_repo(root) if canary.name in f]
-        finally:
-            subprocess.run(
-                ["git", "rm", "--cached", "-q", "--", str(canary)],
-                cwd=root,
-                capture_output=True,
-            )
-            canary.unlink(missing_ok=True)
+        subprocess.run(["git", "add", "--", "scripts"], cwd=root, capture_output=True)
+        return [f for f in check_repo(root) if canary.name in f]
 
     @pytest.mark.parametrize("label,tag,line", _MUST_CATCH, ids=[c[0] for c in _MUST_CATCH])
-    def test_catches_real_credential(self, label, tag, line) -> None:
-        found = self._scan_with_canary(tag, line)
+    def test_catches_real_credential(self, tmp_path: Path, label, tag, line) -> None:
+        found = self._scan_with_canary(tmp_path, tag, line)
         assert found, f"the secret checker missed a real credential: {label}"
 
     @pytest.mark.parametrize(
-        "label,line", _MUST_NOT_FLAG, ids=[c[0] for c in _MUST_NOT_FLAG]
+        "index,label,line",
+        [(i, label, line) for i, (label, line) in enumerate(_MUST_NOT_FLAG)],
+        ids=[c[0] for c in _MUST_NOT_FLAG],
     )
-    def test_does_not_flag_identifier_noise(self, label, line) -> None:
-        found = self._scan_with_canary(f"fp_{abs(hash(line)) % 10**8}", line)
+    def test_does_not_flag_identifier_noise(self, tmp_path: Path, index, label, line) -> None:
+        # Index-based, not `hash(line)`: str hashing is salted per process, so a
+        # hash-derived filename changed on every run and every worker.
+        found = self._scan_with_canary(tmp_path, f"fp_{index}", line)
         assert not found, (
             f"the secret checker flagged ordinary code ({label}): {found} — "
             "a gate that cries wolf on variable names gets deleted, and then "

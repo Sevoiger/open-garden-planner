@@ -30,7 +30,7 @@ drifting until someone remembers to re-measure.
 
 | Fact | Value |
 |---|---|
-| Collected tests | **8 548** |
+| Collected tests | **8 548** at `132f6715` (this change adds 11 of its own) |
 | Result | `1 failed, 8506 passed, 41 skipped in 912.60s (0:15:12)` |
 | Collection overhead alone | 3.4 s |
 | Local wall clock, unit layer only | **192.6 s** (3 min 12 s) |
@@ -188,15 +188,104 @@ Recorded rather than silently amended, because each changes what the work is wor
    De-duplicating the two runs therefore buys runner-minutes, not gate latency — and
    any restructuring must keep a check literally named `Test`.
 
+## Parallel execution: measured, and the one thing that blocked it
+
+Measured on the same box, same tree, `pytest-xdist` 3.8.0 installed for the
+experiment only (`pyproject.toml`, `uv.lock` and `pylock.toml` untouched):
+
+| Run | Wall clock | Factor |
+|---|---|---|
+| Full suite, serial | 912.6 s | 1.00× |
+| Full suite, `-n 8 --dist loadfile` | **154.1 s** | **5.92×** |
+| `tests/unit` only, serial | 192.6 s | 1.00× |
+| `tests/unit` only, `-n 8 --dist loadfile` | 61.1 s | 3.15× |
+| `tests/unit` minus its 3 slowest files, serial | 120.5 s | 1.60× |
+
+The unit layer's parallel efficiency is the poorer of the two (3.15× vs 5.92×),
+which is what per-worker fixed cost predicts: every worker imports the app,
+collects the tree and builds the session fixtures, and against 192 s of work that
+overhead is a visible fraction. The full suite amortises it.
+
+**8 514 of the tests passed under `-n 8` on the first attempt.** Every one of the
+four failures was understood:
+
+| Failure | Cause |
+|---|---|
+| `test_settings_chokepoint.py` ×3 | Working-tree race — see below |
+| `test_distribution_inventory.py::test_real_frozen_bundle_passes_the_inventory_check` | The interpreter guard described above; unrelated to parallelism |
+
+No port collision, no `QSettings` interference, no timing flake. **The three risks
+the issue named as blockers turned out to be already handled**, and the one real
+blocker was not on its list.
+
+### The blocker: one test mutated the git working tree
+
+`tests/unit/test_gate_commands.py::_scan_with_canary` staged a canary file at
+`scripts/_canary_<tag>.py` in the **real** repository, scanned, then unstaged and
+deleted it. It was the only test in the tree that mutated shared state, and serial
+execution hid the consequence completely.
+
+`tests/unit/test_settings_chokepoint.py::_python_sources` globs the working tree
+(`root.rglob("*.py")`, line 250) and `_scan` reads what it found (line 273). Under
+`-n 8` those are two different modules on two different workers, so:
+
+- one worker's `rglob` listed the canary inside the window between the other
+  worker's write and unlink, and the read then raised `FileNotFoundError` on
+  `scripts\_canary_ghp.py` — three failures in one run;
+- the same window ran the other way: `test_gate_commands.py`'s own whole-repo
+  `check_repo(_REPO_ROOT) == []` assertion could read a **sibling worker's** staged
+  canary and report a credential that was never committed anywhere.
+
+Both are properties of *sharing one working tree*, not of the scheduler, so both
+also applied to the two-concurrent-process case `tests/conftest.py` already
+documents for `QSettings` (§11.4, 2026-08-17) — the same class of hazard, a second
+instance.
+
+The fix is the cause, not a schedule: the canary is now staged in a throwaway
+`git init`-ed repo under `tmp_path`, so nothing outside the temp directory is ever
+created, staged or deleted. `test_settings_chokepoint.py` additionally treats a file
+that vanished after being listed as absent rather than as a violation — absorbing
+`FileNotFoundError` only, so a real read error still raises and cannot quietly
+shrink the scanned set. Verified: 5 consecutive `-n 8` runs of the two colliding
+modules, 98 passed each, no canary residue and a clean `git status`.
+
+### Why grouping was not the answer
+
+xdist can keep colliding tests together — `@pytest.mark.xdist_group(name)` with
+`--dist loadgroup` — and it was considered. Three reasons against:
+
+1. **The `--dist` modes are mutually exclusive.** `loadgroup` *replaces*
+   `loadfile`; there is no combination. Since `--dist loadfile` is what produced
+   the measured 5.92×, adopting `loadgroup` trades a measured result for a
+   speculative one.
+2. **The argument for `loadfile` that motivated this note is weak.** `loadfile`
+   was originally chosen to protect module-scoped fixtures from being rebuilt per
+   worker. The three files that have them (`test_spike_q3d_board.py`,
+   `test_spike_q3d_render.py`, `test_dynamic_input_overlay.py`) all cost **under
+   4.6 s** — they do not reach the slowest-30 list — so their duplication is a few
+   seconds, not minutes.
+3. **Grouping schedules around the symptom.** It makes the collision not happen
+   *under xdist*, while the hazard persists for anyone running two pytest
+   processes at once — the exact scenario the conftest comment and the 2026-08-17
+   incident describe. Fixing the mutation removes it for every scheduler and for
+   serial runs too.
+
+With the mutation gone, no grouping is needed: nothing else failed under `-n 8`.
+
 ## Consequences for the choices ahead
 
 - **The suite's shape suits parallel execution.** Only two session-scoped autouse
   fixtures and three module-scoped ones exist in the whole tree; everything else is
   function-scoped and independent.
-- **But `--dist load` (xdist's default) is the wrong setting here.** It splits a
-  module across workers, which rebuilds module-scoped fixtures such as
-  `tests/unit/test_spike_q3d_board.py::plan` (the 500-object reference plan plus two
-  boards) once per worker. `--dist loadfile` keeps a module whole.
+- **But `--dist load` (xdist's default) is not automatically right.** With
+  `--dist loadfile` the longest file is a hard per-worker floor, and here that is
+  `test_iconography_3c.py` at 96.7 s against a `total/8` of 77.6 s. `worksteal`
+  splits at test level and would lift that ceiling, at the cost of splitting
+  module-scoped fixtures — which the measurement above says is cheap. The mode to
+  commit should therefore be measured, not assumed.
+- **27 % of the run is pytest's own overhead**, proportional to test count rather
+  than to what any test asserts. Parallel execution divides it; it does not remove
+  it.
 - **`pytest-timeout` changes meaning.** The 180 s guard must stay (#448, the
   2026-08-17 stall), but today a Windows timeout dumps stacks and aborts the run;
   under xdist it kills one worker, which is restarted, and the run continues. A hang
@@ -207,7 +296,10 @@ Recorded rather than silently amended, because each changes what the work is wor
   `core/tools/constraint_tool.py`. Losing a single line fails that job, and since
   `Coverage` is not required, the red would sit there unblocking merges while looking
   authoritative.
-- **The honest instrument for the concentrated half is a fix, not a scheduler.** Per
-  the Amdahl-style projection in the script, perfect `-n 8` would divide the 620 s of
-  call time into 78 s. That projection is real but it is also a floor: it ignores
-  worker start-up, duplicated collection (3.4 s × N), and duplicated session fixtures.
+- **The honest instrument for the concentrated half is a fix, not a scheduler.**
+  The `-n 8` projection of the 620 s of call time into 78 s is a floor: it ignores
+  worker start-up, duplicated collection (3.4 s × N) and duplicated session
+  fixtures, and the measured 154 s is what that floor actually looks like.
+- **The cheapest large win needs no new dependency at all.** `pytest tests/unit` is
+  3 min 12 s against 15 min for everything. A committed inner-loop convention
+  captures most of the available speed-up before any dependency is added.

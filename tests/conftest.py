@@ -130,6 +130,7 @@ def _reset_app_settings():
     backend, this also clears the `UiState/` geometry keys.
     """
     import open_garden_planner.app.settings as settings_module
+    from open_garden_planner.app.settings import AppSettings
 
     def _reset() -> None:
         # Per-key wipe, NOT `clear()`: on the Windows registry backend a
@@ -144,6 +145,22 @@ def _reset_app_settings():
         store = settings_module.create_qsettings()
         for key in store.allKeys():
             store.remove(key)
+        # Re-assert the Agent API guard INSIDE the wipe, atomically with it.
+        #
+        # It used to be written by a separate autouse fixture that merely
+        # *depended* on this one, which left a real gap: between this wipe and
+        # that write the key did not exist, so `agent_api_enabled` read
+        # `DEFAULT_AGENT_API_ENABLED` (True) and `agent_api_port` read its
+        # default (8765). A GardenPlannerApp built by an earlier test arms
+        # `QTimer.singleShot(1500, self._maybe_start_agent_api)`, and that lambda
+        # holds `self`, so the window object outlives the test that made it; a
+        # timer landing in the gap started a REAL AgentApiServer on 8765, and
+        # two workers doing that collided with
+        # `OSError: [Errno 10048]` (measured #509 under `pytest -n 8`). The gap
+        # was always there — serial runs simply made it microseconds wide against
+        # a 1500 ms timer. See `_disable_agent_api_server`, which now asserts
+        # this instead of writing it.
+        store.setValue(AppSettings.KEY_AGENT_API_ENABLED, False)
         store.sync()
         settings_module._settings_instance = None  # type: ignore[attr-defined]
 
@@ -255,15 +272,26 @@ def _disable_agent_api_server(_reset_app_settings):
     """Never auto-start the embedded Agent API server during tests.
 
     The server defaults to ON in production (US-D1.1) but tests must not bind a
-    real loopback port. Depends on `_reset_app_settings` so this runs strictly
-    AFTER its store-clearing setup (autouse same-scope order is not otherwise
-    guaranteed — an earlier version ran first and had its write wiped by the
-    clear). Tests that exercise the server build `AgentApiServer` directly.
+    real loopback port. Tests that exercise the server build `AgentApiServer`
+    directly, on an OS-assigned port.
+
+    The False is written inside `_reset_app_settings._reset()`, atomically with the
+    key wipe, and this fixture ASSERTS it rather than writing it. That is the whole
+    point of the split: when the write lived here instead, the instant between the
+    wipe and this write had no `agent_api/enabled` key at all, so a read returned
+    the production default (True) and a read of the port returned 8765 — and an
+    earlier test's deferred `_maybe_start_agent_api` timer landing in that window
+    started a real server. See the note in `_reset()`. Asserting rather than
+    writing also means a regression here is loud instead of silent.
     """
     from open_garden_planner.app.settings import AppSettings, create_qsettings
 
-    create_qsettings().setValue(AppSettings.KEY_AGENT_API_ENABLED, False)
-    yield
+    value = create_qsettings().value(AppSettings.KEY_AGENT_API_ENABLED, None)
+    assert value is not True, (
+        f"the Agent API guard is {value!r}, not False — a test could bind a real "
+        "loopback port. The write belongs in _reset_app_settings._reset(), "
+        "immediately after the key wipe, not here (#509)."
+    )
 
 
 @pytest.fixture(autouse=True, scope="session")
