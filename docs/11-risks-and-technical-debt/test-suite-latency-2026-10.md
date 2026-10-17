@@ -105,6 +105,76 @@ parallel execution fixes. A suite where half the time sits in fifty tests is not
 that is a suite where those fifty tests are doing something expensive, and the right
 first move is to find out what.
 
+> **These per-file numbers are position-dependent, and the table must not be read
+> as "these files are slow".** It is measured — see "The real cause is an
+> accumulation, not a slow file" below for the measurement that overturns the naive
+> reading, and for why the same file costs 3 s alone and 96.7 s in the suite.
+
+## The real cause is an accumulation, not a slow file
+
+The ten files above share a signature worth chasing, and chasing it overturned the
+attribution. The leading file constructs **no full application**: it builds
+individual widgets and calls `apply_theme()` two or three times per test.
+
+`tests/integration/test_iconography_3c.py` **alone**:
+
+```
+36 passed in 2.14s          # every call time <= 1.04s
+```
+
+The **same file**, immediately after `tests/ui/test_main_window.py` (which builds
+~30 full `GardenPlannerApp`s):
+
+```
+447s total; individual theme tests 60-66s each
+```
+
+and in the full suite it costs 96.7 s. Identical test code, **~45× the cost**,
+decided entirely by what ran before it. A single test isolated from its own file:
+
+```
+1 passed in 0.16s
+```
+
+So the theme tests are not intrinsically heavy. They are **victims of a leak in
+other files**. Probing `QApplication` state directly, before and after
+`test_main_window.py`:
+
+| Probe | Live widgets | Visible | `apply_theme` round-trip |
+|---|---|---|---|
+| alone | **0** | — | **1.3 ms** |
+| after `test_main_window.py` | **38 271** | **0 (0.0 %)** | **22 478 ms** |
+
+Thirty apps leak **38 271 widgets and 1 580 top-level widgets** into the process.
+`apply_theme()` walks `app.allWidgets()` on every call, so every later theme switch
+pays for all of them — and the surviving widgets are `QLineEdit`s and the like that
+nobody can see.
+
+**`gc.collect()` is not the fix.** It freed 8 337 objects and moved the widget count
+only from 38 271 to 37 638; the round-trip did not improve. So the widgets are held
+by *strong* references, not by collectable cycles. A referrer probe found the holder
+to be a plain `list` — i.e. PyQt6/sip's own bookkeeping, which does not identify an
+application-level holder. **The holder is therefore not yet established**, and this
+document does not claim it is.
+
+### What follows, and what does not
+
+- **A visibility-filtered walk would cost 0.0 ms** against 21 825 ms measured, and
+  0 % of the surviving widgets are visible. That is a tempting one-function product
+  change — and it is *not* obviously safe: a widget that is hidden now and shown
+  later would have skipped its re-tint, so the fix is only correct if hidden widgets
+  re-tint lazily (e.g. on `showEvent`) instead. That is a behaviour change to
+  visible UI and needs its own review and its own evidence.
+- **The leak is the cause, so the leak is the correct primary target.** It lives in
+  test hygiene, not in the product, and fixing it preserves product semantics
+  exactly. The chokepoint question is whether one conftest-level teardown can
+  reclaim top-level widgets and their children, rather than thirty-four files each
+  having to remember to.
+- **A suite whose cost depends on test order has a measurement problem before it has
+  a performance problem.** The per-test table above is a valid record of one run in
+  one order; it is not a per-file cost. Re-running a slow file alone is the cheapest
+  diagnostic available and would have found this immediately.
+
 ## Three mechanisms, at three different levels of confidence
 
 ### 1. A global theme switch, called in a loop — measured, and the largest single cause
@@ -136,12 +206,14 @@ are 48 call sites across 7 test files
 `test_sun_mismatch.py`); the three most expensive files alone are **28 %** of the
 suite's measured test time.
 
-Measured: the call sites and the cache invalidation. **Hypothesis, not yet measured:**
-that ~2-3 s per call is dominated by the icon re-render rather than the stylesheet.
-The decisive experiment is a one-line ablation — replace the `clear_cache` listener
-with a no-op on an identical widget set and re-time — because if that alone collapses
-the cost, the fix is scoped to one module and belongs with the product-performance
-work in #461 rather than here.
+**Measured, and superseding the earlier guess here:** the per-call cost is not
+intrinsic — it is the widget count, inflated by a leak in the app-building tests.
+The same `apply_theme()` call that costs 1.3 ms in a clean process costs 22 478 ms
+after 30 `GardenPlannerApp`s have leaked 38 271 widgets into it, **none of them
+visible**. See "The real cause is an accumulation, not a slow file" above for the
+full measurement. What this section still establishes is *why these files are the
+victims*: they are the only ones that call the one global, cache-destroying,
+widget-count-proportional operation in a loop.
 
 ### 2. Full application boots — measured
 
