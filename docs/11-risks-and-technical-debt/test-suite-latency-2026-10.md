@@ -22,6 +22,19 @@ venv/Scripts/python.exe -m pytest tests/ -q --durations=0 --timeout=180 > durati
 venv/Scripts/python.exe scripts/measure_test_suite_latency.py durations.txt
 ```
 
+> **These numbers are machine-relative, and this box drifts.** Measured across one
+> session on the same tree and the same code, two files that were never touched
+> changed by `test_retracted_figures.py` 30.0 s → 49.0 s and `test_main_window.py`
+> 21.7 s → 29.8 s, a 37–63 % swing with no code change involved. Treat a
+> single run's absolute numbers accordingly, and compare **ratios** rather than
+> seconds when asking whether a change helped.
+>
+> **Two figures in this document must never be compared across runs.** Total *call*
+> time is measured per test and therefore inflates under parallel execution — the
+> suite's 620.6 s of call time serial became 1 700 s of call time under `-n auto`,
+> while its *wall clock* fell from 673.6 s to 182 s. The useful quantity is wall
+> clock; the useful reading of the per-test table is its shape, not its sum.
+
 The CI `Test` job now writes the same report and uploads it as the
 `test-durations-linux` artifact, so the baseline refreshes on every push instead of
 drifting until someone remembers to re-measure.
