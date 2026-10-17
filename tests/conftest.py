@@ -294,6 +294,60 @@ def _disable_agent_api_server(_reset_app_settings):
     )
 
 
+@pytest.fixture(autouse=True)
+def _reclaim_widgets(qtbot: object):  # noqa: ARG001 - see below
+    """Destroy the widget graph a test leaves behind, so the next one does not pay for it.
+
+    This is the measured root cause of the suite's single largest cost block
+    (#509), and the numbers are stark. A clean process holds **0** widgets and an
+    `apply_theme()` round-trip costs **1.3 ms**. After `tests/ui/test_main_window.py`
+    — 30 tests, each building a full `GardenPlannerApp` — the process holds
+    **38 271** widgets and **1 580** top-level widgets, of which **0 % are visible**,
+    and one `apply_theme()` round-trip costs **22 478 ms**. That is why
+    `test_iconography_3c.py` takes 2.1 s alone and 96.7 s in the suite: the theme
+    tests are not slow, they are paying for everyone else's leaked widget graphs
+    through `apply_theme()`'s `app.allWidgets()` walk.
+
+    **The cause:** nothing ever calls `deleteLater()` on those apps. `qtbot.addWidget`
+    closes a widget at teardown; closing is not deleting. The Python wrapper is
+    collected (only 2 of the 30 apps were still reachable) while the C++ object and
+    its ~1 270 children survive to process exit. `gc.collect()` does not help — it
+    freed 8 337 objects and moved the widget count from 38 271 to only 37 638,
+    because the survivors are held by strong references, not by collectable cycles.
+
+    **The fix, in one place.** Requesting `qtbot` is load-bearing for ordering, not
+    for the Qt app: this fixture lives in the root conftest, so pytest finalises it
+    LAST, after `tests/integration/conftest.py`'s `_no_leaked_agent_api_thread` has
+    already walked `topLevelWidgets()` to stop any server an app still owns. Doing
+    this earlier would delete those windows first and the leak warning would never
+    fire — a gate that silently stops reporting. Measured effect of this exact
+    sequence on that same 38 271-widget process: **38 271 -> 0 widgets, 1 580 -> 0
+    top-level widgets.**
+
+    `sendPostedEvents` must name `QEvent.Type.DeferredDelete` explicitly. Passing
+    `None, 0` — the shape that looks right — flushes nothing, and measuring that
+    wrong call is how the first attempt at this "proved" the chokepoint ineffective.
+    """
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    yield
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        try:
+            widget.close()
+            widget.deleteLater()
+        except RuntimeError:
+            # Already deleted on the C++ side; the wrapper outlived it.
+            pass
+    app.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _silence_welcome_dialog():
     """Never open the modal startup Welcome dialog during tests — session-wide.
