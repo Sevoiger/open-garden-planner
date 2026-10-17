@@ -67,7 +67,7 @@ def start_server(providers: Any, **kwargs: Any) -> tuple[AgentApiServer, int]:
         providers: the `AgentProviders` bundle to serve.
         **kwargs: passed through to `AgentApiServer` (write_token, writes_enabled).
     """
-    for _ in range(PORT_ATTEMPTS):
+    for attempt in range(PORT_ATTEMPTS):
         port = free_port()
         server = AgentApiServer(providers, port=port, **kwargs)
         try:
@@ -81,8 +81,31 @@ def start_server(providers: Any, **kwargs: Any) -> tuple[AgentApiServer, int]:
             # The thread lost the race inside create_server and died. `start()` has
             # already cleared its thread/server references, so there is nothing to stop.
             continue
-        if server.is_running:
+        # `start()` returning normally has TWO meanings, and the difference matters:
+        # either uvicorn reported itself ready, or the ready-deadline expired and it
+        # logged a warning (server.py:2671). `AgentApiServer.is_running` is only "the
+        # thread is alive", which is true in both - so testing it would hand back a
+        # server that is running but not listening, which is the exact defect this
+        # module's docstring says it refuses to create. Use the same predicate
+        # `start()` itself waited on. It reaches into a private attribute because the
+        # class exposes no public readiness check; that is a gap worth noting, not a
+        # licence to use the weaker one.
+        if getattr(server._server, "started", False):
             return server, port
+        # Not ready, and this is not a port collision: a readiness that misses its
+        # deadline is a product-side delay. Do not retry it - retrying here is what
+        # turns a real defect into a slow pass. Stop the live thread first, because
+        # abandoning it would leak a running server and eventually a port.
+        server.stop()
+        raise AssertionError(
+            f"the AgentApiServer on port {port} did not become ready within its "
+            f"deadline (attempt {attempt + 1}/{PORT_ATTEMPTS}). `start()` logged a "
+            "warning instead of raising, so the thread was alive but uvicorn never "
+            "reported `started`. Retrying would hide a product-side delay."
+        )
+    # Only reachable by exhausting every attempt on a genuine collision. Without this
+    # the function falls off the end and hands back `None` for the caller to unpack,
+    # which surfaces as a TypeError about tuples rather than about ports.
     raise AssertionError(
         f"could not start an AgentApiServer on an ephemeral port in "
         f"{PORT_ATTEMPTS} attempts; this is not a port collision any more, so it is "

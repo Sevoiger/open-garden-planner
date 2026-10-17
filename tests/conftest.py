@@ -316,12 +316,17 @@ def _reclaim_widgets(qtbot: object):  # noqa: ARG001 - see below
     tests are not slow, they are paying for everyone else's leaked widget graphs
     through `apply_theme()`'s `app.allWidgets()` walk.
 
-    **The cause:** nothing ever calls `deleteLater()` on those apps. `qtbot.addWidget`
-    closes a widget at teardown; closing is not deleting. The Python wrapper is
-    collected (only 2 of the 30 apps were still reachable) while the C++ object and
-    its ~1 270 children survive to process exit. `gc.collect()` does not help — it
-    freed 8 337 objects and moved the widget count from 38 271 to only 37 638,
-    because the survivors are held by strong references, not by collectable cycles.
+    **The cause, as far as it was established — and the limit of that.** Nothing calls
+    `deleteLater()` on those apps: `qtbot.addWidget` closes a widget at teardown, and
+    closing is not deleting. The Python wrapper is collected (only 2 of the 30 apps were
+    still reachable) while the C++ object and its ~1 270 children survive to process exit.
+    `gc.collect()` does not help — it freed 8 337 objects and moved the widget count from
+    38 271 to only 37 638, so the survivors are not reachable as collectable cycles.
+    **What holds them is NOT identified.** A referrer probe walked into PyQt6/sip
+    bookkeeping and stopped there, so "strong references" is the reading consistent with
+    the `gc` measurement, not a proven mechanism — and the chokepoint below does not need
+    it to be true. Naming it here would be the same error as a docstring that calls
+    `sendPostedEvents(None, 0)` the right call and measures the wrong one.
 
     **The fix, in one place.** Requesting `qtbot` is load-bearing for ordering, not
     for the Qt app: this fixture lives in the root conftest, so pytest finalises it
@@ -330,7 +335,9 @@ def _reclaim_widgets(qtbot: object):  # noqa: ARG001 - see below
     this earlier would delete those windows first and the leak warning would never
     fire — a gate that silently stops reporting. Measured effect of this exact
     sequence on that same 38 271-widget process: **38 271 -> 0 widgets, 1 580 -> 0
-    top-level widgets.**
+    top-level widgets.** That is the count this fixture can report; it says nothing
+    about what would survive if `deleteLater()` were dropped, because the alternative
+    was never measured, only this one.
 
     `sendPostedEvents` must name `QEvent.Type.DeferredDelete` explicitly. Passing
     `None, 0` — the shape that looks right — flushes nothing, and measuring that

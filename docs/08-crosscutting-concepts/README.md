@@ -649,16 +649,35 @@ run is parallel. Three things follow from that, and each is a trap worth naming.
 | Command | What it is | Measured |
 |---|---|---|
 | `pytest tests/` | the correctness battery, parallel, perf deselected | **156 s** (`-n 8`) |
-| `pytest tests/ -m perf` | the timing-sensitive tests, which never share a runner | **24 s** |
+| `pytest tests/ -m perf -n 0` | the timing-sensitive tests, which never share a runner | **26 s** |
 | `pytest tests/unit` | the natural inner loop for a logic-only change | **193 s** serial, **61 s** parallel |
 
 **The perf tests need `-m perf`, and the marker is about the measurement, not the
 directory.** `addopts` deselects them so that a plain `pytest tests/` **collects no
 perf test at all** — the most likely way to mistakenly believe they ran. They are
-wall-clock budgets, and three of the ten carry that marker *outside* `tests/perf/`
-(a map-picker close bound, the point-snapper mean, the spatial-index medians), so
-the split is by auditing for wall-clock assertions rather than by listing a
-directory. CI runs `pytest tests/ -m perf -n 0` as its own step.
+wall-clock budgets, and **7 of the 14 carry that marker *outside* `tests/perf/`**, so the
+split is by auditing for wall-clock assertions rather than by listing a directory. That
+number is worth writing down precisely, because it changes the invocation:
+
+```powershell
+pytest tests/ -m perf -n 0     # all 14 — what CI runs
+pytest tests/perf -m perf      # only 7, and it PASSES. The worst kind of wrong.
+```
+
+A directory-scoped command is the natural mistake here and it fails **silently** — the
+gate is green while half of it never ran. `-m perf` is required because `addopts`' own
+`-m 'not perf'` otherwise wins and collects nothing at all; `-n 0` is required because
+running these across workers is the condition the split exists to prevent.
+
+The audit that produced the split was, twice, incomplete: it read `tests/perf/` and
+grepped for `time.`, and missed four unmarked bounds including two classes literally
+named `TestPerf`. `tests/unit/test_perf_marker_guard.py` now closes that mechanically —
+it walks each module's AST, follows the timing sources (`time.perf_counter`,
+`time.monotonic`, `time.process_time`) across calls, and fails the build if a test orders
+a measured duration against a bound without the marker. **12 of the 14 assert a duration;
+the other two are marked for scenario consistency**, which is the one thing the guard is
+documented not to check — it proves a marker is *required* where it fires, not that every
+marker present is needed.
 
 **Small targeted runs are slower than they were.** Worker start-up dominates when there
 is nothing to distribute: one 11-test file measured 2.85 s serially against 5.48 s under

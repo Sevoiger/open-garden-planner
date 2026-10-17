@@ -1,102 +1,164 @@
-"""Every wall-clock assertion in the suite must sit on the quiet runner (#509).
+"""Every wall-clock assertion must sit on the quiet runner (#509).
 
-`addopts` carries `-m 'not perf'`, so the `perf` marker is what decides whether a
-test runs in the default parallel run or on a quiet runner of its own. That makes
-the marker a **correctness contract for the gate**, not a label: an unmarked
-wall-clock assertion runs beside up to `-n auto` workers, and two such tests were
-found failing intermittently that way during this change's own senior review — one
-of which (a map-picker close bound under 0.5 s) the first audit had walked straight
-past, while two more sat in classes literally named `TestPerf`.
+`addopts` carries `-m 'not perf'`, so the `perf` marker decides whether a test runs in
+the default parallel run or on a quiet runner of its own. That makes the marker a
+**correctness contract for the gate**, not a label.
 
-So the invariant is pinned here as a test rather than in prose: **no test may assert
-against a measured duration without the marker.** Prose decays — §8.10.4 already
-claimed the audit was complete when it was not — so the check has to be mechanical.
+This guard exists because prose decays. §8.10.4 asserted the marker audit was complete
+when four wall-clock bounds were still unmarked, two of them in classes literally named
+`TestPerf` — and the previous version of this file, which matched an allowlist of
+variable *names*, would not have caught any of them either. It was defeated seven ways,
+including the entire NFR-PERF-01 budget module, where no test function contains an
+`ast.Assert` at all.
 
-Two deliberate design choices, both learned by being wrong first:
+**So this matches timing SOURCES, not timing NAMES**, and follows them across calls.
+A test is wall-clock sensitive when it orders a measured duration against a bound —
+whatever anyone calls the variable, and wherever the clock was read:
 
-- **An ordering operator is required.** A budget is an inequality
-  (`elapsed < 0.5`); `assert manager._timer.interval() == expected_interval_ms` is a
-  *configured* value compared for equality and is not a measurement. Without this
-  distinction the first run flagged `test_timer_interval_from_settings`.
-- **One traversal, one naming scheme.** A first version walked the tree twice
-  (candidates, then marked) and the two passes spelled node ids differently, so every
-  class-level marker failed to match its own tests and the guard reported two correctly
-  marked classes as offenders.
+- in the test's own body — `assert build_median_ms < 200`;
+- in a body reached transitively through helpers, because that is how the real code is
+  shaped. `_measure_repaints` reads the clock and returns a list; `_assert_repaint_budget`
+  medians it and asserts; the test only calls the second. One hop of dataflow finds
+  neither (`build_median_ms` comes from `statistics.median(samples)`, and
+  `best_median` from `min(all_medians)`), so the closure is taken over calls.
+
+**What this guard deliberately does not claim.** It is one-directional: it proves a
+marker is *required* where it fires, not that every marker present is needed. Two tests
+in `test_nfr_budgets.py` are marked because they build the same scenario on the quiet
+runner, not because they assert a duration. A bidirectional check would have to judge
+intent, and an intention a gate cannot read is not a gate.
 """
 
 from __future__ import annotations
 
 import ast
+from collections.abc import Collection
 from pathlib import Path
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 
-# Names a measured duration typically arrives as.
-DURATION_NAMES = frozenset({
-    "elapsed", "avg_ms", "build_median_ms", "query_median_ms", "best_median",
-    "duration_ms", "took_ms", "wall_ms", "roundtrip_ms",
-})
-DURATION_SUFFIXES = ("_ms", "_seconds", "_secs")
-
+# The sources of a measured duration. This is the property, not a convention.
+TIMING_SOURCES = frozenset({"perf_counter", "monotonic", "process_time", "perf_counter_ns"})
 ORDERING_OPS = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
+MARKER = "perf"
 
 
-def _names_in(node: ast.AST) -> set[str]:
-    names: set[str] = set()
-    for child in ast.walk(node):
-        if isinstance(child, ast.Name):
-            names.add(child.id)
-        elif isinstance(child, ast.Attribute):
-            names.add(child.attr)
-    return names
+def _call_name(node: ast.AST) -> str | None:
+    """Bare name of a call target, for both `f()` and `obj.f()`."""
+    func = node.func if isinstance(node, ast.Call) else None
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
 
 
-def _is_duration(name: str) -> bool:
-    return name in DURATION_NAMES or name.endswith(DURATION_SUFFIXES)
+def _functions(tree: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    return {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
 
 
-def _has_marker(node: ast.AST) -> bool:
+def _calls_any(func: ast.AST, names: Collection[str]) -> bool:
+    return any(
+        isinstance(node, ast.Call) and _call_name(node) in names
+        for node in ast.walk(func)
+    )
+
+
+def _reads_a_clock(tree: ast.Module) -> set[str]:
+    """Names of functions that reach a timing source, transitively through calls.
+
+    A fixed point rather than a single pass: `_assert_repaint_budget` only becomes
+    clock-reading after `_measure_repaints` has, and the ordering in the source file
+    is not a dependency order.
+    """
+    functions = _functions(tree)
+    timed: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name, func in functions.items():
+            if name in timed:
+                continue
+            if _calls_any(func, TIMING_SOURCES) or _calls_any(func, timed):
+                timed.add(name)
+                changed = True
+    return timed
+
+
+def _orders_a_value_against_a_bound(func: ast.AST) -> bool:
+    for node in ast.walk(func):
+        if not isinstance(node, ast.Assert) or not isinstance(node.test, ast.Compare):
+            continue
+        if any(isinstance(op, ORDERING_OPS) for op in node.test.ops):
+            return True
+    return False
+
+
+def _sensitive_names(tree: ast.Module) -> set[str]:
+    """Functions that order a measured duration against a bound."""
+    timed = _reads_a_clock(tree)
+    return {name for name in timed if _orders_a_value_against_a_bound(_functions(tree)[name])}
+
+
+def _marker_names(node: ast.AST) -> set[str]:
+    """Marker attribute names applied to a function or class."""
+    found: set[str] = set()
     for decorator in getattr(node, "decorator_list", []):
-        text = ast.dump(decorator)
-        if "perf" in text and "mark" in text:
-            return True
-    return False
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        parts: list[str] = []
+        while isinstance(target, ast.Attribute):
+            parts.append(target.attr)
+            target = target.value
+        if isinstance(target, ast.Name):
+            parts.append(target.id)
+        # An exact `perf` in a `pytest.mark....` chain. Deliberately not a substring
+        # test: `parametrize("kind", ["perf"])`, `ids=["perf_x"]` and
+        # `skipif(True, reason="perf")` all contain the word and none of them marks
+        # anything, and a guard that reads them as markers fails toward hiding a test.
+        if len(parts) >= 2 and "mark" in parts[:-1]:
+            found.add(parts[0])
+    return found
 
 
-def _asserts_duration(func: ast.AST) -> bool:
-    """True when the body compares a measured duration against a bound."""
-    for stmt in ast.walk(func):
-        if not isinstance(stmt, ast.Assert) or not isinstance(stmt.test, ast.Compare):
-            continue
-        if not any(isinstance(op, ORDERING_OPS) for op in stmt.test.ops):
-            continue
-        if any(_is_duration(name) for name in _names_in(stmt)):
-            return True
-    return False
+def is_perf_marked(node: ast.AST) -> bool:
+    return MARKER in _marker_names(node)
 
 
 def collect_duration_asserts(tree: ast.Module) -> list[tuple[str, bool]]:
-    """`(node_id, marked)` for every test that compares a duration against a bound.
+    """`(node_id, marked)` for every test that can be wall-clock sensitive.
 
-    A single traversal, so the id a test is recorded under is the id it is looked up
-    by. The marker is inherited: a marked class marks its test methods.
+    A test qualifies when it orders a duration itself, or when it calls something that
+    does — which is the shape the NFR module uses, where the test's own body contains
+    no assertion at all.
+
+    The **marker** is inherited from an enclosing class; the **sensitivity** is not.
+    One timing test in a class of twenty ordinary ones must not force all twenty onto
+    the quiet runner, and a first version that propagated sensitivity to the class got
+    that wrong in the opposite direction - it demanded markers for every sibling test.
     """
+    sensitive = _sensitive_names(tree)
     found: list[tuple[str, bool]] = []
 
     def visit(node: ast.AST, marked: bool, prefix: str) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.ClassDef):
-                visit(child, marked or _has_marker(child), f"{prefix}{child.name}::")
+                visit(child, marked or is_perf_marked(child), f"{prefix}{child.name}::")
             elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                marked_here = marked or _has_marker(child)
-                if child.name.startswith("test_") and _asserts_duration(child):
-                    found.append((f"{prefix}{child.name}", marked_here))
-                visit(child, marked_here, prefix)
+                own = marked or is_perf_marked(child)
+                if child.name.startswith("test_") and (
+                    child.name in sensitive or _calls_any(child, sensitive)
+                ):
+                    found.append((f"{prefix}{child.name}", own))
+                visit(child, own, prefix)
             else:
                 visit(child, marked, prefix)
 
     visit(tree, False, "")
-    return sorted(found)
+    return sorted(set(found))
 
 
 def _python_files() -> list[Path]:
@@ -114,9 +176,11 @@ def test_no_wall_clock_assertion_is_unmarked() -> None:
             if not marked:
                 rel = path.relative_to(TESTS_ROOT.parent).as_posix()
                 offenders.append(f"{rel}::{node_id}")
-    assert scanned >= 7, (
-        f"the guard only matched {scanned} duration assertion(s); it has probably "
-        "stopped recognising how the suite spells them"
+    assert scanned >= 12, (
+        f"the guard matched {scanned} wall-clock-sensitive test(s); the perf set is 14, "
+        "of which 12 assert a duration and 2 are marked for scenario consistency on the "
+        "quiet runner. A count below 12 means the detection has regressed - re-check the "
+        "call-graph closure, not the floor."
     )
     assert not offenders, (
         "wall-clock assertions without @pytest.mark.perf — they run beside up to "
@@ -126,33 +190,90 @@ def test_no_wall_clock_assertion_is_unmarked() -> None:
     )
 
 
-def test_the_guard_detects_an_unmarked_assertion() -> None:
-    """A guard nobody checked is a guard nobody can trust.
+def _verdict(source: str) -> list[tuple[str, bool]]:
+    return collect_duration_asserts(ast.parse(source))
 
-    Deliberately NOT marked `perf`: it asserts no duration, it IS the check that
-    durations get marked. Marking it would deselect the gate from the default run.
+
+def test_the_guard_cannot_be_defeated_by_spelling() -> None:
+    """The shapes that beat the previous allowlist-of-names version.
+
+    Each one defeated the name-based guard; a regression to it would reopen the hole
+    silently, which is why these are written as executable examples rather than prose.
     """
+    # 1. The NFR module's shape: the clock is read in one helper, the assert is in
+    #    another, and the test only calls the second. Neither one-hop nor one-function
+    #    analysis finds this.
+    nfr_shape = (
+        "import pytest, time, statistics\n"
+        "@pytest.mark.perf\n"
+        "class TestBudget:\n"
+        "    def test_x(self):\n"
+        "        _assert_budget()\n"
+        "def _measure(view):\n"
+        "    t0 = time.perf_counter()\n"
+        "    return [time.perf_counter() - t0]\n"
+        "def _assert_budget():\n"
+        "    best = min(statistics.median(_measure(None)) for _ in range(8))\n"
+        "    assert best <= 16.7\n"
+    )
+    assert _verdict(nfr_shape) == [("TestBudget::test_x", True)]
 
-    def ids(source: str) -> list[tuple[str, bool]]:
-        return collect_duration_asserts(ast.parse(source))
+    # 2. A name the allowlist never contained, measured through a list.
+    assert _verdict(
+        "import pytest, time, statistics\n@pytest.mark.perf\n"
+        "def test_y():\n"
+        "    samples = []\n"
+        "    for _ in range(8):\n"
+        "        t0 = time.perf_counter()\n"
+        "        samples.append((time.perf_counter() - t0) * 1000)\n"
+        "    assert statistics.median(samples) < 200\n"
+    ) == [("test_y", True)]
 
-    # An unmarked method-level budget is reported unmarked.
-    assert ids("def test_x():\n    elapsed = 1.0\n    assert elapsed < 0.5\n") == [
-        ("test_x", False)
-    ]
-    # The same budget marked at method level.
-    assert ids(
-        "import pytest\n@pytest.mark.perf\ndef test_x():\n"
-        "    elapsed = 1.0\n    assert elapsed < 0.5\n"
-    ) == [("test_x", True)]
-    # The same budget marked at CLASS level, reported under the qualified id.
-    assert ids(
-        "import pytest\n@pytest.mark.perf\nclass TestPerf:\n"
-        "    def test_x(self):\n        elapsed = 1.0\n        assert elapsed < 0.5\n"
-    ) == [("TestPerf::test_x", True)]
-    # A configured interval compared for EQUALITY is not a measurement.
-    assert ids(
-        "def test_y():\n    expected_ms = 500\n    assert timer == expected_ms\n"
+    # 3. The direct form, with an unfamiliar name.
+    assert _verdict(
+        "import pytest, time\n@pytest.mark.perf\n"
+        "def test_z():\n    started_at = time.monotonic()\n"
+        "    assert time.monotonic() - started_at < 0.5\n"
+    ) == [("test_z", True)]
+
+    # 4. Words containing 'perf' that mark nothing must not read as markers.
+    for decorator in (
+        '@pytest.mark.parametrize("kind", ["perf", "unit"])',
+        '@pytest.mark.skipif(True, reason="perf budget")',
+        "@pytest.mark.performance",
+    ):
+        verdict = _verdict(
+            "import pytest, time\n"
+            + decorator
+            + "\ndef test_w():\n    delta = time.perf_counter() - 1.0\n"
+            "    assert delta < 1.0\n"
+        )
+        assert verdict == [("test_w", False)], (
+            f"{decorator} was read as a perf marker: {verdict}"
+        )
+
+    # 5. Equality on a configured interval is not a measurement - no ordering operator.
+    assert _verdict(
+        "import time\ndef test_q():\n    expected_ms = 500\n"
+        "    assert timer.interval() == expected_ms\n"
     ) == []
-    # And a non-temporal assertion must not be swept up by the suffix heuristics.
-    assert ids("def test_z():\n    assert species_key == 'x'\n") == []
+
+    # 6. A test that never touches a clock is not swept up, even inside a marked class.
+    assert _verdict(
+        "import pytest\n@pytest.mark.perf\nclass TestThing:\n"
+        "    def test_r(self):\n        assert species_key == 'x'\n"
+    ) == []
+
+    # 7. Reading a clock is not enough - it must be ordered against a bound. This test
+    #    calls a helper that times something and then asserts something else entirely.
+    #    (The first draft of this case asserted `_measure() > 0`, which IS a bound, and
+    #    the guard rightly flagged it. The example, not the guard, was wrong.)
+    assert _verdict(
+        "import time\n"
+        "def _log_duration():\n"
+        "    t0 = time.perf_counter()\n"
+        "    return time.perf_counter() - t0\n"
+        "def test_s():\n"
+        "    _log_duration()\n"
+        "    assert 1 + 1 == 2\n"
+    ) == []

@@ -2721,15 +2721,24 @@ the general one — a suite that grows a slow file should not silently lose a wo
   processes — the 2026-08-17 §11.4 incident that made `TEST_APPLICATION` per-PID in the
   first place.
 - **Fixing the leak in the 51 files that build an app.** Correct, and it is the reason the
-  chokepoint exists: one place cannot be forgotten, and a 34-file diff would put the fix
+  chokepoint exists: one place cannot be forgotten, and a 51-file diff would put the fix
   behind review of every unrelated line.
 
 **The timing tests are excluded deliberately, and this is a scheduling principle rather
-than a convenience.** Two tests fail intermittently when they share a runner with eight
-workers — the NFR repaint budget, and `test_tasks.py`'s deferred-check reminder — and
+than a convenience.** Tests fail intermittently when they share a runner with eight
+workers — the NFR repaint budget and the map-picker close bound among them — and
 §11.4's #354 entry already holds that a performance test must protect a *sustained*
 regression statistically rather than assert that one shared runner owns a quiet CPU. A
 single-step gate here would have been a gate that cries wolf.
+
+The marker means **wall-clock sensitive, not "lives in `tests/perf/`"**, and that
+distinction is the load-bearing part of the decision. Seven of the 14 marked tests live
+outside `tests/perf/`, which is why the runner command is `pytest tests/ -m perf` and
+not a directory. Two errors in this ADR were caught by review and are recorded because
+they are the natural mistakes: an earlier version justified the marker by naming
+`tests/integration/test_tasks.py`, which carries **no marker** and so is not covered by
+the flag at all. Its hazard was real — two schedulers call `_check_overdue_tasks` — but it
+is a shared-*state* defect and was fixed by isolating the arm, not by scheduling around it.
 
 **Consequences (limitations, stated).**
 
@@ -2738,11 +2747,17 @@ single-step gate here would have been a gate that cries wolf.
   `-n 0` is the escape hatch. The trade is asymmetric and deliberate — 517 s saved on a
   full run against 2.6 s added to a small one — but it is a real cost and is the first
   thing to revisit if the inner loop starts using single-file runs heavily.
-- **`pytest tests/` now deselects the perf tests, so a bare `pytest tests/perf`
-  collects nothing.** The perf suite must be invoked as `pytest tests/perf -m perf`.
-  CI does this as its own step, so nothing stops being verified, but this is a footgun
-  and it is recorded here deliberately. `tests/perf/test_sun_receiver_budget.py` carried
-  no `perf` marker at all and would have stayed in the parallel run; it now has one.
+- **`pytest tests/` now deselects the perf tests**, so they must be invoked explicitly as
+  `pytest tests/ -m perf -n 0` — three details that were each wrong in an earlier draft of
+  this record. It is `tests/`, because a directory-only form (`pytest tests/perf -m perf`)
+  runs 7 of the 14 and **silently passes**, which is the worst failure mode available to a
+  gate that exists to catch slow drift. It needs `-m perf`, or the `-m 'not perf'` in
+  `addopts` wins and nothing is collected. It needs `-n 0`, because running the timing
+  tests across workers is the thing the split exists to prevent.
+  CI does this as its own step, so nothing stops being verified.
+  `tests/unit/test_perf_marker_guard.py` fails the build if a wall-clock assertion is added
+  without the marker, so this list cannot silently go stale — an audit written in prose had
+  already been wrong twice by the time the third review found the two `TestPerf` classes.
 - **A crashed worker is not a clean abort.** The 180 s `pytest-timeout` guard stays — #448
   and the 2026-08-17 stall both earn it — but on Windows it currently dumps stacks and
   aborts the run. Under xdist a timeout kills one worker, which is restarted, and the run

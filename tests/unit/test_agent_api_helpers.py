@@ -22,8 +22,27 @@ from open_garden_planner.agent_api.server import PortInUseError
 from tests.agent_api_helpers import NOT_STARTED, PORT_ATTEMPTS, free_port, start_server
 
 
+class _FakeUvicorn:
+    """The uvicorn object `start()` waits on via `getattr(server, "started", False)`."""
+
+    def __init__(self) -> None:
+        self.started = False
+
+
 class _FakeServer:
-    """Stands in for `AgentApiServer`; records the ports it was constructed with."""
+    """Stands in for `AgentApiServer`; records the ports it was constructed with.
+
+    Models the real class's two distinct readiness states, because that distinction is
+    the one the helper depends on:
+
+    - `is_running` is "the thread is alive", and it is true whether or not uvicorn ever
+      reported `started`;
+    - `_server.started` is what `start()` itself polls, and it is the only true
+      readiness signal.
+
+    A fake that conflates them cannot test the difference — and conflating them is
+    exactly the bug this helper's second round of review caught.
+    """
 
     def __init__(self, providers: object, *, port: int, **kwargs: object) -> None:
         self.providers = providers
@@ -32,6 +51,7 @@ class _FakeServer:
         self.start_calls = 0
         self.stopped = False
         self._running = False
+        self._server = _FakeUvicorn()
 
     @property
     def is_running(self) -> bool:
@@ -40,6 +60,7 @@ class _FakeServer:
     def start(self) -> None:
         self.start_calls += 1
         self._running = True
+        self._server.started = True
 
     def stop(self) -> None:
         self.stopped = True
@@ -135,26 +156,58 @@ def test_exhausting_the_attempts_is_reported_not_retried_forever(monkeypatch) ->
         start_server(object())
 
 
-def test_a_server_that_returns_but_never_ran_is_retried(monkeypatch) -> None:
-    """`start()` returning without the loop listening is not success either."""
-    calls = {"n": 0}
+def test_a_server_that_returns_but_never_became_ready_is_reported_not_retried(monkeypatch) -> None:
+    """`start()` returning normally does not mean uvicorn is listening.
+
+    The thread hit the ready-deadline instead of the death check, so `start()` returned
+    with a logged warning and `is_running` True. The first version of this test asserted
+    the opposite - that the helper retries into a working server - which is the
+    mirror-image defect: a readiness that misses its deadline is a product-side delay,
+    not a port collision, and retrying it turns a real defect into a slow pass.
+
+    It also asserts the live thread is stopped. Abandoning it would leak a running
+    server and, eventually, the port.
+    """
+    created: list[_FakeServer] = []
 
     def silent(providers: object, *, port: int, **kwargs: object) -> _FakeServer:
-        calls["n"] += 1
         server = _FakeServer(providers, port=port, **kwargs)
-        if calls["n"] < 3:
-            server.start = lambda: None  # returns, never becomes running
+        # The thread comes up but never reports `started` — the deadline path.
+        server.start = lambda: server._server.__setattr__("started", False)  # type: ignore[method-assign]
+        server._running = True
+        created.append(server)
         return server
 
     monkeypatch.setattr("tests.agent_api_helpers.AgentApiServer", silent)
-    server, _port = start_server(object())
-    assert calls["n"] == 3
-    assert server.is_running
+    with pytest.raises(AssertionError, match="did not become ready"):
+        start_server(object())
+    assert len(created) == 1, "a readiness deadline is not a collision; do not retry it"
+    assert created[0].stopped, "the live thread must be stopped, not abandoned"
 
 
 def test_attempt_count_is_bounded() -> None:
     """A retry loop with no ceiling is a hang, not a retry."""
     assert 2 <= PORT_ATTEMPTS <= 10
+
+
+def test_exhausting_a_collision_loop_raises_rather_than_returning_none(monkeypatch) -> None:
+    """The loop must not fall off its end.
+
+    A retry loop that exhausts without an explicit raise returns `None` implicitly, and
+    the caller then fails at the unpacking with a TypeError about tuples — which says
+    nothing about ports and sends the next reader looking in the wrong place. This was a
+    real hole introduced while fixing the readiness check above.
+    """
+    monkeypatch.setattr("tests.agent_api_helpers.AgentApiServer", _FakeServer)
+
+    def always_busy(providers: object, *, port: int, **kwargs: object) -> _FakeServer:
+        server = _FakeServer(providers, port=port, **kwargs)
+        server.start = _raise(PortInUseError(port))  # type: ignore[method-assign]
+        return server
+
+    monkeypatch.setattr("tests.agent_api_helpers.AgentApiServer", always_busy)
+    with pytest.raises(AssertionError, match="not a port collision"):
+        start_server(object())
 
 
 def _raise(exc: BaseException):
