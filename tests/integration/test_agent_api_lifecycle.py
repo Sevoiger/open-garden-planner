@@ -1,16 +1,16 @@
-"""Issue #365: ``new_plan`` / ``open_plan`` over the REAL MCP transport.
+﻿"""Issue #365: ``new_plan`` / ``open_plan`` over the REAL MCP transport.
 
 Why this file exists separately from ``test_agent_api_default_on.py`` (which
 covers the same tools at the main-thread-body level): both tools originally
 returned ``ExportResult(**result)`` while their providers returned a dict with
 no ``format`` key and a ``None`` ``file_path`` against a ``str`` field. So both
 raised a pydantic ``ValidationError`` on **every successful call over the
-wire** — while all 22 body-level tests passed, because the body never builds
+wire** â€” while all 22 body-level tests passed, because the body never builds
 the result model. Only the transport crosses that boundary.
 
 The lesson is general: a tool's declared return model is a contract, and
 testing the provider is not the same as testing the tool. These are per-tool
-tests, honestly described — they cover the two models #365 added, not every
+tests, honestly described â€” they cover the two models #365 added, not every
 model in the server. (Enumerating every ``X(**result)`` site in ``server.py``
 against its model's required fields found no other live tool in violation, so
 the remaining models are covered by the existing transport suites.)
@@ -19,7 +19,6 @@ the remaining models are covered by the existing transport suites.)
 from __future__ import annotations
 
 import asyncio
-import socket
 import threading
 from pathlib import Path
 from typing import Any
@@ -30,6 +29,7 @@ from open_garden_planner.agent_api import providers as _providers
 from open_garden_planner.agent_api.server import SERVER_THREAD_NAME, AgentApiServer
 from open_garden_planner.app.application import GardenPlannerApp
 from open_garden_planner.app.settings import get_settings
+from tests.agent_api_helpers import start_server
 
 _TOKEN = "lifecycle-transport-token-abcdef123456"
 
@@ -42,10 +42,6 @@ def _stub_providers() -> _providers.AgentProviders:
     )
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
 def _drive(server: AgentApiServer, body: Any, result: dict[str, Any]) -> None:
@@ -78,7 +74,7 @@ def app(qtbot: Any, monkeypatch: Any) -> Any:
 
     Uses the app's OWN ``_build_agent_providers()`` rather than a stub, because
     the bug lived in the seam between the real provider and the tool's declared
-    return model — a stub would have hidden it a second time.
+    return model â€” a stub would have hidden it a second time.
     """
     get_settings().show_welcome_on_startup = False
     # The agent path does its own dirty check and never calls this GUI
@@ -93,13 +89,8 @@ def app(qtbot: Any, monkeypatch: Any) -> Any:
 
 
 def _server(win: Any) -> AgentApiServer:
-    server = AgentApiServer(
-        win._build_agent_providers(),
-        port=_free_port(),
-        write_token=_TOKEN,
-        writes_enabled=True,
-    )
-    server.start()
+    server, _ = start_server(win._build_agent_providers(), write_token=_TOKEN,
+        writes_enabled=True)
     return server
 
 
@@ -175,7 +166,7 @@ def test_open_plan_returns_a_valid_payload_over_the_transport(
     payload = result["payload"]
     assert payload["file_path"] == str(target)
     assert payload["width_cm"] == pytest.approx(900.0)
-    # Reported from BEFORE the load, which resets the flag — this is the one
+    # Reported from BEFORE the load, which resets the flag â€” this is the one
     # fact an agent needs when it passed force=true and may have just discarded
     # work. Read after the load it would always be False.
     assert payload["was_dirty"] is True
@@ -185,7 +176,7 @@ def test_open_plan_returns_a_valid_payload_over_the_transport(
 def test_lifecycle_tools_refuse_a_dirty_plan_over_the_transport(
     app: Any, qtbot: Any
 ) -> None:
-    """The refusal is reported as a tool error, not a success payload — and the
+    """The refusal is reported as a tool error, not a success payload â€” and the
     document survives it."""
     app._do_agent_create_object("TREE", 10.0, 10.0, None, None, None, None, None)
     before = len(app.canvas_scene.items())
@@ -227,8 +218,8 @@ class TestServerTeardownLeavesNothingRunning:
 
     This is not hygiene for its own sake. These three tests are the first in the
     suite to run a REAL in-process uvicorn server, and CI segfaulted twice at
-    interpreter teardown with this module's `_run` — i.e. `loop.run_until_complete
-    (server.serve())` — on the stack, during an unrelated Qt test. A uvicorn loop
+    interpreter teardown with this module's `_run` â€” i.e. `loop.run_until_complete
+    (server.serve())` â€” on the stack, during an unrelated Qt test. A uvicorn loop
     left running keeps its sockets and its main-thread bridge alive, which is a
     crash waiting for a bystander to trigger it.
 
@@ -244,10 +235,9 @@ class TestServerTeardownLeavesNothingRunning:
     """
 
     def test_stop_leaves_no_server_thread_behind(self) -> None:
-        srv = AgentApiServer(
-            _stub_providers(), port=_free_port(), write_token=_TOKEN, writes_enabled=True
+        srv, _ = start_server(
+            _stub_providers(), write_token=_TOKEN, writes_enabled=True
         )
-        srv.start()
         thread = srv._thread
         assert thread is not None and thread.is_alive(), "should run while started"
 
@@ -262,10 +252,9 @@ class TestServerTeardownLeavesNothingRunning:
         """It is documented as idempotent and the app calls it from both the
         quit path and the teardown fixtures, so a second call must be a no-op
         rather than an error."""
-        srv = AgentApiServer(
-            _stub_providers(), port=_free_port(), write_token=_TOKEN, writes_enabled=True
+        srv, _ = start_server(
+            _stub_providers(), write_token=_TOKEN, writes_enabled=True
         )
-        srv.start()
         thread = srv._thread
         srv.stop()
         srv.stop()  # must not raise
@@ -278,9 +267,8 @@ class TestServerTeardownLeavesNothingRunning:
         Counted before and after, so it measures what THIS loop leaked."""
         before = len(_alive_server_threads())
         for _ in range(3):
-            srv = AgentApiServer(
-                _stub_providers(), port=_free_port(), write_token=_TOKEN, writes_enabled=True
+            srv, _ = start_server(
+                _stub_providers(), write_token=_TOKEN, writes_enabled=True
             )
-            srv.start()
             srv.stop()
         assert len(_alive_server_threads()) == before

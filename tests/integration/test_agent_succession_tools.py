@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import socket
 import threading
 import uuid
 from typing import Any
@@ -40,6 +39,7 @@ from open_garden_planner.core.object_types import ObjectType, is_bed_type
 from open_garden_planner.models.plant_data import species_key
 from open_garden_planner.services.bundled_species_db import get_species_db, lookup_species
 from open_garden_planner.ui.canvas.items import RectangleItem
+from tests.agent_api_helpers import free_port, start_server
 from tests.integration.agent_task_soil_stubs import TASK_SOIL_STUBS
 
 LOCATION: dict[str, Any] = {
@@ -54,12 +54,6 @@ LOCATION: dict[str, Any] = {
 TODAY = datetime.date(2026, 6, 15)
 
 
-def _free_port() -> int:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port: int = sock.getsockname()[1]
-    sock.close()
-    return port
 
 
 def _pump(qtbot: Any, coro: Any) -> None:
@@ -339,8 +333,7 @@ class TestSuccessionReadTools:
             ],
             2026,
         )
-        server = AgentApiServer(h.providers, port=_free_port())
-        server.start()
+        server, _ = start_server(h.providers)
         out: dict[str, Any] = {}
 
         async def run() -> None:
@@ -386,8 +379,7 @@ class TestSuccessionReadTools:
 
     def test_find_succession_gaps_over_mcp(self, qtbot: Any) -> None:
         h = SuccessionHarness()
-        server = AgentApiServer(h.providers, port=_free_port())
-        server.start()
+        server, _ = start_server(h.providers)
         out: dict[str, Any] = {}
 
         async def run() -> None:
@@ -424,8 +416,7 @@ class TestSuccessionReadTools:
     def test_no_location_reports_the_marker_over_mcp(self, qtbot: Any) -> None:
         h = SuccessionHarness()
         h.pm.set_location({})
-        server = AgentApiServer(h.providers, port=_free_port())
-        server.start()
+        server, _ = start_server(h.providers)
         out: dict[str, Any] = {}
 
         async def run() -> None:
@@ -455,8 +446,7 @@ class TestSuccessionReadTools:
     def test_a_trellis_is_refused_by_the_read_tools(self, qtbot: Any) -> None:
         """A plant-parent that holds no soil is not a succession bed."""
         h = SuccessionHarness()
-        server = AgentApiServer(h.providers, port=_free_port())
-        server.start()
+        server, _ = start_server(h.providers)
         out: dict[str, Any] = {}
 
         async def run() -> None:
@@ -483,8 +473,7 @@ class TestSuccessionReadTools:
 
     def test_unknown_bed_is_refused_not_reported_empty(self, qtbot: Any) -> None:
         h = SuccessionHarness()
-        server = AgentApiServer(h.providers, port=_free_port())
-        server.start()
+        server, _ = start_server(h.providers)
         out: dict[str, Any] = {}
 
         async def run() -> None:
@@ -512,8 +501,10 @@ class TestSetSuccessionPlan:
     """The token-gated write: undo steps, refusals, exact restoration."""
 
     def _token_server(self, h: SuccessionHarness) -> AgentApiServer:
+        # No bind happens here — the caller starts it — so plain `free_port()` is
+        # correct and there is nothing to retry.
         return AgentApiServer(
-            h.providers, port=_free_port(), writes_enabled=True, write_token="tok"
+            h.providers, port=free_port(), writes_enabled=True, write_token="tok"
         )
 
     @staticmethod
@@ -832,8 +823,7 @@ class TestSetSuccessionPlan:
 
     def test_the_tool_is_absent_without_writes_enabled(self, qtbot: Any) -> None:
         h = SuccessionHarness()
-        server = AgentApiServer(h.providers, port=_free_port())
-        server.start()
+        server, _ = start_server(h.providers)
         out: dict[str, Any] = {}
 
         async def run() -> None:
