@@ -8,8 +8,13 @@ PyQt6 desktop app for precision garden planning with CAD-like metric accuracy.
 # Run app
 venv/Scripts/python.exe -m open_garden_planner
 
-# Run tests
+# Run tests. `addopts` runs these in parallel (`-n auto --dist worksteal`) and
+# deselects the `perf` marker, so a full run is ~156s instead of ~674s (#509, 8.10.4)
 venv/Scripts/python.exe -m pytest tests/ -v
+# The timing-sensitive tests, which must not share a runner with workers
+venv/Scripts/python.exe -m pytest tests/perf -m perf -v
+# One file or a few tests: `-n 0` avoids paying worker start-up (2.9s vs 5.5s)
+venv/Scripts/python.exe -m pytest tests/unit/test_i18n.py -v -n 0
 
 # Lint
 venv/Scripts/python.exe -m ruff check src/

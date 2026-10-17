@@ -260,20 +260,34 @@ Recorded rather than silently amended, because each changes what the work is wor
    De-duplicating the two runs therefore buys runner-minutes, not gate latency — and
    any restructuring must keep a check literally named `Test`.
 
-## Parallel execution: measured, and the one thing that blocked it
+## Parallel execution: measured, what blocked it, and what the modes are worth
 
-Measured on the same box, same tree, `pytest-xdist` 3.8.0 installed for the
-experiment only (`pyproject.toml`, `uv.lock` and `pylock.toml` untouched):
+All figures on the same box, `pytest-xdist` 3.8.0. Two tree states are reported,
+because the widget-leak fix above changes the answer and would otherwise be read as
+part of the speed-up:
 
-| Run | Wall clock | Factor |
+| Run | Before the leak fix | After the leak fix |
 |---|---|---|
-| Full suite, serial | 912.6 s | 1.00× |
-| Full suite, `-n 8 --dist loadfile` | **154.1 s** | **5.92×** |
-| `tests/unit` only, serial | 192.6 s | 1.00× |
-| `tests/unit` only, `-n 8 --dist loadfile` | 61.1 s | 3.15× |
-| `tests/unit` minus its 3 slowest files, serial | 120.5 s | 1.60× |
+| Full suite, serial | 912.6 s | **673.6 s** |
+| Full suite, `-n 8 --dist worksteal` | — | **156.2 s** |
+| Full suite, `-n 8 --dist loadfile` | 154.1 s | 186.3 s |
+| Full suite, `-n 8 --dist load` | — | 250.2 s |
+| Full suite, `-n 4 --dist worksteal` | — | 245.2 s |
+| `tests/unit` only, serial | 192.6 s | — |
+| `tests/unit` only, `-n 8 --dist loadfile` | 61.1 s | — |
+| `tests/unit` minus its 3 slowest files, serial | 120.5 s | — |
 
-The unit layer's parallel efficiency is the poorer of the two (3.15× vs 5.92×),
+The leak fix costs the parallel run about 44 s — the reclaim fixture now runs in every
+worker for every test — and saves the serial run 239 s. It is a shift in where the work
+sits, not a regression.
+
+**`worksteal` is the mode.** It splits at test level, so no single slow file becomes one
+worker's floor. That is only measurable *after* the leak fix: before it,
+`test_iconography_3c.py` at 96.7 s was the binding constraint and whole-file granularity
+looked essential. Its advantage over `loadfile` is the general one — a suite that grows a
+slow file should not silently lose a worker.
+
+The unit layer's parallel efficiency is the poorer of the two (3.15× against 4.31×),
 which is what per-worker fixed cost predicts: every worker imports the app,
 collects the tree and builds the session fixtures, and against 192 s of work that
 overhead is a visible fraction. The full suite amortises it.
@@ -375,3 +389,43 @@ With the mutation gone, no grouping is needed: nothing else failed under `-n 8`.
 - **The cheapest large win needs no new dependency at all.** `pytest tests/unit` is
   3 min 12 s against 15 min for everything. A committed inner-loop convention
   captures most of the available speed-up before any dependency is added.
+
+## Two findings that are not about speed
+
+### `--cov` and the perf tests cannot be combined, and this predates #509
+
+The repaint budget test **passes** with `pytest tests/perf -m perf -n 0` (0.92 s) and
+**fails** with the same flags plus `--cov`:
+
+```
+AssertionError: Fit-in-view repaint exceeds frame budget 16.70 ms
+                (best median: 20.29 ms across 8 rounds)
+```
+
+Coverage tracing inflates the very repaints the test measures, and the test's
+best-of-8-rounds median — §11.4's load tolerance — cannot out-run the tracer. This is
+not a parallel-execution effect: the failure reproduces at `-n 0`.
+
+The `Coverage` job has always run the whole suite under `--cov`, so it has been
+**measuring something it cannot gate**. Because `Coverage` is not a required check, a red
+there does not block a merge, which is how this survives unnoticed. Correcting it means
+deciding what the coverage baseline should include, and it is deliberately not attempted
+here — it is a separate change with its own baseline review.
+
+### Four instruments lied during this investigation, all the same way
+
+Every wrong conclusion above came from a measurement that reported confidently about code
+it never reached. This is §11.4's "a no-op measured by an instrument that bypasses the
+code is not evidence of a no-op", and it cost four corrections:
+
+| Instrument | It claimed | Reality |
+|---|---|---|
+| A benchmark of synthetic `QLabel`/`QWidget` trees | `apply_theme` costs 2–3 s per call; the icon cache is the cause | The widgets never requested an icon — `svg=0 icon=0 pixmap=0`, so the `clear_cache` ablation changed nothing (1.0×) |
+| `gc.collect()` | the chokepoint cannot reclaim the leak | It freed 8 337 objects and moved the widget count only 38 271 → 37 638: strong references, not collectable cycles |
+| `sendPostedEvents(None, 0)` | the chokepoint is ineffective | `DeferredDelete` must be named explicitly; the call flushed nothing. A measurement that mis-invokes its instrument refutes the call, not the idea |
+| A PowerShell `function Time-Run($label, $args)` + `@args` splat | `-n 8` takes 740 s, so parallelising made things worse | `$args` is a PowerShell **automatic** variable: the flags never reached pytest and three *serial* runs were reported as parallel. The tell was 740 s being suspiciously close to the 673 s serial figure, and two runs disagreeing on failure count for no scheduler-related reason |
+
+The pattern is uniform: **a measurement instrument that does not reach the code produces
+a confident number about it.** The defences that worked were unglamorous — read the cache
+sizes, compare the failing count across runs, check the wall clock against a figure that
+should be impossible.

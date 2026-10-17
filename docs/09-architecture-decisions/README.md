@@ -2651,6 +2651,113 @@ Two measurements decided the remedy, and both were needed:
 
 **Evidence.** The committed `tests/integration/test_polygon_paint_bound.py` pins that an over-budget polygon paints an outline (not a fill) on screen, that the degraded paint is many times cheaper than full detail **with the item's own wide pen**, that a polygon at the bound, an offscreen render and a selected item paint the exact fill, and that a hostile polygon is refused at the seam without dropping the rest of a plan. The cost table above is reproducible with the shapes in that test file.
 
+## ADR-058: The suite runs in parallel, and the timing tests do not (issue #509)
+
+**Status:** Accepted.
+
+**Context.** The full battery took 912.6 s serially on the development box and gated every
+iteration between a change and the owner's hands-on pass. Three candidate causes were
+separated by measurement, and only one of them is a scheduling problem.
+
+The suite was **highly concentrated**: the median test took 0.030 s against a mean of
+0.339 s (11.3×), and ten files of 228 held 57 % of measured call time. But the naive
+reading of that table — "these files are slow" — was **wrong**. `test_iconography_3c.py`
+alone runs 36 tests in 2.14 s; the same file immediately after
+`tests/ui/test_main_window.py` takes 447 s, with individual theme tests at 60–66 s.
+Probing `QApplication` directly: a clean process holds **0** widgets and one
+`apply_theme()` round-trip costs **1.3 ms**; after `test_main_window.py` it holds
+**38 271** widgets and **1 580** top-level widgets, **0 % of them visible**, and the
+round-trip costs **22 478 ms**.
+
+So the expensive tests were **victims**. Thirty apps leaked their widget graphs because
+`qtbot.addWidget` *closes* a widget and closing is not deleting, and `apply_theme()`
+walks `app.allWidgets()` on every call. Fixing the leak — one autouse fixture that
+closes and `deleteLater()`s every top-level widget per test — took the serial suite from
+912.6 s to **673.6 s** and flattened the distribution (slowest-50 share 50.9 % → 37.9 %;
+mean/median 11.3× → 6.8×). It changes no product code and removes no test.
+
+**Decision.** `addopts` carries `-n auto --dist worksteal -m 'not perf'`, and
+`pytest-xdist>=3.8.0` joins the `dev` extra.
+
+Measured on the fixed tree, all four modes genuinely parallel:
+
+| Mode | Wall clock |
+|---|---|
+| **`-n 8 --dist worksteal`** | **156.2 s** |
+| `-n 8 --dist loadfile` | 186.3 s |
+| `-n 8 --dist load` | 250.2 s |
+| `-n 4 --dist worksteal` | 245.2 s |
+
+**`worksteal` is chosen because it splits at test level**, so no single slow file
+becomes one worker's floor. That distinction was only measurable *after* the leak fix:
+before it, `test_iconography_3c.py` at 96.7 s was the binding constraint and
+`loadfile`'s whole-file granularity looked essential. Its advantage over `loadfile` is
+the general one — a suite that grows a slow file should not silently lose a worker.
+
+**Alternatives rejected.**
+
+- **Not parallelising, and only documenting an inner loop.** `pytest tests/unit` is
+  192.6 s against 673.6 s for everything, so this captures a large part of the win with
+  no new dependency. It does not help the case the owner actually described — running
+  *everything* before testing by hand — and a convention nobody is forced to follow is
+  the failure mode this repository has already paid for twice.
+- **`@pytest.mark.xdist_group` + `--dist loadgroup` to keep the colliding tests
+  together.** It works, and it was rejected for three reasons: the `--dist` modes are
+  mutually exclusive, so `loadgroup` *replaces* `loadfile` rather than combining with it;
+  the protection `loadfile` was originally chosen for turns out to be worth under 4.6 s
+  (the three files with module-scoped fixtures do not reach the slowest-30 list); and
+  grouping schedules around the symptom. The actual collision was a test writing into the
+  git working tree, and that hazard also applied to two concurrently launched pytest
+  processes — the 2026-08-17 §11.4 incident that made `TEST_APPLICATION` per-PID in the
+  first place.
+- **Fixing the leak in the 34 files that build an app.** Correct, and it is the reason the
+  chokepoint exists: one place cannot be forgotten, and a 34-file diff would put the fix
+  behind review of every unrelated line.
+
+**The timing tests are excluded deliberately, and this is a scheduling principle rather
+than a convenience.** Two tests fail intermittently when they share a runner with eight
+workers — the NFR repaint budget, and `test_tasks.py`'s deferred-check reminder — and
+§11.4's #354 entry already holds that a performance test must protect a *sustained*
+regression statistically rather than assert that one shared runner owns a quiet CPU. A
+single-step gate here would have been a gate that cries wolf.
+
+**Consequences (limitations, stated).**
+
+- **`-n auto` in `addopts` makes a *small* targeted run slower**, because worker start-up
+  dominates: one 11-test file measured 2.85 s serial against 5.48 s under `-n auto`.
+  `-n 0` is the escape hatch. The trade is asymmetric and deliberate — 517 s saved on a
+  full run against 2.6 s added to a small one — but it is a real cost and is the first
+  thing to revisit if the inner loop starts using single-file runs heavily.
+- **`pytest tests/` now deselects the perf tests, so a bare `pytest tests/perf`
+  collects nothing.** The perf suite must be invoked as `pytest tests/perf -m perf`.
+  CI does this as its own step, so nothing stops being verified, but this is a footgun
+  and it is recorded here deliberately. `tests/perf/test_sun_receiver_budget.py` carried
+  no `perf` marker at all and would have stayed in the parallel run; it now has one.
+- **A crashed worker is not a clean abort.** The 180 s `pytest-timeout` guard stays — #448
+  and the 2026-08-17 stall both earn it — but on Windows it currently dumps stacks and
+  aborts the run. Under xdist a timeout kills one worker, which is restarted, and the run
+  continues: **a hang now presents as a crashed worker rather than as a failure.**
+- **A parallel run's first visible failure mode is coverage, not tests.**
+  `quality/coverage-floors.json` holds exact `covered * 100 // statements` integers per
+  package plus a per-file floor, so losing a single line fails that job — and since
+  `Coverage` is not a required check, that red would sit there unblocking merges while
+  looking authoritative.
+- **`--cov` and the perf tests are mutually exclusive, and this predates the ADR.** The
+  repaint budget fails under coverage tracing at **20.29 ms against a 16.70 ms budget**,
+  because tracing inflates the very repaints the test measures, and the test's
+  best-of-8-rounds median cannot out-run it. The `Coverage` job has always run every test
+  under `--cov`, so it has been measuring something it cannot gate. Correcting that is
+  separate work and is not attempted here.
+
+**Evidence.** `scripts/measure_test_suite_latency.py` reproduces the concentration table
+from a recorded `--durations` report (11 unit tests pin its arithmetic against a
+hand-computable fixture, including the ways it could report a confident wrong number);
+`docs/11-risks-and-technical-debt/test-suite-latency-2026-10.md` holds the full baseline,
+the per-layer and per-file tables, the widget-leak measurement and the corrections to
+issue #509's stated facts. The CI `Test` job uploads its `--durations=0` report as the
+`test-durations-linux` artifact, so the baseline refreshes on every push rather than
+drifting until someone remembers to re-measure.
+
 ### ADR-042 addendum: the runtime tint becomes a luminance map (issue #502, 16 October 2026)
 
 The forge's tint-readability band was written for a tint that could not do the job.

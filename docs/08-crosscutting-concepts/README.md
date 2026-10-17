@@ -641,6 +641,41 @@ saved setting and next-window startup translation for every registered locale.
 and a new source key missing from some or all catalogs. Equal-size wrong-key catalogs,
 invalid values/placeholders, stale binaries and stale source declarations fail.
 
+### 8.10.4 The inner loop, and which run is the gate (#509)
+
+`addopts` carries `-n auto --dist worksteal -m 'not perf'` (ADR-058), so the **default**
+run is parallel. Three things follow from that, and each is a trap worth naming.
+
+| Command | What it is | Measured |
+|---|---|---|
+| `pytest tests/` | the correctness battery, parallel, perf deselected | **156 s** |
+| `pytest tests/perf -m perf` | the timing-sensitive tests, which never share a runner | **8 s** |
+| `pytest tests/unit` | the natural inner loop for a logic-only change | **193 s** |
+
+**The perf tests need `-m perf`.** `addopts` deselects them so that a plain
+`pytest tests/perf` **collects nothing at all** — the single most likely way to
+mistakenly believe they ran. They are wall-clock budgets, and what they contend for is
+the CPU rather than the index.
+
+**Small targeted runs are slower than they were.** Worker start-up dominates when there
+is nothing to distribute: one 11-test file measured 2.85 s serially against 5.48 s under
+`-n auto`. Pass **`-n 0`** for a single file or a handful of tests. The asymmetry is
+deliberate (517 s saved on a full run against 2.6 s added to a small one) but it is a
+real cost, and `-n 0` is the documented escape rather than something to discover.
+
+**Which run is the gate.** A targeted run is good security during a change; the **full**
+correctness battery plus the perf step is the gate before a PR. This is safe in one
+direction only, and the direction matters: a targeted run can fail while the full run
+passes (a false alarm — harmless), but the dangerous direction would be a targeted run
+passing beside a red full run, which is exactly why the full run stays the gate. §11.4
+records the precedent for the fix when that happens: request the fixture the test
+actually needs rather than inheriting it from a neighbour.
+
+One consequence of parallelism is worth expecting: **a hang presents as a crashed
+worker**, not as a clean abort. The `pytest-timeout` guard still applies per test (#448
+and the 2026-08-17 stall earn it); xdist kills and restarts the one worker and
+continues.
+
 ## 8.11 Security Scanning (SAST)
 
 **Tool:** [Bandit](https://bandit.readthedocs.io/) — a Python SAST tool that detects common security anti-patterns (subprocess injection, unsafe deserialization, weak cryptography, hardcoded secrets, etc.).

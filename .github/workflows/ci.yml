@@ -74,6 +74,11 @@ jobs:
       # the report for the artifact below, and `set -o pipefail` is load-bearing:
       # without it the pipeline's exit status is `tee`'s, so a failing suite
       # would report green.
+      #
+      # Parallelism is NOT spelled out here. `addopts` carries `-n auto --dist
+      # worksteal`, which resolves to 4 workers on ubuntu-latest's 4 vCPUs and is
+      # the measured 4.31x over serial (673.6s -> 156.2s on the reference tree).
+      # Repeating the flags at the call site would let the two drift apart.
       - name: Run tests
         shell: bash
         env:
@@ -81,6 +86,14 @@ jobs:
         run: |
           set -o pipefail
           pytest tests/ -v --durations=0 2>&1 | tee test-durations.txt
+
+      # The perf tests are deselected by `addopts` (-m 'not perf') so they never
+      # share a runner with the parallel workers — two of them fail intermittently
+      # under load. They still run on every push, here, alone.
+      - name: Run performance budgets on a quiet runner
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest tests/perf -m perf -v -n 0
 
       - name: Upload the per-test duration report
         if: always()
@@ -192,10 +205,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0
       - uses: ./.github/actions/setup-locked-env
+
+      # `-m 'not perf'` here is what `addopts` already selects, restated because it
+      # is load-bearing for this job: measured, the coverage floors in
+      # quality/coverage-floors.json are UNCHANGED by excluding the perf tests
+      # ("regressions": [], "file_regressions": []), so nothing is lost.
+      #
+      # The perf tests cannot simply be added back under `--cov`. The NFR repaint
+      # budget fails at 20.29 ms against a 16.70 ms budget under coverage tracing —
+      # tracing inflates the very repaints it measures, and the test's best-of-8-rounds
+      # median cannot out-run the tracer. The failure reproduces at `-n 0`, so it is
+      # not a parallel effect. This job has therefore always been measuring something
+      # it cannot gate; deciding what its baseline SHOULD include is separate work.
       - name: Measure full-suite line and branch coverage
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests/ -v --cov=open_garden_planner --cov-branch --cov-report=xml --cov-report=term
+        run: >
+          python -m pytest tests/ -v -m 'not perf'
+          --cov=open_garden_planner --cov-branch --cov-report=xml --cov-report=term
       - name: Enforce package line floors
         if: always()
         run: python scripts/check_coverage_floors.py --xml coverage.xml --report coverage-summary.json

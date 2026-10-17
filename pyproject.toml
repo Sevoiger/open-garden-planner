@@ -65,6 +65,15 @@ dev = [
     "pytest-qt>=4.4.0",
     "pytest-cov>=4.1.0",
     "pytest-timeout>=2.3.0",
+    # Parallel suite execution (#509). Measured on the reference tree:
+    # 673.6s serial -> 156.2s with `-n 8 --dist worksteal` (4.31x). worksteal
+    # beat loadfile (186.3s) and load (250.2s) because it splits at test level,
+    # so no single slow file becomes a worker's floor.
+    #
+    # This is what makes the timing tests need the documented split below in
+    # `addopts`: two of them are load-sensitive and fail intermittently when run
+    # beside seven other workers.
+    "pytest-xdist>=3.8.0",
     "ruff>=0.1.0",
     "mypy>=1.8.0",
     "bandit>=1.7.0",
@@ -136,12 +145,34 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -n auto --dist worksteal -m 'not perf'"
 qt_api = "pyqt6"
 markers = [
     "perf: performance benchmarks and NFR budget tests",
     "real_weather_worker: tests exercising the real _WeatherFetchWorker lifecycle",
 ]
+# `addopts` carries two #509 decisions, both measured rather than assumed.
+#
+# `-n auto --dist worksteal` — the reference tree runs 673.6s serial and 156.2s
+# with 8 workers on worksteal (4.31x). worksteal beat loadfile (186.3s) and load
+# (250.2s) because it splits at test level, so a single slow file never becomes one
+# worker's floor. The two costs of having it in `addopts` are real:
+#   * a SMALL targeted run gets slower, because worker start-up dominates —
+#     one 11-test file measured 2.85s serial against 5.48s under `-n auto`.
+#     Pass `-n 0` for a single file or a handful of tests.
+#   * `-n 0` also works as the escape hatch for anything machine-specific.
+#
+# `-m 'not perf'` — the timing-sensitive tests must not share a runner with eight
+# workers. Two of them fail intermittently under parallel load: the NFR repaint
+# budget, and tests/integration/test_tasks.py's deferred-check reminder. §11.4's
+# #354 entry already holds that performance tests must protect a sustained
+# regression statistically rather than assert that one shared runner owns a quiet
+# CPU; running them in their own step is that principle applied to scheduling.
+#
+# CONSEQUENCE, deliberate: `pytest tests/` now DESELECTS the perf tests, so run them
+# explicitly with `pytest tests/perf -m perf`. CI does this as its own step, so
+# nothing stops being verified — but a bare `pytest tests/perf` collects nothing,
+# which is a footgun this comment exists to prevent.
 # Per-test hang guard (pytest-timeout): a stalled full-app test used to freeze the
 # whole battery silently (2026-08-17, Package 3a run stalled 18 min in
 # test_trellis.py). Generous — the slowest legitimate tests build the full app
