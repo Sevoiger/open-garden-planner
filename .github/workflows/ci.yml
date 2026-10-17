@@ -76,9 +76,10 @@ jobs:
       # would report green.
       #
       # Parallelism is NOT spelled out here. `addopts` carries `-n auto --dist
-      # worksteal`, which resolves to 4 workers on ubuntu-latest's 4 vCPUs and is
-      # the measured 4.31x over serial (673.6s -> 156.2s on the reference tree).
-      # Repeating the flags at the call site would let the two drift apart.
+      # worksteal`, which resolves to 4 workers on ubuntu-latest's 4 vCPUs. On this
+      # 20-core box the same flag gave 4.31x over serial at `-n 8` (673.6s ->
+      # 156.2s); at 4 workers the measured figure is 2.7x (245.2s), so 4.31x must not
+      # be quoted as this job's speed-up.
       - name: Run tests
         shell: bash
         env:
@@ -87,13 +88,21 @@ jobs:
           set -o pipefail
           pytest tests/ -v --durations=0 2>&1 | tee test-durations.txt
 
-      # The perf tests are deselected by `addopts` (-m 'not perf') so they never
-      # share a runner with the parallel workers — two of them fail intermittently
-      # under load. They still run on every push, here, alone.
+      # The wall-clock-sensitive tests, deselected from the default run by
+      # `addopts` (-m 'not perf') so they never share a runner with the parallel
+      # workers. They still run on every push, here, alone and serial.
+      #
+      # `tests/ -m perf`, NOT `tests/perf -m perf`: the marker means "wall-clock
+      # sensitive", so it is applied by measurement rather than by directory. Three
+      # such tests live outside tests/perf/ and were found by auditing for
+      # wall-clock assertions rather than by listing the perf directory — a
+      # map-picker close bound (0.5 s), the point-snapper mean (16 ms) and the
+      # spatial-index medians (200 ms / 1 ms). Senior review caught that the ADR
+      # justified the split with one of them while the split did not cover it (#509).
       - name: Run performance budgets on a quiet runner
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/perf -m perf -v -n 0
+        run: pytest tests/ -m perf -v -n 0
 
       - name: Upload the per-test duration report
         if: always()

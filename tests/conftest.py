@@ -283,14 +283,22 @@ def _disable_agent_api_server(_reset_app_settings):
     earlier test's deferred `_maybe_start_agent_api` timer landing in that window
     started a real server. See the note in `_reset()`. Asserting rather than
     writing also means a regression here is loud instead of silent.
+
+    **The read must ask for a bool.** `QSettings.value(key, default)` returns the raw
+    QVariant, so `setValue(key, False)` reads back as the STRING `'false'` — and
+    `assert value is not True` then passes for `'false'` *and* for the `None` that
+    means "key absent", which is precisely the dangerous state this fixture exists to
+    name. `type=bool` is how the product itself reads it (`app/settings.py:677-683`),
+    so this reads it the same way and asserts `is False` (#509, senior review).
     """
     from open_garden_planner.app.settings import AppSettings, create_qsettings
 
-    value = create_qsettings().value(AppSettings.KEY_AGENT_API_ENABLED, None)
-    assert value is not True, (
-        f"the Agent API guard is {value!r}, not False — a test could bind a real "
-        "loopback port. The write belongs in _reset_app_settings._reset(), "
-        "immediately after the key wipe, not here (#509)."
+    value = create_qsettings().value(AppSettings.KEY_AGENT_API_ENABLED, True, type=bool)
+    assert value is False, (
+        f"the Agent API guard reads {value!r}, not False — a test could bind a real "
+        "loopback port (the product default is on, and the port default is 8765). "
+        "The write belongs in _reset_app_settings._reset(), immediately after the "
+        "key wipe, not here (#509)."
     )
 
 

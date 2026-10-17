@@ -273,36 +273,23 @@ def _parse(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-def _parse_if_present(path: Path) -> ast.Module | None:
-    """Parse `path`, or return None when it was deleted after being listed.
-
-    ``_all_sources()`` globs the working tree and ``_scan`` reads what it found —
-    two separate moments, with a window between them. A file that vanishes inside
-    that window is not a chokepoint violation, and reporting it as one is how a
-    scanner earns a reputation for lying. Measured under ``pytest -n 8`` (#509): a
-    sibling worker's staged canary turned three of these gates into
-    ``FileNotFoundError`` instead of findings.
-
-    Only ``FileNotFoundError`` is absorbed. Any other read failure still raises,
-    so a permissions problem cannot quietly shrink the scanned set.
-    """
-    try:
-        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except FileNotFoundError:
-        return None
-
-
 def _scan(detector: Detector, *, exempt: Collection[str] = ()) -> list[str]:
-    """Run a detector over every scanned module, formatting hits as ``path:line``."""
+    """Run a detector over every scanned module, formatting hits as ``path:line``.
+
+    Deliberately strict about a file that disappears between `_all_sources()` listing it
+    and this loop reading it. It briefly absorbed `FileNotFoundError` to survive the
+    working-tree race that `test_gate_commands.py`'s canary used to cause (#509), but
+    that canary now stages in a `tmp_path` repo and never touches the tree this scans.
+    The absorption was leftover scaffolding, and for a store-isolation gate a module
+    that silently fails to scan is worse than a red run: it reports "no violations"
+    for a file it never read (#509 review).
+    """
     offenders: list[str] = []
     for path in _all_sources():
         rel = _rel(path)
         if rel in exempt:
             continue
-        tree = _parse_if_present(path)
-        if tree is None:
-            continue
-        offenders += [f"{rel}:{line}" for line in detector(tree)]
+        offenders += [f"{rel}:{line}" for line in detector(_parse(path))]
     return offenders
 
 

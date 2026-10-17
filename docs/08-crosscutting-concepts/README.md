@@ -648,14 +648,17 @@ run is parallel. Three things follow from that, and each is a trap worth naming.
 
 | Command | What it is | Measured |
 |---|---|---|
-| `pytest tests/` | the correctness battery, parallel, perf deselected | **156 s** |
-| `pytest tests/perf -m perf` | the timing-sensitive tests, which never share a runner | **8 s** |
-| `pytest tests/unit` | the natural inner loop for a logic-only change | **193 s** |
+| `pytest tests/` | the correctness battery, parallel, perf deselected | **156 s** (`-n 8`) |
+| `pytest tests/ -m perf` | the timing-sensitive tests, which never share a runner | **24 s** |
+| `pytest tests/unit` | the natural inner loop for a logic-only change | **193 s** serial, **61 s** parallel |
 
-**The perf tests need `-m perf`.** `addopts` deselects them so that a plain
-`pytest tests/perf` **collects nothing at all** — the single most likely way to
-mistakenly believe they ran. They are wall-clock budgets, and what they contend for is
-the CPU rather than the index.
+**The perf tests need `-m perf`, and the marker is about the measurement, not the
+directory.** `addopts` deselects them so that a plain `pytest tests/` **collects no
+perf test at all** — the most likely way to mistakenly believe they ran. They are
+wall-clock budgets, and three of the ten carry that marker *outside* `tests/perf/`
+(a map-picker close bound, the point-snapper mean, the spatial-index medians), so
+the split is by auditing for wall-clock assertions rather than by listing a
+directory. CI runs `pytest tests/ -m perf -n 0` as its own step.
 
 **Small targeted runs are slower than they were.** Worker start-up dominates when there
 is nothing to distribute: one 11-test file measured 2.85 s serially against 5.48 s under

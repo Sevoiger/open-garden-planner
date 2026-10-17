@@ -55,6 +55,7 @@ Run commands from the repository root with the locked interpreter:
 
 ```text
 .venv/Scripts/python.exe -m pytest tests/ -v
+.venv/Scripts/python.exe -m pytest tests/ -m perf -v
 .venv/Scripts/python.exe -m ruff check src/ tests/ scripts/
 .venv/Scripts/python.exe -m bandit -r src/ --severity-level high
 .venv/Scripts/python.exe scripts/check_no_secrets.py
@@ -68,6 +69,22 @@ Run commands from the repository root with the locked interpreter:
 CI also measures coverage and enforces package line floors. Type allowances are per file and platform.
 Do not raise allowances or lower coverage floors to hide regressions.
 See [quality requirements](docs/10-quality-requirements/README.md) and the CI workflow for the exact gates.
+
+### The two pytest lines are both required
+
+`addopts` runs the suite in parallel (`-n auto --dist worksteal`) and **deselects** the
+`perf` marker, so wall-clock-sensitive tests never share a runner with eight workers —
+they fail intermittently when they do.
+
+- `pytest tests/` — everything except the `perf`-marked tests.
+- `pytest tests/ -m perf` — exactly those, on a quiet runner. CI runs it as its own step.
+
+Running only the first and assuming the second ran with it is the easy mistake here:
+`pytest tests/perf` alone collects **nothing**. The marker means "wall-clock sensitive",
+so such tests are marked wherever they live — several are outside `tests/perf/`.
+
+For a single file or a handful of tests, add `-n 0`: worker start-up dominates when there
+is almost nothing to distribute.
 
 Windows delivery also requires a frozen build, startup check, and subsystem self-test.
 Follow **ogp-change-control §2.8** in the [change-control skill](.agents/skills/ogp-change-control/SKILL.md).

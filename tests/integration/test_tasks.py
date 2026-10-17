@@ -210,6 +210,15 @@ class TestOverdueReminderBar:
         # inline. Pin the singleShot(0) wiring.
         self._set_toggle(monkeypatch, True)
         win = self._make_app(qtbot, monkeypatch)
+        # Drain the startup sequence's OWN singleShot BEFORE patching. There are two
+        # independent schedulers of `_check_overdue_tasks` — application.py:5315 in
+        # `_startup_sequence` and :5871 in `_open_project_file` — and the startup one
+        # is still pending here. If it fires after the monkeypatch, it calls the STUB,
+        # so `calls` becomes [1, 1] instead of [1]. That is a scheduling artefact, not
+        # the double-open this test is about, and it only showed up under parallel
+        # load because a loaded event loop defers the 0 ms timer past the patch
+        # (#509, found by senior review).
+        qtbot.wait(50)
         past = (datetime.date.today() - datetime.timedelta(days=5)).isoformat()
         win._project_manager.set_manual_task(
             ManualTask(id="o1", date=past, title="overdue thing")
@@ -223,7 +232,9 @@ class TestOverdueReminderBar:
         monkeypatch.setattr(win, "_check_overdue_tasks", lambda: calls.append(1))
         win._open_project_file(str(path))
         assert calls == []        # deferred, not inline
-        qtbot.wait(50)            # let singleShot(0) fire
+        # Wait for the condition rather than for a fixed span: the assertion is "it
+        # ran", not "it ran within 50 ms", and the second is a machine statement.
+        qtbot.waitUntil(lambda: bool(calls), timeout=2000)
         assert calls == [1]
 
     def test_future_and_done_tasks_not_counted(self, qtbot, monkeypatch) -> None:

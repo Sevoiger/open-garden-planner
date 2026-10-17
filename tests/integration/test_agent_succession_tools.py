@@ -39,7 +39,7 @@ from open_garden_planner.core.object_types import ObjectType, is_bed_type
 from open_garden_planner.models.plant_data import species_key
 from open_garden_planner.services.bundled_species_db import get_species_db, lookup_species
 from open_garden_planner.ui.canvas.items import RectangleItem
-from tests.agent_api_helpers import free_port, start_server
+from tests.agent_api_helpers import start_server
 from tests.integration.agent_task_soil_stubs import TASK_SOIL_STUBS
 
 LOCATION: dict[str, Any] = {
@@ -500,20 +500,20 @@ class TestSuccessionReadTools:
 class TestSetSuccessionPlan:
     """The token-gated write: undo steps, refusals, exact restoration."""
 
-    def _token_server(self, h: SuccessionHarness) -> AgentApiServer:
-        # No bind happens here — the caller starts it — so plain `free_port()` is
-        # correct and there is nothing to retry.
-        return AgentApiServer(
-            h.providers, port=free_port(), writes_enabled=True, write_token="tok"
-        )
+    def _token_server(self, h: SuccessionHarness) -> tuple[AgentApiServer, int]:
+        # Routed through `start_server` so the port race is retried here too. A first
+        # pass of this refactor kept `free_port()` here on the reasoning that "no bind
+        # happens in this helper" — but the bind happens in the CALLER's `start()`,
+        # which is exactly where the race bites, so the helper's own invariant said not
+        # to do it. Now the helper starts and the port comes back with it.
+        return start_server(h.providers, writes_enabled=True, write_token="tok")
 
     @staticmethod
     def _url(server: AgentApiServer) -> str:
         return f"{server.url}?token=tok"
 
     def _call(self, qtbot: Any, h: SuccessionHarness, name: str, args: dict) -> dict:
-        server = self._token_server(h)
-        server.start()
+        server, _port = self._token_server(h)
         out: dict[str, Any] = {}
 
         async def run() -> None:

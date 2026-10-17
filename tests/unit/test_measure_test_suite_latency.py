@@ -137,17 +137,14 @@ def test_missing_report_is_an_error_not_a_traceback(tmp_path: Path) -> None:
     assert main([str(tmp_path / "nope.txt")]) == 2
 
 
-def test_script_runs_as_a_subprocess_and_is_ruff_clean() -> None:
+def test_script_runs_as_a_subprocess_and_reports(tmp_path: Path) -> None:
     """The documented command in the docstring has to actually work."""
-    report = Path(__file__).parent / "_latency_fixture.txt"
+    report = tmp_path / "durations.txt"
     report.write_text("\n".join(FIXTURE), encoding="utf-8")
-    try:
-        proc = subprocess.run(  # noqa: S603 - fixed argv
-            [sys.executable, str(SCRIPT), str(report)],
-            capture_output=True, text=True, encoding="utf-8", timeout=120, check=False,
-        )
-    finally:
-        report.unlink()
+    proc = subprocess.run(  # noqa: S603 - fixed argv
+        [sys.executable, str(SCRIPT), str(report)],
+        capture_output=True, text=True, encoding="utf-8", timeout=120, check=False,
+    )
     assert proc.returncode == 0, proc.stderr
     assert "parsed 3 timed tests" in proc.stdout
 
