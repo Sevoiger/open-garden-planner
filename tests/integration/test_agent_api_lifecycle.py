@@ -1,4 +1,4 @@
-﻿"""Issue #365: ``new_plan`` / ``open_plan`` over the REAL MCP transport.
+"""Issue #365: ``new_plan`` / ``open_plan`` over the REAL MCP transport.
 
 Why this file exists separately from ``test_agent_api_default_on.py`` (which
 covers the same tools at the main-thread-body level): both tools originally
