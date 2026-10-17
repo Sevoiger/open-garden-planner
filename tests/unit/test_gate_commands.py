@@ -795,24 +795,30 @@ class TestCheckNoSecrets:
         scratch file must not be able to fail a build. That is why this stages the
         canary at all — staging is what a real leak would look like.
 
-        It used to stage it in the REAL working tree at
-        ``scripts/_canary_<tag>.py``, which made this the only test in the whole
-        suite that mutated shared state, and serial execution hid what that cost.
-        Measured under ``pytest -n 8`` (#509): another worker's
-        ``root.rglob("*.py")`` in ``test_settings_chokepoint.py`` could list the
-        canary inside the window between this test's write and its unlink, and then
-        die with ``FileNotFoundError`` on the read — three failures in one run. The
-        same window worked the other way too: this file's own whole-repo
-        ``check_repo(_REPO_ROOT)`` assertion could read a *sibling worker's* staged
-        canary and report a credential that was never committed anywhere.
+        **It used to stage the canary in the REAL repository**, at
+        ``scripts/_canary_<tag>.py``, and #507 then had to harden that: the
+        ``git add`` sat OUTSIDE the ``try``, so an interrupted run — Ctrl-C, a
+        pytest-timeout kill, a crash between the two calls — left the canary
+        staged and the next ``git commit -a`` published it. It happened: a
+        one-line canary was committed on PR #507 before review caught it.
 
-        Both are properties of sharing one working tree, not of the scheduler, so
-        they also applied to the two-concurrent-process case ``conftest.py`` already
-        documents for QSettings (§11.4, 2026-08-17). Building the repo under
-        ``tmp_path`` removes the cause instead of scheduling around it: nothing
-        outside the temp directory is ever created, staged or deleted, under any
-        scheduler and including serial runs.
+        This no longer touches the real index at all, so that failure is not
+        hardened against — it is **structurally impossible**: nothing outside the
+        temp directory is created, staged or deleted, under any scheduler, and
+        including an interrupted run. That was measured, not assumed (#509):
+        staging into the shared working tree was the only test in the suite that
+        mutated shared state, and under ``pytest -n`` a sibling worker's
+        ``root.rglob("*.py")`` in ``test_settings_chokepoint.py`` could list the
+        canary inside the write-to-unlink window and die with
+        ``FileNotFoundError``. The same window also let this file's own
+        whole-repo scan read a *sibling worker's* staged canary and report a
+        credential that was never committed anywhere.
+
+        ``test_the_real_tree_is_clean`` still guards the real tree, which is now
+        the third state to check rather than the only one.
         """
+        import subprocess
+
         from scripts.check_no_secrets import check_repo
 
         root = tmp_path / f"repo_{tag}"
@@ -824,12 +830,43 @@ class TestCheckNoSecrets:
         canary = root / "scripts" / f"_canary_{tag}.py"
         canary.write_text(line + "\n", encoding="utf-8")
         subprocess.run(["git", "add", "--", "scripts"], cwd=root, capture_output=True)
+        # No try/finally unstage, because there is nothing to unstage: `root` is a
+        # throwaway repo under tmp_path, so the canary cannot reach the real index
+        # even if this process dies mid-test. #507's `_assert_no_canary_residue`
+        # contract ("stage, scan, unstage, delete") no longer describes what happens,
+        # and the honest version is stronger: there is no fourth step to forget.
         return [f for f in check_repo(root) if canary.name in f]
+
+    def _assert_no_canary_residue(self, tag: str) -> None:
+        """The helper's contract is "stage, scan, unstage, delete" - assert all four.
+
+        Added after a one-line ``_canary_fp_*.py`` was committed and pushed on
+        PR #507 (#507, round 4 of review). No other gate could have caught it: the
+        canary's own text is in ``_MUST_NOT_FLAG``, so the secrets scan is blind
+        to it by construction, and a residue assertion is the only thing that
+        turns "we hope the ``finally`` ran" into a checked invariant.
+        """
+        import subprocess
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        leftovers = sorted(p.name for p in (root / "scripts").glob("_canary_*"))
+        assert not leftovers, f"canary file(s) left on disk after {tag}: {leftovers}"
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.split()
+        canaries = [p for p in staged if "_canary_" in p]
+        assert not canaries, f"canary still staged in the index after {tag}: {canaries}"
 
     @pytest.mark.parametrize("label,tag,line", _MUST_CATCH, ids=[c[0] for c in _MUST_CATCH])
     def test_catches_real_credential(self, tmp_path: Path, label, tag, line) -> None:
         found = self._scan_with_canary(tmp_path, tag, line)
         assert found, f"the secret checker missed a real credential: {label}"
+        self._assert_no_canary_residue(tag)
 
     @pytest.mark.parametrize(
         "index,label,line",

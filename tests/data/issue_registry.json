@@ -921,8 +921,13 @@
   },
   "503": {
     "is_pr": false,
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The LOD flat fill never fires on the canvas: 'widget is not None' is false for every cached paint (follow-up of #409/#430)"
+  },
+  "507": {
+    "is_pr": true,
+    "state": "MERGED",
+    "title": "fix(503): remove the #409 low-zoom LOD flat fill instead of making it reachable"
   },
   "509": {
     "is_pr": false,
