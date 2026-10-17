@@ -14,11 +14,14 @@ serially on one core". Two of its four proposed remedies were costs, not speedup
 its central number had never been decomposed. This records the decomposition, so the
 next change to the suite is chosen from measurement instead of guessed.
 
-Reproduce:
+Reproduce — and note the `-n 0`, which is load-bearing. Without it `addopts` supplies
+`-n auto --dist worksteal`, and this document's own table below is a SERIAL measurement:
+per-test call time inflates under parallel execution, so a parallel run cannot be
+compared with it.
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
-venv/Scripts/python.exe -m pytest tests/ -q --durations=0 --timeout=180 > durations.txt
+venv/Scripts/python.exe -m pytest tests/ -q -n 0 --durations=0 --timeout=180 > durations.txt
 venv/Scripts/python.exe scripts/measure_test_suite_latency.py durations.txt
 ```
 
@@ -36,8 +39,10 @@ venv/Scripts/python.exe scripts/measure_test_suite_latency.py durations.txt
 > clock; the useful reading of the per-test table is its shape, not its sum.
 
 The CI `Test` job now writes the same report and uploads it as the
-`test-durations-linux` artifact, so the baseline refreshes on every push instead of
-drifting until someone remembers to re-measure.
+`test-durations-linux` artifact. **That artifact is a parallel run with the perf tests
+deselected, so it is a shape signal only** — which tests are relatively expensive, whether
+a file's share moved — and deliberately *not* a replacement for the serial table below.
+Nothing parses it yet; that is a stated limitation, not automation.
 
 ## The run
 
@@ -78,7 +83,8 @@ lever from the one below and should not be attributed to it.
 
 ## Where the test time actually is
 
-Measured over the 1 830 tests with a `call` phase above the 5 ms threshold:
+Measured over the 1 849 tests with a `call` phase above the 5 ms threshold
+(958 + 797 + 89 + 5, the rows below):
 
 | Layer | Tests timed | Seconds | Share | Mean |
 |---|---|---|---|---|
@@ -233,7 +239,9 @@ widget-count-proportional operation in a loop.
 ### 2. Full application boots — measured
 
 `tests/ui/test_main_window.py` (22.1 s) and `tests/ui/test_language_menu.py`
-construct a real `GardenPlannerApp` per test; 34 test files construct one in total.
+construct a real `GardenPlannerApp` per test; **51** test files construct one in total
+(`git grep -l "GardenPlannerApp()" 132f6715 -- tests/`), 49 of which also register it
+with `qtbot.addWidget` and therefore have its close-but-not-delete leak.
 `pyproject.toml` already records the cost: "the slowest legitimate tests build the
 full app in ~6 s". Sharing one app across tests would remove the repeated boot, but a
 shared `GardenPlannerApp` is shared mutable state, and this repo's §11.4 record is
@@ -292,9 +300,10 @@ part of the speed-up:
 | `tests/unit` only, `-n 8 --dist loadfile` | 61.1 s | — |
 | `tests/unit` minus its 3 slowest files, serial | 120.5 s | — |
 
-The leak fix costs the parallel run about 44 s — the reclaim fixture now runs in every
-worker for every test — and saves the serial run 239 s. It is a shift in where the work
-sits, not a regression.
+The leak fix costs the parallel run about **32 s** — the reclaim fixture now runs in every
+worker for every test, which is the whole of the 154.1 s → 186.3 s move in the only
+before/after parallel pair in the table — and saves the serial run 239 s. It is a shift in
+where the work sits, not a regression.
 
 **`worksteal` is the mode.** It splits at test level, so no single slow file becomes one
 worker's floor. That is only measurable *after* the leak fix: before it,

@@ -5,12 +5,12 @@ covers the same tools at the main-thread-body level): both tools originally
 returned ``ExportResult(**result)`` while their providers returned a dict with
 no ``format`` key and a ``None`` ``file_path`` against a ``str`` field. So both
 raised a pydantic ``ValidationError`` on **every successful call over the
-wire** â€” while all 22 body-level tests passed, because the body never builds
+wire** — while all 22 body-level tests passed, because the body never builds
 the result model. Only the transport crosses that boundary.
 
 The lesson is general: a tool's declared return model is a contract, and
 testing the provider is not the same as testing the tool. These are per-tool
-tests, honestly described â€” they cover the two models #365 added, not every
+tests, honestly described — they cover the two models #365 added, not every
 model in the server. (Enumerating every ``X(**result)`` site in ``server.py``
 against its model's required fields found no other live tool in violation, so
 the remaining models are covered by the existing transport suites.)
@@ -74,7 +74,7 @@ def app(qtbot: Any, monkeypatch: Any) -> Any:
 
     Uses the app's OWN ``_build_agent_providers()`` rather than a stub, because
     the bug lived in the seam between the real provider and the tool's declared
-    return model â€” a stub would have hidden it a second time.
+    return model — a stub would have hidden it a second time.
     """
     get_settings().show_welcome_on_startup = False
     # The agent path does its own dirty check and never calls this GUI
@@ -166,7 +166,7 @@ def test_open_plan_returns_a_valid_payload_over_the_transport(
     payload = result["payload"]
     assert payload["file_path"] == str(target)
     assert payload["width_cm"] == pytest.approx(900.0)
-    # Reported from BEFORE the load, which resets the flag â€” this is the one
+    # Reported from BEFORE the load, which resets the flag — this is the one
     # fact an agent needs when it passed force=true and may have just discarded
     # work. Read after the load it would always be False.
     assert payload["was_dirty"] is True
@@ -176,7 +176,7 @@ def test_open_plan_returns_a_valid_payload_over_the_transport(
 def test_lifecycle_tools_refuse_a_dirty_plan_over_the_transport(
     app: Any, qtbot: Any
 ) -> None:
-    """The refusal is reported as a tool error, not a success payload â€” and the
+    """The refusal is reported as a tool error, not a success payload — and the
     document survives it."""
     app._do_agent_create_object("TREE", 10.0, 10.0, None, None, None, None, None)
     before = len(app.canvas_scene.items())
@@ -218,8 +218,8 @@ class TestServerTeardownLeavesNothingRunning:
 
     This is not hygiene for its own sake. These three tests are the first in the
     suite to run a REAL in-process uvicorn server, and CI segfaulted twice at
-    interpreter teardown with this module's `_run` â€” i.e. `loop.run_until_complete
-    (server.serve())` â€” on the stack, during an unrelated Qt test. A uvicorn loop
+    interpreter teardown with this module's `_run` — i.e. `loop.run_until_complete
+    (server.serve())` — on the stack, during an unrelated Qt test. A uvicorn loop
     left running keeps its sockets and its main-thread bridge alive, which is a
     crash waiting for a bystander to trigger it.
 

@@ -2676,6 +2676,16 @@ closes and `deleteLater()`s every top-level widget per test — took the serial 
 912.6 s to **673.6 s** and flattened the distribution (slowest-50 share 50.9 % → 37.9 %;
 mean/median 11.3× → 6.8×). It changes no product code and removes no test.
 
+**One measurement detail worth stating, because the two halves of that pair come from
+different runs.** The *before* figures are from the recorded serial run at `132f6715`; the
+*after* figures are from the serial full-suite run immediately after the leak fix. They are
+**not** comparable with a parallel run of the same tree, which measures 32.2 % and 20.7×
+on the identical code: per-test call time inflates when tests contend, so one suite reads
+620.6 s of call time serially and 1 700 s under `-n auto`. The distribution's shape is a
+signal; its sum is a statement about the scheduler.
+`docs/11-risks-and-technical-debt/test-suite-latency-2026-10.md` holds both runs and that
+caveat.
+
 **Decision.** `addopts` carries `-n auto --dist worksteal -m 'not perf'`, and
 `pytest-xdist>=3.8.0` joins the `dev` extra.
 
@@ -2710,7 +2720,7 @@ the general one — a suite that grows a slow file should not silently lose a wo
   git working tree, and that hazard also applied to two concurrently launched pytest
   processes — the 2026-08-17 §11.4 incident that made `TEST_APPLICATION` per-PID in the
   first place.
-- **Fixing the leak in the 34 files that build an app.** Correct, and it is the reason the
+- **Fixing the leak in the 51 files that build an app.** Correct, and it is the reason the
   chokepoint exists: one place cannot be forgotten, and a 34-file diff would put the fix
   behind review of every unrelated line.
 

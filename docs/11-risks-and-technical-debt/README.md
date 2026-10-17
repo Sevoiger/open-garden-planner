@@ -1300,7 +1300,7 @@ dynamic consumers retain comments, and unresolved receivers/helper imports fail 
   warning would never fire); `sendPostedEvents` must name `QEvent.Type.DeferredDelete`
   explicitly, because `sendPostedEvents(None, 0)` — the shape that looks right — flushes
   nothing, and measuring that wrong call is how the first attempt appeared to prove the
-  chokepoint ineffective; and a chokepoint beats thirty-four edits because it cannot be
+  chokepoint ineffective; and a chokepoint beats the 51 per-file edits because it cannot be
   forgotten. **Lesson: the expensive tests in a suite are frequently the victims of other
   tests, not the culprits, and a per-test duration table says which tests are slow, not
   which files are.** Re-running a slow file on its own is the cheapest diagnostic there

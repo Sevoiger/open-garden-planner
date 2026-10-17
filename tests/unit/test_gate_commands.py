@@ -838,13 +838,22 @@ class TestCheckNoSecrets:
         return [f for f in check_repo(root) if canary.name in f]
 
     def _assert_no_canary_residue(self, tag: str) -> None:
-        """The helper's contract is "stage, scan, unstage, delete" - assert all four.
+        """Assert the REAL repository carries no canary residue.
 
         Added after a one-line ``_canary_fp_*.py`` was committed and pushed on
         PR #507 (#507, round 4 of review). No other gate could have caught it: the
         canary's own text is in ``_MUST_NOT_FLAG``, so the secrets scan is blind
         to it by construction, and a residue assertion is the only thing that
         turns "we hope the ``finally`` ran" into a checked invariant.
+
+        **Rewritten in scope by #509.** It used to assert the helper's four-step
+        contract — "stage, scan, unstage, delete" — against the real index, because
+        the helper staged there. The helper now stages in a throwaway repo under
+        ``tmp_path``, so there is no unstage and no delete to assert, and #507's
+        hazard is structurally impossible rather than merely handled. What remains
+        worth asserting is the state this change could still damage: the real tree.
+        `test_the_real_tree_is_clean` covers the credential shape; this covers any
+        residue at all, which is the broader of the two.
         """
         import subprocess
         from pathlib import Path
