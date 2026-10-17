@@ -67,10 +67,27 @@ jobs:
       - name: Check all translation catalogs against current source
         run: python scripts/check_translations.py
 
+      # `--durations=0` records the per-test cost (#509). Nothing in the repo
+      # captured where the wall clock went, so every speed-up was a guess; this
+      # makes the measurement a byproduct of a run that has to happen anyway.
+      # `tee` keeps the live progress and failures in the log while also writing
+      # the report for the artifact below, and `set -o pipefail` is load-bearing:
+      # without it the pipeline's exit status is `tee`'s, so a failing suite
+      # would report green.
       - name: Run tests
+        shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/ -v
+        run: |
+          set -o pipefail
+          pytest tests/ -v --durations=0 2>&1 | tee test-durations.txt
+
+      - name: Upload the per-test duration report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-durations-linux
+          path: test-durations.txt
 
   security:
     name: Security
