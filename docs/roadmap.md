@@ -2974,3 +2974,39 @@ Epic #392 remains open; other audit bundles and #485 remain separate.
 - **#448 (Test environment flakiness)**: Decorated `test_type_cli_missing_mypy_is_an_error_not_a_clean_result` with skipif for non-3.11 interpreters matching `test_type_cli_generate_check_regress_and_reduce`. Added multi-round retry and local load tolerance to `tests/perf/test_nfr_budgets.py` while keeping CI budgets strict.
 - **Shortcut overload resolution**: Dedicated `Ctrl+F` to global search focus in `CategoryToolbar` and reassigned Find & Replace to `Ctrl+H` in `GardenPlannerApp`, eliminating ambiguous shortcut overload warnings with whole-window duplicate shortcut assertion gate.
 
+
+### 2D canvas follow-up: a paint bound, one look rule and a line budget (#470, #472, #473)
+
+Three pre-existing 2D defects found during the Phase 17 L1 work (#385), shipped together
+because none touches the in-flight L1 branch's files (see ADR-057, §8.28, §11.4.9).
+
+- **#502 (manual pass of #501)**: a textured fill did not show the chosen colour - the runtime tint was a
+  31 % wash (`_tint_texture`, alpha 80/255), so a light-green fill over the Roof Tiles texture rendered the standard
+  brown (`#ca6846` → `#b8925d`); raising the wash flattened the low-contrast materials. Replaced by a **luminance map**
+  (chosen colour × the texture's relative luminance), which makes the colour read and preserves relative contrast by
+  construction (ADR-042 addendum). The same pass showed the Properties panel disagreeing with the canvas after a
+  reload: the loader rebuilt the brush/pen but never restored the stored appearance attributes, so the panel showed the
+  object type's defaults and the next save wrote them over the user's colours — the loader now restores them through
+  `core/item_look.restore_stored_look` (#438/#469). The §8.10 gate gained the pale-colour case and a relative-contrast
+  assertion (reverting the tint fails 19 of 48 cases); `tests/integration/test_item_appearance_roundtrip.py` pins the
+  rendered pixels across all five shapes and the Ctrl+D duplicate. Lesson in §11.4.10.
+- **#472 (Bounded polygon paint)**: `PolygonItem` painted any vertex count a plan held, and a
+  reflex-heavy outline makes one antialiased fill quadratic (measured with the item's own pen:
+  ~322 ms at 1,024 vertices, ~5.6 s at 16,384). Full detail is now bounded by
+  `MAX_FULL_DETAIL_VERTICES = 256`; above it an interactive, unselected paint draws the exact
+  outline with a **cosmetic** 1-px pen (essential — a wide solid pen makes the outline a fill
+  again), while exports/offscreen renders and selected items keep the exact fill.
+  `MAX_POLYGON_VERTICES = 16_384` refuses a hostile
+  polygon at the load seam without dropping the rest of the plan. Pinned in
+  `tests/integration/test_polygon_paint_bound.py`.
+- **#470 (Offset copy keeps its look)**: the offset tool made a rectangle, circle or ellipse copy
+  in its object type's default fill, pattern and stroke. One seam, `core/item_look.py::
+  copy_visual_style`, now copies both the serialized attributes and the pen/brush, and is shared
+  with `mirror_geometry` (chamfer/fillet/trim stay with #441 on the L1 branch). Pinned in
+  `tests/integration/test_offset_tool.py`.
+- **#473 (Line paint in the budgets)**: the NFR-PERF-01 reference plan held no polyline, so the
+  three budget scenarios could not see a slower line paint. A second scenario adds plain fences
+  and a styled gravel path to the same plan, with their item cache **disabled** so `paint()` runs
+  every frame, pinned deterministically by a `cacheMode()` guard and behaviourally by a same-run
+  delta; an absolute per-frame budget for the styled lines stays with #450. Pinned in
+  `tests/perf/test_nfr_budgets.py`.
