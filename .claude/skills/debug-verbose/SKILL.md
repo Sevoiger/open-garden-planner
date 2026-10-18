@@ -2441,3 +2441,10 @@ library present. Re-run the complete suite under this isolation before reporting
 
 **Lesson.** Isolating preferences does not isolate libraries. Native test results must
 not depend on the owner's current catalog, and tests must never overwrite it.
+
+**Child-process review.** A fresh-interpreter startup test bypassed the parent's
+monkeypatch. Add tests/child_app_bootstrap.py and include its explicit path/settings
+redirection before imports in both spike child probes. The actual app-startup test
+asserts the loaded custom/list paths remain confined. Static/import-only subprocesses
+do not instantiate the app; launcher tests use a fake interpreter, and import CLI
+regressions supply explicit temporary paths. The11 child/confinement checks pass.

@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.child_app_bootstrap import isolated_app_prelude
+
 SPIKE = Path(__file__).resolve().parents[2] / "src" / "open_garden_planner" / "spike_q3d"
 ENGINE_MODULES = ("PyQt6.QtQuick3D", "PyQt6.QtQuick", "PyQt6.QtQml", "PyQt6.QtQuickWidgets")
 
@@ -56,18 +58,21 @@ def test_scan_sees_the_from_package_import_spelling(tmp_path: Path) -> None:
     assert "PyQt6.QtQuick3D" in _imports(probe)
 
 
-def test_spike_never_imported_at_startup() -> None:
+def test_spike_never_imported_at_startup(tmp_path: Path) -> None:
     """Constructing the app loads neither the spike nor the Qt Quick 3D bindings.
 
     In a fresh interpreter: an in-process ``sys.modules`` diff passes vacuously
     once any earlier test has imported the spike (senior review).
     """
-    code = (
+    code = isolated_app_prelude(tmp_path) + (
         "import sys\n"
         "from PyQt6.QtWidgets import QApplication\n"
         "app = QApplication([])\n"
         "from open_garden_planner.app.application import GardenPlannerApp\n"
         "win = GardenPlannerApp()\n"
+        "assert _child_plants.get_plant_library()._library_path.is_relative_to(_child_data)\n"
+        "from open_garden_planner.models.plant_lists import get_plant_list_store\n"
+        "assert get_plant_list_store().path.is_relative_to(_child_data)\n"
         "print(sorted(m for m in sys.modules if m.startswith("
         "('open_garden_planner.spike_q3d', 'PyQt6.QtQuick3D'))))\n"
     )
@@ -94,7 +99,7 @@ def test_an_early_failure_still_records_what_the_run_parsed(tmp_path: Path) -> N
     record kept every other test green (senior review, pass 7). A run refused at
     ``_validate``, before any plan or engine work, still writes it. In a child
     process: ``run_spike_cli`` redirects faulthandler and the settings store."""
-    code = (
+    code = isolated_app_prelude(tmp_path) + (
         "import sys\n"
         "from open_garden_planner.spike_q3d.runner import run_spike_cli\n"
         f"sys.exit(run_spike_cli(['x', '--spike-q3d', '--out', {str(tmp_path)!r}, "

@@ -1371,3 +1371,9 @@ path through one private helper; conftest overrides it before collection and per
 singletons reset into tmp_path. Captured public-function aliases still call that helper.
 Do not override HOME or weaken localization assertions. Confinement regressions check
 real file writes and clean per-test libraries across captured service aliases.
+
+A fresh interpreter does not inherit Python monkeypatches. The spike startup probe
+now prepends tests/child_app_bootstrap.py isolation for settings and libraries before
+imports, and asserts the constructed app's library/list paths are confined. Both
+spike child probes use this helper. Launcher tests use fake interpreters; import CLI
+tests pass explicit temporary paths. Static/import-only children never construct OGP.

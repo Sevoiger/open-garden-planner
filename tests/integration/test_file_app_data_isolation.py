@@ -4,7 +4,9 @@ import pytest
 
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.models.plant_lists import get_plant_list_store
-from open_garden_planner.services.companion_planting_service import get_app_data_dir as companion_path
+from open_garden_planner.services.companion_planting_service import (
+    get_app_data_dir as companion_path,
+)
 from open_garden_planner.services.guild_library import get_app_data_dir as guild_path
 from open_garden_planner.services.plant_library import get_app_data_dir, get_plant_library
 from open_garden_planner.services.weather_service import get_app_data_dir as weather_path
