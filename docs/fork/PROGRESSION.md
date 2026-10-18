@@ -96,3 +96,35 @@ verrouillée affiché sans exception non interceptée, icône existante du menu 
 Les noms longs de la liste sont abrégés avec infobulle complète.
 Le run complet intermédiaire a été arrêté après les échecs d'iconographie pour
 relancer sur ces corrections ; ce run ne constitue pas le résultat final.
+
+## Bilan automatisé — état revu `09aa3b9`
+
+Re-revue indépendante : aucun P0/P1, trois régressions reproduites et relancées
+par le reviewer. Le groupe formulaires/dates/suppression/icônes passe : 61 tests.
+Suite complète native arm64 hors écran (checkout isolé, PYTHONPATH explicite) :
+8609 réussites, 46 skips, 2 tests désélectionnés (CLI explicitement Linux/Windows),
+2 échecs en 479,52 s. Échec DXF déjà présent sur la base amont ; second échec :
+l'inventaire exhaustif du test de sécurité MCP n'incluait pas les quatre nouveaux
+outils. Inventaire complété sans changer le code de production, puis module de
+gate d'authentification et client MCP réel relancés avec succès. Le run complet
+est rapporté tel quel ; il n'a pas été réécrit en « tout vert ».
+
+Ruff, Bandit HIGH=0, traduction complète EN/DE (2721 clés), verrou/export,
+dépendances installées, parité agents, références de compétences, scan secrets
+et sources wiki : réussis. Audit de dépendances : aucune vulnérabilité connue
+hors exceptions héritées de la CI. Mypy direct : 1928 erreurs héritées contre
+1943 sur l'amont inchangé, aucune augmentation par fichier ; cinq nouveaux
+modules sans erreur. Aucun seuil ni baseline modifié. Les contrôles GitHub de
+typage/dépendances Linux et Windows passent ; les suites GitHub se relancent
+sur le commit final et leur état est consultable dans la PR.
+
+Critère éditable mesuré : modification temporaire du titre dans les sources,
+lancement d'un processus neuf, restauration puis second lancement neuf ; le
+changement apparaît/disparaît sans installation ni construction. Sources
+restaurées intégralement après l'essai, aucun GUI visible lancé pendant les tests.
+
+PR brouillon : https://github.com/Sevoiger/open-garden-planner/pull/1.
+Restent non validés : aspect et stabilité sur l'écran du propriétaire, origine
+des clics apparents, et import/calibration d'un jardin réel faute de sources.
+L'usage reste en anglais/allemand avec guide français. Home Assistant reste une
+architecture future documentée. Pas de merge, tag, release ou livraison d'installeur.
