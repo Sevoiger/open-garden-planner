@@ -4539,8 +4539,10 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.ui.widgets.coordinate_input_field import (
             CoordinateInputField,
         )
+        from open_garden_planner.ui.widgets.garden_status_bar import GardenStatusBar
 
-        status_bar = self.statusBar()
+        status_bar = GardenStatusBar(self)
+        self.setStatusBar(status_bar)
 
         # Coordinate label (left side, permanent). Every segment carries a
         # small themed icon (#310) so the bar scans as a row of instruments.
@@ -4560,30 +4562,38 @@ class GardenPlannerApp(QMainWindow):
         status_bar.addPermanentWidget(self.zoom_label)
 
         # Selection info label
-        status_bar.addPermanentWidget(self._make_icon_label("select", tooltip=self.tr("Selection")))
+        selection_label_icon = self._make_icon_label("select", tooltip=self.tr("Selection"))
+        status_bar.addPermanentWidget(selection_label_icon)
         self.selection_label = QLabel(self.tr("No selection"))
         self.selection_label.setMinimumWidth(150)
         status_bar.addPermanentWidget(self.selection_label)
+        status_bar.add_optional_segment(selection_label_icon, self.selection_label)
 
         # Tool label
-        status_bar.addPermanentWidget(self._make_icon_label("status_tool", tooltip=self.tr("Active tool")))
+        tool_label_icon = self._make_icon_label("status_tool", tooltip=self.tr("Active tool"))
+        status_bar.addPermanentWidget(tool_label_icon)
         self.tool_label = QLabel(self.tr("Select"))
         self.tool_label.setMinimumWidth(80)
         status_bar.addPermanentWidget(self.tool_label)
+        status_bar.add_optional_segment(tool_label_icon, self.tool_label)
 
         # Location label
-        status_bar.addPermanentWidget(self._make_icon_label("location", tooltip=self.tr("Garden location")))
+        location_label_icon = self._make_icon_label("location", tooltip=self.tr("Garden location"))
+        status_bar.addPermanentWidget(location_label_icon)
         self.location_label = QLabel(self.tr("No location set"))
         self.location_label.setMinimumWidth(160)
         self.location_label.setToolTip(self.tr("Garden GPS location — use File > Set Garden Location to configure"))
         status_bar.addPermanentWidget(self.location_label)
+        status_bar.add_optional_segment(location_label_icon, self.location_label)
 
         # Season label (US-10.7)
-        status_bar.addPermanentWidget(self._make_icon_label("season", tooltip=self.tr("Season")))
+        season_label_icon = self._make_icon_label("season", tooltip=self.tr("Season"))
+        status_bar.addPermanentWidget(season_label_icon)
         self.season_label = QLabel(self.tr("Season: —"))
         self.season_label.setMinimumWidth(100)
         self.season_label.setToolTip(self.tr("Current season year — use File > Manage Seasons to configure"))
         status_bar.addPermanentWidget(self.season_label)
+        status_bar.add_optional_segment(season_label_icon, self.season_label)
 
         # Sun & shade simulation hint (US-E3/E4) — night / no-location notes.
         # Lives here, NOT on the sun toolbar: a variable-width label in the

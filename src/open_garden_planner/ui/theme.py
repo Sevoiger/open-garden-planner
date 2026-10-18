@@ -6,6 +6,7 @@ Provides light and dark color schemes with comprehensive styling.
 import contextlib
 import logging
 import os
+import sys
 import tempfile
 from collections.abc import Callable
 from enum import Enum
@@ -1211,6 +1212,12 @@ def apply_theme(app: QApplication, mode: ThemeMode) -> None:
     # already see the new values.
     colors = ThemeColors.get_colors(mode)
     _current_colors = colors
+
+    # Native Aqua draws some toolbar/tab surfaces using the OS appearance even
+    # under QSS. Fusion keeps this application's complete custom theme coherent
+    # on macOS (including when the OS and application appearances differ).
+    if sys.platform == "darwin" and app.style().objectName().lower() != "fusion":
+        app.setStyle("Fusion")
 
     stylesheet = generate_stylesheet(mode)
     app.setStyleSheet(stylesheet)

@@ -433,3 +433,12 @@ launch. Rejection and cancellation never reach process launch.
 Linux startup creates QApplication, secures the settings backend, loads preferences
 and constructs the main window. An ownership/permission failure exits with a visible
 error before the preference and window steps.
+
+## Personal macOS source launch
+
+`Lancer-Jardin.command` resolves its directory, validates `.venv/bin/python`,
+then runs `python -m open_garden_planner` once with startup output appended to
+`.local/logs/launcher.log`. Normal Qt shutdown returns the process exit code;
+a nonzero exit displays the log tail and waits for acknowledgement. Installation
+is separate (`scripts/setup_macos.sh`). No rebuilding or automatic restart occurs.
+On macOS `apply_theme` selects Fusion before the existing QSS is applied (ADR-058).

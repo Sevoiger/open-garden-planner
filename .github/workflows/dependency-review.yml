@@ -21,6 +21,8 @@ permissions:
 
 jobs:
   report:
+    # Personal forks must not create unsolicited scheduled public issues.
+    if: github.repository == 'cofade/open-garden-planner'
     name: Report available dependency updates
     runs-on: ubuntu-latest
     permissions:

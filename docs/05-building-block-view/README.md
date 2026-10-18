@@ -491,3 +491,13 @@ ConstraintListItem looks up and renders a descriptor in the existing translation
 context; it retains theme refresh and delete signals. The module accepts display
 values and returns text, with no commands, scene mutation or solver callbacks.
 Constraint geometry and satisfaction remain in their existing components.
+
+## Personal macOS fork: status instruments
+
+`ui/widgets/garden_status_bar.py::GardenStatusBar` extends QStatusBar with
+optional icon/label pairs. Resize and layout requests schedule one idempotent
+fit pass. Core coordinates, coordinate entry and zoom keep their permanent
+positions; complete secondary segments are shown in priority order when space
+permits. `GardenPlannerApp` wires existing status values and icons into it.
+No project data or scene geometry changes. See ADR-058 and
+`tests/integration/test_macos_layout.py`.

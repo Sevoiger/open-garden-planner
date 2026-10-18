@@ -470,3 +470,13 @@ caused a frozen WebEngine import error. The source environment loaded Windows'
 native ICU 72.1. A clean rebuild with PATH restricted to the locked environment,
 Windows system directories, Python and Git passed detached `--selftest` (exit 0)
 and the eight-second smoke (exit 124). No dependency pin or spec change was needed.
+
+## Personal macOS fork
+
+The personal fork uses `scripts/setup_macos.sh` and `Lancer-Jardin.command`
+for editable source execution (ADR-058); see the French guide
+`docs/fork/INSTALLATION_MACOS.md`. Runtime files and private garden material are
+ignored. No frozen installer is required after source edits. Release and monthly
+issue-report jobs are restricted to the upstream repository, so this fork cannot
+publish a release or open scheduled issues by inheriting those workflows. The
+current mandate permits personal-fork draft PRs, with no merge or release.

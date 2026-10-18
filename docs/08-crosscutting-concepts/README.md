@@ -2579,3 +2579,12 @@ The map's calibration, crop/mosaic math and existing cancellation outcomes are u
 The load seam is the second half. `ProjectManager._deserialize_item_core` refuses a polygon above `MAX_POLYGON_VERTICES = 16_384` and skips it with a logged warning (counted for the app's existing skipped-item notice), so a hostile `.ogp` cannot stall the loader or exhaust memory; the rest of the plan loads normally. At this ceiling the degraded outline is ~69 ms, and no legible garden outline comes near it. Both constants live in `ui/canvas/items/polygon_item.py` and are the only place to retune the bound. The measured cost table, the pen-width finding and the rejected alternatives (convex-hull / bounding-box fill, a hairline-but-wide pen, reflex counting, a low load ceiling) are in ADR-057; the regression is pinned by `tests/integration/test_polygon_paint_bound.py`.
 
 An "item made from an item" copies a shape's **look** through one seam that the **offset tool and mirror** share, `core/item_look.py::copy_visual_style`. It copies both the serialized attributes (`fill_pattern`, `fill_color`, `stroke_color`, `stroke_width`, `stroke_style`) and the live `QPen`/`QBrush`, because a copy that writes only one of the two looks right until the next save (#470). Chamfer, fillet and trim are the same shape of bug and are **not** routed here: they are owned by the in-flight L1 branch's #441, so routing them now would collide.
+
+## Personal macOS fork: appearance and status sizing
+
+On macOS, apply the existing QSS over Fusion (ADR-058), preserving the OS font
+and native dialogs. `GardenStatusBar` prioritises complete icon/label pairs and
+recomputes visibility after both resizing and content-driven layout requests.
+Hidden secondary status details reappear when the window has enough space;
+coordinates, typed input and zoom stay permanent. Run layout regression tests
+with realistic 13-point fonts as well as the offscreen platform's smaller default.

@@ -2749,3 +2749,32 @@ they work, well under the 0.4 threshold — every texture on the canvas would ha
 a solid colour. *Reachability is necessary, not sufficient: before promoting a dormant
 path, ask whether it earns the degradation it costs, and put the answer in front of the
 person who has to look at it.*
+
+## ADR-058: Editable macOS personal fork
+
+**Status**: Accepted for the personal fork (owner mandate, 2026-10-18).
+
+**Context**: The owner targets Apple Silicon and wants source changes to take
+ effect after closing and reopening the GUI. Native Aqua surfaces conflict with
+ the existing comprehensive QSS theme, and permanent status instruments exceed
+ a narrow window's width (diagnostic rendering at 800 logical pixels).
+
+**Decision**: Prepare native Python 3.11 with the manifest-pinned uv, preserve
+ `uv.lock`/`pylock.toml`, install editable in `.venv`, and launch using the local
+ interpreter. No app bundle is needed for development. On macOS use Qt Fusion
+ beneath the existing QSS; keep native OS file dialogs and the system font.
+ `GardenStatusBar` fits lower priority icon/label pairs around the permanent
+ coordinates, typed input and zoom. Application fonts are never reduced to
+ conceal layout problems. Existing status values remain available on wider windows.
+
+**Consequences**: The launcher does no installation and propagates normal process
+ termination. Its startup log lives at `.local/logs/launcher.log`. Tools, private
+ garden sources and diagnostics stay ignored. Windows/Linux delivery and frozen
+ build gates are outside this fork's acceptance scope. Business, data safety,
+ translation and independent review gates remain. First launch was observed by
+ the owner with problems; visual acceptance of the fixes is still pending. The
+ reported spontaneous clicks have no established cause.
+
+**Evidence**: `tests/integration/test_macos_launcher.py` exercises real subprocess
+ launch and failure paths including spaces/accents; `test_macos_layout.py` checks
+ 800/1200/1800 logical pixel layouts with 13-point fonts and native-style replacement.

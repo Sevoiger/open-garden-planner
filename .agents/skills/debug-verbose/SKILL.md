@@ -2250,3 +2250,41 @@ fixing the guard is what made the feature's cost visible, and the cost is inform
 a feature leaves no test that fails when it returns, so replace its tests with a negative pin
 rather than dropping them. And when a fix makes a dead branch live, run the sibling suites - then
 be willing to revert the collateral if the branch does not survive.
+
+## Case study: macOS Aqua surfaces and an overfull status bar (personal fork, 2026-10-18)
+
+**Symptom.** The owner reported automatic-looking clicks and badly delimited text
+and sizes on the first Mac run. The visible app was closed before investigation.
+
+**Evidence.** Local tagged `[LAYOUT]` diagnostic renders used Cocoa without showing
+widgets. The native font was `.AppleSystemUIFont,13`; an 800-pixel main widget
+showed dark native toolbar/tab surfaces under light QSS and overlapping status
+instruments. Fusion corrected the surfaces in the comparison render. Real GUI
+layout tests at 800/1200/1800 pixels passed after optional segments were fitted.
+
+**Fix.** Select Fusion for the existing custom QSS on macOS. Fit complete optional
+status icon/label pairs around coordinates, typed input and zoom. Refit on layout
+requests as well as resize. Do not scale fonts down. Temporary probes stay local.
+
+**Limits.** Neither render explains spontaneous clicks. Do not report the initial
+hypothesis about concurrent offscreen tests as a proven root cause. Visual owner
+acceptance remains pending. Pinned by `tests/integration/test_macos_layout.py`.
+
+## Case study: translation extraction under a symlinked macOS temporary directory (personal fork, 2026-10-18)
+
+**Symptom.** The unchanged catalog gate refused its first source location as outside
+the repository on macOS. The native temporary root `/var/folders` resolves through
+`/private/var/folders`, which has one more path component.
+
+**Evidence.** The failing gate printed `Qt extraction location is outside the source
+tree`; `test_macos_translation_paths.py` reproduced it with a temporary alias at a
+different depth. The exact same test passes after canonicalising the output path
+before invoking pylupdate, and the full catalog/source/binary gate passes again.
+
+**Fix.** Resolve the temporary TS destination before giving it to Qt, so the writer
+and reader use the same parent directory. Retain the source-boundary validation.
+No catalog keys, translations, runtime dependencies or thresholds changed.
+
+**Lesson.** Resolve a shared base before producing relative paths, rather than
+resolving only when consuming them. Pinned by
+`tests/integration/test_macos_translation_paths.py`.

@@ -1275,3 +1275,28 @@ assigned `OffsetTool`; a real German status-message regression exposed the misma
 The tool now uses explicit `CanvasView` translation calls. Complete display fields and
 values are selected from production tables, helper calls bind their source argument,
 dynamic consumers retain comments, and unresolved receivers/helper imports fail closed.
+
+### 11.4.12 Aqua/QSS appearance mismatch and narrow status layouts (personal macOS fork)
+
+The first macOS run produced poorly delimited controls. A native Cocoa diagnostic
+with widgets never displayed recorded `.AppleSystemUIFont,13` and Aqua styling;
+rendering the main widget exposed dark native toolbar/tab surfaces beneath the
+light QSS theme, and overlapping status instruments at 800 logical pixels.
+The same render with Fusion corrected the native surfaces. `apply_theme` now
+selects Fusion on macOS, and `GardenStatusBar` fits optional complete icon/label
+pairs instead of forcing every permanent segment into a small window. Screen
+resolution is not a widget-width budget; do not reduce fonts to compensate.
+Pinned by `tests/integration/test_macos_layout.py` at 800, 1200 and 1800 pixels
+with a 13-point font. Diagnostic instrumentation is local and untracked.
+The owner's separate report of apparent automatic clicks remains unexplained;
+concurrent offscreen tests were stopped, but no causation was established.
+
+### 11.4.13 Translation paths through macOS temporary-directory aliases
+
+`/var/folders` and `/private/var/folders` have different depths but identify the
+same temporary directory. Passing an unresolved TS destination to pylupdate and
+resolving only when consuming its relative source locations produced false
+outside-source errors. Canonicalise the destination before extraction; preserve
+the source-boundary guard. Reproduced before the fix and pinned by
+`tests/integration/test_macos_translation_paths.py` using an alias at another depth.
+Both locales and compiled catalogs pass again without translation-content changes.

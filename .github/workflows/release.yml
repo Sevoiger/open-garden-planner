@@ -20,7 +20,7 @@ jobs:
     # Matches both a bare `chore:` and a scoped `chore(...)` prefix (a scoped
     # message like `chore(finalize-us):` previously slipped through and wrongly
     # triggered a release).
-    if: "!startsWith(github.event.head_commit.message, 'chore:') && !startsWith(github.event.head_commit.message, 'chore(')"
+    if: "github.repository == 'cofade/open-garden-planner' && !startsWith(github.event.head_commit.message, 'chore:') && !startsWith(github.event.head_commit.message, 'chore(')"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

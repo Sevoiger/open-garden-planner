@@ -276,3 +276,14 @@ Full how-to (step-by-step, `.ts` format, recompile command): see `docs/08-crossc
 **Maintaining this file:** Update the progress summary when status changes and keep the Quick Reference current. `CLAUDE.md` and `AGENTS.md` are a synchronized pair: if either changes, update both and run `venv/Scripts/python.exe scripts/check_agent_context.py`.
 
 **Version note:** CI release workflow (`release.yml`) is the sole source of truth for versions. Never create git tags manually.
+
+## Personal macOS fork scope
+
+`MISSION_AGENT_JARDIN.md` is the owner's controlling mandate for this fork.
+Target native Apple Silicon macOS and editable source execution only. Use
+`.venv/bin/python` and `scripts/setup_macos.sh`; Windows/Linux packaging,
+installer builds and their delivery checks are outside this fork's acceptance
+scope. Preserve business/persistence tests, atomic writes, translations, undo,
+independent review, feature branches and draft-only personal-fork PRs. Never
+merge, tag, release, publish a wiki or post to upstream under this mandate.
+Private garden sources stay ignored. Progress lives in `docs/fork/PROGRESSION.md`.
