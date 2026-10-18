@@ -26,8 +26,10 @@ command produces a report that silently cannot reproduce this document's own tab
   `perf` row in the layer table below cannot be produced at all and every total, share and
   concentration figure shifts. (`-m ''` is the intuitive way to clear a marker filter and
   it does **not** work: pytest answers `argument -m: expected one argument`.) Measured:
-  `tests/ -n 0` collects 8 613 of 8 627 with 14 deselected; with `-o addopts=""` it
-  collects all 8 627.
+  `tests/ -n 0` collects 8 614 of 8 628 with 14 deselected; with `-o addopts=""` it
+  collects all 8 628. (Counts measured at `4d1cd992`. They move with every commit
+  that adds a test - this change's own last commit moved them by one - so the
+  durable statement is "14 of the total are deselected", not the absolute numbers.)
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
@@ -64,8 +66,8 @@ Nothing parses it yet; that is a stated limitation, not automation.
 | Fact | Value |
 |---|---|
 | Collected tests | **8 548** at `132f6715` |
-| Collected tests on this branch's head | **8 627** (+79: this change adds 22, #507 adds 57) |
-| Default run (`-m 'not perf'`) | **8 613** collected, 14 deselected |
+| Collected tests on this branch's head | **8 628** at `4d1cd992` (+80: this change adds 23, #507 adds 57) |
+| Default run (`-m 'not perf'`) | **8 614** collected, 14 deselected |
 | Result | `1 failed, 8506 passed, 41 skipped in 912.60s (0:15:12)` |
 | Collection overhead alone | 3.4 s |
 | Local wall clock, unit layer only | **192.6 s** (3 min 12 s) |
@@ -119,6 +121,21 @@ Measured over the 1 849 tests with a `call` phase above the 5 ms threshold
 | Slowest 50 tests | **50.9 %** |
 | Slowest 200 tests | 72.4 % |
 | Top decile of files | **71.8 %** |
+
+**The same two metrics across the three configurations this change measured.** ADR-058 quotes
+the middle and right columns; this is the table they come from, so the figures have a home
+outside the ADR and their provenance is a row rather than a citation:
+
+| Metric | serial, before the leak fix (`132f6715`) | serial, after the leak fix | parallel (`-n auto`) |
+|---|---|---|---|
+| Slowest 50 tests | 50.9 % | **37.9 %** | **32.2 %** |
+| Mean/median | 11.3× | **6.8×** | **20.7×** |
+
+The columns are not comparable with each other and the parallelism column is not an
+improvement in concentration — it is the opposite, and that is the point: per-test *call*
+time inflates when tests contend (620.6 s serial against ~1 700 s under `-n auto`), so the
+parallel column's higher mean/median is a statement about the scheduler rather than about
+the tests. Wall clock is the quantity to compare; this table is a shape reading.
 
 Ten files out of 228 hold **57 %** of all measured test time:
 

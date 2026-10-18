@@ -829,6 +829,23 @@ def test_the_perf_steps_cannot_be_neutralised() -> None:
     selector = re.compile(r"-m\s+'?((?:not\s+)?perf)'?")
     found = 0
     for job_name, job in workflow["jobs"].items():
+        # The JOB is checked too, and that is not belt-and-braces. Measured: putting
+        # `continue-on-error: true` or `if: ${{ false }}` on `jobs.coverage` or
+        # `jobs.test` leaves a step-only check green while the perf tests stop gating
+        # entirely - the same neutralisation one level up. The repo has already written
+        # down that this is the dangerous lever (11.4: "never reach for
+        # `continue-on-error` to quiet a job - that converts a visible defect into an
+        # invisible one"). A first version of this test asserted on steps only and its
+        # docstring claimed those were "the only keys that can make a green step not
+        # gate", which was false: the parent object carries the same two keys.
+        assert not job.get("continue-on-error"), (
+            f"the `{job_name}` job has continue-on-error: every gate inside it - including "
+            "the perf budgets - becomes advisory while the check reports pass"
+        )
+        assert "if" not in job or job_name not in ("test", "coverage"), (
+            f"the `{job_name}` job is conditional, and it carries a perf gate: it may be "
+            "skipped entirely, which is reported differently from passing"
+        )
         for step in job.get("steps", []):
             run = step.get("run")
             if not (run and selector.search(run)):
@@ -847,6 +864,18 @@ def test_the_perf_steps_cannot_be_neutralised() -> None:
         f"expected the perf step in `test` and the two in `coverage`, found {found} — if a "
         "step was renamed or moved, this check has silently stopped looking at it"
     )
+
+    # WHAT THIS CANNOT SEE, stated because the alternative is a false impression of
+    # coverage. These are shell-level and so are not visible in the parsed YAML:
+    #   * `|| true`, and a pipe to `tee` without `pipefail`, on a perf step's command;
+    #   * `-o addopts="--collect-only"`, `--co`, or `env: PYTEST_ADDOPTS: --co` - each
+    #     makes the step succeed without running a test;
+    #   * a `run:` expressed as a YAML list, which raises TypeError here (loud, but the
+    #     message will be about a type rather than about a weakened gate);
+    #   * a perf step moved into a reusable workflow this file calls.
+    # Each was measured and each leaves these assertions green. Shell semantics cannot be
+    # pinned statically; recording the boundary can be, which is the same remedy
+    # `test_perf_marker_guard.py` applies to its own five holes.
 
 
 class TestCheckNoSecrets:

@@ -97,12 +97,15 @@ jobs:
       # workers. They still run on every push, here, alone and serial.
       #
       # `tests/ -m perf`, NOT `tests/perf -m perf`: the marker means "wall-clock
-      # sensitive", so it is applied by measurement rather than by directory. Three
-      # such tests live outside tests/perf/ and were found by auditing for
-      # wall-clock assertions rather than by listing the perf directory — a
-      # map-picker close bound (0.5 s), the point-snapper mean (16 ms) and the
-      # spatial-index medians (200 ms / 1 ms). Senior review caught that the ADR
-      # justified the split with one of them while the split did not cover it (#509).
+      # sensitive", so it is applied by measurement rather than by directory, and
+      # SEVEN of the fourteen marked tests live outside tests/perf/ — the two
+      # agent_api shutdown tests, the map-picker close bound (0.5 s), the shadow-overlay
+      # and sun-heatmap budgets, the point-snapper mean (16 ms) and the spatial-index
+      # medians (200 ms / 1 ms). The directory form collects the other seven and passes.
+      # (An earlier version of this comment said "three", which is the count of marked
+      # tests that carry NO CI slack — a different set that happened to be written down
+      # first. `tests/unit/test_gate_commands.py` pins the command so it cannot be
+      # changed to the directory form.)
       - name: Run performance budgets on a quiet runner
         env:
           QT_QPA_PLATFORM: offscreen
@@ -219,104 +222,49 @@ jobs:
           sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0
       - uses: ./.github/actions/setup-locked-env
 
-      # NO `-m` filter here, deliberately, and the reason is the opposite of what an
-      # earlier draft of this comment claimed.
+      # The `perf` marker means "wall-clock sensitive" (see ADR-058). `addopts` carries
+      # `-n auto --dist worksteal -m 'not perf'`, so this job has to say what it wants
+      # instead of inheriting it, and it says two different things in two steps:
       #
-      # That draft added `-m 'not perf'` to match `addopts`, justified by the claim
-      # that the floors in quality/coverage-floors.json are unchanged by excluding the
-      # perf tests. Measured on this branch, that claim is false, and the measurement is
-      # the whole content of this comment:
+      #   step 1  deselects the perf tests  - three of the fourteen carry no CI slack and
+      #                                        must not share a runner with 4 workers
+      #   step 2  runs exactly those 14 at `-n 0` and appends
       #
-      #   full suite, perf INCLUDED  -> "regressions": [], exit 0
-      #   full suite, `-m 'not perf'`-> "regressions": [{"package": "agent_api", "floor":
-      #                                    92, "covered_statements": 2012}], exit 1
-      #
-      # agent_api drops from 92.30% to 91.66% (2012 of 2195; the earlier draft of this
-      # comment said 91.71%, which is not what 2012/2195 is). The gate needs 92% of 2195 =
-      # 2020 covered statements and the run with perf covers 2026, so the true margin is
-      # SIX — and the filter removes FOURTEEN, overshooting it by more than double.
-      #
-      # The fourteen, measured by diffing two full `--cov` JSON reports (with and without
-      # `-m 'not perf'`) rather than listed from anyone's memory:
-      #   2686, 2691, 2715, 2716, 2718, 2719, 2720, 2728, 2729, 2733, 2734, 2735,
-      #   2737, 2768
-      # Every one is in `_run()`'s `_forced_stop` branch, `_cancel_loop_tasks` or
-      # `_force_stop` — `stop()`'s FORCED-SHUTDOWN escalation, the #373 fix. None is in
-      # `start()`/`_check_port_free()`/`_start_locked()`, which an earlier draft named;
-      # that block is covered by test_agent_api_lifecycle.py and test_agent_api_server.py,
-      # and pointing the next maintainer at the wrong block would have sent them past the
-      # interesting one. The two `perf`-marked tests in
-      # tests/integration/test_agent_api_shutdown.py are the suite's only coverage of the
-      # escalation.
-      #
-      # So the marker — added to keep wall-clock assertions off a loaded runner — was
-      # silently deleting a shutdown escalation from the only job that measures it.
-      #
-      # What this change actually does to this job: it removes the filter, and it adds
-      # `-n auto`. The one number quoted here was taken by the author from `gh`, not
-      # copied from a review: master 412f01bd, run 39076508170, job duration
-      # `Coverage` 21m10s (1270 s) and `Test` 17m27s (1047 s), both measured the same way
-      # (`gh run view <id> --json jobs`). **The post-change figure is deliberately absent**,
-      # because CI has not run this configuration: the branch's pushed head 9e3655a6
-      # predates the filter removal, so its 4m37s / 3m51s describe a different job and
-      # quoting them here would repeat this comment's own earlier error. Measure it with
-      # the same command once the run exists.
-      #
-      # The cost is stated rather than waved away: `agent_api` sits six statements above its
-      # floor (2026 of 2195, floor needs 2020), and those six are what a parallel run's
-      # variance eats. The second step below is load-bearing for that floor AND is the only
-      # place the three zero-slack budgets run, so it does two jobs rather than widening a
-      # margin.
-      # ADR-058 warned that "a parallel run's first visible failure mode is coverage",
-      # and this is that warning costing six statements.
-      #
-      # The NFR repaint budget under tracing is NOT the obstacle it was taken for. An
-      # earlier draft claimed "`--cov` and the perf tests are mutually exclusive", citing
-      # 20.29 ms against a 16.70 ms budget, and generalised that to this job being
-      # permanently red. Both halves were wrong, and the second was wrong in the way this
-      # PR is about: the 20.29 ms figure is a LOCAL measurement against the LOCAL budget.
-      # tests/perf/test_nfr_budgets.py:56-57 reads
-      # `_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"`
-      # and `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on this job the budget is 50 ms
-      # and the test passes under tracing — `gh run view 39076508170` (CI, master
-      # 412f01bd) records Coverage SUCCESS, 8565 passed. Verified locally by running the
-      # file under `--cov` both ways: `CI=true` -> 6 passed; unset -> 1 failed. The
-      # instrument was correct and the generalisation was not. The `== "true"` is
-      # load-bearing and is quoted in full for that reason: a runner that sets `CI=1`
-      # takes the LOCAL 16.7 ms budget, so a shorthand like `_IS_CI = CI or ...` written
-      # into a new test would silently take the wrong branch.
-      #
-      # Whether `Coverage` should be a required check is a separate policy question for
-      # the owner, deliberately not answered here.
-      #
-      # Two steps, and they are ONE decision rather than two. Measured with the gate itself:
+      # Step 2 is load-bearing, not tidiness, and the two steps are ONE decision:
       #   step 1 alone (`-m 'not perf'`, -n auto, --cov)  agent_api 2012/2195  gate EXIT 1
-      #   step 1 + the serial append below                agent_api 2026/2195  gate EXIT 0
-      # A delta of exactly 14 - the fourteen lines enumerated above. The deselect is what
-      # REMOVES those statements from the parallel step; the append is what puts them back.
-      # Delete the append and this job goes red on `agent_api`; delete the deselect and the
-      # append becomes redundant. Neither half is optional and neither is decorative.
+      #   step 1 + step 2 (-n 0, --cov-append)            agent_api 2026/2195  gate EXIT 0
+      # Delete step 2 and this job goes red on `agent_api`; drop the deselect from step 1
+      # and step 2 becomes redundant while three budgets run under load. The gate needs
+      # 92% of 2195 = 2020 covered statements, so the margin is SIX either way - the
+      # append does not widen it, it restores what the deselect removed.
       #
-      # Why deselect rather than simply letting them run under `-n auto`: the `perf` marker
-      # means "wall-clock sensitive", and eleven of the fourteen carry explicit CI slack
-      # (NFR 50 ms; receiver 30 s, which is 3x its 10 s local budget and is in SECONDS -
-      # `test_sun_receiver_budget.py:42` compares `time.perf_counter() - started`;
-      # shadow-overlay x4 against a stated 50 ms; sun-heatmap x3 against a stated 2 s; the
-      # shutdown pair at 4.0 s against a documented 0.19-2.2 s). Three carry no CI slack at
-      # all: map-picker close under 0.5 s, point-snapper mean under 16 ms, and the
-      # spatial-index medians under 200 ms / 1 ms. Those three must not share a runner with
-      # eight workers, and the serial step is the only place they run.
+      # The fourteen statements, from diffing two full `--cov` reports (with and without
+      # the filter) rather than listed from memory: 2686, 2691, 2715, 2716, 2718, 2719,
+      # 2720, 2728, 2729, 2733, 2734, 2735, 2737, 2768. All are `stop()`'s forced-shutdown
+      # escalation in agent_api/server.py - `_run`'s `_forced_stop` branch,
+      # `_cancel_loop_tasks`, `_force_stop`, the #373 fix - and the ONLY coverage of it is
+      # the two `perf`-marked tests in tests/integration/test_agent_api_shutdown.py.
       #
-      # What the step is NOT: a wider coverage margin. The margin against the 92% floor
-      # (2020) is SIX in both shapes, and an earlier draft of this comment claimed the
-      # append "restores the margin to fourteen" - that was the right number attached to the
-      # wrong claim. A later draft then retracted it entirely as "a no-op for the figure",
-      # which was ALSO wrong: it compared step 1 running everything + append against step 1
-      # deselecting + append, two shapes that both contain the append, so of course they
-      # matched. The comparison that answers the question is step 1 ALONE, which is the
-      # 2012 / exit 1 above. Both drafts were refuted by a measurement already on the page.
-      # The parallel part of this job is still a parallel run; do not read "deterministic"
-      # into it.
+      # The three that carry no CI slack, and why they are the reason step 1 deselects:
+      #   tests/integration/test_map_picker_dialog.py  - close() under 0.5 s
+      #   tests/unit/test_point_snapper.py              - mean under 16 ms
+      #   tests/unit/test_snap_spatial_index.py         - 200 ms build / 1 ms query medians
+      # The last one's own docstring records "a single wall-clock sample previously produced
+      # a false failure at 284 ms" against a 200 ms budget, on an UNLOADED runner.
+      #
+      # A footgun worth keeping next to the code: `tests/perf/test_nfr_budgets.py` reads
+      # `_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"`
+      # and `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`. The `== "true"` is load-bearing -
+      # a runner that sets `CI=1` takes the LOCAL 16.7 ms budget - so `_IS_CI = CI or ...`
+      # written into a new test would silently take the wrong branch.
+      #
+      # Measured job durations (`gh run view <id> --json jobs`): master 412f01bd run
+      # 39076508170 Coverage 1270 s / Test 1047 s; this branch's runs 39109872385 and
+      # 39109870093 Coverage 357 s and 476 s, Test 405 s and 271 s. Read the spread, not
+      # the smaller figure - a single CI sample is one reading of a shared runner.
+      #
+      # Whether `Coverage` should be a required check is a policy question for the owner,
+      # deliberately not answered here.
       - name: Measure full-suite line and branch coverage
         env:
           QT_QPA_PLATFORM: offscreen
