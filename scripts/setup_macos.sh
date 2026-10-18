@@ -14,11 +14,15 @@ fi
 export UV_CACHE_DIR="$ROOT/.tools/uv-cache"
 export UV_PYTHON_INSTALL_DIR="$ROOT/.tools/python"
 mkdir -p "$ROOT/.tools"
-PIN="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["tool"]["uv"]["required-version"].removeprefix("=="))')"
+PIN="$(awk '/^\[tool\.uv\]/{section=1;next} section && /^required-version = / {gsub(/"/,"",$3);sub(/^==/,"",$3);print $3;exit}' pyproject.toml)"
+if [[ ! "$PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Version uv exacte introuvable dans pyproject.toml." >&2
+  exit 1
+fi
 UV="$ROOT/.tools/bootstrap/bin/uv"
 if [[ ! -x "$UV" ]] || [[ "$("$UV" --version)" != "uv $PIN"* ]]; then
   command -v uv >/dev/null || { echo "uv manque : installez uv, puis relancez ce script." >&2; exit 1; }
-  uv --no-config venv --python python3 "$ROOT/.tools/bootstrap"
+  uv --no-config venv --python 3.11 "$ROOT/.tools/bootstrap"
   uv --no-config pip install --python "$ROOT/.tools/bootstrap/bin/python" "uv==$PIN"
 fi
 "$UV" sync --locked --python 3.11 --all-extras --group build --no-install-project

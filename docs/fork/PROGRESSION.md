@@ -53,3 +53,11 @@ Le garde-fou de typage amont refuse macOS par conception ; mypy direct valide
 le nouveau composant sans erreur. Aucun seuil du dépôt n’a été modifié.
 Les workflows hérités de release et de création mensuelle d’issue sont maintenant
 réservés à l’amont pour empêcher une publication automatique du fork.
+
+Revue indépendante du lot 0 : un P1 trouvé (un détail masqué restait masqué après
+raccourcissement du texte à largeur constante). Correction par notification
+explicite `StatusLabel.text_changed` vers le recalcul coalescé ; test de
+régression sans resize ni appel manuel au recalcul : réussi. Les huit tests de
+mise en page/lanceur passent. P2 de bootstrap corrigé : lecture de la version uv
+avec awk, téléchargement du Python du bootstrap par uv, prérequis uv documenté.
+Nouvelle passe indépendante demandée après ces corrections.

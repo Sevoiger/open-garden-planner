@@ -1,5 +1,9 @@
 # Jardin sur macOS
 
+Prérequis : Git et `uv` doivent être installés et accessibles dans le Terminal.
+Le script télécharge son Python 3.11 si nécessaire ; aucun Python global récent
+n’est requis pour lire la configuration.
+
 Depuis le dossier du projet, exécuter `bash scripts/setup_macos.sh` une fois.
 Le script utilise Python 3.11 natif, le verrou `uv.lock` et une installation
 éditable dans `.venv`. Une connexion Internet est nécessaire à la préparation.

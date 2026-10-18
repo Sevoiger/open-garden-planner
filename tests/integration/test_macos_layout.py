@@ -65,3 +65,28 @@ def test_theme_replaces_aqua_and_retains_readable_controls(window):
     apply_theme(app, ThemeMode.DARK)
     app.setStyleSheet("")
     assert app.style().objectName().lower() == "fusion"
+
+
+def test_hidden_status_segment_reappears_when_text_shortens(qtbot):
+    from PyQt6.QtWidgets import QLabel
+
+    from open_garden_planner.ui.widgets.garden_status_bar import GardenStatusBar, StatusLabel
+
+    bar = GardenStatusBar()
+    qtbot.addWidget(bar)
+    core = QLabel("Permanent input")
+    core.setFixedWidth(500)
+    bar.addPermanentWidget(core)
+    icon = QLabel("+")
+    detail = StatusLabel("Selection measurement " * 30)
+    bar.addPermanentWidget(icon)
+    bar.addPermanentWidget(detail)
+    bar.add_optional_segment(icon, detail)
+    bar.resize(800, 40)
+    bar.show()
+    qtbot.waitUntil(lambda: detail.isHidden())
+    # No resize, no explicit fit call: a hidden label must notify its owner.
+    detail.setText("No selection")
+    qtbot.waitUntil(lambda: detail.isVisible())
+    assert icon.isVisible()
+    assert detail.geometry().right() <= bar.width()

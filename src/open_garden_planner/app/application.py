@@ -4539,7 +4539,7 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.ui.widgets.coordinate_input_field import (
             CoordinateInputField,
         )
-        from open_garden_planner.ui.widgets.garden_status_bar import GardenStatusBar
+        from open_garden_planner.ui.widgets.garden_status_bar import GardenStatusBar, StatusLabel
 
         status_bar = GardenStatusBar(self)
         self.setStatusBar(status_bar)
@@ -4564,7 +4564,7 @@ class GardenPlannerApp(QMainWindow):
         # Selection info label
         selection_label_icon = self._make_icon_label("select", tooltip=self.tr("Selection"))
         status_bar.addPermanentWidget(selection_label_icon)
-        self.selection_label = QLabel(self.tr("No selection"))
+        self.selection_label = StatusLabel(self.tr("No selection"))
         self.selection_label.setMinimumWidth(150)
         status_bar.addPermanentWidget(self.selection_label)
         status_bar.add_optional_segment(selection_label_icon, self.selection_label)
@@ -4572,7 +4572,7 @@ class GardenPlannerApp(QMainWindow):
         # Tool label
         tool_label_icon = self._make_icon_label("status_tool", tooltip=self.tr("Active tool"))
         status_bar.addPermanentWidget(tool_label_icon)
-        self.tool_label = QLabel(self.tr("Select"))
+        self.tool_label = StatusLabel(self.tr("Select"))
         self.tool_label.setMinimumWidth(80)
         status_bar.addPermanentWidget(self.tool_label)
         status_bar.add_optional_segment(tool_label_icon, self.tool_label)
@@ -4580,7 +4580,7 @@ class GardenPlannerApp(QMainWindow):
         # Location label
         location_label_icon = self._make_icon_label("location", tooltip=self.tr("Garden location"))
         status_bar.addPermanentWidget(location_label_icon)
-        self.location_label = QLabel(self.tr("No location set"))
+        self.location_label = StatusLabel(self.tr("No location set"))
         self.location_label.setMinimumWidth(160)
         self.location_label.setToolTip(self.tr("Garden GPS location — use File > Set Garden Location to configure"))
         status_bar.addPermanentWidget(self.location_label)
@@ -4589,7 +4589,7 @@ class GardenPlannerApp(QMainWindow):
         # Season label (US-10.7)
         season_label_icon = self._make_icon_label("season", tooltip=self.tr("Season"))
         status_bar.addPermanentWidget(season_label_icon)
-        self.season_label = QLabel(self.tr("Season: —"))
+        self.season_label = StatusLabel(self.tr("Season: —"))
         self.season_label.setMinimumWidth(100)
         self.season_label.setToolTip(self.tr("Current season year — use File > Manage Seasons to configure"))
         status_bar.addPermanentWidget(self.season_label)

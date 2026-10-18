@@ -4,9 +4,19 @@ Coordinates, typed input and zoom remain permanent. Lower priority details are
 revealed as space permits. No font scaling or global screen geometry assumptions.
 """
 
-from PyQt6.QtCore import QEvent, QTimer
+from PyQt6.QtCore import QEvent, QTimer, pyqtSignal
 from PyQt6.QtGui import QResizeEvent
-from PyQt6.QtWidgets import QSizeGrip, QStatusBar, QWidget
+from PyQt6.QtWidgets import QLabel, QSizeGrip, QStatusBar, QWidget
+
+
+class StatusLabel(QLabel):
+    """Notify the status bar even while this label is explicitly hidden."""
+
+    text_changed = pyqtSignal()
+
+    def setText(self, text: str | None) -> None:  # noqa: N802
+        super().setText(text)
+        self.text_changed.emit()
 
 
 class GardenStatusBar(QStatusBar):
@@ -20,9 +30,14 @@ class GardenStatusBar(QStatusBar):
         self._fit_timer.setSingleShot(True)
         self._fit_timer.timeout.connect(self.fit_segments)
 
-    def add_optional_segment(self, icon: QWidget, label: QWidget) -> None:
+    def add_optional_segment(self, icon: QWidget, label: StatusLabel) -> None:
         """Register an existing permanent pair in descending priority order."""
         self._segments.append((icon, label))
+        label.text_changed.connect(self.schedule_fit)
+        self.schedule_fit()
+
+    def schedule_fit(self) -> None:
+        """Coalesce value changes, including changes to currently hidden labels."""
         self._fit_timer.start(0)
 
     def resizeEvent(self, event: QResizeEvent | None) -> None:  # noqa: N802
