@@ -231,29 +231,44 @@ jobs:
       #   full suite, `-m 'not perf'`-> "regressions": [{"package": "agent_api", "floor":
       #                                    92, "covered_statements": 2012}], exit 1
       #
-      # agent_api drops from 92.30% to 91.71%. Fourteen statements is the entire margin,
-      # and they come from the two `perf`-marked tests in
-      # tests/integration/test_agent_api_shutdown.py — the only coverage in the suite of
-      # server.py's start()/_check_port_free()/_start_locked()/_run() block. So the
-      # marker, which exists to keep wall-clock assertions off a loaded runner, was
-      # silently removing a product lifecycle from the only job that measures it.
+      # agent_api drops from 92.30% to 91.71%. The gate needs 92% of 2195 = 2020 covered
+      # statements and this run covers 2026, so the true margin is SIX, and the filter
+      # removes fourteen — overshooting it by more than double. The fourteen are in
+      # server.py's FORCED-SHUTDOWN path, not `start()`: lines 2686, 2691, 2715-2720,
+      # 2728, 2733, 2737, 2768, which is `_run()`'s `_forced_stop` branch,
+      # `_cancel_loop_tasks` and `_force_stop`. That is the #373 escalation, and the two
+      # `perf`-marked tests in tests/integration/test_agent_api_shutdown.py are its only
+      # coverage in the suite. An earlier draft of this comment attributed them to
+      # `start()`/`_check_port_free()`/`_start_locked()`; that block is covered by
+      # test_agent_api_lifecycle.py and test_agent_api_server.py and contributes none of
+      # the fourteen, and pointing the next maintainer at the wrong block would have sent
+      # them past the interesting one.
       #
-      # The two costs of leaving the perf tests in are both pre-existing and both
-      # stated rather than hidden:
-      #   * The NFR repaint budget fails under tracing (20.29 ms vs a 16.70 ms budget) —
-      #     the tracer inflates the repaints it measures. Reproduces at `-n 0`. This job
-      #     has been red for that reason since before #509; measured on `master` at
-      #     412f01bd it is already 2 failed with `regressions: []`.
-      #   * ADR-058 predicted this shape of failure — a gate that is not in branch
-      #     protection going red while looking authoritative — eleven lines before
-      #     creating it. It did not help that the wrong fix seemed to remove the
-      #     failure; it moved it to the floor gate and made the comment assert the
-      #     opposite of what the gate reported.
+      # So the marker — added to keep wall-clock assertions off a loaded runner — was
+      # silently deleting a shutdown escalation from the only job that measures it.
       #
-      # So this job keeps master's behaviour and its master's redness. Deciding whether
-      # `Coverage` should be a required check — and whether the baseline SHOULD include
-      # the NFR tests at all — is a policy question for the owner, deliberately not
-      # answered here.
+      # What this change actually does to this job, stated without drama: it removes the
+      # filter, and it adds `-n auto`. Master ran this serially (21m10s); it now runs in
+      # parallel (4m37s at 39076508170-equivalent hardware). That is the whole trade, and
+      # it has a real cost worth stating: a six-statement margin now lives on a
+      # non-deterministic scheduler, and one changed branch in one test flips the job.
+      # ADR-058 warned that "a parallel run's first visible failure mode is coverage",
+      # and this is that warning costing six statements.
+      #
+      # The NFR repaint budget under tracing is NOT the obstacle it was taken for. An
+      # earlier draft claimed "`--cov` and the perf tests are mutually exclusive", citing
+      # 20.29 ms against a 16.70 ms budget, and generalised that to this job being
+      # permanently red. Both halves were wrong, and the second was wrong in the way this
+      # PR is about: the 20.29 ms figure is a LOCAL measurement against the LOCAL budget.
+      # tests/perf/test_nfr_budgets.py:56-57 reads `_IS_CI = CI or GITHUB_ACTIONS` and
+      # `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on this job the budget is 50 ms
+      # and the test passes under tracing — `gh run view 39076508170` (CI, master
+      # 412f01bd) records Coverage SUCCESS, 8565 passed. Verified locally by running the
+      # file under `--cov` both ways: `CI=true` -> 6 passed; unset -> 1 failed. The
+      # instrument was correct and the generalisation was not.
+      #
+      # Whether `Coverage` should be a required check is a separate policy question for
+      # the owner, deliberately not answered here.
       - name: Measure full-suite line and branch coverage
         env:
           QT_QPA_PLATFORM: offscreen

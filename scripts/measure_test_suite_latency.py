@@ -2,8 +2,15 @@
 
 Run the suite once with durations recorded, then point this at the report:
 
-    pytest tests/ --durations=0 --timeout=180 > durations.txt
+    pytest tests/ -n 0 --durations=0 --timeout=180 > durations.txt
     python scripts/measure_test_suite_latency.py durations.txt
+
+**`-n 0` is load-bearing, not a style preference.** `addopts` supplies
+`-n auto --dist worksteal` (#509), and under parallel execution per-test call time
+*inflates* - the same suite reads 620.6 s of call time serially and about 1 700 s under
+`-n auto`. This script cannot detect which kind of report it was handed, so a parallel run
+is silently rendered as a baseline. That is the exact failure this script exists to
+prevent, pointed at itself, so it is called out here rather than left to the reader.
 
 That is the step issue #509 called the missing first one: nothing in the repo
 recorded *where* the wall clock went, so every optimisation was a guess about

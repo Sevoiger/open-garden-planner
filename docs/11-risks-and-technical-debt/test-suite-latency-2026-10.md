@@ -425,25 +425,36 @@ With the mutation gone, no grouping is needed: nothing else failed under `-n 8`.
 
 ## Two findings that are not about speed
 
-### `--cov` and the perf tests cannot be combined, and this predates #509
+### `--cov` and the perf tests *do* combine on CI — an earlier draft of this file said they could not
 
-The repaint budget test **passes** with `pytest tests/perf -m perf -n 0` (0.92 s) and
-**fails** with the same flags plus `--cov`:
+**This section was wrong and is corrected rather than deleted, because the error is the
+interesting part.** It originally read: the repaint budget "**fails** with the same flags
+plus `--cov`" at 20.29 ms against a 16.70 ms budget, therefore the `Coverage` job "has been
+**measuring something it cannot gate**".
 
-```
-AssertionError: Fit-in-view repaint exceeds frame budget 16.70 ms
-                (best median: 20.29 ms across 8 rounds)
-```
+The first half is true **locally** and the conclusion does not follow, because the budget
+in that message is the LOCAL one. `tests/perf/test_nfr_budgets.py:56-57` reads
+`_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"`
+and `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`. GitHub Actions sets `CI=true`, so on
+that job the budget is **50 ms**, not 16.70 ms, and 20.29 ms is comfortably inside it.
 
-Coverage tracing inflates the very repaints the test measures, and the test's
-best-of-8-rounds median — §11.4's load tolerance — cannot out-run the tracer. This is
-not a parallel-execution effect: the failure reproduces at `-n 0`.
+Same file, same `--cov`, same machine, one variable changed:
 
-The `Coverage` job has always run the whole suite under `--cov`, so it has been
-**measuring something it cannot gate**. Because `Coverage` is not a required check, a red
-there does not block a merge, which is how this survives unnoticed. Correcting it means
-deciding what the coverage baseline should include, and it is deliberately not attempted
-here — it is a separate change with its own baseline review.
+| `CI` | budget | result |
+|---|---|---|
+| `true` | 50.0 ms | **6 passed** |
+| unset | 16.7 ms | 1 failed (20.29 ms) |
+
+And the job's own history settles it: `gh run view 39076508170` (CI, master `412f01bd`)
+records `Coverage` **success**, 8565 passed. So the job was never measuring something it
+could not gate, and "it has always been broken" was a local number promoted to a claim
+about a configuration nobody ran.
+
+What #509 *does* change about that job: it removed a `-m 'not perf'` filter that #509's
+own first draft had added — that filter pushed `agent_api` to 91.71% against a 92% floor,
+and the fourteen statements it removed are `stop()`'s forced escalation, not `start()` —
+and it added `-n auto`. Master ran the job serially in 21m10s; it now runs in 4m37s. The
+real cost is a six-statement margin now sitting on a non-deterministic scheduler.
 
 ### Four instruments lied during this investigation, all the same way
 
@@ -454,7 +465,7 @@ code is not evidence of a no-op", and it cost four corrections:
 | Instrument | It claimed | Reality |
 |---|---|---|
 | A benchmark of synthetic `QLabel`/`QWidget` trees | `apply_theme` costs 2–3 s per call; the icon cache is the cause | The widgets never requested an icon — `svg=0 icon=0 pixmap=0`, so the `clear_cache` ablation changed nothing (1.0×) |
-| `gc.collect()` | the chokepoint cannot reclaim the leak | It freed 8 337 objects and moved the widget count only 38 271 → 37 638: strong references, not collectable cycles |
+| `gc.collect()` | the chokepoint cannot reclaim the leak | It freed 8 337 objects and moved the widget count only 38 271 → 37 638, so the survivors are not collectable cycles. **What holds them is NOT identified** — the referrer probe walked into PyQt6/sip bookkeeping — so "strong references" is the reading consistent with the measurement, not a proven mechanism |
 | `sendPostedEvents(None, 0)` | the chokepoint is ineffective | `DeferredDelete` must be named explicitly; the call flushed nothing. A measurement that mis-invokes its instrument refutes the call, not the idea |
 | A PowerShell `function Time-Run($label, $args)` + `@args` splat | `-n 8` takes 740 s, so parallelising made things worse | `$args` is a PowerShell **automatic** variable: the flags never reached pytest and three *serial* runs were reported as parallel. The tell was 740 s being suspiciously close to the 673 s serial figure, and two runs disagreeing on failure count for no scheduler-related reason |
 

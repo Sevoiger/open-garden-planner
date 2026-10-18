@@ -2733,8 +2733,10 @@ single-step gate here would have been a gate that cries wolf.
 
 The marker means **wall-clock sensitive, not "lives in `tests/perf/`"**, and that
 distinction is the load-bearing part of the decision. Seven of the 14 marked tests live
-outside `tests/perf/`, which is why the runner command is `pytest tests/ -m perf` and
-not a directory. Two errors in this ADR were caught by review and are recorded because
+outside `tests/perf/`, which is why the runner command is
+`pytest tests/ -m perf -n 0` and not a directory. All three details of that command are
+load-bearing; the `-n 0` is easy to omit precisely because the command looks complete
+without it. Two errors in this ADR were caught by review and are recorded because
 they are the natural mistakes: an earlier version justified the marker by naming
 `tests/integration/test_tasks.py`, which carries **no marker** and so is not covered by
 the flag at all. Its hazard was real — two schedulers call `_check_overdue_tasks` — but it
@@ -2767,12 +2769,29 @@ is a shared-*state* defect and was fixed by isolating the arm, not by scheduling
   package plus a per-file floor, so losing a single line fails that job — and since
   `Coverage` is not a required check, that red would sit there unblocking merges while
   looking authoritative.
-- **`--cov` and the perf tests are mutually exclusive, and this predates the ADR.** The
-  repaint budget fails under coverage tracing at **20.29 ms against a 16.70 ms budget**,
-  because tracing inflates the very repaints the test measures, and the test's
-  best-of-8-rounds median cannot out-run it. The `Coverage` job has always run every test
-  under `--cov`, so it has been measuring something it cannot gate. Correcting that is
-  separate work and is not attempted here.
+- **Coverage tracing and the perf tests are not in conflict; an earlier draft of this ADR
+  said they were, and was wrong.** It claimed the repaint budget "fails under coverage
+  tracing at 20.29 ms against a 16.70 ms budget" and concluded the `Coverage` job had
+  "always been measuring something it cannot gate". Both steps fail. The 20.29 ms figure
+  is a **local** measurement against the **local** budget:
+  `tests/perf/test_nfr_budgets.py:56-57` reads
+  `_IS_CI = os.environ.get("CI") == "true" or ... GITHUB_ACTIONS` and
+  `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on CI the budget is **50 ms** and the
+  test passes under tracing. Verified both ways on one machine, same file, same
+  `--cov`: `CI=true` → 6 passed; `CI` unset → 1 failed. And `gh run view 39076508170`
+  (CI, master `412f01bd`) records the `Coverage` job **succeeded**, 8565 passed.
+  The lesson is this ADR's own first rule about instruments: a measurement taken against
+  one configuration does not describe another, and "locally it fails here" became "it has
+  always been broken there" without anyone running the second half.
+- **What #509 did change about that job, and the cost of it.** It removed a `-m 'not perf'`
+  filter that #509's own first draft had added (which pushed `agent_api` from 92.30% to
+  91.71%, below its floor) and it added `-n auto`: master ran that job serially in
+  21m10s, it now runs in 4m37s. The cost is the one this ADR predicted in the bullet
+  above — a six-statement margin (`agent_api` covers 2026 of 2195 against a floor of
+  2020) now sits on a non-deterministic scheduler, where one changed branch in one test
+  flips the job. The fourteen statements the filter removed are `stop()`'s forced
+  escalation (`_run`'s `_forced_stop` branch, `_cancel_loop_tasks`, `_force_stop`) — the
+  #373 fix — not `start()`, which is covered elsewhere.
 
 **Evidence.** `scripts/measure_test_suite_latency.py` reproduces the concentration table
 from a recorded `--durations` report (11 unit tests pin its arithmetic against a

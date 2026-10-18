@@ -687,8 +687,6 @@ def test_the_release_workflow_still_attests_build_provenance() -> None:
     )
 
 
-
-
 def test_ci_still_scans_for_committed_secrets() -> None:
     """A live Agent API write token was committed and pushed (PR #369, 2026-09-29).
 

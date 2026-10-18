@@ -73,8 +73,9 @@ See [quality requirements](docs/10-quality-requirements/README.md) and the CI wo
 ### The two pytest lines are both required
 
 `addopts` runs the suite in parallel (`-n auto --dist worksteal`) and **deselects** the
-`perf` marker, so wall-clock-sensitive tests never share a runner with eight workers —
-they fail intermittently when they do.
+`perf` marker, so wall-clock-sensitive tests never share a runner with the workers -
+they fail intermittently when they do. (`-n auto` is 4 on a CI runner and 20 on a dev
+box; eight is the measurement configuration those numbers were taken in, not a constant.)
 
 - `pytest tests/` — everything except the `perf`-marked tests.
 - `pytest tests/ -m perf -n 0` — exactly those, on a quiet runner. CI runs it as its own step.
@@ -86,7 +87,7 @@ Three details in that second command are load-bearing, and the failure modes are
 | `pytest tests/ -m perf -n 0` | all 14, correctly |
 | `pytest tests/perf -m perf` | **7, and it passes** — 7 of the 14 live elsewhere |
 | `pytest tests/perf` | **nothing at all** — `addopts`' `-m 'not perf'` wins |
-| `pytest tests/ -m perf` | 14, but spread across 8 workers, i.e. exactly what the split prevents |
+| `pytest tests/ -m perf` | 14, but spread across every worker, i.e. exactly what the split prevents |
 
 Running only the first and assuming the second ran with it is the easy mistake here.
 The marker means "wall-clock sensitive", so such tests are marked wherever they live —
