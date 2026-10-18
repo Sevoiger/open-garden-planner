@@ -208,3 +208,8 @@ MISSION_AGENT_JARDIN.md
 # Owner-provided local UI captures
 /toPatch/
 /topatch/
+
+# Owner-provided plant imports and generated local reading copies
+/plants/
+/output/
+/tmp/pdfs/

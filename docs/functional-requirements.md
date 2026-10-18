@@ -645,3 +645,20 @@ Acceptance: `test_garden_memory.py`, `test_perennial_garden.py`,
   species, preserving existing favorites/lists with a pre-change backup, refusing
   unreadable stores and supporting idempotent retries. Standard portable list exports
   are included; no real-garden placement occurs. Tests: test_classic_plant_lists.py.
+
+### FR-FORK-UI-03: Scroll forms without modifying closed choices
+
+Closed combo boxes ignore wheel editing even when focused; the gesture scrolls the
+nearest enclosing form, including pixel-only trackpad updates. Explicit open lists
+retain scrolling, and mouse/keyboard selection remain available application-wide.
+
+### FR-FORK-PLANTS-02: French starter catalog and local JSON sheets
+
+Explicit closed-app import exposes 118 bundled identities under French common names,
+80 unspecified gardening labels and owner-supplied JSON sheets in offline search and
+reusable lists. Existing identities, source fields and raw ambiguities are preserved;
+missing dimensions/traits are not inferred. Existing stores are strictly validated,
+backed up and replaced atomically per file. Replay completes a partial installation
+without overwriting edited records or installed collections. Personal source files
+and generated documents remain untracked. An instance's Variety field remains the
+existing write path; importing never plants the garden.

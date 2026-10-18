@@ -1348,3 +1348,14 @@ rename and scroll reachability in light/dark. ADR-060 follow-up; debug-verbose c
 The independent review also exercised standalone panels: hiding content on header
 close must release the expanded minimum, even without a SidebarController. This is
 now explicit in set_expanded(False), with a real-click open/close/grow/reopen test.
+
+### Personal fork: wheel editing versus form scrolling
+
+Measured before: a -120 wheel tick over a closed combo changed index1 to2 and left
+the enclosing scrollbar at0. Merely filtering/ignoring stopped editing but still
+left scroll at0. Forwarding to the viewport changes scroll by60px while index stays1.
+On this Qt offscreen backend, pixel-only (-40) updates are ignored by QScrollArea;
+apply their already-directed pixel displacement only when forwarded handling rejects
+it. Keep native open-list scrolling and keyboard editing covered independently.
+Local JSON imports preserve conflicting month data as provenance, never as inferred
+frost-relative calendar offsets. Two-store imports are replayable, not globally atomic.

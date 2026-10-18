@@ -245,6 +245,13 @@ class GardenPlannerApp(QMainWindow):
         """Initialize the main window."""
         super().__init__()
 
+        from open_garden_planner.ui.widgets.combo_wheel_guard import ComboWheelGuard
+
+        self._combo_wheel_guard = ComboWheelGuard(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._combo_wheel_guard)
+
         self.setMinimumSize(800, 600)
 
         # Persistent UI state (window geometry, main splitter)

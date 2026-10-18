@@ -531,3 +531,10 @@ from row hints; embedded LayerList rows reserve rename-editor height and own pad
 `services/classic_plant_lists.py` resolves a bundled starter manifest and delegates
 writes to PlantListStore. `scripts/import_classic_plants.py` is an explicit CLI entry,
 with portable examples in examples/plant-lists; no second species database is added.
+
+Personal fork: `ui/widgets/combo_wheel_guard.py` is installed by GardenPlannerApp
+and routes wheel gestures over closed choices to their nearest scroll viewport.
+`services/local_plant_import.py` validates/private-imports JSON sheets and merges
+search/list stores; `french_plant_catalog.py` builds name-localized and unspecified
+starter snapshots from resource metadata. `scripts/import_local_plants.py` is an
+explicit closed-app operation, not a startup hook.

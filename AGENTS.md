@@ -307,3 +307,8 @@ PLANTES_ET_DESSIN.md; importing local user storage requires OGP closed. No merge
 Independent review resolved the standalone-panel collapse floor regression. The four
 classic collections (36 entries) are installed locally with exact preservation of
 previous lists and a verified no-op replay; no plants were placed on the owner's plan.
+
+Personal macOS wheel/catalog follow-up (2026-10-18): closed choices scroll their
+form instead of editing; offline French starter/search records and private JSON
+sheet imports preserve source uncertainty and replay safely. Owner chooses to draw
+a fresh plan manually. plants/ and generated output/ remain local and untracked.

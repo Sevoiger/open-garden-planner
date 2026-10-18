@@ -2894,3 +2894,21 @@ existing bundled catalog, not a horticultural suitability guarantee. Tests exerc
 real store/GUI reopening, byte-preserving backups, replay after user edits, malformed
 store refusal, failed-write retry and portable/CLI paths with accents. See
 `docs/fork/PLANTES_ET_DESSIN.md`; source drawing/calibration is conditional on owner input.
+
+### ADR-061 follow-up: private JSON sheets and French identities
+
+The extended explicit importer writes validated custom-library snapshots for offline
+search, plus standard Plant Lists snapshots for drag/drop. French copies retain the
+bundled scientific identity, so they replace its search presentation instead of
+creating duplicate species; their prior English name remains a search alias. Generic
+starter labels have explicit stable provider IDs, no asserted scientific species,
+and no inferred size/environment/calendar data. Supplied sheet URLs define stable
+source IDs; every source field and SHA-256 remains in raw provenance. The original
+private sheets/PDFs never become bundled resources. Two files cannot be atomically
+replaced together: backup both before the first write, replace each atomically, and
+recover a partial installation through idempotent replay. The existing custom-library
+writer silently swallows I/O errors, so this importer uses a checked atomic write;
+it does not change the existing interactive write behavior. Explicit collection keys
+are installation markers; a new batch uses a new key. No live cache is modified:
+the application must be closed. Localize only still-original names in the earlier
+Classiques lists, preserving identities and user edits.

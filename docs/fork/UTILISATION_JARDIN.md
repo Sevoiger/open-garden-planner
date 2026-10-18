@@ -1,6 +1,14 @@
 # Utiliser le suivi du jardin
 
-Lancer `Lancer-Jardin.command`, puis ouvrir `examples/jardin-demo.ogp` avec
+## Partir d’un plan vide
+
+Lancer `Lancer-Jardin.command`, choisir **File > New**, puis enregistrer le nouveau
+plan dans `jardin-personnel/`. Dessiner ses limites et ajouter les plantes au fur
+et à mesure. Les anciens fichiers restent disponibles ; nul besoin de les effacer.
+
+## Essayer la démonstration (facultatif)
+
+Pour découvrir le suivi, ouvrir `examples/jardin-demo.ogp` avec
 **File > Open**. Ce fichier est entièrement fictif : un massif, un arbre, une
 vivace, deux groupes de bulbes et cinq interventions. Le fond quadrillé est
 artificiel (une cellule = un mètre), sans relation avec un jardin réel.
@@ -70,8 +78,9 @@ cochée. Les projets sans suivi gardent le comportement saisonnier amont.
 
 L’application reste en anglais/allemand ; les libellés, notes, accents et dates
 français fonctionnent. Une traduction intégrale de l’application en français
-reste une amélioration distincte. Aucun document du jardin réel n’était fourni :
-sa reprise, les positions à préciser et la calibration d’un plan réel restent à faire.
+reste une amélioration distincte. Le propriétaire a choisi de construire son plan
+à la main. Les fiches de plantes importées enrichissent la bibliothèque sans imposer
+de positions, de dates de plantation ni de dessin automatique.
 
 ## Vérification sur le Mac après les tests automatiques
 
@@ -93,3 +102,12 @@ Dans une catégorie, Filter… est un champ de recherche : y saisir par exemple
 `apple`. Les boutons de caractéristiques peuvent réduire la liste à zéro résultat.
 Le message No matching objects l'indique ; Clear filters réaffiche tous les objets.
 La réouverture d'une catégorie repart sans filtre de recherche ni caractéristique.
+
+
+## Faire défiler sans changer une fiche
+
+Sur un menu déroulant fermé, la molette ou le pavé tactile fait défiler le formulaire,
+sans modifier la valeur du menu, même après lui avoir donné le focus. Cliquer pour
+ouvrir la liste puis sélectionner une valeur ; le clavier reste utilisable. La liste
+ouverte garde son défilement. Cette protection concerne les menus déroulants dans
+l’ensemble de l’application, pas les champs numériques ni le zoom du plan.

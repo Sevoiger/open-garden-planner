@@ -2390,3 +2390,25 @@ after opening, a header close hid content but kept275px minimum against25px hint
 `set_expanded(False)` now releases the floor on that path, as the controller already
 does on its animated path. A real header-click regression opens, closes, grows,
 reopens and closes a standalone panel; both standalone and managed cases pass.
+
+
+## Case study: wheel gestures edit plant details instead of scrolling (personal fork, 2026-10-18)
+
+**Symptom.** Owner scrolls a column but closed choice fields change rapidly, including
+Plant Details. **Evidence before change:** a -120 tick changes combo index1→2 while
+scroll stays0. An ignore-only event filter keeps index1 but still scroll0, so disabling
+editing alone is insufficient. Forwarding to the nearest viewport yields index1,
+scroll60. A second probe shows pixel-only -40 updates rejected by QScrollArea on the
+measured backend (angle tick accepted); explicit fallback moves the scrollbar40px.
+
+**Fix.** GardenPlannerApp installs an application filter for closed QComboBox fields.
+Forward complete gesture data to the nearest scroll viewport; apply pixels directly
+only if that viewport rejects them. Open choice lists and keyboard edits retain their
+normal behavior. No spin-box or canvas-wheel policy is changed. Regression tests use
+real Plant Details fields, focused/unfocused controls, angle/pixel gestures, open-list
+scrolling and real-main-window installation. Temporary probes remain local.
+
+**Lesson.** Prove both lack of unintended mutation and actual enclosing scroll. An
+ignored event is not evidence that the user's intended scroll happened. Qt6 exposes
+no source() getter on QWheelEvent here; construct the forwarded event using its
+available pointingDevice(), phase and deltas, verified with the runtime signature.

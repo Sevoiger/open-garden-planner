@@ -20,8 +20,8 @@ Le pack ajoute quatre listes réutilisables, avec neuf plantes chacune :
   fraisier, thym, romarin, basilic, ciboulette.
 
 Les noms scientifiques et données restent ceux du catalogue embarqué, avec leur
-précision et leurs inconnues. Les noms affichés dans les fiches sont ceux du
-catalogue anglais. Cette sélection facilite la prise en main ; elle ne garantit
+précision et leurs inconnues. Le pack français remplace les noms usuels affichés par leurs équivalents français ;
+les noms botaniques restent inchangés. Cette sélection facilite la prise en main ; elle ne garantit
 pas l'adaptation des plantes à votre climat, sol ou exposition.
 
 Ouvrir **Plant Lists** dans la colonne de droite, choisir une collection dans son
@@ -84,3 +84,52 @@ une comparaison « inférieur à ». Le cercle a donc un diamètre de 300 cm, so
 Dans les propriétés, **Diameter** règle directement le diamètre en centimètres.
 Les champs **Position X / Y** règlent la position, pas les rayons. Pour une plante,
 l'emprise dessinée et son cercle d'envergure future sont des informations distinctes.
+
+
+## Catalogue français et plantes sans variété
+
+Le pack français expose les 118 fiches embarquées dans six collections **Catalogue FR**,
+et ajoute 80 fiches de départ dans quatre collections **À préciser** : vivaces/fleurs,
+arbustes/grimpantes, graminées/couvre-sols, arbres. Il s’agit de noms de groupes
+usuels, pas de 80 nouvelles espèces identifiées. Par exemple **Sauge — variété à
+préciser** ne suppose ni Salvia officinalis ni une variété de sauge arbustive.
+Les dimensions, le cycle et l’exposition restent inconnus. Les données des espèces
+identifiées restent celles du catalogue embarqué, sans ajout horticole inventé.
+
+Dans **Plant Lists**, choisir une collection, puis glisser la fiche sur le plan.
+Sélectionner la plante et compléter **Plant Details > Variety** quand le cultivar
+est connu. Ce champ appartient à cette plantation ; il ne renomme pas toutes les
+sauges de la bibliothèque. Pour identifier précisément une autre espèce, utiliser
+**Search** ou compléter son nom botanique. Les recherches françaises et les anciens
+noms anglais des fiches embarquées restent disponibles. Les 36 noms du précédent
+pack Classiques passent aussi en français, à l’exception des noms déjà personnalisés.
+
+## Importer un dossier de fiches JSON
+
+Fermer l’application après avoir enregistré, puis lancer :
+
+```bash
+.venv/bin/python scripts/import_local_plants.py plants/import01 --french-catalog
+```
+
+Le dossier import01 fourni contient 37 fiches JSON et leurs PDF. Les fiches sont
+ajoutées à la recherche hors ligne et à **Mes plantes — import01**. Avec les 118
+fiches françaises et les 80 fiches génériques, cela représente 235 fiches dans la
+recherche, dont des groupes non identifiés. Les collections peuvent présenter une
+même fiche à plusieurs endroits ; ce ne sont pas autant de plantes sur le plan.
+
+Les noms et mesures explicites sont repris : mètres vers centimètres, nom botanique
+et nom usuel français. Tous les champs source, l’URL et l’empreinte du fichier restent
+conservés dans les données de provenance. Les JSON sont la source de l’import ; les
+PDF d’origine restent à côté. Les périodes textuelles et les listes de mois peuvent
+se contredire : elles sont conservées sans créer de dates ni de tâches supposées.
+Une rusticité en degrés Celsius n’est pas convertie arbitrairement en zone USDA.
+Une exposition multiple reste dans les données source plutôt que d’être réduite
+à une seule préférence présentée comme certaine.
+
+Les deux stockages, custom_plants.json et plant_lists.json, sont validés et sauvegardés
+avant modification. Chaque remplacement de fichier est atomique ; si l’import est
+interrompu entre les deux, le relancer termine l’installation. La relance n’écrase
+pas les fiches, notes, renommages ou retraits déjà personnalisés. Un nouveau lot doit
+porter un autre nom de dossier ou un **--collection-key** distinct. Les données
+personnelles dans plants/ et les documents de sortie dans output/ restent hors Git.

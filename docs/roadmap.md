@@ -3093,3 +3093,8 @@ rename sizing fixed; four classic-plant collections prepared through the existin
 list importer (ADR-061). Circle input and sketch/calibration prerequisites documented
 in docs/fork/PLANTES_ET_DESSIN.md. Native owner confirmation and a real source drawing
 remain separate; no merge/release authorization is inferred.
+
+Personal macOS follow-up (2026-10-18): wheel-safe closed choices; French common-name
+catalog, 80 unspecified starter cards and explicit private JSON import into offline
+search + Plant Lists. French guides can be read as a single paginated PDF. Native
+owner acceptance remains pending; the owner is drawing a new plan manually.

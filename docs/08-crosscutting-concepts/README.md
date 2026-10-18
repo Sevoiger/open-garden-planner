@@ -2625,3 +2625,10 @@ Starter collections reuse canonical bundled species keys and existing list snaps
 preserve unknown traits and require a closed app for external import. No garden
 positions or confirmed planting dates are inferred. See `PLANTES_ET_DESSIN.md` for
 radius/angle input and the dimension evidence needed before tracing a real sketch.
+
+Personal-fork form scrolling: closed QComboBox controls never consume the wheel as
+an edit. An application event filter forwards to the nearest QAbstractScrollArea
+viewport, retaining device, pixel/angle deltas and phase. On backends where that
+viewport ignores pixel-only gestures, its scrollbars receive the pixel displacement.
+An open choice view and explicit keyboard/click editing remain normal. No global
+font, input-focus policy, spin-box behavior or canvas-wheel behavior changes.
