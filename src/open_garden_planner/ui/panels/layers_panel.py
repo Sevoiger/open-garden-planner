@@ -116,6 +116,16 @@ class LayerListItem(QWidget):
         # Update styling based on layer state
         self._update_styling()
 
+    def sizeHint(self) -> QSize:  # noqa: N802
+        """Reserve enough row height for the normally hidden rename editor."""
+        hint = super().sizeHint()
+        editor = getattr(self, "name_edit", None)
+        layout = self.layout()
+        if editor is not None and layout is not None:
+            margins = layout.contentsMargins()
+            hint.setHeight(max(hint.height(), editor.sizeHint().height() + margins.top() + margins.bottom()))
+        return hint
+
     def _start_editing(self) -> None:
         """Start inline editing of layer name."""
         self.name_label.hide()
@@ -256,6 +266,7 @@ class LayersPanel(QWidget):
 
         # Layer list - height adjusts to content, scrolls at 5+ layers
         self.layer_list = QListWidget()
+        self.layer_list.setObjectName("LayerList")
         self.layer_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self.layer_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.layer_list.currentRowChanged.connect(self._on_layer_selected)
@@ -360,20 +371,13 @@ class LayersPanel(QWidget):
 
     def _adjust_list_height(self) -> None:
         """Adjust the list height based on number of layers."""
-        # Height per item (24px icon + 4+4px margins + 4px padding)
-        item_height = 36
-        num_layers = len(self._layers)
-        max_visible = 5
-
-        if num_layers <= max_visible:
-            # Show all layers without scrolling
-            height = max(item_height, num_layers * item_height)
-            self.layer_list.setFixedHeight(height)
-        else:
-            # Limit to max_visible layers, enable scrolling
-            height = max_visible * item_height
-            self.layer_list.setMaximumHeight(height)
-            self.layer_list.setMinimumHeight(height)
+        # Embedded rows own their padding. Derive viewport height from the
+        # actual row hints, including the rename editor, rather than a 36px guess.
+        count = min(5, self.layer_list.count())
+        rows = sum(self.layer_list.sizeHintForRow(i) for i in range(count))
+        margins = self.layer_list.contentsMargins()
+        height = max(36, rows) + margins.top() + margins.bottom()
+        self.layer_list.setFixedHeight(height)
 
     def refresh_layer_visibility(self, layer_id: UUID, visible: bool) -> None:
         """Update the visibility button for a layer without emitting layer_visibility_changed.

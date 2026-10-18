@@ -3,6 +3,7 @@
 import contextlib
 
 from PyQt6.QtCore import (
+    QAbstractAnimation,
     QEasingCurve,
     QEvent,
     QPropertyAnimation,
@@ -137,6 +138,19 @@ class CollapsiblePanel(QWidget):
         # Content area
         if self._content_widget:
             layout.addWidget(self._content_widget)
+
+    def event(self, event: QEvent | None) -> bool:
+        if event is None:
+            return False
+        result = super().event(event)
+        if (event.type() == QEvent.Type.LayoutRequest and self._expanded
+                and (self._anim is None or self._anim.state() != QAbstractAnimation.State.Running)):
+            # New rows/content can arrive after the opening animation finished.
+            # Keep the open panel's floor in step with its current content.
+            height = self.sizeHint().height()
+            if self.minimumHeight() != height:
+                self.setMinimumHeight(height)
+        return result
 
     def set_content(self, widget: QWidget) -> None:
         """Set the content widget.

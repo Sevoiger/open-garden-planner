@@ -733,6 +733,11 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         border-radius: 4px;
     }}
 
+    /* Embedded layer rows provide their own layout padding. */
+    QListWidget#LayerList::item {{
+        padding: 0px;
+    }}
+
     QListWidget::item:selected {{
         color: {colors['text_primary']};
         background-color: {colors['selection']};
