@@ -43,8 +43,6 @@ from tests.integration.agent_task_soil_stubs import TASK_SOIL_STUBS
 _PROMPT_SHUTDOWN_MAX_S = 4.0
 
 
-
-
 def _unused(*_a: Any, **_k: Any) -> dict[str, Any]:
     raise AssertionError("no provider should run during a start/stop test")
 

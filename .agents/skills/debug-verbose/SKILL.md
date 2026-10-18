@@ -2264,8 +2264,12 @@ supposed to be straightforward: measure where the time goes, then parallelise.
    built synthetic `QLabel`/`QWidget` trees, which request no icons at all - the cache was
    `svg=0 icon=0 pixmap=0`. **The instrument never reached the mechanism it was testing.**
 2. *"`gc.collect()` will reclaim the leaked widgets."* It freed 8 337 objects and moved the
-   widget count only 38 271 -> 37 638. The survivors are held by **strong** references, not
-   collectable cycles - so the plausible one-liner would have been useless.
+   widget count only 38 271 -> 37 638, so they are not reachable as collectable cycles
+   and the plausible one-liner would have been useless. **What holds them is NOT
+   identified** - the referrer probe walked into PyQt6/sip bookkeeping and stopped - so
+   "strong references" is the reading consistent with the `gc` measurement, not a proven
+   mechanism. The chokepoint does not need it to be true, and claiming it would repeat
+   this file's own first case study: an instrument that asserts a mechanism it never saw.
 3. *"The chokepoint cannot reclaim them either."* `sendPostedEvents(None, 0)` - the shape
    that looks right - flushes nothing; `DeferredDelete` must be named explicitly. **A
    measurement that mis-invokes its instrument refutes the call, not the idea**, and I was

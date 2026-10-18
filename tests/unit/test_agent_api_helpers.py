@@ -144,6 +144,16 @@ def test_a_different_runtime_error_is_a_product_failure_and_must_surface(monkeyp
 
 
 def test_exhausting_the_attempts_is_reported_not_retried_forever(monkeypatch) -> None:
+    """Two things at once, because they are the same assertion.
+
+    The loop is bounded, and the bound is reported rather than retried silently. It must
+    also not **fall off its end**: a retry loop that exhausts without an explicit raise
+    returns `None` implicitly, and the caller then fails at the unpacking with a
+    TypeError about tuples — which says nothing about ports and sends the next reader
+    looking in the wrong place. That hole was real: it was introduced in this same change
+    while the readiness branch above was being rewritten, which is why the bound needs a
+    test of its own rather than being trusted as a `for`-loop's obvious ending.
+    """
     monkeypatch.setattr("tests.agent_api_helpers.AgentApiServer", _FakeServer)
 
     def always_busy(providers: object, *, port: int, **kwargs: object) -> _FakeServer:
@@ -188,26 +198,6 @@ def test_a_server_that_returns_but_never_became_ready_is_reported_not_retried(mo
 def test_attempt_count_is_bounded() -> None:
     """A retry loop with no ceiling is a hang, not a retry."""
     assert 2 <= PORT_ATTEMPTS <= 10
-
-
-def test_exhausting_a_collision_loop_raises_rather_than_returning_none(monkeypatch) -> None:
-    """The loop must not fall off its end.
-
-    A retry loop that exhausts without an explicit raise returns `None` implicitly, and
-    the caller then fails at the unpacking with a TypeError about tuples — which says
-    nothing about ports and sends the next reader looking in the wrong place. This was a
-    real hole introduced while fixing the readiness check above.
-    """
-    monkeypatch.setattr("tests.agent_api_helpers.AgentApiServer", _FakeServer)
-
-    def always_busy(providers: object, *, port: int, **kwargs: object) -> _FakeServer:
-        server = _FakeServer(providers, port=port, **kwargs)
-        server.start = _raise(PortInUseError(port))  # type: ignore[method-assign]
-        return server
-
-    monkeypatch.setattr("tests.agent_api_helpers.AgentApiServer", always_busy)
-    with pytest.raises(AssertionError, match="not a port collision"):
-        start_server(object())
 
 
 def _raise(exc: BaseException):

@@ -11,22 +11,42 @@ variable *names*, would not have caught any of them either. It was defeated seve
 including the entire NFR-PERF-01 budget module, where no test function contains an
 `ast.Assert` at all.
 
-**So this matches timing SOURCES, not timing NAMES**, and follows them across calls.
-A test is wall-clock sensitive when it orders a measured duration against a bound —
-whatever anyone calls the variable, and wherever the clock was read:
+**So this matches timing SOURCES, not timing NAMES**, and follows them across calls to a
+fixed point — twice, once for the clock and once for the assertion, because the real code
+puts them in different functions:
 
-- in the test's own body — `assert build_median_ms < 200`;
-- in a body reached transitively through helpers, because that is how the real code is
-  shaped. `_measure_repaints` reads the clock and returns a list; `_assert_repaint_budget`
-  medians it and asserts; the test only calls the second. One hop of dataflow finds
-  neither (`build_median_ms` comes from `statistics.median(samples)`, and
-  `best_median` from `min(all_medians)`), so the closure is taken over calls.
+    test_xyz()  ->  run_budget()  ->  _assert_budget()  ->  _measure_repaints()
 
-**What this guard deliberately does not claim.** It is one-directional: it proves a
-marker is *required* where it fires, not that every marker present is needed. Two tests
-in `test_nfr_budgets.py` are marked because they build the same scenario on the quiet
-runner, not because they assert a duration. A bidirectional check would have to judge
-intent, and an intention a gate cannot read is not a gate.
+`test_xyz` never names the asserter; `_assert_budget` never calls a clock. Closing only
+the clock and then asking whether a test *directly* calls a sensitive function misses
+that entire chain, and did — it was caught executing against this file's own
+`collect_duration_asserts`, which returned `[]` for exactly that shape.
+
+**What this guard does NOT claim, stated precisely rather than hedged.** Each item below
+is a real hole, verified, not a caveat about a hypothetical:
+
+- **The timing-source set is an enumeration, not "any clock".** `time.time`,
+  `time.thread_time` and `timeit.default_timer` are measurable and not listed. Nothing
+  here uses them for a budget — `time.time` is non-monotonic, which is the reason — but a
+  future test that does would be missed.
+- **Not every wall-clock assertion is an `assert` with a comparison operator.**
+  `self.assertLess(...)`, `assert not (delta >= limit)` and `pytest.approx` on a
+  duration are all invisible to it. `self.assertLess` does not occur in this suite; that
+  is a fact about today, not a guarantee.
+- **A budget inside a `@pytest.fixture` is not attributed to the tests that use it.** The
+  guard would see the fixture function itself, and a fixture is not a test.
+- **Functions are keyed by bare name across the whole module**, so duplicate method names
+  resolve last-definition-wins. `test_agent_api_writes.py` has 37 `body` definitions, so
+  the collision is real in this suite; it is currently harmless because no timing helper
+  shares a name with a test elsewhere in a module, and that is a latent landmine, not a
+  safety property.
+- **It is one-directional.** It proves a marker is *required* where it fires, not that
+  every marker present is needed. Two tests in `test_nfr_budgets.py` are marked because
+  they build the same scenario on the quiet runner, not because they assert a duration.
+
+A guard whose limits are written down is auditable. One that claims more than it checks is
+the defect §11.4 keeps finding, and it has been found in three consecutive reviews of this
+very file.
 """
 
 from __future__ import annotations
@@ -37,8 +57,15 @@ from pathlib import Path
 
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 
-# The sources of a measured duration. This is the property, not a convention.
-TIMING_SOURCES = frozenset({"perf_counter", "monotonic", "process_time", "perf_counter_ns"})
+# The sources of a measured duration. This is the property, not a convention — but it
+# is an enumeration, and the honest scope note is that it is not the whole stdlib.
+# `time.time`, `time.thread_time` and `timeit.default_timer` are measurable and are NOT
+# listed; `time.time` is the wall clock and is not monotonic, which is why nothing in
+# this suite uses it for a budget. A future test that does, and is therefore not caught,
+# is a known limit of this guard rather than a defect in it — see the docstring.
+TIMING_SOURCES = frozenset({
+    "perf_counter", "perf_counter_ns", "monotonic", "process_time", "process_time_ns",
+})
 ORDERING_OPS = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
 MARKER = "perf"
 
@@ -98,10 +125,41 @@ def _orders_a_value_against_a_bound(func: ast.AST) -> bool:
     return False
 
 
+def _closure(seed: set[str], tree: ast.Module) -> set[str]:
+    """Grow `seed` to a fixed point over who calls whom, within this module."""
+    functions = _functions(tree)
+    grown = set(seed)
+    changed = True
+    while changed:
+        changed = False
+        for name, func in functions.items():
+            if name in grown:
+                continue
+            if _calls_any(func, grown):
+                grown.add(name)
+                changed = True
+    return grown
+
+
 def _sensitive_names(tree: ast.Module) -> set[str]:
-    """Functions that order a measured duration against a bound."""
+    """Functions that order a measured duration against a bound, and their callers.
+
+    Two closures, not one. `_reads_a_clock` closes the clock over the call graph, then
+    the *sensitivity* is closed the same way — because the propagation has to survive a
+    hop that carries only an assertion. The real code does exactly this:
+
+        test_xyz()  ->  run_budget()  ->  _assert_budget()  ->  _measure()
+
+    `test_xyz` never mentions the asserter, and `_assert_budget` never calls a clock
+    directly. Closing only the clock and asking whether a test *directly* calls a
+    sensitive function misses that whole chain; it was caught executing against this
+    file's own `collect_duration_asserts`, which returned `[]` for it.
+    """
     timed = _reads_a_clock(tree)
-    return {name for name in timed if _orders_a_value_against_a_bound(_functions(tree)[name])}
+    sensitive = {
+        name for name in timed if _orders_a_value_against_a_bound(_functions(tree)[name])
+    }
+    return _closure(sensitive, tree)
 
 
 def _marker_names(node: ast.AST) -> set[str]:
@@ -217,6 +275,29 @@ def test_the_guard_cannot_be_defeated_by_spelling() -> None:
         "    assert best <= 16.7\n"
     )
     assert _verdict(nfr_shape) == [("TestBudget::test_x", True)]
+
+    # 1b. THE ONE ROUND 4 CAUGHT, and the reason sensitivity gets its own closure.
+    #     Three hops, and the test names none of the functions that measure or assert.
+    #     The round-3 version returned `[]` for this: it closed the clock but then asked
+    #     only whether the test DIRECTLY called a sensitive function, so one
+    #     intermediate `return _assert_budget()` was enough to hide the whole chain.
+    #     `_assert_budget` reaches the clock through `_measure`, and orders the result;
+    #     `run_budget` only forwards. Sensitivity has to propagate the same way the clock
+    #     does, or the forwarding layer is where the trace goes cold.
+    three_hops = (
+        "import pytest, time\n"
+        "@pytest.mark.perf\n"
+        "def test_wrapped():\n"
+        "    run_budget()\n"
+        "def run_budget():\n"
+        "    return _assert_budget()\n"
+        "def _assert_budget():\n"
+        "    assert _measure() < 16.7\n"
+        "def _measure():\n"
+        "    t0 = time.perf_counter()\n"
+        "    return time.perf_counter() - t0\n"
+    )
+    assert _verdict(three_hops) == [("test_wrapped", True)]
 
     # 2. A name the allowlist never contained, measured through a list.
     assert _verdict(

@@ -54,8 +54,6 @@ LOCATION: dict[str, Any] = {
 TODAY = datetime.date(2026, 6, 15)
 
 
-
-
 def _pump(qtbot: Any, coro: Any) -> None:
     """Run `coro` on a worker thread while the Qt loop keeps running.
 

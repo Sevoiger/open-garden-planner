@@ -71,9 +71,13 @@ jobs:
       # captured where the wall clock went, so every speed-up was a guess; this
       # makes the measurement a byproduct of a run that has to happen anyway.
       # `tee` keeps the live progress and failures in the log while also writing
-      # the report for the artifact below, and `set -o pipefail` is load-bearing:
-      # without it the pipeline's exit status is `tee`'s, so a failing suite
-      # would report green.
+      # the report for the artifact below. The `pipefail` that keeps a failing suite
+      # from reporting green comes from the `shell: bash` line further down, which
+      # runs `bash --noprofile --norc -eo pipefail {0}`; the explicit `set -o pipefail`
+      # in the script body is therefore a no-op. It is kept because removing it would
+      # make the guarantee depend on a reader remembering that `shell:` line, but the
+      # guarantee itself does not live here — an earlier version of this comment credited
+      # this line and so would have kept the script safe even if `shell:` changed.
       #
       # Parallelism is NOT spelled out here. `addopts` carries `-n auto --dist
       # worksteal`, which resolves to 4 workers on ubuntu-latest's 4 vCPUs. On this
@@ -215,22 +219,46 @@ jobs:
           sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0
       - uses: ./.github/actions/setup-locked-env
 
-      # `-m 'not perf'` here is what `addopts` already selects, restated because it
-      # is load-bearing for this job: measured, the coverage floors in
-      # quality/coverage-floors.json are UNCHANGED by excluding the perf tests
-      # ("regressions": [], "file_regressions": []), so nothing is lost.
+      # NO `-m` filter here, deliberately, and the reason is the opposite of what an
+      # earlier draft of this comment claimed.
       #
-      # The perf tests cannot simply be added back under `--cov`. The NFR repaint
-      # budget fails at 20.29 ms against a 16.70 ms budget under coverage tracing —
-      # tracing inflates the very repaints it measures, and the test's best-of-8-rounds
-      # median cannot out-run the tracer. The failure reproduces at `-n 0`, so it is
-      # not a parallel effect. This job has therefore always been measuring something
-      # it cannot gate; deciding what its baseline SHOULD include is separate work.
+      # That draft added `-m 'not perf'` to match `addopts`, justified by the claim
+      # that the floors in quality/coverage-floors.json are unchanged by excluding the
+      # perf tests. Measured on this branch, that claim is false, and the measurement is
+      # the whole content of this comment:
+      #
+      #   full suite, perf INCLUDED  -> "regressions": [], exit 0
+      #   full suite, `-m 'not perf'`-> "regressions": [{"package": "agent_api", "floor":
+      #                                    92, "covered_statements": 2012}], exit 1
+      #
+      # agent_api drops from 92.30% to 91.71%. Fourteen statements is the entire margin,
+      # and they come from the two `perf`-marked tests in
+      # tests/integration/test_agent_api_shutdown.py — the only coverage in the suite of
+      # server.py's start()/_check_port_free()/_start_locked()/_run() block. So the
+      # marker, which exists to keep wall-clock assertions off a loaded runner, was
+      # silently removing a product lifecycle from the only job that measures it.
+      #
+      # The two costs of leaving the perf tests in are both pre-existing and both
+      # stated rather than hidden:
+      #   * The NFR repaint budget fails under tracing (20.29 ms vs a 16.70 ms budget) —
+      #     the tracer inflates the repaints it measures. Reproduces at `-n 0`. This job
+      #     has been red for that reason since before #509; measured on `master` at
+      #     412f01bd it is already 2 failed with `regressions: []`.
+      #   * ADR-058 predicted this shape of failure — a gate that is not in branch
+      #     protection going red while looking authoritative — eleven lines before
+      #     creating it. It did not help that the wrong fix seemed to remove the
+      #     failure; it moved it to the floor gate and made the comment assert the
+      #     opposite of what the gate reported.
+      #
+      # So this job keeps master's behaviour and its master's redness. Deciding whether
+      # `Coverage` should be a required check — and whether the baseline SHOULD include
+      # the NFR tests at all — is a policy question for the owner, deliberately not
+      # answered here.
       - name: Measure full-suite line and branch coverage
         env:
           QT_QPA_PLATFORM: offscreen
         run: >
-          python -m pytest tests/ -v -m 'not perf'
+          python -m pytest tests/ -v -o addopts="-v --tb=short -n auto --dist worksteal"
           --cov=open_garden_planner --cov-branch --cov-report=xml --cov-report=term
       - name: Enforce package line floors
         if: always()

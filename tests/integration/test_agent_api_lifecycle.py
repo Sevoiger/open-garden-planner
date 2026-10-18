@@ -42,8 +42,6 @@ def _stub_providers() -> _providers.AgentProviders:
     )
 
 
-
-
 def _drive(server: AgentApiServer, body: Any, result: dict[str, Any]) -> None:
     async def run() -> None:
         from mcp import ClientSession

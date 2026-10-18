@@ -46,8 +46,6 @@ def _redirect_documents_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(paths_module, "get_documents_dir", lambda: tmp_path)
 
 
-
-
 def _providers(
     scene: Any, project_manager: ProjectManager, soil_service: SoilService
 ) -> AgentProviders:

@@ -269,11 +269,20 @@ Recorded rather than silently amended, because each changes what the work is wor
    `TEST_APPLICATION` from `os.getpid()`, added on 2026-08-17 (§11.4) precisely so two
    concurrent pytest processes cannot share one store. Parallel workers are separate
    processes, so each gets its own key by construction.
-5. **The port risk is smaller than stated.** Every socket test uses `_free_port()`
-   (`bind(("127.0.0.1", 0))`, then reads the OS-assigned port). No test binds a fixed
-   port; `8765` appears only in settings-default assertions and dialog URL strings,
-   and `tests/integration/conftest.py` records that no test ever binds it. The real
-   residual is a TOCTOU window, since `_free_port()` closes before the server re-binds.
+5. **The port risk was real, and this change closed it.** *This entry was written before
+   the port helper landed and both halves of it are now stale — recorded here rather than
+   silently corrected, because the correction is the point.* It originally read: every
+   socket test uses `_free_port()` (`bind(("127.0.0.1", 0))`, then reads the OS-assigned
+   port), so the only residual is a TOCTOU window since `_free_port()` closes before the
+   server re-binds. Neither half holds for this tree: **no test calls `_free_port()` any
+   more** — ten files each carried their own copy and all of them now go through
+   `tests/agent_api_helpers.py::start_server()`, which **retries on a lost bind** and so
+   absorbs the TOCTOU window rather than describing it. The TOCTOU was not theoretical:
+   `test_agent_api_dns_rebinding.py` failed with `Agent API server failed to start` under
+   20 workers, and that is the failure the retry exists for.
+   Still true, and worth keeping: no test binds a fixed port. `8765` appears only in
+   settings-default assertions and dialog URL strings, and `tests/integration/conftest.py`
+   records that no test ever binds it.
 6. **Criterion 2 (`-m "not perf"`) is worth ~0.5 %.** `tests/perf` is 6.35 s of a
    1 362 s run. It has independent merit — a plain run becomes deterministic, per
    §11.4's #354 entry about not letting timing assertions share a runner with

@@ -61,8 +61,6 @@ from tests.agent_api_helpers import start_server
 TOKEN = "test-write-token-12345"
 
 
-
-
 _APP_BY_VIEW: dict[int, GardenPlannerApp] = {}
 
 
@@ -2110,8 +2108,6 @@ def test_zero_delta_move_is_still_allowed(canvas: Any, qtbot: Any) -> None:
     assert body.result["item_id"] == item_id  # type: ignore[attr-defined]
 
 
-
-
 def test_off_plan_object_is_flagged_and_diagnosed(canvas: Any, qtbot: Any) -> None:
     """issue #380: a legacy off-plan object is discoverable, not invisible."""
     view = canvas
@@ -2187,7 +2183,6 @@ def test_absurd_position_is_still_refused(canvas: Any, qtbot: Any) -> None:
     after = len([i for i in scene.items() if i.parentItem() is None])
     assert after == before
     assert view.command_manager.can_undo is False
-
 
 
 def test_clamped_house_create_and_position_are_one_undo_step_each(

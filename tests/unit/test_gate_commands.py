@@ -823,9 +823,15 @@ class TestCheckNoSecrets:
 
         root = tmp_path / f"repo_{tag}"
         (root / "scripts").mkdir(parents=True)
-        # Not check=True: if git were unavailable, `_tracked_files` falls back to
-        # walking the directory, which still finds the canary — the assertion this
-        # method serves is about detection, not about git being installed.
+        # Not check=True, and the reason is NOT "git might be missing, so let the scan fall
+        # back to walking the directory" — that fallback cannot happen. `subprocess.run`
+        # raises FileNotFoundError when the binary is absent, which is an OSError and is
+        # NOT caught here, so a machine without git would ERROR on this line and never
+        # reach `_tracked_files` at all. (`scripts/check_no_secrets.py:187` does catch it;
+        # this call site does not, which is a real exposure and a separate fix.)
+        # The actual reason is narrower: `git init` writes to stderr and its exit status
+        # is not what this helper asserts. The assertion is about DETECTION — that a
+        # tracked canary is found — not about git being installed or configured.
         subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True)
         canary = root / "scripts" / f"_canary_{tag}.py"
         canary.write_text(line + "\n", encoding="utf-8")

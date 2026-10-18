@@ -1290,8 +1290,11 @@ dynamic consumers retain comments, and unresolved receivers/helper imports fail 
   (only 2 of 30 apps were still reachable by `gc.get_objects()` — the Python wrapper
   is collected, the C++ graph is not). `apply_theme()` walks `app.allWidgets()` on
   every call, so every later theme switch pays for all of them. `gc.collect()` is not
-  the fix: it freed 8 337 objects and moved the widget count only 38 271 → 37 638,
-  because the survivors are held by **strong** references, not collectable cycles.
+  the fix: it freed 8 337 objects and moved the widget count only 38 271 → 37 638, so the
+  survivors are not reachable as collectable cycles. **What holds them is NOT identified** —
+  the referrer probe walked into PyQt6/sip bookkeeping and stopped — so "strong references"
+  is the reading consistent with that measurement, not a proven mechanism, and the chokepoint
+  below does not need it to be true.
   Fixed by one autouse fixture in `tests/conftest.py` that closes and `deleteLater()`s
   every top-level widget per test — 38 271 → 0, and the serial suite 912.6 s → 673.6 s
   with no product change and no test removed. Three details decide whether it works:
