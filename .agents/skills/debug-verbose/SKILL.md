@@ -2383,3 +2383,10 @@ layer command/undo suite unchanged. No model geometry or font reduction.
 embedded widget after view styling, not just the item's advertised size, and test
 content growth while another panel competes for space. Pin:
 `tests/integration/test_layer_layout_growth.py`.
+
+
+**Independent-review follow-up.** The shared floor also affected standalone panels:
+after opening, a header close hid content but kept275px minimum against25px hint.
+`set_expanded(False)` now releases the floor on that path, as the controller already
+does on its animated path. A real header-click regression opens, closes, grows,
+reopens and closes a standalone panel; both standalone and managed cases pass.

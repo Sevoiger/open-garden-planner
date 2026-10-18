@@ -1,7 +1,7 @@
 """Rows can grow after an accordion animation without overlapping footer controls."""
 
 import pytest
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QLabel, QStyle, QStyleOptionFrame
 
@@ -10,6 +10,25 @@ from open_garden_planner.ui.panels.layers_panel import LayersPanel
 from open_garden_planner.ui.theme import ThemeMode, apply_theme
 from open_garden_planner.ui.widgets.collapsible_panel import CollapsiblePanel
 from open_garden_planner.ui.widgets.panel_stack import SidebarController
+
+
+def test_standalone_panel_releases_content_floor_on_header_close(qtbot):
+    content = QLabel("Available amendments")
+    content.setMinimumHeight(250)
+    panel = CollapsiblePanel("Amendments", content, expanded=False)
+    qtbot.addWidget(panel)
+    panel.show()
+    for height in (250, 400):
+        content.setMinimumHeight(height)
+        qtbot.mouseClick(panel._header, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(lambda: panel.minimumHeight() == panel.sizeHint().height())
+        assert panel.minimumHeight() >= height
+        qtbot.mouseClick(panel._header, Qt.MouseButton.LeftButton)
+        assert not panel.is_expanded()
+        assert panel.minimumHeight() == 0
+        assert not content.isVisible()
+        panel.resize(panel.width(), panel.sizeHint().height())
+        assert panel.height() < height
 
 
 @pytest.mark.parametrize("mode", [ThemeMode.LIGHT, ThemeMode.DARK])

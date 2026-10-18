@@ -182,6 +182,10 @@ class CollapsiblePanel(QWidget):
             emit: Whether to emit the expanded_changed signal
         """
         self._expanded = expanded
+        if not expanded:
+            # Standalone panels close here rather than through the controller's
+            # animation path. Release the floor set by expanded layout requests.
+            self.setMinimumHeight(0)
 
         # Update indicator
         self._paint_indicator()
