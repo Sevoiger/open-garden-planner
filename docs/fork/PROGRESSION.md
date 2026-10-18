@@ -226,7 +226,21 @@ La revue a identifié une réapparition des fiches supprimées lors du rejeu : l
 bloque maintenant tout le lot, pas uniquement sa liste. La régression supprime une
 fiche et enrichit sa source sous la même clé, puis vérifie l’absence de toute écriture.
 Revue finale 4095b12 favorable ; 19 tests import/molette relancés indépendamment.
-105 contrôles ciblés initiaux réussis ; le contrôle final inclut cette régression.
+108 contrôles ciblés sous isolation réussis ; 11 contrôles enfant/confinement
+réussis et relancés par le reviewer. Deux anciens tests avaient lu les noms de la
+bibliothèque personnelle : la suite a été arrêtée, les fiches précédentes et les
+235 fiches importées comparées en lecture seule et confirmées intactes. Le résolveur
+de données est maintenant redirigé avant collection et par test, et les tests enfants
+qui construisent l’application reçoivent un prélude explicite. Chemins de production
+inchangés ; la re-revue de f34e618 est favorable.
 Les six guides de ce dossier sont compilés dans un PDF local, avec sommaire cliquable,
 signets et pagination ; les deux annexes techniques ont été traduites en français.
-La lecture visuelle et la suite complète restent à consigner une fois terminées.
+PDF local de 16 pages : toutes les pages rendues et inspectées, 23 signets,
+sommaire cliquable et aucun texte hors des marges. Suite complète finale isolée sur `f34e618` : **8656 réussites, 46 skips,
+2 tests CLI explicitement incompatibles Darwin désélectionnés, 1 échec**, en 802,70 s.
+Seul échec : largeur nulle au round-trip DXF, déjà reproduit sur la base amont inchangée.
+Aucun nouvel échec. Après les tests, les deux bibliothèques réelles ont exactement
+les mêmes empreintes qu’avant la suite. Ruff, Bandit HIGH=0, traductions EN/DE,
+parité, citations, secrets et sources wiki passent ; mypy reste à 1928 erreurs héritées
+sans augmentation par fichier. Confirmation visuelle native de la molette encore
+nécessaire. PR personnelle en brouillon, sans fusion ni release.
