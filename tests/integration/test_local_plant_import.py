@@ -125,6 +125,24 @@ def test_interrupted_two_store_import_is_completed_by_replay(monkeypatch, tmp_pa
     assert result["collections"] == [{"name": "Mes plantes", "count": 1}]
 
 
+def test_completed_batch_does_not_restore_deleted_custom_species_or_add_new_content(tmp_path):
+    source = tmp_path / "sources"
+    _sheet(source)
+    app_data = tmp_path / "data"
+    first = read_sheets(source)
+    install_collections(app_data, [("batch", "Collection", first)])
+    path = app_data / "custom_plants.json"
+    payload = json.loads(path.read_bytes())
+    payload["plants"].pop(first[0].source_id)
+    path.write_text(json.dumps(payload))
+    _sheet(source, name="second", url="https://example.test/another-plant")
+    before = {p.name: p.read_bytes() for p in app_data.glob("*.json")}
+    result = install_collections(app_data, [("batch", "Collection", read_sheets(source))])
+    assert result["added_to_search"] == 0
+    assert result["skipped_collections"] == 1
+    assert before == {p.name: p.read_bytes() for p in app_data.glob("*.json")}
+
+
 def test_french_catalog_has_full_names_and_unspecified_generic_sage(monkeypatch, tmp_path):
     collections = french_collections()
     assert sum(len(rows) for _, _, rows in collections) == 198

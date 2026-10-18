@@ -2412,3 +2412,11 @@ scrolling and real-main-window installation. Temporary probes remain local.
 ignored event is not evidence that the user's intended scroll happened. Qt6 exposes
 no source() getter on QWheelEvent here; construct the forwarded event using its
 available pointingDevice(), phase and deltas, verified with the runtime signature.
+
+
+**Import replay review.** Independent review found that the completed-batch marker
+skipped list creation but still re-added a custom species removed by the owner.
+Move the marker check ahead of the entire collection import: a completed batch is
+a no-op for both stores. Custom snapshots are written before the marker, so retries
+of a partial write still finish. A regression deletes the custom species, enriches
+the source under the same key and verifies every existing JSON byte is unchanged.

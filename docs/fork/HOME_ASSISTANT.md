@@ -1,27 +1,30 @@
-# Future Home Assistant boundary
+# Évolutions possibles avec Home Assistant
 
-No Home Assistant connection, credentials, REST/MQTT service, web interface or
-actuation is implemented in tranche 1. `.ogp` remains the source of truth for
-plantings, zones, explicit associations and interventions.
+La première tranche ne fournit ni connexion Home Assistant, ni identifiants,
+service REST/MQTT, interface web ou commande d’équipement. Le `.ogp` reste la source
+de référence des plantations, zones, associations explicites et interventions.
 
-Potential read data: stable zone/planting IDs, labels, partial dates, condition,
-zone membership and separately planned/completed interventions. The existing
-embedded MCP server is loopback-only and requires the application to be open.
-Reads use a Qt-thread snapshot; writes use the same validation and commands as
-the GUI, require the existing write opt-in/token, and remain in memory until Save.
-The tracking tools are `get_garden_record`, `list_zone_plantings`,
-`search_garden_interventions`, `set_garden_card`, `add_garden_intervention`,
-`edit_garden_intervention`, `delete_garden_intervention`. Actual IDs are returned;
-`persisted:false` never claims a disk save. Durable request keys protect additions.
+Les données potentiellement consultables sont les identifiants stables des zones et
+plantations, libellés, dates partielles, états, appartenances aux zones et interventions
+prévues ou réalisées. Le serveur MCP embarqué existant écoute uniquement sur la boucle
+locale et nécessite une application ouverte. Ses lectures utilisent un instantané sur
+le thread Qt. Les écritures passent par les mêmes validations et commandes que
+l’interface, exigent l’activation des écritures et un jeton, puis restent en mémoire
+jusqu’à l’enregistrement. Les outils de suivi sont `get_garden_record`,
+`list_zone_plantings`, `search_garden_interventions`, `set_garden_card`,
+`add_garden_intervention`, `edit_garden_intervention` et `delete_garden_intervention`.
+Ils renvoient les identifiants réels. `persisted:false` ne prétend jamais qu’une
+sauvegarde disque a eu lieu. Les clés de requêtes durables protègent les ajouts rejoués.
 
-A later persistent companion could expose an explicitly authenticated REST or
-MQTT boundary without requiring a GUI. That is a separate architecture decision,
-including file ownership/locking and a single writer: it must not independently
-rewrite a plan while OGP edits it. A safe first read-only prototype could consume
-an intentional JSON export. Server operation and deployment are separate scope.
+Un éventuel compagnon persistant pourrait exposer une interface REST ou MQTT
+authentifiée sans imposer l’ouverture de l’application. Cela demanderait une décision
+d’architecture distincte : propriété et verrouillage des fichiers, rédacteur unique,
+et interdiction de réécrire indépendamment le plan pendant qu’OGP le modifie. Un premier
+prototype en lecture seule pourrait consommer un export JSON produit volontairement.
+L’exploitation et le déploiement d’un serveur constituent un chantier séparé.
 
-Future sensor associations should reference zone UUIDs, with an explicit mapping
-from sensor identity to zone and measurement type/unit. Store timestamped raw
-measurements separately from interpretations and manual interventions. A sensor
-reading, recommendation or automation request does not prove that watering or a
-soil application occurred. No irrigation control is authorised by this note.
+De futurs liens avec des capteurs devraient référencer les UUID des zones et préciser
+le lien entre identité du capteur, zone, type de mesure et unité. Les mesures brutes
+horodatées resteraient séparées des interprétations et interventions manuelles. Une
+mesure, recommandation ou demande d’automatisation ne prouve pas qu’un arrosage ou
+un apport au sol a été effectué. Cette note n’autorise aucune commande d’irrigation.

@@ -144,6 +144,10 @@ def install_collections(
             raise ValueError("Collection keys must be nonempty and unique")
         seen_collections.add(key)
         marker = f"Import local OGP v1/{key}"
+        if marker in markers:
+            # The marker is written after custom snapshots. Its presence means
+            # this batch completed; replay must preserve user deletions too.
+            continue
         entries = []
         for plant in plants:
             record = plant.to_dict()

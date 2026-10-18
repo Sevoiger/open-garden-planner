@@ -98,7 +98,8 @@ identifiées restent celles du catalogue embarqué, sans ajout horticole invent�
 
 Dans **Plant Lists**, choisir une collection, puis glisser la fiche sur le plan.
 Sélectionner la plante et compléter **Plant Details > Variety** quand le cultivar
-est connu. Ce champ appartient à cette plantation ; il ne renomme pas toutes les
+est connu. Régler manuellement l’emprise dessinée si la fiche générique ne donne
+pas de dimension. Ce champ appartient à cette plantation ; il ne renomme pas toutes les
 sauges de la bibliothèque. Pour identifier précisément une autre espèce, utiliser
 **Search** ou compléter son nom botanique. Les recherches françaises et les anciens
 noms anglais des fiches embarquées restent disponibles. Les 36 noms du précédent
