@@ -303,3 +303,7 @@ Second personal UI follow-up (2026-10-18): late sidebar content growth and embed
 layer rename sizing are corrected. ADR-061 defines four explicit classic-plant list
 imports from the existing catalog, with backup and replay preservation. See
 PLANTES_ET_DESSIN.md; importing local user storage requires OGP closed. No merge implied.
+
+Independent review resolved the standalone-panel collapse floor regression. The four
+classic collections (36 entries) are installed locally with exact preservation of
+previous lists and a verified no-op replay; no plants were placed on the owner's plan.

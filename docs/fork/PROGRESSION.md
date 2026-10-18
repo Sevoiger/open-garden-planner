@@ -183,6 +183,19 @@ Tests de croissance/réduction avec autre panneau ouvert : réussis, clair et so
 Le catalogue contient déjà118 espèces hors ligne. Quatre listes classiques de9 plantes
 chacune sont préparées à partir de ces données, avec import explicite (application
 fermée), copie de sauvegarde, refus de données illisibles et reprise sans doublons.
-Aucune plantation réelle n'est ajoutée. L'installation locale effective reste à exécuter
-après revue. 66 contrôles ciblés réussis. Dessin réel/cote encore absents ; guide
+Aucune plantation réelle n'est ajoutée. Les 36 fiches sont maintenant installées dans
+les quatre collections de la bibliothèque locale, application fermée et après revue.
+Le fichier existant a été sauvegardé ; une deuxième exécution laisse ses octets
+inchangés et n'ajoute aucun doublon. 77 contrôles ciblés réussis sur `d2a8c90` ; revue
+indépendante favorable, avec 27 tests relancés. La revue avait identifié un plancher
+de hauteur conservé lors de la fermeture d'un panneau autonome : corrigé et couvert
+par des clics réels sur son titre. Dessin réel/cote encore absents ; guide
 PLANTES_ET_DESSIN.md ajouté, dont l'explication rayon<angle en centimètres/degrés.
+Confirmation visuelle native des calques encore nécessaire.
+
+Suite complète dans le checkout figé `b11f53c` : **8634 réussites, 46 skips,
+2 tests CLI Darwin désélectionnés, 1 échec**, en 550,72 s. Seul échec : largeur nulle
+au round-trip DXF, déjà reproduit sur la base amont inchangée. Le correctif ultérieur
+`d2a8c90` est validé séparément par les 77 contrôles ciblés et la re-revue indépendante.
+Ruff, Bandit HIGH=0, traductions, parité, citations, secrets et sources wiki passent ;
+mypy reste à 1928 erreurs héritées sans augmentation par fichier. Aucun seuil modifié.

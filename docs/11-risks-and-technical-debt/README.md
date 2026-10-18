@@ -1344,3 +1344,7 @@ QListWidget item padding; their rename field got18px for a31px hint. Give embedd
 ownership of padding and include the hidden editor in row hints, then derive viewport
 height from those hints. Tests exercise grow/shrink, another competing panel, inline
 rename and scroll reachability in light/dark. ADR-060 follow-up; debug-verbose case study.
+
+The independent review also exercised standalone panels: hiding content on header
+close must release the expanded minimum, even without a SidebarController. This is
+now explicit in set_expanded(False), with a real-click open/close/grow/reopen test.
