@@ -2791,15 +2791,19 @@ is a shared-*state* defect and was fixed by isolating the arm, not by scheduling
   mean < 16 ms, spatial-index medians < 200 ms / < 1 ms) beside workers on a 4-vCPU runner.
   So the parallel step deselects them and the serial step is the only place they run, at
   `-n 0`.
-  **The serial step adds no coverage, and an earlier draft of this ADR claimed it restored
-  `agent_api`'s margin "to fourteen". That was never measured and is withdrawn.** Coverage
-  accumulates a *set* of executed lines, so re-running tests that already ran under tracing
-  adds nothing. Measured with the gate itself, `agent_api` is 2026 of 2195 in both shapes —
-  parallel step running everything, and parallel step deselecting perf with the perf set
-  appended — and the margin against the 92% floor (2020) is **six either way**. What the
-  step buys is scheduling, not headroom: it is the single place those fourteen run, without
-  workers. The parallel part of that job is still a parallel run; do not read
-  "deterministic" into it.
+  **The deselect and the append are one decision, not two, and two earlier drafts of this
+  ADR got it wrong in opposite directions.** The first claimed the append "restores the
+  margin to fourteen"; the second retracted that as "adds no coverage — a no-op for the
+  figure". Both are false, and the measurement that refutes both was on the same page.
+  Measured with the gate itself: step 1 alone is `agent_api` **2012 of 2195 with the gate
+  exiting 1**; step 1 plus the serial append is **2026 of 2195 with `regressions: []`**. The
+  delta is exactly the fourteen `stop()` escalation lines. The second draft's error was
+  comparing two shapes that *both* contained the append — step 1 running everything, versus
+  step 1 deselecting — so they matched by construction. The shape that answers the question
+  is step 1 **alone**.
+  So: the append is load-bearing for the coverage gate, and it is also the single place the
+  three zero-slack budgets run. Delete it and `Coverage` goes red on `agent_api`; delete the
+  deselect and it becomes redundant. The margin against the floor is six either way.
   The fourteen statements the filter removed are `stop()`'s forced escalation — `_run`'s
   `_forced_stop` branch, `_cancel_loop_tasks`, `_force_stop`, the #373 fix — not `start()`,
   which is covered by `test_agent_api_lifecycle.py` and `test_agent_api_server.py`. Exact

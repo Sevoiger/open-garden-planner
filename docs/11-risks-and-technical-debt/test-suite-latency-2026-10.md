@@ -195,8 +195,10 @@ document does not claim it is.
 
 ### What follows, and what does not
 
-- **A visibility-filtered walk would cost 0.0 ms** against 21 825 ms measured, and
-  0 % of the surviving widgets are visible. That is a tempting one-function product
+- **A visibility-filtered walk would cost 0.0 ms** against the leaked-state round-trip
+  above — measured twice, at **22 478 ms** and **21 825 ms**, the two being separate runs
+  of the same probe on a box this document elsewhere says drifts 37–63 % — and 0 % of the
+  surviving widgets are visible. That is a tempting one-function product
   change — and it is *not* obviously safe: a widget that is hidden now and shown
   later would have skipped its re-tint, so the fix is only correct if hidden widgets
   re-tint lazily (e.g. on `showEvent`) instead. That is a behaviour change to
@@ -298,10 +300,16 @@ Recorded rather than silently amended, because each changes what the work is wor
    Still true, and worth keeping: no test binds a fixed port. `8765` appears only in
    settings-default assertions and dialog URL strings, and `tests/integration/conftest.py`
    records that no test ever binds it.
-6. **Criterion 2 (`-m "not perf"`) is worth ~0.5 %.** `tests/perf` is 6.35 s of a
-   1 362 s run. It has independent merit — a plain run becomes deterministic, per
-   §11.4's #354 entry about not letting timing assertions share a runner with
-   correctness tests — but it is not a speed lever.
+6. **Criterion 2 (`-m "not perf"`) is worth ~1.7 %, not the ~0.5 % this entry used to
+   claim.** The old figure was `tests/perf` "6.35 s of a 1 362 s run", and both halves were
+   wrong on inspection: 6.35 s is `test_nfr_budgets.py` **alone** (6 tests, timed directly),
+   not the `tests/perf/` directory, and 1 362 s appears nowhere else in this document or in
+   issue #509. This document's own layer table above puts the `perf` layer at **10.5 s of a
+   620.6 s measured-call-time total**, i.e. 1.7 %, which is the figure to use. The 14 marked
+   tests are also spread across the suite now rather than confined to `tests/perf/`, so the
+   number will move again. It has independent merit — a plain run becomes deterministic, per
+   §11.4's #354 entry about not letting timing assertions share a runner with correctness
+   tests — but it is not a speed lever.
 7. **`Coverage` is not a required check.** Branch protection requires eight contexts
    (`Agent context parity`, `Lint`, `Test`, `Security`, `Dependencies` ×2, `Types` ×2).
    De-duplicating the two runs therefore buys runner-minutes, not gate latency — and
@@ -476,10 +484,19 @@ escalation, not `start()` — and it added `-n auto`. Measured on CI with
 | `Coverage` | 21m10s (1270 s) | **5m57s (357 s)** |
 | `Test` | 17m27s (1047 s) | **6m45s (405 s)** |
 
-The same two branch runs disagree with each other — the push run measured `Coverage` at
-7m56s and `Test` at 4m31s — so read the spread, not the smaller figure: GitHub runners are
-shared and this branch's own two runs differ by 33%. The honest summary is **2.7×–3.6× on
-`Coverage`**, measured twice.
+The same two branch runs disagree with each other, so read the spread rather than the
+smaller figure. Raw job spans from `gh run view <id> --json jobs`, all four on the same
+workflow and runner class:
+
+| job | master 39076508170 | branch push 39109870093 | branch PR 39109872385 | branch spread |
+|---|---|---|---|---|
+| `Coverage` | 1270 s (21m10s) | 476 s (7m56s) | 357 s (5m57s) | **33 %** |
+| `Test` | 1047 s (17m27s) | 271 s (4m31s) | 405 s (6m45s) | **50 %** |
+
+The honest summary is **2.7×–3.6× on `Coverage`** and **2.6×–3.9× on `Test`**, measured
+twice each. `Test` has the wider spread of the two, which is worth knowing before quoting
+either number as "the" improvement; a single CI run is one sample of a shared runner, the
+same lesson this document applies to its own box elsewhere.
 
 Two corrections to an earlier draft of this paragraph, both because a number here was
 wrong rather than merely stale: it said **91.71%** (which is not what 2012/2195 is) and

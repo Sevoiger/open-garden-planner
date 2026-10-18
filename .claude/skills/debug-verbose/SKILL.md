@@ -2285,7 +2285,7 @@ supposed to be straightforward: measure where the time goes, then parallelise.
 6. *"`--cov` and the perf tests are mutually exclusive, so the `Coverage` job has been
    measuring something it cannot gate."* The repaint budget fails locally under tracing -
    20.29 ms against a 16.70 ms budget - and that is true. But
-   `tests/perf/test_nfr_budgets.py:56-57` reads `_IS_CI = CI or GITHUB_ACTIONS` and
+   `tests/perf/test_nfr_budgets.py:56-57` reads `_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"` and
    `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so **on CI the budget is 50 ms**. The
    20.29 ms was measured against the LOCAL budget and then generalised to a configuration
    nobody ran; `gh run view 39076508170` records master's `Coverage` job **succeeded**.

@@ -1373,7 +1373,7 @@ dynamic consumers retain comments, and unresolved receivers/helper imports fail 
   **20.29 ms against a 16.70 ms budget** under tracing ... so the `Coverage` job has been
   measuring something it cannot gate". Both halves were wrong, and the error is the one this
   section exists to prevent. `tests/perf/test_nfr_budgets.py:56-57` reads
-  `_IS_CI = CI or GITHUB_ACTIONS` and `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on CI
+  `_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"` and `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on CI
   the budget is **50 ms**. The 20.29 ms was measured **here**, against the **local** 16.7 ms
   budget, and was generalised to a configuration nobody ran - and `gh run view 39076508170`
   records master's `Coverage` job **succeeded** at `412f01bd`. One variable, both ways, same

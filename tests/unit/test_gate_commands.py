@@ -799,9 +799,53 @@ def test_ci_runs_the_whole_perf_set_serially() -> None:
         "running under `-n auto`, which is where the three zero-slack budgets break"
     )
     assert serial and "--cov-append" in serial[0], (
-        "the Coverage job needs a serial `tests/ -m perf -n 0 --cov-append` step. It adds "
-        "no coverage - coverage is a set union, and re-running traced tests adds nothing - "
-        "so its ONLY job is to be the single place those fourteen run, without workers"
+        "the Coverage job needs a serial `tests/ -m perf -n 0 --cov-append` step, and it "
+        "is LOAD-BEARING, not tidiness. Measured with the gate itself: step 1 alone leaves "
+        "`agent_api` at 2012 of 2195 and the gate exiting 1; with the append it is 2026 and "
+        "`regressions: []`. The delta is the fourteen `stop()` escalation lines that the "
+        "deselect above removes from the parallel step. Delete the append and Coverage goes "
+        "red on agent_api; delete the deselect and the append becomes redundant."
+    )
+
+
+def test_the_perf_steps_cannot_be_neutralised() -> None:
+    """The perf steps must actually gate. A step that cannot fail verifies nothing.
+
+    `test_ci_runs_the_whole_perf_set_serially` reads each step's `run:` text, so it cannot
+    see whether the step is allowed to fail. Three mutations were applied and the pin was
+    green for all three: `continue-on-error: true` on the Test job's quiet-runner step,
+    `if: ${{ false }}` on it, and `continue-on-error: true` on the Coverage job's serial
+    append step. Each leaves every other check green while the perf tests stop being
+    verified — the same "worse than no pin, because it reads as protection" failure one
+    level above the command text.
+
+    Three assertions, because these are the only keys that can make a green step not gate.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(
+        (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    selector = re.compile(r"-m\s+'?((?:not\s+)?perf)'?")
+    found = 0
+    for job_name, job in workflow["jobs"].items():
+        for step in job.get("steps", []):
+            run = step.get("run")
+            if not (run and selector.search(run)):
+                continue
+            found += 1
+            where = f"{job_name} / {step.get('name') or run[:40]}"
+            assert not step.get("continue-on-error"), (
+                f"`{where}` has continue-on-error: the perf tests would run, could fail, "
+                "and the job would still be green — a gate that reports nothing"
+            )
+            assert "if" not in step, (
+                f"`{where}` is conditional: a perf step behind an `if:` may be skipped "
+                "entirely, and nothing else in the workflow would notice"
+            )
+    assert found >= 3, (
+        f"expected the perf step in `test` and the two in `coverage`, found {found} — if a "
+        "step was renamed or moved, this check has silently stopped looking at it"
     )
 
 

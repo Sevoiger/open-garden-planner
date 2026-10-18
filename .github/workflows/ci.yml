@@ -263,11 +263,10 @@ jobs:
       # the same command once the run exists.
       #
       # The cost is stated rather than waved away: `agent_api` sits six statements above its
-      # floor (2026 of 2195, floor needs 2020) and those six are what a parallel run's
-      # variance eats. The second step below does not widen that margin - see what it
-      # actually does there - but it does stop the three zero-slack budgets from being
-      # measured under load, which is where the variance would otherwise first show up
-      # as a red job.
+      # floor (2026 of 2195, floor needs 2020), and those six are what a parallel run's
+      # variance eats. The second step below is load-bearing for that floor AND is the only
+      # place the three zero-slack budgets run, so it does two jobs rather than widening a
+      # margin.
       # ADR-058 warned that "a parallel run's first visible failure mode is coverage",
       # and this is that warning costing six statements.
       #
@@ -290,29 +289,34 @@ jobs:
       # Whether `Coverage` should be a required check is a separate policy question for
       # the owner, deliberately not answered here.
       #
-      # Two steps, and what the second one is for is NOT what an earlier draft of this comment
-      # said. It does not add coverage. Coverage accumulates a SET of executed lines, so
-      # re-running tests that already ran under tracing adds nothing, and the second step
-      # is a no-op for the figure: measured with the gate itself,
-      #   agent_api covered = 2026 of 2195 in BOTH shapes - step 1 running everything, and
-      #   step 1 deselecting perf with the perf set appended serially. The margin against
-      #   the 92% floor (2020) is SIX either way. An earlier draft here claimed the step
-      #   "restores the six-statement margin to fourteen"; that was never measured and is
-      #   withdrawn.
+      # Two steps, and they are ONE decision rather than two. Measured with the gate itself:
+      #   step 1 alone (`-m 'not perf'`, -n auto, --cov)  agent_api 2012/2195  gate EXIT 1
+      #   step 1 + the serial append below                agent_api 2026/2195  gate EXIT 0
+      # A delta of exactly 14 - the fourteen lines enumerated above. The deselect is what
+      # REMOVES those statements from the parallel step; the append is what puts them back.
+      # Delete the append and this job goes red on `agent_api`; delete the deselect and the
+      # append becomes redundant. Neither half is optional and neither is decorative.
       #
-      # What it actually buys is SCHEDULING. The `perf` marker means "wall-clock
-      # sensitive", and eleven of the fourteen carry explicit CI slack (NFR 50 ms,
-      # receiver 30 ms, shadow-overlay x4, sun-heatmap x3, the shutdown pair at 4.0 s
-      # against a documented 0.19-2.2 s). Three carry NONE:
-      #   tests/integration/test_map_picker_dialog.py  - close() under 0.5 s
-      #   tests/unit/test_point_snapper.py              - mean under 16 ms
-      #   tests/unit/test_snap_spatial_index.py         - 200 ms build / 1 ms query medians
-      # The last one's own docstring records "a single wall-clock sample previously
-      # produced a false failure at 284 ms" against a 200 ms budget - a 42% overrun on an
-      # UNLOADED runner. So step 1 deselects them and step 2 is the only place they run, at
-      # `-n 0`. That is the whole justification, and it is a scheduling one: those three
-      # must not share a runner with eight workers. The parallel part of this job is still
-      # a parallel run; do not read "deterministic" into it.
+      # Why deselect rather than simply letting them run under `-n auto`: the `perf` marker
+      # means "wall-clock sensitive", and eleven of the fourteen carry explicit CI slack
+      # (NFR 50 ms; receiver 30 s, which is 3x its 10 s local budget and is in SECONDS -
+      # `test_sun_receiver_budget.py:42` compares `time.perf_counter() - started`;
+      # shadow-overlay x4 against a stated 50 ms; sun-heatmap x3 against a stated 2 s; the
+      # shutdown pair at 4.0 s against a documented 0.19-2.2 s). Three carry no CI slack at
+      # all: map-picker close under 0.5 s, point-snapper mean under 16 ms, and the
+      # spatial-index medians under 200 ms / 1 ms. Those three must not share a runner with
+      # eight workers, and the serial step is the only place they run.
+      #
+      # What the step is NOT: a wider coverage margin. The margin against the 92% floor
+      # (2020) is SIX in both shapes, and an earlier draft of this comment claimed the
+      # append "restores the margin to fourteen" - that was the right number attached to the
+      # wrong claim. A later draft then retracted it entirely as "a no-op for the figure",
+      # which was ALSO wrong: it compared step 1 running everything + append against step 1
+      # deselecting + append, two shapes that both contain the append, so of course they
+      # matched. The comparison that answers the question is step 1 ALONE, which is the
+      # 2012 / exit 1 above. Both drafts were refuted by a measurement already on the page.
+      # The parallel part of this job is still a parallel run; do not read "deterministic"
+      # into it.
       - name: Measure full-suite line and branch coverage
         env:
           QT_QPA_PLATFORM: offscreen
