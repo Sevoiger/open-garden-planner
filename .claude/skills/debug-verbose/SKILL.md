@@ -2251,7 +2251,7 @@ a feature leaves no test that fails when it returns, so replace its tests with a
 rather than dropping them. And when a fix makes a dead branch live, run the sibling suites - then
 be willing to revert the collateral if the branch does not survive.
 
-## Case study: five wrong theories, all of them instruments that did not reach the code (#509, 2026-10-18)
+## Case study: six wrong theories, five of them instruments that did not reach the code (#509, 2026-10-18)
 
 **Symptom.** The test suite took 912.6 s serially and gated every iteration between a change
 and the owner's hands-on pass. Issue #509 proposed `pytest-xdist`, and the diagnosis was
@@ -2282,6 +2282,18 @@ supposed to be straightforward: measure where the time goes, then parallelise.
 5. *"'CI no longer pays for the suite twice, so that is 31 minutes of wall clock."* The `test`
    and `coverage` jobs have no `needs:` between them and run concurrently. What doubles is
    runner-minutes, not the wait.
+6. *"`--cov` and the perf tests are mutually exclusive, so the `Coverage` job has been
+   measuring something it cannot gate."* The repaint budget fails locally under tracing -
+   20.29 ms against a 16.70 ms budget - and that is true. But
+   `tests/perf/test_nfr_budgets.py:56-57` reads `_IS_CI = CI or GITHUB_ACTIONS` and
+   `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so **on CI the budget is 50 ms**. The
+   20.29 ms was measured against the LOCAL budget and then generalised to a configuration
+   nobody ran; `gh run view 39076508170` records master's `Coverage` job **succeeded**.
+   One variable, both ways: `CI=true` -> 6 passed, unset -> 1 failed. **An instrument
+   pointed at the right code can still answer a different question than the one you carry
+   to the next file.** The corollary cost a fifth review round, and the same claim had
+   already been corrected in four documents by the time it was found a fifth time in
+   11.4 - so the real instrument here is `git grep`, not the measurement.
 
 **Key evidence.** The one measurement that mattered was the cheapest: re-run the slow file
 **on its own**. `test_iconography_3c.py` takes 2.14 s alone and 96.7 s in the suite; the same

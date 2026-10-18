@@ -2785,13 +2785,19 @@ is a shared-*state* defect and was fixed by isolating the arm, not by scheduling
   always been broken there" without anyone running the second half.
 - **What #509 did change about that job, and the cost of it.** It removed a `-m 'not perf'`
   filter that #509's own first draft had added (which pushed `agent_api` from 92.30% to
-  91.71%, below its floor) and it added `-n auto`: master ran that job serially in
-  21m10s, it now runs in 4m37s. The cost is the one this ADR predicted in the bullet
-  above — a six-statement margin (`agent_api` covers 2026 of 2195 against a floor of
-  2020) now sits on a non-deterministic scheduler, where one changed branch in one test
-  flips the job. The fourteen statements the filter removed are `stop()`'s forced
-  escalation (`_run`'s `_forced_stop` branch, `_cancel_loop_tasks`, `_force_stop`) — the
-  #373 fix — not `start()`, which is covered elsewhere.
+  91.66%, below its floor) and it added `-n auto`. It also adds a **second, serial** step to
+  that job: re-running the 14 perf tests with `-n 0 --cov-append`. Without it, removing the
+  filter would have put three zero-slack budgets (map-picker close < 0.5 s, point-snapper
+  mean < 16 ms, spatial-index medians < 200 ms / < 1 ms) beside workers on a 4-vCPU runner,
+  and left `agent_api`'s six-statement margin on a non-deterministic scheduler where one
+  changed branch in one test flips the job. The serial step restores the margin to fourteen
+  and makes the baseline independent of the scheduler; the cost is that those tests run
+  twice in that job.
+  The fourteen statements the filter removed are `stop()`'s forced escalation — `_run`'s
+  `_forced_stop` branch, `_cancel_loop_tasks`, `_force_stop`, the #373 fix — not `start()`,
+  which is covered by `test_agent_api_lifecycle.py` and `test_agent_api_server.py`. Exact
+  lines, from diffing two `--cov` JSON reports: 2686, 2691, 2715, 2716, 2718, 2719, 2720,
+  2728, 2729, 2733, 2734, 2735, 2737, 2768.
 
 **Evidence.** `scripts/measure_test_suite_latency.py` reproduces the concentration table
 from a recorded `--durations` report (11 unit tests pin its arithmetic against a

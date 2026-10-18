@@ -1367,11 +1367,20 @@ dynamic consumers retain comments, and unresolved receivers/helper imports fail 
   That helper retries `PortInUseError` and the exact string
   `"Agent API server failed to start"`, and re-raises every other `RuntimeError`
   immediately: a retry that swallows real product defects is worse than the flake it was
-  written to remove. Second, `--cov` and the perf tests are mutually exclusive —
-  the repaint budget fails at **20.29 ms against a 16.70 ms budget** under tracing,
-  because tracing inflates the very repaints it measures and the test's best-of-8-rounds
-  median cannot out-run it. That reproduces at `-n 0`, so it is not a parallel effect, and
-  it means the `Coverage` job has been measuring something it cannot gate. **Lesson: a
-  missing `finally` around a side effect is a correctness bug and an unbounded retry loop
-  is a hang; both are worth catching by asking what a helper swallows, not what it
-  returns.**
+  written to remove.
+  Second, and **this correction is itself the lesson**: an earlier draft of this entry
+  claimed "`--cov` and the perf tests are mutually exclusive - the repaint budget fails at
+  **20.29 ms against a 16.70 ms budget** under tracing ... so the `Coverage` job has been
+  measuring something it cannot gate". Both halves were wrong, and the error is the one this
+  section exists to prevent. `tests/perf/test_nfr_budgets.py:56-57` reads
+  `_IS_CI = CI or GITHUB_ACTIONS` and `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on CI
+  the budget is **50 ms**. The 20.29 ms was measured **here**, against the **local** 16.7 ms
+  budget, and was generalised to a configuration nobody ran - and `gh run view 39076508170`
+  records master's `Coverage` job **succeeded** at `412f01bd`. One variable, both ways, same
+  file: `CI=true` -> 6 passed; unset -> 1 failed.
+  **Lesson: a measurement taken against one configuration says nothing about another.**
+  **Lesson: a number that arrives from a reviewer's report is still a number you did not
+  take - the same discipline applies to your own review round.**
+  **Lesson: a missing `finally` around a side effect is a correctness bug and an unbounded
+  retry loop is a hang; both are worth catching by asking what a helper swallows, not what
+  it returns.**

@@ -725,6 +725,52 @@ def test_ci_still_scans_for_committed_secrets() -> None:
     )
 
 
+def test_ci_runs_the_whole_perf_set_serially() -> None:
+    """The perf step's three load-bearing details are pinned, because prose got them wrong.
+
+    `addopts` carries `-n auto --dist worksteal -m 'not perf'` (#509), so the perf tests
+    run in neither mode by default: the battery deselects them and the workers are the
+    thing they must not share a runner with. CI has to supply both halves explicitly.
+
+    All three details fail silently, which is why this is a test and not a comment:
+
+    * `tests/perf -m perf` collects **7 of the 14** and passes. Seven of the marked tests
+      live outside `tests/perf/`, so a directory-scoped command looks complete and is
+      not — CONTRIBUTING.md tabulates it as "the worst kind of wrong".
+    * omitting `-m perf` lets `addopts`' own `-m 'not perf'` win and collects **nothing**.
+    * omitting `-n 0` runs all 14 across 4 workers on a 4-vCPU runner, which is precisely
+      the load the marker exists to avoid, and three of the fourteen carry no CI slack
+      at all (map-picker close < 0.5 s, point-snapper mean < 16 ms, spatial-index
+      medians < 200 ms / < 1 ms).
+
+    Half this contract is already mechanised — `test_perf_marker_guard.py` fails the
+    build if a wall-clock assertion is added without the marker — so the marker was the
+    safe half to leave in prose and the invocation the dangerous one. Twice inside this
+    change the wrong form reached a document (`AGENTS.md`, `CLAUDE.md`, ADR-058 and the
+    latency baseline all carried one) while every check stayed green.
+    """
+    text = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "tests/ -m perf" in text, (
+        "ci.yml no longer runs the perf set. It must be `tests/ -m perf`, not "
+        "`tests/perf -m perf`: the marker means 'wall-clock sensitive', and 7 of the "
+        "14 marked tests live outside tests/perf/, so the directory form runs half the "
+        "gate and reports green"
+    )
+    assert "-m perf -n 0" in text, (
+        "the perf step lost its `-n 0`. Without it the timing tests run across "
+        "workers, which is the condition the perf/perf split exists to prevent"
+    )
+    # And the coverage job must not reintroduce the filter that drops agent_api below
+    # its floor, or reintroduce it with a serial re-measure rather than a silent loss.
+    coverage = text.split("  coverage:", 1)[-1]
+    assert "tests/ -m perf -n 0" in coverage and "--cov-append" in coverage, (
+        "the Coverage job must re-measure the perf tests SERIALLY and append, not "
+        "drop them. Excluding them puts agent_api at 91.66% against a 92% floor; "
+        "including them across workers puts three zero-slack budgets on a loaded runner"
+    )
+
+
 class TestCheckNoSecrets:
     """The secret checker must catch real credentials and nothing else.
 

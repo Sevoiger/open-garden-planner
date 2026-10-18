@@ -49,8 +49,8 @@ Nothing parses it yet; that is a stated limitation, not automation.
 | Fact | Value |
 |---|---|
 | Collected tests | **8 548** at `132f6715` |
-| Collected tests on this branch's head | **8 624** (+76: this change adds 19, #507 adds 57) |
-| Default run (`-m 'not perf'`) | **8 614** collected, 10 deselected |
+| Collected tests on this branch's head | **8 627** (+79: this change adds 22, #507 adds 57) |
+| Default run (`-m 'not perf'`) | **8 613** collected, 14 deselected |
 | Result | `1 failed, 8506 passed, 41 skipped in 912.60s (0:15:12)` |
 | Collection overhead alone | 3.4 s |
 | Local wall clock, unit layer only | **192.6 s** (3 min 12 s) |
