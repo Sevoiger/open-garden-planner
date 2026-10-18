@@ -501,3 +501,14 @@ positions; complete secondary segments are shown in priority order when space
 permits. `GardenPlannerApp` wires existing status values and icons into it.
 No project data or scene geometry changes. See ADR-058 and
 `tests/integration/test_macos_layout.py`.
+
+
+## Personal fork: perennial garden records (ADR-059)
+
+`models/garden_memory.py` owns Qt-free period, card, event and receipt validation.
+`core/garden_memory.py` adapts those contracts to scene UUIDs and the existing command
+manager; both `GardenMemoryDialog` and MCP write providers call this service on the Qt
+thread. `services/garden_queries.py` derives direct/zone views from detached snapshots;
+`services/garden_archive.py` handles media, JSON/CSV and portable ZIPs without widgets.
+ProjectManager owns journal persistence, pre-enrichment backups and perennial season
+copies. Existing object names and plant-instance notes/cultivars remain authoritative.

@@ -2778,3 +2778,42 @@ person who has to look at it.*
 **Evidence**: `tests/integration/test_macos_launcher.py` exercises real subprocess
  launch and failure paths including spaces/accents; `test_macos_layout.py` checks
  800/1200/1800 logical pixel layouts with 13-point fonts and native-style replacement.
+
+
+## ADR-059: Perennial garden memory in the personal fork
+
+**Status**: Accepted for the personal fork, 2026-10-18; native manual acceptance pending.
+
+**Context**: A perennial garden needs stable objects and a dated journal across years.
+A named bulb group can be a single footprint without being a Qt group; approximate
+planting dates must not become fabricated exact dates. Geometry and botanical data
+already have authoritative owners.
+
+**Decision**: Keep names and plant-instance notes/cultivars in their existing fields.
+Store additive `metadata.garden_tracking` cards and a versioned top-level
+`garden_memory` journal. Shapes retain their UUIDs and geometry; explicit zone
+membership is independent of graphical grouping and plant parenting. Periods retain
+precision, canonical value and original label. Unknown dates and quantities remain
+unknown. Historical event targets retain readable names and optional area/quantity
+snapshots; editing today's geometry cannot rewrite them.
+
+Route GUI and token-gated MCP writes through `GardenMemoryService` and the existing
+global command stack. One successful edit is one undo step. Event creation takes a
+persistent request key and content fingerprint; receipts survive undo and deletion,
+so a delayed retry cannot resurrect a deliberately removed intervention. Disk
+persistence remains an explicit Save operation and MCP reports `persisted: false`.
+
+Keep FILE_VERSION unchanged for additive compatibility, but warn that an upstream
+save can discard fork-only tracking. Validate before atomic writes, keep an exclusive
+pre-enrichment original, and preserve opaque top-level extension fields. An enriched
+New Season copies all objects and tracking, even when the legacy annual option would
+remove plants. Attachments are copied beside saved plans; JSON/CSV expose records,
+while a validated ZIP carries the full plan and referenced media for restoration
+into a new folder. Restoration rejects traversal, links, duplicates and size excess.
+
+**Consequences**: This is a personal-fork extension, not an upstream schema guarantee.
+There is no automatic weather/soil inference, full French localization, Home Assistant
+server or physical actuation. See `docs/fork/FORMAT_SUIVI.md`,
+`UTILISATION_JARDIN.md` and `HOME_ASSISTANT.md`. Evidence: unit period/validation tests,
+`test_perennial_garden.py` for UI/undo/reopen/backups/media and a real local MCP client
+in `test_garden_memory_mcp.py`. No dependency or version bump.

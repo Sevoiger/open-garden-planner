@@ -1300,3 +1300,13 @@ outside-source errors. Canonicalise the destination before extraction; preserve
 the source-boundary guard. Reproduced before the fix and pinned by
 `tests/integration/test_macos_translation_paths.py` using an alias at another depth.
 Both locales and compiled catalogs pass again without translation-content changes.
+
+### Personal fork: event-form width and selection contrast (2026-10-18)
+
+At 13-point font and 560×520, the attachment action row exceeded its form's
+available width. A menu button retains all actions within the scrolling form.
+The existing light QSS also left selected list text white on pale green; explicit
+selection foregrounds fix the measured palette. Tests cover actual small-form
+minimums and selection palette colors. Native owner acceptance remains pending;
+these observations do not explain the reported apparent spontaneous clicks.
+See the paired debug-verbose case study and ADR-058/059.

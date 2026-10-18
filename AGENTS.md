@@ -287,3 +287,8 @@ scope. Preserve business/persistence tests, atomic writes, translations, undo,
 independent review, feature branches and draft-only personal-fork PRs. Never
 merge, tag, release, publish a wiki or post to upstream under this mandate.
 Private garden sources stay ignored. Progress lives in `docs/fork/PROGRESSION.md`.
+
+Personal macOS fork tranche 1 (2026-10-18): additive perennial cards, partial dates,
+shared undoable intervention journal, protected MCP and portable data recovery are
+implemented on the personal feature branch. See ADR-059 and docs/fork/PROGRESSION.md
+for evidence and pending native manual acceptance. No upstream release/merge.

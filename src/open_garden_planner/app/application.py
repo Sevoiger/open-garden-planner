@@ -3548,6 +3548,21 @@ class GardenPlannerApp(QMainWindow):
             self.tr("Agent API running at {url}").format(url=server.url), 5000
         )
 
+    def _agent_garden_write(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._agent_bridge.run_on_main(lambda: self._do_garden_write(operation, payload))
+
+    def _do_garden_write(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from open_garden_planner.core.garden_memory import GardenMemoryService
+
+        service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
+        if operation == "card":
+            return service.set_card(payload["item_id"], payload["fields"])
+        if operation == "add":
+            return service.add_event(payload["fields"], payload["request_key"])
+        if operation == "edit":
+            return service.edit_event(payload["event_id"], payload["fields"])
+        raise ValueError(f"Unknown garden write operation: {operation}")
+
     def _build_agent_providers(self) -> Any:
         """Build the one production provider graph used by the embedded MCP server.
 
@@ -3559,6 +3574,7 @@ class GardenPlannerApp(QMainWindow):
 
         return AgentProviders(
             snapshot=self._agent_snapshot,
+            garden_write=self._agent_garden_write,
             diagnostics=self._agent_diagnostics,
             render=self._agent_render,
             save_plan=self._agent_save_plan,
@@ -4469,8 +4485,23 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(check_companion_action, "companion")
         menu.addAction(check_companion_action)
 
+    def _on_garden_records(self, target_id: str | None = None) -> None:
+        """Open perennial tracking from a selected shape or the global Garden menu."""
+        from open_garden_planner.core.garden_memory import GardenMemoryService
+        from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+
+        service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
+        GardenMemoryDialog(service, target_id, self).exec()
+        self._update_properties_panel()
+        self._update_plant_database_panel()
+
     def _setup_garden_menu(self, menu: QMenu) -> None:
         """Set up the Garden menu actions (US-12.10a — soil)."""
+        records = QAction(self.tr("Garden records…"), self)
+        records.triggered.connect(lambda _checked=False: self._on_garden_records())
+        menu.addAction(records)
+        menu.addSeparator()
+
         # Set default soil test (project-wide fallback when a bed has no own test)
         default_soil_action = QAction(self.tr("&Set default soil test…"), self)
         default_soil_action.setStatusTip(
@@ -5101,6 +5132,7 @@ class GardenPlannerApp(QMainWindow):
         self.properties_panel = PropertiesPanel(
             command_manager=self.canvas_view.command_manager
         )
+        self.properties_panel.garden_record_requested.connect(self._on_garden_records)
         # Re-evaluate all three contextual panels when the selected item's type
         # changes (e.g. tree → house): each may need to show or hide. Companion is
         # included explicitly so its visibility does not rely on the incidental

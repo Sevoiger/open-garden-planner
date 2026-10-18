@@ -690,6 +690,7 @@ class PlantDatabasePanel(QWidget):
 
         self.planting_date_edit = ClickableDateEdit()
         self.planting_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.planting_date_edit.setSpecialValueText(self.tr("Unknown date"))
         self.planting_date_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         # Date is already initialized to minimum date in __init__, shows as empty
         self.planting_date_edit.dateChanged.connect(self._on_planting_date_changed)
@@ -903,10 +904,11 @@ class PlantDatabasePanel(QWidget):
             return
         d = self.planting_date_edit.date()
         # Save the selected date
-        value = d.toPyDate().isoformat()
+        known = d != self.planting_date_edit.minimumDate()
+        value = d.toPyDate().isoformat() if known else None
         self._update_instance_metadata("planting_date", value)
-        # Update age display
-        self._update_age_label(d.toPyDate())
+        # Update age display without inventing a sentinel planting date.
+        self._update_age_label(d.toPyDate() if known else None)
 
     def _update_age_label(self, planting_date: date | None) -> None:
         """Update the age label based on planting date.
@@ -1531,6 +1533,11 @@ class PlantDatabasePanel(QWidget):
         self.variety_edit.setText(instance_data.get("variety_cultivar") or "")
 
         # Planting date
+        tracked = bool(getattr(self._current_plant_item, "metadata", {}).get("garden_tracking"))
+        self.planting_date_edit.setEnabled(not tracked)
+        self.planting_date_edit.setToolTip(
+            self.tr("Edit exact or partial dates in Garden records.") if tracked else ""
+        )
         planting_date_str = instance_data.get("planting_date")
         planting_date_val = None
         self.planting_date_edit.blockSignals(True)
@@ -1540,10 +1547,10 @@ class PlantDatabasePanel(QWidget):
                 self.planting_date_edit.setDate(QDate(planting_date_val))
             except (ValueError, TypeError):
                 # If invalid date, default to today
-                self.planting_date_edit.setDate(QDate.currentDate())
+                self.planting_date_edit.setDate(self.planting_date_edit.minimumDate())
         else:
-            # No date saved - default to today
-            self.planting_date_edit.setDate(QDate.currentDate())
+            # Preserve unknown dates rather than displaying an invented day.
+            self.planting_date_edit.setDate(self.planting_date_edit.minimumDate())
         self.planting_date_edit.blockSignals(False)
 
         # Update age label

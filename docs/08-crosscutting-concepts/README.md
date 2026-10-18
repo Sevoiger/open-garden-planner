@@ -2588,3 +2588,19 @@ recomputes visibility after both resizing and content-driven layout requests.
 Hidden secondary status details reappear when the window has enough space;
 coordinates, typed input and zoom stay permanent. Run layout regression tests
 with realistic 13-point fonts as well as the offscreen platform's smaller default.
+
+
+## Personal fork: garden memory safety and chronology (ADR-059)
+
+Partial dates store day/month/season/year/unknown precision and their entered label.
+Search uses inclusive conventional northern calendar ranges; bounds are never persisted
+as invented planting days. Empty numeric fields are unknown; explicit zero survives.
+French decimal commas and French/English/German season names are accepted. Event
+creation timestamps are independent UTC audit timestamps, not occurrence dates.
+Direct object events and zone events are displayed separately. Historical areas and
+names are snapshots, never recalculated from current shapes. Existing names/notes are
+shared rather than duplicated. Unknown top-level extension fields survive fork writes;
+unknown future object types retain the upstream loader's limitations. Upstream save
+compatibility is explicitly limited: keep the pre-enrichment backup and use this fork
+for enriched files. ZIP restoration is bounded and destination-contained; JSON/CSV
+exports alone do not embed external media. See `docs/fork/FORMAT_SUIVI.md`.

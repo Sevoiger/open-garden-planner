@@ -155,6 +155,7 @@ class PropertiesPanel(QWidget):
 
     # Signal emitted when an object's type changes (for updating other panels)
     object_type_changed = pyqtSignal()
+    garden_record_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -621,6 +622,11 @@ class PropertiesPanel(QWidget):
         # Plant-bed relationship sections
         self._add_bed_children_section(item)
         self._add_parent_bed_section(item)
+        if hasattr(item, "item_id") and hasattr(item, "metadata"):
+            records = QPushButton(self.tr("Garden records…"))
+            records.clicked.connect(lambda _checked=False, identity=str(item.item_id):
+                                    self.garden_record_requested.emit(identity))
+            self._form_layout.addRow(records)
 
         self._updating = False
 

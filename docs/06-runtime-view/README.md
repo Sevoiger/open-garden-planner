@@ -442,3 +442,16 @@ then runs `python -m open_garden_planner` once with startup output appended to
 a nonzero exit displays the log tail and waits for acknowledgement. Installation
 is separate (`scripts/setup_macos.sh`). No rebuilding or automatic restart occurs.
 On macOS `apply_theme` selects Fusion before the existing QSS is applied (ADR-058).
+
+
+## Personal fork: garden record edit and restore (ADR-059)
+
+A selected object opens Garden records; the master list also reaches obscured shapes.
+Saving a card or intervention validates first and executes one global undo command.
+MCP uses the same service through the Qt-thread bridge after existing opt-in/token
+checks. Repeating an event request key returns its receipt; conflicting content refuses
+without mutation. Undo/deletion retain receipts, while Save persists current records.
+The first enriched overwrite retains the original plan beside it. Save As relocates
+relative media; an enriched New Season retains UUIDs, notes and events. Portable restore
+validates into staging and publishes a new directory only after plan/media checks;
+it never replaces the active document. See `docs/fork/UTILISATION_JARDIN.md`.

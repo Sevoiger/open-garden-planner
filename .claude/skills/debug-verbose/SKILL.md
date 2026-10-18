@@ -2288,3 +2288,23 @@ No catalog keys, translations, runtime dependencies or thresholds changed.
 **Lesson.** Resolve a shared base before producing relative paths, rather than
 resolving only when consuming them. Pinned by
 `tests/integration/test_macos_translation_paths.py`.
+
+## Case study: clipped event actions and selected-text contrast (personal fork, 2026-10-18)
+
+**Symptom.** Offscreen renders of the actual garden forms at 13-point font and
+560×520 showed attachment buttons clipped horizontally. Selected list text was
+white on a pale green background under the light QSS theme.
+
+**Evidence.** Form minimum-size measurements exposed the action row's width;
+QPalette.HighlightedText/Highlight showed the low-contrast pair. Rendered widgets
+before and after confirmed the affected controls, without capturing the desktop.
+
+**Fix.** Put attachment actions in one translated menu button within the scrolling
+form. Set selected-text foreground explicitly for list, combo and line-edit QSS.
+Keep the system font. Integration tests check small-window minimum sizes and the
+actual selection palette, not just stylesheet text.
+
+**Lesson.** Realistic font sizes and actual palettes expose problems that a default
+headless screenshot can miss. This evidence does not establish native visual
+acceptance or explain the owner's reported apparent automatic clicks. Pins:
+`tests/integration/test_perennial_garden.py`, `tests/unit/test_theme.py`.

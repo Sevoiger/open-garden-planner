@@ -3072,3 +3072,12 @@ colour that *is* `GENERIC_RECTANGLE`'s default, so it could not fail; see §11.4
   `TestTheMaskIsTheItem` asserts that invariant, because a mask in the wrong coordinate frame does
   not fail, it *reads background*, which is what a luminance statistic calls texture. ADR-057
   addendum, §11.4.11.
+
+## Personal macOS fork — tranche 1 (2026-10-18)
+
+Owner-authorized scope lives in the local mission; it does not alter the upstream
+issue queue. Editable Apple Silicon launch and perennial cards/journal, partial dates,
+explicit zones, undo, protected MCP, media/export/restore and a fictional demo are
+implemented on `feature/personal-macos-garden`. Independent review and automated gates
+are recorded in `docs/fork/PROGRESSION.md`. Native visual acceptance remains pending;
+there is no release or merge. Future Home Assistant architecture is documented only.

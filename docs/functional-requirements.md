@@ -608,3 +608,22 @@ Acceptance: `tests/unit/test_stacking.py` (the Qt-free arrange algorithm — nor
   keys/values and fail startup clearly when protection cannot be established.
 - **FR-SAFETY-04**: Thumbnail/Static Maps responses have byte/pixel limits and full
   decoding checks; failed input does not publish partial caches or replace the background.
+
+
+## Personal fork: perennial garden records (2026-10-18, ADR-059)
+
+- **FR-FORK-GARDEN-01**: Named individual/group/zone cards retain object UUIDs, shared
+  notes and geometry. Dormant, uncertain, confirmed-dead and removed states are distinct;
+  an anonymous bulb group requires neither exact identity nor quantity.
+- **FR-FORK-GARDEN-02**: Partial/unknown planting dates retain precision and entered
+  labels. A multi-target intervention has planned/completed status, optional material,
+  quantity/unit, historical area/depth, attachments and stable ID. Direct and zone
+  history remain distinct and are filterable by type/text/date.
+- **FR-FORK-GARDEN-03**: GUI and protected local MCP edits share one command path,
+  persistent creation receipts and global undo/redo. Save/reopen and enriched season
+  copies preserve records; migration keeps an original backup. JSON, CSV and portable
+  ZIP restoration into a new folder support data recovery without replacing the open
+  document. No automatic save or Home Assistant integration is implied.
+
+Acceptance: `test_garden_memory.py`, `test_perennial_garden.py`,
+`test_garden_memory_mcp.py`; owner native visual check remains required.

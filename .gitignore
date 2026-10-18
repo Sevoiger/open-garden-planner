@@ -202,3 +202,5 @@ jardin-personnel/
 .DS_Store
 # Owner's local mandate contains personal garden context
 MISSION_AGENT_JARDIN.md
+# Imported project attachments are private runtime data
+*.assets/

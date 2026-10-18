@@ -61,3 +61,29 @@ régression sans resize ni appel manuel au recalcul : réussi. Les huit tests de
 mise en page/lanceur passent. P2 de bootstrap corrigé : lecture de la version uv
 avec awk, téléchargement du Python du bootstrap par uv, prérequis uv documenté.
 Nouvelle passe indépendante demandée après ces corrections.
+
+
+## Tranche 1 — suivi pérenne
+
+La seconde revue indépendante du lot 0 est sans P0/P1. Suite complète du lot 0 :
+8565 réussites, 46 skips, 2 tests désélectionnés car leur CLI refuse Darwin.
+Un échec DXF (`test_dxf_round_trip_preserves_position`) se reproduit aussi sur
+la base amont inchangée ; il n'est pas masqué ni attribué à cette tranche.
+
+Fiches individu/groupe/zone, dates partielles, états distincts et journal
+multi-cibles implémentés. Noms/notes réutilisent les données existantes ; aucun
+calendrier exact n'est inventé. Écritures GUI/MCP via une commande partagée,
+idempotence persistante, sauvegarde d'origine, médias copiés et restauration
+portable dans un nouveau dossier. Démonstration `examples/jardin-demo.ogp`
+explicitement fictive, avec fond artificiel calibré. Aucun plan personnel trouvé.
+Guides : `UTILISATION_JARDIN.md`, `FORMAT_SUIVI.md`, `HOME_ASSISTANT.md`.
+
+Les formulaires ont été rendus hors écran à 13 points dans une petite fenêtre :
+les commandes de pièces jointes ont été regroupées dans un menu pour éviter
+leur découpage. Le contraste du texte sélectionné a été corrigé dans le thème.
+Les tests vérifient les dimensions et la palette réelle, sans prétendre remplacer
+l'essai visuel du propriétaire. Le scénario réel MCP vérifie authentification,
+refus, répétition, modification, sauvegarde et réouverture. Les saisons françaises,
+anglaises et allemandes et les virgules décimales sont prises en charge.
+
+Revue et contrôles finaux de la tranche en cours. Aucun merge, tag ou release.
