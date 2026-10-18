@@ -725,6 +725,14 @@ def test_ci_still_scans_for_committed_secrets() -> None:
     )
 
 
+def _needs_of(job: dict) -> list[str]:
+    """Normalise a job's `needs`, which YAML may give as a string or a list."""
+    needs = job.get("needs")
+    if needs is None:
+        return []
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
 def test_ci_runs_the_whole_perf_set_serially() -> None:
     """Both of CI's perf steps are pinned by JOB, because prose got them wrong.
 
@@ -819,16 +827,34 @@ def test_the_perf_steps_cannot_be_neutralised() -> None:
     verified — the same "worse than no pin, because it reads as protection" failure one
     level above the command text.
 
-    Three assertions, because these are the only keys that can make a green step not gate.
+    **What is checked: `continue-on-error` and `if` at BOTH step and job level, plus the
+    transitive `needs` graph of the two jobs that carry a perf gate.** Each of those was
+    found by mutation, one round at a time, and each left the previous version of this pin
+    green while the perf tests stopped being verified:
+
+    * step `continue-on-error` / `if:` on the quiet runner or on the serial append;
+    * the same two keys on `jobs.test` / `jobs.coverage` - a step-only check cannot see
+      them, and the parent object carries the same keys;
+    * a dependency that can never run: `needs:` a job whose `if:` is false and the dependent
+      job is skipped, perf step included, in three lines of plain YAML with no shell
+      trickery at all.
+
+    A skipped job is reported differently from a passing one, so each of these turns a
+    working gate into a silent one.
+
+    **What this cannot see** is listed at the end of the body and stated as measurements
+    rather than as a claim of completeness: shell-level rewriting of a `run:` command is not
+    visible in parsed YAML, and neither is pytest configuration injected by environment.
     """
     import yaml
 
     workflow = yaml.safe_load(
         (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     )
+    jobs = workflow["jobs"]
     selector = re.compile(r"-m\s+'?((?:not\s+)?perf)'?")
     found = 0
-    for job_name, job in workflow["jobs"].items():
+    for job_name, job in jobs.items():
         # The JOB is checked too, and that is not belt-and-braces. Measured: putting
         # `continue-on-error: true` or `if: ${{ false }}` on `jobs.coverage` or
         # `jobs.test` leaves a step-only check green while the perf tests stop gating
@@ -865,17 +891,50 @@ def test_the_perf_steps_cannot_be_neutralised() -> None:
         "step was renamed or moved, this check has silently stopped looking at it"
     )
 
-    # WHAT THIS CANNOT SEE, stated because the alternative is a false impression of
-    # coverage. These are shell-level and so are not visible in the parsed YAML:
-    #   * `|| true`, and a pipe to `tee` without `pipefail`, on a perf step's command;
-    #   * `-o addopts="--collect-only"`, `--co`, or `env: PYTEST_ADDOPTS: --co` - each
-    #     makes the step succeed without running a test;
-    #   * a `run:` expressed as a YAML list, which raises TypeError here (loud, but the
-    #     message will be about a type rather than about a weakened gate);
-    #   * a perf step moved into a reusable workflow this file calls.
-    # Each was measured and each leaves these assertions green. Shell semantics cannot be
-    # pinned statically; recording the boundary can be, which is the same remedy
-    # `test_perf_marker_guard.py` applies to its own five holes.
+    # The `needs` graph, because a skipped dependency skips everything downstream of it.
+    # Measured: a job with `if: false`, plus `needs: [that-job]` on `test`, leaves both
+    # pins green while the perf step never executes. Plain YAML, no shell involved, and the
+    # same "a skipped check is not a passing check" failure as an `if:` on the job itself.
+    for gate_job in ("test", "coverage"):
+        _seen: set[str] = set()
+        _queue = list(_needs_of(jobs[gate_job]))
+        while _queue:
+            _dependency = _queue.pop()
+            assert _dependency in jobs, (
+                f"`{gate_job}` needs `{_dependency}`, which does not exist - GitHub would "
+                "fail the workflow, and nothing here was checking that either"
+            )
+            assert _dependency not in _seen, f"cycle in the needs graph at `{_dependency}`"
+            _seen.add(_dependency)
+            assert "if" not in jobs[_dependency], (
+                f"`{gate_job}` needs `{_dependency}`, which is conditional. If that `if:` is "
+                f"false the job is skipped, and so is `{gate_job}` with its perf gate - and "
+                "a skipped job is reported differently from a passing one"
+            )
+            assert not jobs[_dependency].get("continue-on-error"), (
+                f"`{_dependency}` can fail without failing the workflow, and `{gate_job}` "
+                "depends on it"
+            )
+            _queue.extend(_needs_of(jobs[_dependency]))
+
+    # WHAT THIS CANNOT SEE, as measurements rather than as a claim of completeness. A first
+    # draft of this list named four shapes; TWO WERE WRONG, and they are recorded rather
+    # than quietly dropped, because describing an untested hole is the same defect as
+    # making an untested claim:
+    #
+    #   HOLES, each measured and each leaving this test green:
+    #     * `-o addopts="--collect-only"`, `--co`, or `env: PYTEST_ADDOPTS: --co` on a perf
+    #       step's command - the step succeeds without running a single test;
+    #     * `|| true`, or a pipe to `tee` without `pipefail`, on the same command.
+    #
+    #   NOT holes, though the first draft claimed they were:
+    #     * a `run:` expressed as a YAML list FAILS LOUDLY (TypeError from the regex) - an
+    #       unhelpful message, but not a silent pass;
+    #     * a perf step moved into a reusable workflow is caught by `found >= 3` and by
+    #       `len(test_steps) == 1`.
+    #
+    # Shell semantics cannot be pinned statically; recording the boundary can be, which is
+    # the same remedy `test_perf_marker_guard.py` applies to its own holes.
 
 
 class TestCheckNoSecrets:

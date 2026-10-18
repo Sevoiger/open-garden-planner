@@ -490,19 +490,22 @@ records `Coverage` **success**, 8565 passed. So the job was never measuring some
 could not gate, and "it has always been broken" was a local number promoted to a claim
 about a configuration nobody ran.
 
-What #509 *does* change about that job: it removed a `-m 'not perf'` filter that #509's
-own first draft had added — that filter pushed `agent_api` to **91.66%** (2012 of 2195)
-against a 92% floor, and the fourteen statements it removed are `stop()`'s forced
-escalation, not `start()` — and it added `-n auto`. Measured on CI with
-`gh run view <id> --json jobs`, both job durations and same runner class:
+What #509 *does* to that job: it adds `-n auto` and it splits it into two steps. The
+parallel step **keeps** the `-m 'not perf'` filter — an earlier draft of this section said
+the filter was removed, which the shipped YAML contradicts — and a second, serial step runs
+those fourteen tests with `-n 0 --cov-append`. The deselect is what removes **91.66%**'s
+fourteen statements (2012 of 2195, against a 92% floor) from the parallel step; the append is
+what puts them back (2026 of 2195, `regressions: []`). They are one decision, and the
+fourteen are `stop()`'s forced escalation, not `start()`. Measured on CI with
+`gh run view <id> --json jobs`, same workflow and runner class throughout:
 
-| | master `412f01bd` (run 39076508170) | branch `0c472149` (run 39109872385) |
+| | master `412f01bd` (run 39076508170) | head `1b2398f7` (runs 39115631489 / 39115635791) |
 |---|---|---|
-| `Coverage` | 21m10s (1270 s) | **5m57s (357 s)** |
-| `Test` | 17m27s (1047 s) | **6m45s (405 s)** |
+| `Coverage` | 21m10s (1270 s) | **5m39s (339 s)** and **7m36s (456 s)** |
+| `Test` | 17m27s (1047 s) | **5m54s (354 s)** and **4m05s (245 s)** |
 
-The same two branch runs disagree with each other, so read the spread rather than the
-smaller figure. Raw job spans from `gh run view <id> --json jobs`, all four on the same
+The two head runs disagree with each other, so read the spread rather than the smaller
+figure. Raw job spans from `gh run view <id> --json jobs`, all four on the same
 workflow and runner class:
 
 | job | master 39076508170 | branch push 39109870093 | branch PR 39109872385 | branch spread |

@@ -162,8 +162,11 @@ markers = [
 #     Pass `-n 0` for a single file or a handful of tests.
 #   * `-n 0` also works as the escape hatch for anything machine-specific.
 #
-# `-m 'not perf'` — the 14 `perf`-marked tests must not share a runner with eight
-# workers. Two of them fail intermittently under parallel load: the NFR repaint
+# — the 14 `perf`-marked tests must not share a runner with the parallel
+# workers. Which workers: `-n auto` resolves to 4 beside ubuntu-latest's 4 vCPUs
+# and to 20 on the dev box, so name the environment rather than a number - and the
+# "8" quoted further up is the MEASUREMENT harness (`-n 8`), not a shipped
+# configuration. Two fail intermittently under parallel load
 # budget, and the map-picker close bound. §11.4's #354 entry already holds that
 # performance tests must protect a sustained regression statistically rather than
 # assert that one shared runner owns a quiet CPU; running them in their own step is

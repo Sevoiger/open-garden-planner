@@ -2783,14 +2783,18 @@ is a shared-*state* defect and was fixed by isolating the arm, not by scheduling
   The lesson is this ADR's own first rule about instruments: a measurement taken against
   one configuration does not describe another, and "locally it fails here" became "it has
   always been broken there" without anyone running the second half.
-- **What #509 did change about that job, and the cost of it.** It removed a `-m 'not perf'`
-  filter that #509's own first draft had added (which pushed `agent_api` from 92.30% to
-  91.66%, below its floor) and it added `-n auto`. It also adds a **second, serial** step to
-  that job: re-running the 14 perf tests with `-n 0 --cov-append`. Without it, removing the
-  filter would have put three zero-slack budgets (map-picker close < 0.5 s, point-snapper
-  mean < 16 ms, spatial-index medians < 200 ms / < 1 ms) beside workers on a 4-vCPU runner.
-  So the parallel step deselects them and the serial step is the only place they run, at
-  `-n 0`.
+- **What #509 does to that job: two steps, and they are one decision.** The job now runs
+  `pytest tests/ -m 'not perf'` with `-n auto`, and then a **second, serial** step runs the
+  14 perf tests with `-n 0 --cov-append`. The parallel step **keeps** the `-m 'not perf'`
+  filter — an earlier draft of this bullet said #509 removed it, which the shipped YAML
+  contradicts. The deselect and the append are one decision:
+  **step 1 alone is `agent_api` 2012 of 2195 with the gate exiting 1; step 1 plus the append
+  is 2026 of 2195 with `regressions: []`**, a delta of exactly the fourteen `stop()`
+  escalation lines. Drop the append and the job goes red on `agent_api`; drop the deselect
+  and the append becomes redundant while three zero-slack budgets (map-picker close < 0.5 s,
+  point-snapper mean < 16 ms, spatial-index medians < 200 ms / < 1 ms) run beside workers on
+  a 4-vCPU runner. `-n auto` is 4 workers there and 20 on the dev box; the "eight" this ADR
+  quotes elsewhere is the measurement harness, which matches neither.
   **The deselect and the append are one decision, not two, and two earlier drafts of this
   ADR got it wrong in opposite directions.** The first claimed the append "restores the
   margin to fourteen"; the second retracted that as "adds no coverage — a no-op for the

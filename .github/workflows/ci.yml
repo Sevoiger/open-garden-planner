@@ -250,7 +250,7 @@ jobs:
       #   tests/unit/test_point_snapper.py              - mean under 16 ms
       #   tests/unit/test_snap_spatial_index.py         - 200 ms build / 1 ms query medians
       # The last one's own docstring records "a single wall-clock sample previously produced
-      # a false failure at 284 ms" against a 200 ms budget, on an UNLOADED runner.
+      # a false failure at 284 ms" against a 200 ms budget. (The docstring says CI runners are shared; the "unloaded" reading is the author's, from that 284 ms overrun.)
       #
       # A footgun worth keeping next to the code: `tests/perf/test_nfr_budgets.py` reads
       # `_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"`
@@ -258,10 +258,14 @@ jobs:
       # a runner that sets `CI=1` takes the LOCAL 16.7 ms budget - so `_IS_CI = CI or ...`
       # written into a new test would silently take the wrong branch.
       #
-      # Measured job durations (`gh run view <id> --json jobs`): master 412f01bd run
-      # 39076508170 Coverage 1270 s / Test 1047 s; this branch's runs 39109872385 and
-      # 39109870093 Coverage 357 s and 476 s, Test 405 s and 271 s. Read the spread, not
-      # the smaller figure - a single CI sample is one reading of a shared runner.
+      # Measured job durations (`gh run view <id> --json jobs`), same workflow and runner
+      # class throughout. Every run is cited with the head it measured, because an ID
+      # alone does not say what code it ran:
+      #   master 412f01bd, run 39076508170   Coverage 1270 s, Test 1047 s
+      #   head 1b2398f7, run 39115631489     Coverage  339 s, Test  354 s
+      #   head 1b2398f7, run 39115635791     Coverage  456 s, Test  245 s
+      # The two head runs give 2.8x-3.7x on Coverage and 3.0x-4.3x on Test - read the
+      # spread, not the smaller figure. One CI sample is one reading of a shared runner.
       #
       # Whether `Coverage` should be a required check is a policy question for the owner,
       # deliberately not answered here.
