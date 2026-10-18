@@ -2604,3 +2604,13 @@ unknown future object types retain the upstream loader's limitations. Upstream s
 compatibility is explicitly limited: keep the pre-enrichment backup and use this fork
 for enriched files. ZIP restoration is bounded and destination-contained; JSON/CSV
 exports alone do not embed external media. See `docs/fork/FORMAT_SUIVI.md`.
+
+
+### Personal fork override: sidebar and custom popup sizing (ADR-060)
+
+The personal fork's default sidebar is click-operated; the ADR-030 hover-peek behavior
+requires explicit constructor opt-in. Canonical layout order and selection-driven
+pinning are unchanged. Custom category/search windows use their anchor screen's
+available logical geometry, including negative origins, with bounded size and
+scrollable overflow. Welcome content must scroll before action text is squeezed
+below font metrics. See `tests/integration/test_macos_popups.py`.

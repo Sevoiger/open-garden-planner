@@ -3081,3 +3081,8 @@ explicit zones, undo, protected MCP, media/export/restore and a fictional demo a
 implemented on `feature/personal-macos-garden`. Independent review and automated gates
 are recorded in `docs/fork/PROGRESSION.md`. Native visual acceptance remains pending;
 there is no release or merge. Future Home Assistant architecture is documented only.
+
+Personal-fork manual feedback follow-up (2026-10-18, ADR-060): explicit sidebar clicks,
+screen-bounded scrollable category/search popups and readable welcome actions are
+implemented and regression-tested. Category filters reset on reopening and explain empty results;
+new native visual acceptance is pending. See docs/fork/PROGRESSION.md.

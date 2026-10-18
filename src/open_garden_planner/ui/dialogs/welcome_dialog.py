@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -54,8 +56,18 @@ class WelcomeDialog(QDialog):
         layout.setSpacing(20)
         layout.setContentsMargins(30, 30, 30, 30)
 
-        # Banner/Logo at top
-        self._setup_banner(layout)
+        # Keep content at its natural minimum size; scroll rather than
+        # squeezing CTA text out of its padding on smaller screens/fonts.
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_root = QVBoxLayout(content)
+        content_root.setContentsMargins(0, 0, 0, 0)
+        content_root.setSpacing(20)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, stretch=1)
+        self._setup_banner(content_root)
 
         # Main content area with recent projects and actions
         content_layout = QHBoxLayout()
@@ -67,7 +79,7 @@ class WelcomeDialog(QDialog):
         # Right side: Actions
         self._setup_actions(content_layout)
 
-        layout.addLayout(content_layout, stretch=1)
+        content_root.addLayout(content_layout, stretch=1)
 
         # Bottom: Don't show again checkbox
         self._setup_footer(layout)
@@ -76,6 +88,9 @@ class WelcomeDialog(QDialog):
         """Set up the banner image at the top."""
         banner_label = QLabel()
         banner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # The decorative pixmap must not force the scroll content wider than
+        # its viewport once a vertical scrollbar is needed.
+        banner_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         # Load banner image
         resources_dir = Path(__file__).parent.parent.parent / "resources" / "icons"
@@ -149,26 +164,22 @@ class WelcomeDialog(QDialog):
         # CTA sizing only — all colors come from theme.py's
         # QPushButton[buttonRole="primary"/"secondary"] rules, so the buttons
         # follow the active light/dark theme automatically.
-        cta_size_qss = "padding: 15px 20px; font-size: 14px;"
 
         # New Project button (primary)
         new_project_btn = QPushButton(self.tr("New Project"))
         new_project_btn.setProperty("buttonRole", "primary")
-        new_project_btn.setStyleSheet(cta_size_qss)
         new_project_btn.clicked.connect(self._on_new_project)
         actions_layout.addWidget(new_project_btn)
 
         # Open Project button
         open_project_btn = QPushButton(self.tr("Open Project..."))
         open_project_btn.setProperty("buttonRole", "secondary")
-        open_project_btn.setStyleSheet(cta_size_qss)
         open_project_btn.clicked.connect(self._on_open_project)
         actions_layout.addWidget(open_project_btn)
 
         # Open Selected button (for recent projects)
         self._open_selected_btn = QPushButton(self.tr("Open Selected"))
         self._open_selected_btn.setProperty("buttonRole", "secondary")
-        self._open_selected_btn.setStyleSheet(cta_size_qss)
         self._open_selected_btn.setEnabled(False)
         self._open_selected_btn.clicked.connect(self._on_open_selected)
         actions_layout.addWidget(self._open_selected_btn)

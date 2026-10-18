@@ -512,3 +512,12 @@ thread. `services/garden_queries.py` derives direct/zone views from detached sna
 `services/garden_archive.py` handles media, JSON/CSV and portable ZIPs without widgets.
 ProjectManager owns journal persistence, pre-enrichment backups and perennial season
 copies. Existing object names and plant-instance notes/cultivars remain authoritative.
+
+
+### Personal fork popup placement (ADR-060)
+
+`ui/widgets/popup_geometry.py` owns available-screen placement for CategoryDropdown
+and global search. Both hold scrollable content with bounded outer windows.
+SidebarController defaults to click activation, keeping selection pinning and
+canonical order; the existing hover implementation requires explicit constructor
+opt-in. WelcomeDialog separates scrollable content from its fixed footer.

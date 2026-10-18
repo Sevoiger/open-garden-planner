@@ -1317,3 +1317,19 @@ Both editors now preserve the structured period until its displayed text changes
 empty labels display the canonical value. Regression tests cover both editors,
 empty/arbitrary labels and intentional date changes. Deletion catches locked-target
 refusals without changing records/history. See the paired debug-verbose case study.
+
+
+### Personal fork: popup edges and squeezed welcome actions (2026-10-18)
+
+Owner captures overturned the earlier offscreen status-bar-only visual confidence.
+A category placed directly at its anchor's bottom-left can extend hundreds of logical
+pixels beyond the available screen; bounding position alone cannot fit content taller
+than the screen. Bound both size and position, then keep full content in scroll areas.
+Use the anchor screen, including negative origins, rather than primary-screen size.
+
+Welcome's explicit small window constraints compressed locally padded action buttons
+until SE_PushButtonContents measured -5/-6 pixels. Scroll natural-sized content and
+keep the footer outside the scroll area; normal button sizing restores readable text.
+The owner also rejects the upstream hover-peek interaction: default headers now wait
+for clicks. The unlocated blank-filter report remains distinct from these reproduced
+causes. ADR-060 and `test_macos_popups.py` record the boundary and regressions.

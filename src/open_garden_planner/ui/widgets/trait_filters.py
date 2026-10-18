@@ -40,6 +40,18 @@ class TraitFilters(QWidget):
                 buttons[value.value] = button
                 layout.addWidget(button, row * 3 + index // 4, index % 4)
 
+    def clear(self) -> None:
+        """Clear a category's transient traits and publish one coherent change."""
+        changed = False
+        for button in (*self.layer_buttons.values(), *self.function_buttons.values()):
+            if button.isChecked():
+                blocked = button.blockSignals(True)
+                button.setChecked(False)
+                button.blockSignals(blocked)
+                changed = True
+        if changed:
+            self.changed.emit()
+
     @property
     def layers(self) -> set[str]:
         return {key for key, button in self.layer_buttons.items() if button.isChecked()}

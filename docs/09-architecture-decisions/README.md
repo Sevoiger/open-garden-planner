@@ -2817,3 +2817,40 @@ server or physical actuation. See `docs/fork/FORMAT_SUIVI.md`,
 `UTILISATION_JARDIN.md` and `HOME_ASSISTANT.md`. Evidence: unit period/validation tests,
 `test_perennial_garden.py` for UI/undo/reopen/backups/media and a real local MCP client
 in `test_garden_memory_mcp.py`. No dependency or version bump.
+
+
+## ADR-060: Explicit sidebar activation and screen-bounded popups (personal fork)
+
+**Status**: Accepted for the personal fork after owner feedback, 2026-10-18.
+
+**Context**: The owner rejects hover opening in the right sidebar. Their capture
+shows category content beyond the right screen edge, and welcome action text
+clipped out of its buttons. An offscreen Qt 6.11 probe reproduces a category frame
+at `(754,589,638,866)` on an 800×800 available screen and welcome button content
+heights of -5/-6 pixels against 14-pixel font metrics.
+
+**Decision**: SidebarController defaults to explicit header clicks; selection-driven
+context panels still open normally. The historical hover state machine remains
+available only to explicit `hover_peek=True` callers, with its existing tests.
+There is no new persisted setting. Category and global-search popups share
+`ui/widgets/popup_geometry.py`: use the anchor's available screen rectangle in
+logical pixels, prefer below/above, clamp both axes and bound the window size.
+Frameless custom windows retain the existing QSS border. Scroll containers preserve
+access to content larger than the screen instead of clipping thumbnails or filters.
+Category opening resets scroll position; global search retains typing focus.
+
+Welcome content scrolls while its footer remains accessible, and actions use the
+application's normal button sizing rather than local large padding. Do not shrink
+application fonts to conceal layout defects. Replacing the welcome content's height
+squeeze yields 17-pixel content space for a 17-pixel font in the measured setup.
+
+**Evidence/limits**: `test_macos_popups.py` covers screen origins (including negative
+coordinates), all categories/themes, last-item selection, search focus, welcome text
+space and real main-window click behavior. Owner captures remain local/ignored.
+The owner located the blank-filter report in the category panels. A second probe
+reproduced a ground-cover trait hiding all 23 tree thumbnails and surviving close,
+theme change and reopening. Reopening now clears both text and trait filters;
+zero matches show a translated message and a Clear filters action. The same probe
+returns all 23 thumbnails after reopening. Tests exercise these transitions on the
+same category instance across theme changes. These fixes still require native owner
+confirmation and do not explain every earlier apparent automatic click.

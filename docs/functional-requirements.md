@@ -627,3 +627,12 @@ Acceptance: `tests/unit/test_stacking.py` (the Qt-free arrange algorithm — nor
 
 Acceptance: `test_garden_memory.py`, `test_perennial_garden.py`,
 `test_garden_memory_mcp.py`; owner native visual check remains required.
+
+
+- **FR-FORK-UI-01** (ADR-060): sidebar headers open/close by click in the personal
+  fork, retaining contextual selection opening and stable order. All category/search
+  popups stay within the anchor screen; scrolling reaches oversized content. Welcome
+  actions retain enough content area for their text at small window sizes. Tests:
+  `test_macos_popups.py`, existing category/sidebar/welcome suites. Owner native visual
+  confirmation remains required. Category filters reset on reopening; empty results
+  show a message and an explicit reset action.

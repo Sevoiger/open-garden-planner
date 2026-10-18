@@ -455,3 +455,12 @@ The first enriched overwrite retains the original plan beside it. Save As reloca
 relative media; an enriched New Season retains UUIDs, notes and events. Portable restore
 validates into staging and publishes a new directory only after plan/media checks;
 it never replaces the active document. See `docs/fork/UTILISATION_JARDIN.md`.
+
+
+### Personal fork popup opening and sidebar input (ADR-060)
+
+A category click resets its search/scroll, measures desired content, bounds the popup
+to the anchor's available screen and focuses its search input. Large content scrolls.
+Global search uses the same placement without taking focus from the input. A sidebar
+header hover leaves state unchanged by default; clicking opens/closes the pinned
+panel. Canvas selection still reveals relevant contextual panels.

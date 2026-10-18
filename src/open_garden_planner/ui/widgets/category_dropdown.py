@@ -6,17 +6,21 @@ and drag-to-canvas, plus an in-popup search field that filters thumbnails.
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QContextMenuEvent,
     QDrag,
     QShowEvent,
 )
 from PyQt6.QtWidgets import (
+    QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
+    QPushButton,
+    QScrollArea,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -29,6 +33,7 @@ from open_garden_planner.ui.widgets.gallery_data import (
     GalleryCategory,
     GalleryItem,
 )
+from open_garden_planner.ui.widgets.popup_geometry import show_popup_below
 
 if TYPE_CHECKING:
     from open_garden_planner.models.plant_data import PlantSpeciesData
@@ -263,7 +268,7 @@ class CategoryDropdown(QWidget):
     item_selected = pyqtSignal(object)
 
     def __init__(self, category: GalleryCategory, parent: QWidget | None = None) -> None:
-        super().__init__(parent, Qt.WindowType.Popup)
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self._category = category
         self._buttons: list[_ThumbnailButton] = []
         self._setup_ui()
@@ -287,13 +292,27 @@ class CategoryDropdown(QWidget):
         self._search_box.setPlaceholderText(self.tr("Filter…"))
         self._search_box.setClearButtonEnabled(True)
         self._search_box.textChanged.connect(self._apply_filter)
-        layout.addWidget(self._search_box)
+        search_row = QHBoxLayout()
+        search_row.addWidget(self._search_box, stretch=1)
+        self._clear_filters_button = QPushButton(self.tr("Clear filters"))
+        self._clear_filters_button.clicked.connect(self.clear_filters)
+        search_row.addWidget(self._clear_filters_button)
+        layout.addLayout(search_row)
+        self._content = QWidget()
+        content_layout = QVBoxLayout(self._content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(4)
+        self._scroll = QScrollArea()
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setWidget(self._content)
+        layout.addWidget(self._scroll)
         from open_garden_planner.ui.widgets.trait_filters import TraitFilters
 
         self.trait_filters = TraitFilters(self)
         self.trait_filters.setVisible(any(item.species or item.plant_category for item in self._category.items))
         self.trait_filters.changed.connect(lambda: self._apply_filter(self._search_box.text()))
-        layout.addWidget(self.trait_filters)
+        content_layout.addWidget(self.trait_filters)
 
         grid_widget = QWidget()
         grid_layout = QGridLayout(grid_widget)
@@ -308,13 +327,18 @@ class CategoryDropdown(QWidget):
             grid_layout.addWidget(btn, row, col)
             self._buttons.append(btn)
 
-        layout.addWidget(grid_widget)
+        content_layout.addWidget(grid_widget)
+        self._empty_label = QLabel(self.tr("No matching objects"))
+        self._empty_label.setWordWrap(True)
+        content_layout.addWidget(self._empty_label)
+        self._empty_label.hide()
 
         self.adjustSize()
         max_width = (THUMB_SIZE + 16) * GRID_COLS + 32
         if not self.trait_filters.isHidden():
             max_width = max(max_width, self.trait_filters.minimumSizeHint().width() + 32)
-        self.setFixedWidth(max_width)
+        self._preferred_width = max_width
+        self._header = header
 
     def _on_item_clicked(self, item: GalleryItem) -> None:
         self.tool_selected.emit(item.tool_type)
@@ -329,6 +353,13 @@ class CategoryDropdown(QWidget):
             visible = gallery_matches(btn.item, needle, layers=self.trait_filters.layers,
                                       functions=self.trait_filters.functions)
             btn.setVisible(visible)
+        self._empty_label.setVisible(all(btn.isHidden() for btn in self._buttons))
+
+    def clear_filters(self) -> None:
+        """Start each category opening with all objects, never stale hidden chips."""
+        self._search_box.clear()
+        self.trait_filters.clear()
+        self._apply_filter("")
 
     def refresh_thumbnails(self) -> None:
         """Re-pull each button's pixmap after a theme switch (see §8.21)."""
@@ -337,13 +368,22 @@ class CategoryDropdown(QWidget):
 
     def show_below(self, anchor: QWidget) -> None:
         """Show the popup directly beneath the given anchor widget."""
-        self._search_box.clear()
-        self._search_box.setFocus()
+        self.clear_filters()
         for btn in self._buttons:
             btn._update_favorite_state()
-        anchor_bottom_left = anchor.mapToGlobal(anchor.rect().bottomLeft())
-        self.move(anchor_bottom_left)
-        self.show()
+        layout = self.layout()
+        assert layout is not None
+        margins = layout.contentsMargins()
+        search_height = max(self._search_box.sizeHint().height(),
+                            self._clear_filters_button.sizeHint().height())
+        height = (self._header.sizeHint().height() + search_height
+                  + self._content.sizeHint().height() + margins.top() + margins.bottom()
+                  + 2 * layout.spacing())
+        show_popup_below(self, anchor, QSize(self._preferred_width, height))
+        for bar in (self._scroll.verticalScrollBar(), self._scroll.horizontalScrollBar()):
+            if bar is not None:
+                bar.setValue(0)
+        self._search_box.setFocus()
 
 
 # Backwards compatibility / descriptive alias

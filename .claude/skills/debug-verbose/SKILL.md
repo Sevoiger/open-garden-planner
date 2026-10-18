@@ -2324,3 +2324,37 @@ unchanged; show the canonical value if the original label is empty. Parse only
 an intentional text change. A label is presentation, not the date's source of
 truth. Also catch service refusals in intervention deletion, preserving data and
 history when a target becomes locked. Pins: `test_perennial_garden.py`.
+
+## Case study: off-screen category windows and blank welcome actions (personal fork, 2026-10-18)
+
+**Symptom.** Owner captures showed a category cut off at the right edge and welcome
+action text reduced to a thin strip. The owner also rejected hover-open sidebar panels.
+
+**Evidence before change.** An isolated offscreen Qt6.11/13-point probe logged
+`[MENU-PROBE] popup QRect(754,589,638,866)` against available QRect(0,0,800,800).
+Welcome CTA content rectangles were -5/-6 pixels tall against 14-pixel font metrics.
+Header entry committed PEEKING without a click. No desktop capture was required.
+A standalone combo rendered its four options in light/dark; the separately reported
+blank filter case was not established by this experiment.
+
+**Fix.** Category/search popups share anchor-screen logical placement, bounded size,
+frameless QSS borders and scrollable content. Scroll rather than squeeze welcome
+content; retain normal CTA sizing and an accessible footer. Sidebar defaults to
+clicks, with legacy hover behavior requiring explicit constructor opt-in. Selection
+pinning remains. Measurements after change: category frame QRect(162,0,638,800),
+welcome content/font both17px, hover leaves COLLAPSED. No font reduction.
+
+**Lesson.** Position clamping alone cannot fit a taller-than-screen widget. Test
+actual frame bounds, negative monitor origins, last-item reachability and font-content
+space, not just logical visibility or model counts. A nonempty combo probe does not
+prove the owner's different filter menu works. Native acceptance remains separate.
+Pins: `tests/integration/test_macos_popups.py`, category/sidebar/welcome regressions.
+
+
+**Category-filter clarification.** The owner then identified the top category panels.
+A second probe on unchanged `4c5e18b` selected ground_cover in Trees: zero visible
+items, and after close/theme-change/reopen the same hidden filter still yielded zero.
+The patched probe yields no selected filters and all23 tree thumbnails after reopening.
+Reset both text and trait chips on open; show No matching objects and Clear filters
+for intentional zero matches. The same-instance theme-switch workflow is regression
+pinned. This separates a reproducible empty result from an unproven native paint fault.

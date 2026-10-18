@@ -128,3 +128,31 @@ Restent non validés : aspect et stabilité sur l'écran du propriétaire, origi
 des clics apparents, et import/calibration d'un jardin réel faute de sources.
 L'usage reste en anglais/allemand avec guide français. Home Assistant reste une
 architecture future documentée. Pas de merge, tag, release ou livraison d'installeur.
+
+
+## Retour propriétaire — menus et accueil (2026-10-18)
+
+Le propriétaire juge le reste utilisable mais signale : ouverture au survol à droite,
+catégories hors écran dès Trees, menus vides selon l'affichage et filtres au clic vides.
+Deux captures locales montrent un popup coupé et les actions d'accueil illisibles.
+`toPatch/` est exclu de Git. Le reste de son essai constitue un retour positif partiel,
+pas une validation de tous les parcours ni une autorisation de merge/release.
+
+Reproduction mesurée : catégorie 638×866 placée à x754/y589 sur écran800×800 ;
+contenu des CTA d'accueil haut de -5/-6 pixels. Corrections : ouverture explicite
+au clic par défaut, placement partagé borné à l'écran de l'ancre, contenu défilant,
+accueil défilant sans compression des boutons. 59 tests ciblés passent, dont toutes
+les catégories dans les trois modes de thème et le dernier objet accessible.
+La boîte combo simple affiche ses options en clair et sombre dans la sonde ; le
+cas des filtres vides reste à localiser, une précision a été demandée au propriétaire.
+Revue et contrôles complets de ce delta à terminer. Voir ADR-060.
+
+
+Précision du propriétaire : les filtres vides sont dans les catégories en haut.
+Sonde avant/après sur le même scénario : filtre ground_cover dans Trees => zéro
+résultat ; fermeture, thème sombre et réouverture => filtre encore actif/zéro
+vignette avant, filtres vides/23 vignettes après correction. La réouverture remet
+texte et caractéristiques à zéro. Un résultat vide affiche un libellé explicite et
+Clear filters permet de retrouver les objets sans fermer le panneau. Le scénario
+est testé sur la même instance au travers d'un changement de thème. 73 contrôles
+ciblés réussis ; confirmation native des corrections encore nécessaire.

@@ -82,3 +82,14 @@ sa reprise, les positions à préciser et la calibration d’un plan réel reste
 - Créer un ZIP, restaurer ailleurs et ouvrir la copie : fond et pièces jointes présents.
 - Fermer l’application avant les tests automatisés. Après une modification sous
   `src/`, relancer suffit ; pas de reconstruction d’exécutable.
+
+
+Les panneaux de droite s'ouvrent et se referment en cliquant sur leur titre ; un
+simple passage de souris ne les ouvre plus. Une sélection sur le plan peut ouvrir
+les panneaux pertinents. Les catégories en haut se replacent dans l'écran ; utiliser
+leur défilement pour atteindre les derniers objets sur une petite surface d'affichage.
+
+Dans une catégorie, Filter… est un champ de recherche : y saisir par exemple
+`apple`. Les boutons de caractéristiques peuvent réduire la liste à zéro résultat.
+Le message No matching objects l'indique ; Clear filters réaffiche tous les objets.
+La réouverture d'une catégorie repart sans filtre de recherche ni caractéristique.

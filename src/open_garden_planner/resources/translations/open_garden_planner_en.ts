@@ -1073,27 +1073,37 @@
     <context>
         <name>CategoryDropdown</name>
         <message>
-            <location filename="../../ui/widgets/category_dropdown.py" line="184" />
+            <location filename="../../ui/widgets/category_dropdown.py" line="189" />
             <source>Add to Favorites</source>
             <translation>Add to Favorites</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/category_dropdown.py" line="192" />
+            <location filename="../../ui/widgets/category_dropdown.py" line="197" />
             <source>Add to List</source>
             <translation>Add to List</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/category_dropdown.py" line="287" />
+            <location filename="../../ui/widgets/category_dropdown.py" line="297" />
+            <source>Clear filters</source>
+            <translation>Clear filters</translation>
+        </message>
+        <message>
+            <location filename="../../ui/widgets/category_dropdown.py" line="292" />
             <source>Filter…</source>
             <translation>Filter…</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/category_dropdown.py" line="178" />
+            <location filename="../../ui/widgets/category_dropdown.py" line="331" />
+            <source>No matching objects</source>
+            <translation>No matching objects</translation>
+        </message>
+        <message>
+            <location filename="../../ui/widgets/category_dropdown.py" line="183" />
             <source>Remove from Favorites</source>
             <translation>Remove from Favorites</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/category_dropdown.py" line="151" />
+            <location filename="../../ui/widgets/category_dropdown.py" line="156" />
             <source>{name} (Favorite)</source>
             <translation>{name} (Favorite)</translation>
         </message>
@@ -7049,8 +7059,8 @@ Please save your project to a permanent location.</translation>
     <context>
         <name>GlobalSearchField</name>
         <message>
-            <location filename="../../ui/widgets/global_search.py" line="112" />
-            <location filename="../../ui/widgets/global_search.py" line="113" />
+            <location filename="../../ui/widgets/global_search.py" line="128" />
+            <location filename="../../ui/widgets/global_search.py" line="129" />
             <source>Search object…</source>
             <translation>Search object…</translation>
         </message>
@@ -14346,72 +14356,72 @@ Use File › Set Garden Location to configure GPS coordinates.</translation>
     <context>
         <name>WelcomeDialog</name>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="184" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="195" />
             <source>&lt;b&gt;Tip:&lt;/b&gt; Double-click a recent project to open it directly.</source>
             <translation>&lt;b&gt;Tip:&lt;/b&gt; Double-click a recent project to open it directly.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="128" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="143" />
             <source>Clear Recent</source>
             <translation>Clear Recent</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="205" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="216" />
             <source>Close</source>
             <translation>Close</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="236" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="247" />
             <source>File not found: {path}</source>
             <translation>File not found: {path}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="142" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="157" />
             <source>Get Started</source>
             <translation>Get Started</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="155" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="169" />
             <source>New Project</source>
             <translation>New Project</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="218" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="229" />
             <source>No recent projects</source>
             <translation>No recent projects</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="93" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="108" />
             <source>Open Garden Planner</source>
             <translation>Open Garden Planner</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="162" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="175" />
             <source>Open Project...</source>
             <translation>Open Project...</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="169" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="181" />
             <source>Open Selected</source>
             <translation>Open Selected</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="109" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="124" />
             <source>Recent Projects</source>
             <translation>Recent Projects</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="197" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="208" />
             <source>Show this screen on startup</source>
             <translation>Show this screen on startup</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="43" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="45" />
             <source>Welcome to Open Garden Planner</source>
             <translation>Welcome to Open Garden Planner</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/welcome_dialog.py" line="235" />
+            <location filename="../../ui/dialogs/welcome_dialog.py" line="246" />
             <source>{name} (not found)</source>
             <translation>{name} (not found)</translation>
         </message>

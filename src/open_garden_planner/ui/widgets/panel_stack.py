@@ -58,7 +58,10 @@ class _PanelEntry:
 
 
 class SidebarController(QWidget):
-    """Owns the sidebar layout and the COLLAPSED/PEEKING/PINNED state machine.
+    """Owns sidebar layout and click/selection-driven open state.
+
+    Hover peeking is disabled by default in the personal fork. Explicit
+    ``hover_peek=True`` callers retain the upstream peek state machine.
 
     Panels are registered in canonical order via :meth:`add_panel` and live in a
     single scrollable ``QVBoxLayout``; they are never reparented, so a state
@@ -72,8 +75,9 @@ class SidebarController(QWidget):
     # (key, PanelState) — emitted after every committed transition.
     panel_state_changed = pyqtSignal(str, object)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, hover_peek: bool = False) -> None:
         super().__init__(parent)
+        self._hover_peek = hover_peek
 
         # Canonical registry. Insertion order == canonical order.
         self._entries: dict[str, _PanelEntry] = {}
@@ -137,8 +141,11 @@ class SidebarController(QWidget):
         panel.take_over_header()
 
         # Default-arg binding so each lambda captures its own key (not the loop var).
-        panel.header.hover_enter.connect(lambda k=key: self._on_hover_enter(k))
-        panel.header.hover_leave.connect(lambda k=key: self._on_hover_leave(k))
+        # The personal fork opens panels explicitly by click. Retain the
+        # upstream hover mode only for callers that deliberately opt into it.
+        if self._hover_peek:
+            panel.header.hover_enter.connect(lambda k=key: self._on_hover_enter(k))
+            panel.header.hover_leave.connect(lambda k=key: self._on_hover_leave(k))
         panel.header.pin_toggled.connect(lambda _c, k=key: self._on_title_click(k))
 
         self._collapse(entry, animate=False, emit=True)
@@ -251,8 +258,8 @@ class SidebarController(QWidget):
 
     def _on_hover_enter(self, key: str) -> None:
         entry = self._entries.get(key)
-        if entry is None or entry.state is PanelState.PINNED:
-            return  # pinned panels ignore hover entirely
+        if not self._hover_peek or entry is None or entry.state is PanelState.PINNED:
+            return  # default click mode and pinned panels ignore hover
 
         # Re-entering the bar that was about to close cancels that close.
         if self._pending_close_key == key:

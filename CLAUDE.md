@@ -292,3 +292,9 @@ Personal macOS fork tranche 1 (2026-10-18): additive perennial cards, partial da
 shared undoable intervention journal, protected MCP and portable data recovery are
 implemented on the personal feature branch. See ADR-059 and docs/fork/PROGRESSION.md
 for evidence and pending native manual acceptance. No upstream release/merge.
+
+Owner UI feedback follow-up (2026-10-18, ADR-060): sidebar headers default to clicks,
+category/search popups are screen-bounded with scrollable content, and welcome
+content scrolls without squeezing action text. Category filters reset on reopening,
+explain empty results and offer a reset action; see docs/fork/PROGRESSION.md.
+Native visual confirmation remains pending. No merge implied.
