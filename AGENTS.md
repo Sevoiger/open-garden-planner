@@ -298,3 +298,8 @@ category/search popups are screen-bounded with scrollable content, and welcome
 content scrolls without squeezing action text. Category filters reset on reopening,
 explain empty results and offer a reset action; see docs/fork/PROGRESSION.md.
 Native visual confirmation remains pending. No merge implied.
+
+Second personal UI follow-up (2026-10-18): late sidebar content growth and embedded
+layer rename sizing are corrected. ADR-061 defines four explicit classic-plant list
+imports from the existing catalog, with backup and replay preservation. See
+PLANTES_ET_DESSIN.md; importing local user storage requires OGP closed. No merge implied.

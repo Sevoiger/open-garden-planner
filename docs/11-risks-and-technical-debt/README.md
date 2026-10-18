@@ -1333,3 +1333,14 @@ keep the footer outside the scroll area; normal button sizing restores readable 
 The owner also rejects the upstream hover-peek interaction: default headers now wait
 for clicks. The unlocated blank-filter report remains distinct from these reproduced
 causes. ADR-060 and `test_macos_popups.py` record the boundary and regressions.
+
+### Personal fork: late layer growth and embedded row padding
+
+The accordion's post-animation minimum was a snapshot: later layers enlarged the
+fixed list without raising that floor, so a second open panel squeezed opacity/actions
+into overlapping positions. Update the open floor on layout requests, outside the
+animation, and change it only when the hint differs. Layer rows also lost10px to generic
+QListWidget item padding; their rename field got18px for a31px hint. Give embedded rows
+ownership of padding and include the hidden editor in row hints, then derive viewport
+height from those hints. Tests exercise grow/shrink, another competing panel, inline
+rename and scroll reachability in light/dark. ADR-060 follow-up; debug-verbose case study.

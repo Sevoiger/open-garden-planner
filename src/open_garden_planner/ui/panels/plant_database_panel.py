@@ -1351,7 +1351,7 @@ class PlantDatabasePanel(QWidget):
         self.no_selection_label.setText(
             self.tr(
                 "No species data.\n\n"
-                "Click 'Search' to find species online,\n"
+                "Click 'Search' to choose an offline species or search online,\n"
                 "or 'Create Custom' to define your own."
             )
         )

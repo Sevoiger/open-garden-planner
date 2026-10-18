@@ -169,3 +169,20 @@ passent ; aucune augmentation des erreurs mypy par fichier. PR personnelle toujo
 en brouillon, aucune fusion/release. La session du propriétaire n'a pas été fermée :
 enregistrer, quitter puis relancer le lanceur charge les nouveaux menus. Confirmation
 visuelle native encore attendue sur survol/clic, bords d'écran et filtres/thèmes.
+
+
+## Deuxième lot de captures et plantes classiques (2026-10-18)
+
+Deux nouvelles captures montrent le renommage de calque trop bas et un chevauchement
+liste/opacité/boutons quand plusieurs panneaux sont ouverts. Sonde avant changement :
+minimum du panneau conservé à192px alors que son sizeHint passe à336px après ajouts ;
+ligne rendue26px, éditeur18px pour un besoin31px. Après correction : ligne39px,
+éditeur31px et plancher mis à jour sur les demandes de disposition hors animation.
+Tests de croissance/réduction avec autre panneau ouvert : réussis, clair et sombre.
+
+Le catalogue contient déjà118 espèces hors ligne. Quatre listes classiques de9 plantes
+chacune sont préparées à partir de ces données, avec import explicite (application
+fermée), copie de sauvegarde, refus de données illisibles et reprise sans doublons.
+Aucune plantation réelle n'est ajoutée. L'installation locale effective reste à exécuter
+après revue. 66 contrôles ciblés réussis. Dessin réel/cote encore absents ; guide
+PLANTES_ET_DESSIN.md ajouté, dont l'explication rayon<angle en centimètres/degrés.

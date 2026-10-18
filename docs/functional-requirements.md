@@ -636,3 +636,12 @@ Acceptance: `test_garden_memory.py`, `test_perennial_garden.py`,
   `test_macos_popups.py`, existing category/sidebar/welcome suites. Owner native visual
   confirmation remains required. Category filters reset on reopening; empty results
   show a message and an explicit reset action.
+
+
+- **FR-FORK-UI-02**: an expanded sidebar accommodates later layer additions/removals
+  without overlapping list, opacity and action controls; inline rename keeps space
+  for its text. Stable order and undo paths remain. Tests: test_layer_layout_growth.py.
+- **FR-FORK-PLANTS-01**: explicit automated import creates four reusable lists/36 bundled
+  species, preserving existing favorites/lists with a pre-change backup, refusing
+  unreadable stores and supporting idempotent retries. Standard portable list exports
+  are included; no real-garden placement occurs. Tests: test_classic_plant_lists.py.

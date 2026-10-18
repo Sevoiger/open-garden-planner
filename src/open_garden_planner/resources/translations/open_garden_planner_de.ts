@@ -1317,17 +1317,17 @@
     <context>
         <name>CollapsiblePanel</name>
         <message>
-            <location filename="../../ui/widgets/collapsible_panel.py" line="260" />
+            <location filename="../../ui/widgets/collapsible_panel.py" line="274" />
             <source>Click to collapse</source>
             <translation>Zum Einklappen klicken</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/collapsible_panel.py" line="262" />
+            <location filename="../../ui/widgets/collapsible_panel.py" line="276" />
             <source>Click to keep open</source>
             <translation>Zum Offenhalten klicken</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/collapsible_panel.py" line="264" />
+            <location filename="../../ui/widgets/collapsible_panel.py" line="278" />
             <source>Click to open</source>
             <translation>Zum Öffnen klicken</translation>
         </message>
@@ -8154,12 +8154,12 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
     <context>
         <name>LayerListItem</name>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="147" />
+            <location filename="../../ui/panels/layers_panel.py" line="157" />
             <source>Delete Layer</source>
             <translation>Ebene löschen</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="146" />
+            <location filename="../../ui/panels/layers_panel.py" line="156" />
             <source>Rename Layer</source>
             <translation>Ebene umbenennen</translation>
         </message>
@@ -8177,33 +8177,33 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
     <context>
         <name>LayersPanel</name>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="288" />
+            <location filename="../../ui/panels/layers_panel.py" line="299" />
             <source>Add Layer</source>
             <translation>Ebene hinzufügen</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="294" />
+            <location filename="../../ui/panels/layers_panel.py" line="305" />
             <source>Auto-assign plants to food-forest layers</source>
             <translation>Pflanzen automatisch Waldgarten-Ebenen zuordnen</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="291" />
+            <location filename="../../ui/panels/layers_panel.py" line="302" />
             <source>Create food-forest layer set</source>
             <translation>Waldgarten-Ebenen erstellen</translation>
         </message>
         <message>
             <location filename="../../models/layer.py" line="59" />
-            <location filename="../../ui/panels/layers_panel.py" line="488" />
+            <location filename="../../ui/panels/layers_panel.py" line="492" />
             <source>Layer</source>
             <translation>Ebene</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="275" />
+            <location filename="../../ui/panels/layers_panel.py" line="286" />
             <source>Layer opacity</source>
             <translation>Ebenen-Deckkraft</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="268" />
+            <location filename="../../ui/panels/layers_panel.py" line="279" />
             <source>Opacity:</source>
             <translation>Deckkraft:</translation>
         </message>
@@ -10252,9 +10252,19 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <location filename="../../ui/panels/plant_database_panel.py" line="1352" />
             <source>No species data.
 
-Click 'Search' to find species online,
+Click 'Search' to choose an offline species or search online,
 or 'Create Custom' to define your own.</source>
             <translation>Keine Artdaten.
+
+Über ‚Suchen‘ eine Offline-Art wählen oder online suchen,
+oder über ‚Eigene erstellen‘ eine eigene Art definieren.</translation>
+        </message>
+        <message>
+            <source>No species data.
+
+Click 'Search' to find species online,
+or 'Create Custom' to define your own.</source>
+            <translation type="vanished">Keine Artdaten.
 
 Klicken Sie auf 'Suchen', um Arten online zu finden,
 oder 'Eigene erstellen', um Ihre eigene zu definieren.</translation>

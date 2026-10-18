@@ -1297,17 +1297,17 @@
     <context>
         <name>CollapsiblePanel</name>
         <message>
-            <location filename="../../ui/widgets/collapsible_panel.py" line="260" />
+            <location filename="../../ui/widgets/collapsible_panel.py" line="274" />
             <source>Click to collapse</source>
             <translation>Click to collapse</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/collapsible_panel.py" line="262" />
+            <location filename="../../ui/widgets/collapsible_panel.py" line="276" />
             <source>Click to keep open</source>
             <translation>Click to keep open</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/collapsible_panel.py" line="264" />
+            <location filename="../../ui/widgets/collapsible_panel.py" line="278" />
             <source>Click to open</source>
             <translation>Click to open</translation>
         </message>
@@ -8038,12 +8038,12 @@ Please save your project to a permanent location.</translation>
     <context>
         <name>LayerListItem</name>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="147" />
+            <location filename="../../ui/panels/layers_panel.py" line="157" />
             <source>Delete Layer</source>
             <translation>Delete Layer</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="146" />
+            <location filename="../../ui/panels/layers_panel.py" line="156" />
             <source>Rename Layer</source>
             <translation>Rename Layer</translation>
         </message>
@@ -8061,33 +8061,33 @@ Please save your project to a permanent location.</translation>
     <context>
         <name>LayersPanel</name>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="288" />
+            <location filename="../../ui/panels/layers_panel.py" line="299" />
             <source>Add Layer</source>
             <translation>Add Layer</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="294" />
+            <location filename="../../ui/panels/layers_panel.py" line="305" />
             <source>Auto-assign plants to food-forest layers</source>
             <translation>Auto-assign plants to food-forest layers</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="291" />
+            <location filename="../../ui/panels/layers_panel.py" line="302" />
             <source>Create food-forest layer set</source>
             <translation>Create food-forest layer set</translation>
         </message>
         <message>
             <location filename="../../models/layer.py" line="59" />
-            <location filename="../../ui/panels/layers_panel.py" line="488" />
+            <location filename="../../ui/panels/layers_panel.py" line="492" />
             <source>Layer</source>
             <translation>Layer</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="275" />
+            <location filename="../../ui/panels/layers_panel.py" line="286" />
             <source>Layer opacity</source>
             <translation>Layer opacity</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/layers_panel.py" line="268" />
+            <location filename="../../ui/panels/layers_panel.py" line="279" />
             <source>Opacity:</source>
             <translation>Opacity:</translation>
         </message>
@@ -10098,9 +10098,19 @@ You can capture the satellite view directly from the map below instead.</transla
             <location filename="../../ui/panels/plant_database_panel.py" line="1352" />
             <source>No species data.
 
-Click 'Search' to find species online,
+Click 'Search' to choose an offline species or search online,
 or 'Create Custom' to define your own.</source>
             <translation>No species data.
+
+Click 'Search' to choose an offline species or search online,
+or 'Create Custom' to define your own.</translation>
+        </message>
+        <message>
+            <source>No species data.
+
+Click 'Search' to find species online,
+or 'Create Custom' to define your own.</source>
+            <translation type="vanished">No species data.
 
 Click 'Search' to find species online,
 or 'Create Custom' to define your own.</translation>

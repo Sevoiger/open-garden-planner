@@ -2854,3 +2854,43 @@ zero matches show a translated message and a Clear filters action. The same prob
 returns all 23 thumbnails after reopening. Tests exercise these transitions on the
 same category instance across theme changes. These fixes still require native owner
 confirmation and do not explain every earlier apparent automatic click.
+
+
+### ADR-060 personal-fork follow-up: late sidebar content (2026-10-18)
+
+A panel's initial minimum-height floor was frozen after its open animation. Adding
+layers later increased the fixed list but not that floor; opening another panel then
+squeezed the controls into overlapping positions. CollapsiblePanel now synchronizes
+its open floor on layout requests outside its animation, without forcing growth in
+collapsed state. Embedded layer rows own their padding, reserve the hidden rename
+editor's natural height and size the list from real row hints (up to five visible).
+The old 36px row became a 26px item widget under 5px+5px QSS padding and an18px rename
+field against a31px hint. The measured replacement gives a39px row and31px editor.
+`test_layer_layout_growth.py` covers grow/shrink with another open panel and theme
+modes; existing undo/layer tests remain authoritative for mutation behavior.
+
+## ADR-061: Explicit starter collections from the existing catalog
+
+**Status**: Accepted for the personal macOS fork, 2026-10-18.
+
+**Context**: The owner requests automated import of common plants and asks about
+existing libraries. The app already contains118 offline species and11 object categories;
+duplicating them in the custom-species store would create competing identities.
+
+**Decision**: Define four nine-species collections in `classic_plant_lists.json`,
+resolve all names through the bundled catalog, and use standard PlantList snapshots
+and the existing atomic PlantListStore importer. `services/classic_plant_lists.py`
+prevalidates the existing store and keeps an exclusive byte-for-byte original before
+an actual change. Explicit CLI execution while OGP is closed avoids racing its cached
+store. Replays recognize the collection descriptions (independent of user rename),
+skip installed lists, and retain user notes/deleted entries. Interrupted batches are
+recoverable by retry. No startup reinstallation, network lookup, new plant facts,
+instance planting dates or automatic placement in a garden. Portable examples use
+the normal list import format. UI generic-plant guidance now mentions offline search.
+
+**Consequences/evidence**: No dependency or project-format change. Existing favorites,
+private lists and custom data remain in their current stores. The source file is the
+existing bundled catalog, not a horticultural suitability guarantee. Tests exercise
+real store/GUI reopening, byte-preserving backups, replay after user edits, malformed
+store refusal, failed-write retry and portable/CLI paths with accents. See
+`docs/fork/PLANTES_ET_DESSIN.md`; source drawing/calibration is conditional on owner input.

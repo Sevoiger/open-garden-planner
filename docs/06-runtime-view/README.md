@@ -464,3 +464,13 @@ to the anchor's available screen and focuses its search input. Large content scr
 Global search uses the same placement without taking focus from the input. A sidebar
 header hover leaves state unchanged by default; clicking opens/closes the pinned
 panel. Canvas selection still reveals relevant contextual panels.
+
+
+### Personal fork: list growth and explicit collection import
+
+After the opening animation, a sidebar layout request recalculates the open panel's
+height floor; other panels scroll instead of squeezing its layer controls. An explicit
+classic-list import runs with the app closed, validates the old store, prepares every
+snapshot, backs up existing bytes, then imports missing collections atomically through
+the existing list service. Retry skips completed descriptions and does not overwrite
+user-edited entries. The next GUI launch loads the four collections normally.

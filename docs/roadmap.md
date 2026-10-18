@@ -3086,3 +3086,10 @@ Personal-fork manual feedback follow-up (2026-10-18, ADR-060): explicit sidebar 
 screen-bounded scrollable category/search popups and readable welcome actions are
 implemented and regression-tested. Category filters reset on reopening and explain empty results;
 new native visual acceptance is pending. See docs/fork/PROGRESSION.md.
+
+
+Second personal-fork UI feedback (2026-10-18): late sidebar height growth and layer
+rename sizing fixed; four classic-plant collections prepared through the existing
+list importer (ADR-061). Circle input and sketch/calibration prerequisites documented
+in docs/fork/PLANTES_ET_DESSIN.md. Native owner confirmation and a real source drawing
+remain separate; no merge/release authorization is inferred.

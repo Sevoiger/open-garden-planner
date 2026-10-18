@@ -521,3 +521,13 @@ and global search. Both hold scrollable content with bounded outer windows.
 SidebarController defaults to click activation, keeping selection pinning and
 canonical order; the existing hover implementation requires explicit constructor
 opt-in. WelcomeDialog separates scrollable content from its fixed footer.
+
+
+### Personal fork: sidebar content growth and classic lists (ADR-060/061)
+
+CollapsiblePanel handles open layout requests so asynchronously changed content can
+raise/lower its minimum floor after animation. LayersPanel derives visible-list height
+from row hints; embedded LayerList rows reserve rename-editor height and own padding.
+`services/classic_plant_lists.py` resolves a bundled starter manifest and delegates
+writes to PlantListStore. `scripts/import_classic_plants.py` is an explicit CLI entry,
+with portable examples in examples/plant-lists; no second species database is added.

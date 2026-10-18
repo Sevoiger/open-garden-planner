@@ -2358,3 +2358,28 @@ The patched probe yields no selected filters and all23 tree thumbnails after reo
 Reset both text and trait chips on open; show No matching objects and Clear filters
 for intentional zero matches. The same-instance theme-switch workflow is regression
 pinned. This separates a reproducible empty result from an unproven native paint fault.
+
+## Case study: late layer growth overlaps sidebar controls (personal fork, 2026-10-18)
+
+**Symptom.** Owner captures showed a clipped layer rename field and opacity/action
+controls overlapping layer rows while another sidebar panel was open.
+
+**Evidence before change.** A13-point offscreen probe measured a36px list row becoming
+a26px embedded widget under generic5px+5px item padding. The rename field received18px
+against its31px size hint. Separately, an opened accordion kept its192px minimum while
+its content hint grew to336px after layer additions. Competing open panels exposed
+the stale floor. A grow/shrink integration test reproduces the overlap with another
+350px content panel in a350px sidebar.
+
+**Fix.** Embedded layer rows own their padding and reserve the hidden editor's natural
+height; the list uses real row hints plus frame margins (up to five visible rows).
+An expanded CollapsiblePanel updates its floor on layout requests after its animation,
+with an equality guard to avoid feedback. Collapsed/animating states retain their
+existing contracts. The measured row is now39px with a31px editor. Growth/shrink,
+inline editing and scrolling assertions pass in light and dark, with the existing
+layer command/undo suite unchanged. No model geometry or font reduction.
+
+**Lesson.** An opening-time floor is not a content-lifetime invariant. Measure the
+embedded widget after view styling, not just the item's advertised size, and test
+content growth while another panel competes for space. Pin:
+`tests/integration/test_layer_layout_growth.py`.

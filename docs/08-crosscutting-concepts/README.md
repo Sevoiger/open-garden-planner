@@ -2614,3 +2614,14 @@ pinning are unchanged. Custom category/search windows use their anchor screen's
 available logical geometry, including negative origins, with bounded size and
 scrollable overflow. Welcome content must scroll before action text is squeezed
 below font metrics. See `tests/integration/test_macos_popups.py`.
+
+
+### Personal fork: changing content and catalog reuse (ADR-060/061)
+
+An accordion's open floor must follow layout changes after animation, with an equality
+guard to avoid self-triggered layout churn. Layer list item widgets provide their own
+padding and size hints; do not subtract generic item padding from a rename editor.
+Starter collections reuse canonical bundled species keys and existing list snapshots,
+preserve unknown traits and require a closed app for external import. No garden
+positions or confirmed planting dates are inferred. See `PLANTES_ET_DESSIN.md` for
+radius/angle input and the dimension evidence needed before tracing a real sketch.
