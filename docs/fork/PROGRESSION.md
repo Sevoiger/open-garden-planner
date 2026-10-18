@@ -156,3 +156,16 @@ texte et caractéristiques à zéro. Un résultat vide affiche un libellé expli
 Clear filters permet de retrouver les objets sans fermer le panneau. Le scénario
 est testé sur la même instance au travers d'un changement de thème. 73 contrôles
 ciblés réussis ; confirmation native des corrections encore nécessaire.
+
+### Bilan final du correctif de menus
+
+État de production testé : `b836787`. Suite complète hors écran dans un checkout
+figé : **8626 réussites, 46 skips, 2 tests CLI incompatibles Darwin désélectionnés,
+1 échec**, en 526,68 s. Le seul échec est le round-trip DXF déjà reproduit sur la
+base amont inchangée. Aucun nouvel échec. Revue indépendante du delta sans P0/P1,
+34 tests relancés séparément par le reviewer et réussis. Ruff, Bandit HIGH=0,
+traductions EN/DE complètes (2723 clés), parité, citations, secrets et sources wiki
+passent ; aucune augmentation des erreurs mypy par fichier. PR personnelle toujours
+en brouillon, aucune fusion/release. La session du propriétaire n'a pas été fermée :
+enregistrer, quitter puis relancer le lanceur charge les nouveaux menus. Confirmation
+visuelle native encore attendue sur survol/clic, bords d'écran et filtres/thèmes.
