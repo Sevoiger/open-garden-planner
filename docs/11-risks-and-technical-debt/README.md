@@ -1359,3 +1359,15 @@ apply their already-directed pixel displacement only when forwarded handling rej
 it. Keep native open-list scrolling and keyboard editing covered independently.
 Local JSON imports preserve conflicting month data as provenance, never as inferred
 frost-relative calendar offsets. Two-store imports are replayable, not globally atomic.
+
+### Personal fork: test preferences were isolated, file libraries were not
+
+Installing a real French custom catalog exposed two tests reading owner data:
+Strawberry/Apfelbaum assertions saw Fraisier/Pommier. Stop the full run before further
+library operations; read-only comparison verified previous and imported records
+unchanged. QSettings redirection alone cannot protect custom_plants, plant_lists,
+seed inventory, weather cache or guild/companion files. Resolve the unchanged platform
+path through one private helper; conftest overrides it before collection and per-test
+singletons reset into tmp_path. Captured public-function aliases still call that helper.
+Do not override HOME or weaken localization assertions. Confinement regressions check
+real file writes and clean per-test libraries across captured service aliases.

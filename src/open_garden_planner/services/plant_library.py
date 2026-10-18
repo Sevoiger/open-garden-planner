@@ -14,6 +14,17 @@ def get_app_data_dir() -> Path:
     Returns:
         Path to the application data directory
     """
+    app_dir = _default_app_data_dir()
+    app_dir.mkdir(parents=True, exist_ok=True)
+    return app_dir
+
+
+def _default_app_data_dir() -> Path:
+    """Resolve the standard location separately from creating the directory.
+
+    Tests override this resolver before collection, so previously imported aliases
+    of get_app_data_dir cannot bypass isolation and reach personal libraries.
+    """
     import sys
 
     if sys.platform == "win32":
@@ -31,9 +42,7 @@ def get_app_data_dir() -> Path:
         xdg_data = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
         app_data = Path(xdg_data)
 
-    app_dir = app_data / "OpenGardenPlanner"
-    app_dir.mkdir(parents=True, exist_ok=True)
-    return app_dir
+    return app_data / "OpenGardenPlanner"
 
 
 class PlantLibrary:

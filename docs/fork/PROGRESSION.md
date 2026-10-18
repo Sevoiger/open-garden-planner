@@ -199,3 +199,34 @@ au round-trip DXF, déjà reproduit sur la base amont inchangée. Le correctif u
 `d2a8c90` est validé séparément par les 77 contrôles ciblés et la re-revue indépendante.
 Ruff, Bandit HIGH=0, traductions, parité, citations, secrets et sources wiki passent ;
 mypy reste à 1928 erreurs héritées sans augmentation par fichier. Aucun seuil modifié.
+
+
+## Molette, catalogue français et fiches import01 (2026-10-18)
+
+Le propriétaire construit désormais son plan à la main. Aucun croquis n’est repris
+ni aucune plante positionnée automatiquement. Un geste de molette sur un menu fermé
+ne modifie plus sa valeur : il défile dans le formulaire. Les listes ouvertes et le
+clavier restent utilisables. La sonde mesure avant correction index1 vers2 sans
+défilement, puis index1 conservé avec60px de défilement. Les gestes pixel du pavé
+tactile sont aussi couverts ; aucune modification du zoom ni des champs numériques.
+
+Installation locale effectuée application fermée, après revue : 118 fiches embarquées
+avec noms français, 80 fiches génériques « variété à préciser » et 37 fiches privées
+du lot import01. Ce sont 235 fiches dans le pack, pas 235 espèces distinctes. Les
+fiches personnelles préexistantes restent présentes. Onze nouvelles collections
+sont accessibles dans Plant Lists ; les plantes importées sont aussi recherchables
+hors ligne. Les anciennes listes Classiques ont leurs noms d’origine passés en
+français : 31 changements effectifs, cinq noms déjà identiques en français/anglais.
+Les autres données et personnalisations sont préservées. Les sources JSON/PDF restent
+hors Git. Les fichiers locaux existants ont leurs sauvegardes ; la relance a laissé
+les deux stockages strictement identiques. Les recherches Tomate, Sauge générique,
+Sauge officinale et Taiga ont été vérifiées dans la bibliothèque réellement installée.
+
+La revue a identifié une réapparition des fiches supprimées lors du rejeu : le marqueur
+bloque maintenant tout le lot, pas uniquement sa liste. La régression supprime une
+fiche et enrichit sa source sous la même clé, puis vérifie l’absence de toute écriture.
+Revue finale 4095b12 favorable ; 19 tests import/molette relancés indépendamment.
+105 contrôles ciblés initiaux réussis ; le contrôle final inclut cette régression.
+Les six guides de ce dossier sont compilés dans un PDF local, avec sommaire cliquable,
+signets et pagination ; les deux annexes techniques ont été traduites en français.
+La lecture visuelle et la suite complète restent à consigner une fois terminées.

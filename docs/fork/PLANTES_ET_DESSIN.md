@@ -115,8 +115,9 @@ Fermer l’application après avoir enregistré, puis lancer :
 
 Le dossier import01 fourni contient 37 fiches JSON et leurs PDF. Les fiches sont
 ajoutées à la recherche hors ligne et à **Mes plantes — import01**. Avec les 118
-fiches françaises et les 80 fiches génériques, cela représente 235 fiches dans la
-recherche, dont des groupes non identifiés. Les collections peuvent présenter une
+fiches françaises et les 80 fiches génériques, cela représente 235 fiches dans le
+pack, dont des groupes non identifiés. Les fiches personnelles déjà présentes
+s’ajoutent à ce nombre. Les collections peuvent présenter une
 même fiche à plusieurs endroits ; ce ne sont pas autant de plantes sur le plan.
 
 Les noms et mesures explicites sont repris : mètres vers centimètres, nom botanique

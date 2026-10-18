@@ -312,3 +312,7 @@ Personal macOS wheel/catalog follow-up (2026-10-18): closed choices scroll their
 form instead of editing; offline French starter/search records and private JSON
 sheet imports preserve source uncertainty and replay safely. Owner chooses to draw
 a fresh plan manually. plants/ and generated output/ remain local and untracked.
+
+Test isolation follow-up: file-backed app-data resolution is overridden before
+collection and each test resets plant/list/seed stores to a temporary directory.
+Previously imported path aliases stay isolated; production path policy is unchanged.

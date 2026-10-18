@@ -2632,3 +2632,8 @@ viewport, retaining device, pixel/angle deltas and phase. On backends where that
 viewport ignores pixel-only gestures, its scrollbars receive the pixel displacement.
 An open choice view and explicit keyboard/click editing remain normal. No global
 font, input-focus policy, spin-box behavior or canvas-wheel behavior changes.
+
+Tests isolate file-backed app data as well as QSettings: conftest overrides the
+plant-library path resolver before collection (protecting captured function aliases),
+then redirects each test and resets plant/list/seed stores. Production path resolution
+and directory creation retain their platform behavior; there is no new setting or flag.

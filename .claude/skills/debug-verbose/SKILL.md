@@ -2420,3 +2420,24 @@ Move the marker check ahead of the entire collection import: a completed batch i
 a no-op for both stores. Custom snapshots are written before the marker, so retries
 of a partial write still finish. A regression deletes the custom species, enriches
 the source under the same key and verifies every existing JSON byte is unchanged.
+
+
+## Case study: tests read the owner's installed French library (personal fork, 2026-10-18)
+
+**Evidence.** After the explicit local French import, two formerly passing workflows
+expected Strawberry/Apfelbaum but rendered Fraisier/Pommier from the custom library.
+QSettings isolation did not isolate file-backed app data. The full run was stopped;
+read-only comparison confirmed all previous and235 imported records intact. Merely
+patching one get_app_data_dir export would miss aliases imported by weather, guild
+and companion services.
+
+**Fix.** Separate the unchanged platform resolver from directory creation. Override
+that resolver at conftest import (before collection), then use a fresh temporary path
+and reset plant/list/seed singletons per test. Previously captured public aliases
+still reach the overridden resolver; HOME is unchanged. Two parameterized workflows
+prove fresh libraries, actual writes under tmp_path and all captured aliases confined.
+The36 related checks plus2 confinement regressions pass with the populated personal
+library present. Re-run the complete suite under this isolation before reporting it.
+
+**Lesson.** Isolating preferences does not isolate libraries. Native test results must
+not depend on the owner's current catalog, and tests must never overwrite it.

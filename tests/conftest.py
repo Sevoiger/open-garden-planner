@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,6 +51,24 @@ PRODUCTION_STORE = (
 )
 _app_settings.ORGANIZATION_NAME = TEST_ORGANIZATION
 _app_settings.APPLICATION_NAME = TEST_APPLICATION
+
+# Isolate file-backed app data before collection too. Services import aliases of
+# get_app_data_dir, so override its resolver rather than just one exported alias.
+# No environment HOME override and no reads/writes to a developer's real library.
+import open_garden_planner.services.plant_library as _plant_library  # noqa: E402
+
+_COLLECTION_APP_DATA = tempfile.TemporaryDirectory(prefix=f"ogp-test-data-{os.getpid()}-")
+_plant_library._default_app_data_dir = lambda: Path(_COLLECTION_APP_DATA.name)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_file_app_data(monkeypatch, tmp_path):
+    from open_garden_planner.models import plant_lists, seed_inventory
+
+    monkeypatch.setattr(_plant_library, "_default_app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(_plant_library, "_library_instance", None)
+    monkeypatch.setattr(plant_lists, "_STORE", None)
+    monkeypatch.setattr(seed_inventory, "_store", None)
 
 
 @pytest.fixture(autouse=True, scope="session")
