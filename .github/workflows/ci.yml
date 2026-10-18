@@ -262,10 +262,12 @@ jobs:
       # quoting them here would repeat this comment's own earlier error. Measure it with
       # the same command once the run exists.
       #
-      # The cost is stated rather than waved away: before the second step below,
-      # `agent_api` held a six-statement margin on a non-deterministic scheduler, where
-      # one changed branch in one test flips the job. The second step is what removes
-      # that exposure.
+      # The cost is stated rather than waved away: `agent_api` sits six statements above its
+      # floor (2026 of 2195, floor needs 2020) and those six are what a parallel run's
+      # variance eats. The second step below does not widen that margin - see what it
+      # actually does there - but it does stop the three zero-slack budgets from being
+      # measured under load, which is where the variance would otherwise first show up
+      # as a red job.
       # ADR-058 warned that "a parallel run's first visible failure mode is coverage",
       # and this is that warning costing six statements.
       #
@@ -274,37 +276,51 @@ jobs:
       # 20.29 ms against a 16.70 ms budget, and generalised that to this job being
       # permanently red. Both halves were wrong, and the second was wrong in the way this
       # PR is about: the 20.29 ms figure is a LOCAL measurement against the LOCAL budget.
-      # tests/perf/test_nfr_budgets.py:56-57 reads `_IS_CI = CI or GITHUB_ACTIONS` and
-      # `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on this job the budget is 50 ms
+      # tests/perf/test_nfr_budgets.py:56-57 reads
+      # `_IS_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"`
+      # and `FRAME_BUDGET_MS = 50.0 if _IS_CI else 16.7`, so on this job the budget is 50 ms
       # and the test passes under tracing — `gh run view 39076508170` (CI, master
       # 412f01bd) records Coverage SUCCESS, 8565 passed. Verified locally by running the
       # file under `--cov` both ways: `CI=true` -> 6 passed; unset -> 1 failed. The
-      # instrument was correct and the generalisation was not.
+      # instrument was correct and the generalisation was not. The `== "true"` is
+      # load-bearing and is quoted in full for that reason: a runner that sets `CI=1`
+      # takes the LOCAL 16.7 ms budget, so a shorthand like `_IS_CI = CI or ...` written
+      # into a new test would silently take the wrong branch.
       #
       # Whether `Coverage` should be a required check is a separate policy question for
       # the owner, deliberately not answered here.
       #
-      # Two steps, not one, and the split is load-bearing rather than tidiness. Removing
-      # the `-m 'not perf'` filter above put all 14 `perf`-marked tests INTO this job, and
-      # running them beside `-n auto` workers is the condition the marker exists to
-      # prevent. Six of the fourteen carry explicit CI slack (NFR 50 ms, receiver 30 ms,
-      # shadow-overlay and sun-heatmap at x4 and x3); three carry NONE:
+      # Two steps, and what the second one is for is NOT what an earlier draft of this comment
+      # said. It does not add coverage. Coverage accumulates a SET of executed lines, so
+      # re-running tests that already ran under tracing adds nothing, and the second step
+      # is a no-op for the figure: measured with the gate itself,
+      #   agent_api covered = 2026 of 2195 in BOTH shapes - step 1 running everything, and
+      #   step 1 deselecting perf with the perf set appended serially. The margin against
+      #   the 92% floor (2020) is SIX either way. An earlier draft here claimed the step
+      #   "restores the six-statement margin to fourteen"; that was never measured and is
+      #   withdrawn.
+      #
+      # What it actually buys is SCHEDULING. The `perf` marker means "wall-clock
+      # sensitive", and eleven of the fourteen carry explicit CI slack (NFR 50 ms,
+      # receiver 30 ms, shadow-overlay x4, sun-heatmap x3, the shutdown pair at 4.0 s
+      # against a documented 0.19-2.2 s). Three carry NONE:
       #   tests/integration/test_map_picker_dialog.py  - close() under 0.5 s
       #   tests/unit/test_point_snapper.py              - mean under 16 ms
       #   tests/unit/test_snap_spatial_index.py         - 200 ms build / 1 ms query medians
       # The last one's own docstring records "a single wall-clock sample previously
-      # produced a false failure at 284 ms" against a 200 ms budget, i.e. a 42% overrun on
-      # an unloaded runner. So the second step re-runs exactly those fourteen SERIALLY and
-      # appends, which restores the six-statement agent_api margin to fourteen and makes
-      # the coverage baseline independent of the scheduler. Cost: the perf tests run
-      # twice in this job.
+      # produced a false failure at 284 ms" against a 200 ms budget - a 42% overrun on an
+      # UNLOADED runner. So step 1 deselects them and step 2 is the only place they run, at
+      # `-n 0`. That is the whole justification, and it is a scheduling one: those three
+      # must not share a runner with eight workers. The parallel part of this job is still
+      # a parallel run; do not read "deterministic" into it.
       - name: Measure full-suite line and branch coverage
         env:
           QT_QPA_PLATFORM: offscreen
         run: >
-          python -m pytest tests/ -v -o addopts="-v --tb=short -n auto --dist worksteal"
+          python -m pytest tests/ -v -m 'not perf'
+          -o addopts="-v --tb=short -n auto --dist worksteal -m 'not perf'"
           --cov=open_garden_planner --cov-branch --cov-report=xml --cov-report=term
-      - name: Re-measure the perf tests serially and append
+      - name: Measure the perf tests serially and append
         env:
           QT_QPA_PLATFORM: offscreen
         run: >

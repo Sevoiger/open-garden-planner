@@ -726,48 +726,82 @@ def test_ci_still_scans_for_committed_secrets() -> None:
 
 
 def test_ci_runs_the_whole_perf_set_serially() -> None:
-    """The perf step's three load-bearing details are pinned, because prose got them wrong.
+    """Both of CI's perf steps are pinned by JOB, because prose got them wrong.
 
     `addopts` carries `-n auto --dist worksteal -m 'not perf'` (#509), so the perf tests
-    run in neither mode by default: the battery deselects them and the workers are the
-    thing they must not share a runner with. CI has to supply both halves explicitly.
-
-    All three details fail silently, which is why this is a test and not a comment:
+    run in neither mode by default: the battery deselects them, and the workers are the
+    thing they must not share a runner with. Both jobs that run them have to say so
+    explicitly, and each of the three details fails SILENTLY:
 
     * `tests/perf -m perf` collects **7 of the 14** and passes. Seven of the marked tests
       live outside `tests/perf/`, so a directory-scoped command looks complete and is
-      not — CONTRIBUTING.md tabulates it as "the worst kind of wrong".
+      not - CONTRIBUTING.md tabulates it as "the worst kind of wrong".
     * omitting `-m perf` lets `addopts`' own `-m 'not perf'` win and collects **nothing**.
     * omitting `-n 0` runs all 14 across 4 workers on a 4-vCPU runner, which is precisely
       the load the marker exists to avoid, and three of the fourteen carry no CI slack
       at all (map-picker close < 0.5 s, point-snapper mean < 16 ms, spatial-index
       medians < 200 ms / < 1 ms).
 
-    Half this contract is already mechanised — `test_perf_marker_guard.py` fails the
-    build if a wall-clock assertion is added without the marker — so the marker was the
-    safe half to leave in prose and the invocation the dangerous one. Twice inside this
-    change the wrong form reached a document (`AGENTS.md`, `CLAUDE.md`, ADR-058 and the
-    latency baseline all carried one) while every check stayed green.
-    """
-    text = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    **Why this parses the YAML rather than grepping the file.** The first version of this
+    test grepped for `"tests/ -m perf"` and `"-m perf -n 0"` in the whole text, and it
+    passed for the wrong reason: both substrings are satisfied by the COVERAGE job's copy
+    of the command, so mutating the TEST job's step - the one actually named "Run
+    performance budgets on a quiet runner", the one carrying the three zero-slack budgets -
+    to `pytest tests/ -m perf -v` or to the directory form left this test GREEN. Both
+    mutations were run; both passed. A pin that cannot fail is worse than no pin, because
+    it reads as protection. `text.split("  coverage:", 1)[-1]` had the same defect wearing
+    a disguise: if the separator ever goes missing the "scoped" assertion silently becomes
+    a whole-file assertion with the same outcome. So each job is looked up by key, and a
+    missing key is a failure rather than an empty result.
 
-    assert "tests/ -m perf" in text, (
-        "ci.yml no longer runs the perf set. It must be `tests/ -m perf`, not "
-        "`tests/perf -m perf`: the marker means 'wall-clock sensitive', and 7 of the "
-        "14 marked tests live outside tests/perf/, so the directory form runs half the "
-        "gate and reports green"
+    The marker half of this contract was already mechanised - `test_perf_marker_guard.py`
+    fails the build if a wall-clock assertion is added without the marker - so the marker
+    was the safe half to leave in prose and the invocation the dangerous one. Four
+    documents carried a wrong invocation inside this change while every check stayed
+    green.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(
+        (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     )
-    assert "-m perf -n 0" in text, (
-        "the perf step lost its `-n 0`. Without it the timing tests run across "
-        "workers, which is the condition the perf/perf split exists to prevent"
+    jobs = workflow["jobs"]
+
+    def perf_steps(job: str) -> list[str]:
+        assert job in jobs, f"ci.yml no longer has a `{job}` job"
+        # Matches `-m perf`, `-m 'perf'` AND `-m 'not perf'`. The parallel coverage step
+        # is a perf step by virtue of DESELECTING the marker, so a filter that saw only
+        # the positive form would miss the very step whose deselection is the point.
+        selector = re.compile(r"-m\s+'?((?:not\s+)?perf)'?")
+        return [
+            " ".join(step["run"].split())
+            for step in jobs[job]["steps"]
+            if step.get("run") and selector.search(step["run"])
+        ]
+
+    test_steps = perf_steps("test")
+    assert len(test_steps) == 1, (
+        f"expected exactly one perf step in the `test` job, found {len(test_steps)}: "
+        f"{test_steps}"
     )
-    # And the coverage job must not reintroduce the filter that drops agent_api below
-    # its floor, or reintroduce it with a serial re-measure rather than a silent loss.
-    coverage = text.split("  coverage:", 1)[-1]
-    assert "tests/ -m perf -n 0" in coverage and "--cov-append" in coverage, (
-        "the Coverage job must re-measure the perf tests SERIALLY and append, not "
-        "drop them. Excluding them puts agent_api at 91.66% against a 92% floor; "
-        "including them across workers puts three zero-slack budgets on a loaded runner"
+    assert "tests/ -m perf" in test_steps[0] and "-n 0" in test_steps[0], (
+        f"the test job's perf step is `{test_steps[0]}`. It must be "
+        "`pytest tests/ -m perf -n 0`: `tests/perf -m perf` collects 7 of the 14 and "
+        "PASSES, and dropping `-n 0` puts three zero-slack budgets beside 4 workers"
+    )
+
+    coverage_steps = perf_steps("coverage")
+    parallel = [s for s in coverage_steps if "-m 'not perf'" in s]
+    serial = [s for s in coverage_steps if "tests/ -m perf" in s and "-n 0" in s]
+    assert parallel and "--cov" in parallel[0], (
+        "the Coverage job's parallel step must deselect the perf tests with "
+        "`-m 'not perf'`; the perf set is then measured by the serial step instead of "
+        "running under `-n auto`, which is where the three zero-slack budgets break"
+    )
+    assert serial and "--cov-append" in serial[0], (
+        "the Coverage job needs a serial `tests/ -m perf -n 0 --cov-append` step. It adds "
+        "no coverage - coverage is a set union, and re-running traced tests adds nothing - "
+        "so its ONLY job is to be the single place those fourteen run, without workers"
     )
 
 

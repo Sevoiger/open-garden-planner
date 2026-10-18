@@ -2788,11 +2788,18 @@ is a shared-*state* defect and was fixed by isolating the arm, not by scheduling
   91.66%, below its floor) and it added `-n auto`. It also adds a **second, serial** step to
   that job: re-running the 14 perf tests with `-n 0 --cov-append`. Without it, removing the
   filter would have put three zero-slack budgets (map-picker close < 0.5 s, point-snapper
-  mean < 16 ms, spatial-index medians < 200 ms / < 1 ms) beside workers on a 4-vCPU runner,
-  and left `agent_api`'s six-statement margin on a non-deterministic scheduler where one
-  changed branch in one test flips the job. The serial step restores the margin to fourteen
-  and makes the baseline independent of the scheduler; the cost is that those tests run
-  twice in that job.
+  mean < 16 ms, spatial-index medians < 200 ms / < 1 ms) beside workers on a 4-vCPU runner.
+  So the parallel step deselects them and the serial step is the only place they run, at
+  `-n 0`.
+  **The serial step adds no coverage, and an earlier draft of this ADR claimed it restored
+  `agent_api`'s margin "to fourteen". That was never measured and is withdrawn.** Coverage
+  accumulates a *set* of executed lines, so re-running tests that already ran under tracing
+  adds nothing. Measured with the gate itself, `agent_api` is 2026 of 2195 in both shapes —
+  parallel step running everything, and parallel step deselecting perf with the perf set
+  appended — and the margin against the 92% floor (2020) is **six either way**. What the
+  step buys is scheduling, not headroom: it is the single place those fourteen run, without
+  workers. The parallel part of that job is still a parallel run; do not read
+  "deterministic" into it.
   The fourteen statements the filter removed are `stop()`'s forced escalation — `_run`'s
   `_forced_stop` branch, `_cancel_loop_tasks`, `_force_stop`, the #373 fix — not `start()`,
   which is covered by `test_agent_api_lifecycle.py` and `test_agent_api_server.py`. Exact

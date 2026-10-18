@@ -14,14 +14,24 @@ serially on one core". Two of its four proposed remedies were costs, not speedup
 its central number had never been decomposed. This records the decomposition, so the
 next change to the suite is chosen from measurement instead of guessed.
 
-Reproduce — and note the `-n 0`, which is load-bearing. Without it `addopts` supplies
-`-n auto --dist worksteal`, and this document's own table below is a SERIAL measurement:
-per-test call time inflates under parallel execution, so a parallel run cannot be
-compared with it.
+Reproduce — and note the two flags that are load-bearing, because without either the
+command produces a report that silently cannot reproduce this document's own tables.
+
+* **`-n 0`.** Without it `addopts` supplies `-n auto --dist worksteal`, and this
+  document's tables are a SERIAL measurement: per-test call time inflates under parallel
+  execution (620.6 s of call time serially against ~1 700 s under `-n auto`), so a
+  parallel run cannot be compared with them.
+* **`-o addopts=""`.** Without it `addopts` supplies both `-n auto --dist worksteal`
+  *and* `-m 'not perf'`, and the run deselects the whole `perf` layer — 14 tests, so the
+  `perf` row in the layer table below cannot be produced at all and every total, share and
+  concentration figure shifts. (`-m ''` is the intuitive way to clear a marker filter and
+  it does **not** work: pytest answers `argument -m: expected one argument`.) Measured:
+  `tests/ -n 0` collects 8 613 of 8 627 with 14 deselected; with `-o addopts=""` it
+  collects all 8 627.
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
-venv/Scripts/python.exe -m pytest tests/ -q -n 0 --durations=0 --timeout=180 > durations.txt
+venv/Scripts/python.exe -m pytest tests/ -q -n 0 -o addopts="" --durations=0 --timeout=180 > durations.txt
 venv/Scripts/python.exe scripts/measure_test_suite_latency.py durations.txt
 ```
 
@@ -37,6 +47,11 @@ venv/Scripts/python.exe scripts/measure_test_suite_latency.py durations.txt
 > suite's 620.6 s of call time serial became 1 700 s of call time under `-n auto`,
 > while its *wall clock* fell from 673.6 s to 182 s. The useful quantity is wall
 > clock; the useful reading of the per-test table is its shape, not its sum.
+> (That 182 s was the under-load measurement behind the false 740 s "regression" in the
+> case study at the end of this document. This box later measured the same code at
+> 68–90 s across this change's own runs, so treat any single wall-clock figure here as one
+> sample of a machine that drifts, and quote the ratio instead. Where the tables cannot
+> avoid a single number, it is labelled with the configuration that produced it.)
 
 The CI `Test` job now writes the same report and uploads it as the
 `test-durations-linux` artifact. **That artifact is a parallel run with the perf tests
@@ -451,10 +466,26 @@ could not gate, and "it has always been broken" was a local number promoted to a
 about a configuration nobody ran.
 
 What #509 *does* change about that job: it removed a `-m 'not perf'` filter that #509's
-own first draft had added — that filter pushed `agent_api` to 91.71% against a 92% floor,
-and the fourteen statements it removed are `stop()`'s forced escalation, not `start()` —
-and it added `-n auto`. Master ran the job serially in 21m10s; it now runs in 4m37s. The
-real cost is a six-statement margin now sitting on a non-deterministic scheduler.
+own first draft had added — that filter pushed `agent_api` to **91.66%** (2012 of 2195)
+against a 92% floor, and the fourteen statements it removed are `stop()`'s forced
+escalation, not `start()` — and it added `-n auto`. Measured on CI with
+`gh run view <id> --json jobs`, both job durations and same runner class:
+
+| | master `412f01bd` (run 39076508170) | branch `0c472149` (run 39109872385) |
+|---|---|---|
+| `Coverage` | 21m10s (1270 s) | **5m57s (357 s)** |
+| `Test` | 17m27s (1047 s) | **6m45s (405 s)** |
+
+The same two branch runs disagree with each other — the push run measured `Coverage` at
+7m56s and `Test` at 4m31s — so read the spread, not the smaller figure: GitHub runners are
+shared and this branch's own two runs differ by 33%. The honest summary is **2.7×–3.6× on
+`Coverage`**, measured twice.
+
+Two corrections to an earlier draft of this paragraph, both because a number here was
+wrong rather than merely stale: it said **91.71%** (which is not what 2012/2195 is) and
+**4m37s**, a figure taken from a reviewer's prose that described run 39074830696 — a head
+which predates the filter removal, so it measured a different job. The branch number above
+is one the author's own command produced.
 
 ### Four instruments lied during this investigation, all the same way
 
