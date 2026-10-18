@@ -402,10 +402,11 @@ instance.
 
 The fix is the cause, not a schedule: the canary is now staged in a throwaway
 `git init`-ed repo under `tmp_path`, so nothing outside the temp directory is ever
-created, staged or deleted. `test_settings_chokepoint.py` additionally treats a file
-that vanished after being listed as absent rather than as a violation — absorbing
-`FileNotFoundError` only, so a real read error still raises and cannot quietly
-shrink the scanned set. Verified: 5 consecutive `-n 8` runs of the two colliding
+created, staged or deleted. `test_settings_chokepoint.py` scans strictly:
+an earlier version of this paragraph said it absorbed `FileNotFoundError` for a file that
+vanished after being listed, and that absorption was reverted — the test's own docstring
+calls it leftover scaffolding. The direction is the safe one (the code is stricter than the
+text was), but the sentence was false, and it is corrected here rather than annotated. Verified: 5 consecutive `-n 8` runs of the two colliding
 modules, 98 passed each, no canary residue and a clean `git status`.
 
 ### Why grouping was not the answer
@@ -505,24 +506,19 @@ fourteen are `stop()`'s forced escalation, not `start()`. Measured on CI with
 | `Test` | 17m27s (1047 s) | **5m54s (354 s)** and **4m05s (245 s)** |
 
 The two head runs disagree with each other, so read the spread rather than the smaller
-figure. Raw job spans from `gh run view <id> --json jobs`, all four on the same
-workflow and runner class:
+figure. Both are the same head (`1b2398f7`), the same workflow and the same runner class:
 
-| job | master 39076508170 | branch push 39109870093 | branch PR 39109872385 | branch spread |
+| job | master `412f01bd` | `1b2398f7` push `39115631489` | `1b2398f7` PR `39115635791` | spread |
 |---|---|---|---|---|
-| `Coverage` | 1270 s (21m10s) | 476 s (7m56s) | 357 s (5m57s) | **33 %** |
-| `Test` | 1047 s (17m27s) | 271 s (4m31s) | 405 s (6m45s) | **50 %** |
+| `Coverage` | 1270 s (21m10s) | 339 s (5m39s) | 456 s (7m36s) | **34 %** |
+| `Test` | 1047 s (17m27s) | 354 s (5m54s) | 245 s (4m05s) | **44 %** |
 
-The honest summary is **2.7×–3.6× on `Coverage`** and **2.6×–3.9× on `Test`**, measured
-twice each. `Test` has the wider spread of the two, which is worth knowing before quoting
-either number as "the" improvement; a single CI run is one sample of a shared runner, the
-same lesson this document applies to its own box elsewhere.
-
-Two corrections to an earlier draft of this paragraph, both because a number here was
-wrong rather than merely stale: it said **91.71%** (which is not what 2012/2195 is) and
-**4m37s**, a figure taken from a reviewer's prose that described run 39074830696 — a head
-which predates the filter removal, so it measured a different job. The branch number above
-is one the author's own command produced.
+The honest summary is **2.8x-3.7x on `Coverage`** and **3.0x-4.3x on `Test`**. An earlier
+version of this paragraph computed 2.7x-3.6x / 2.6x-3.9x from runs at head `0c472149` - four
+commits back, and printed without their head - which disagreed with the table above it and
+with `ci.yml`. The figures are derived from the columns here, so a reader can check the
+arithmetic; and because the spread is this wide, a single run is one sample of a shared
+runner rather than a measurement of the change.
 
 ### Four instruments lied during this investigation, all the same way
 

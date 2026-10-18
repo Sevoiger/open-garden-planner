@@ -328,10 +328,15 @@ def _reclaim_widgets(qtbot: object):  # noqa: ARG001 - see below
     it to be true. Naming it here would be the same error as a docstring that calls
     `sendPostedEvents(None, 0)` the right call and measures the wrong one.
 
-    **The fix, in one place.** Requesting `qtbot` is load-bearing for ordering, not
-    for the Qt app: this fixture lives in the root conftest, so pytest finalises it
-    LAST, after `tests/integration/conftest.py`'s `_no_leaked_agent_api_thread` has
-    already walked `topLevelWidgets()` to stop any server an app still owns. Doing
+    **The fix, in one place.** Two things deliver the ordering, and an earlier version of
+    this docstring credited the wrong one. It is the **root-conftest position** that makes
+    this fixture finalise after `tests/integration/conftest.py`'s
+    `_no_leaked_agent_api_thread` has walked `topLevelWidgets()` to stop any server an app
+    still owns - measured with `--setup-show`, the teardown order is
+    `_no_leaked_agent_api_thread -> _reclaim_widgets -> qtbot`, and it stays that way with
+    the `qtbot` request removed. The request orders this fixture ahead of **qtbot's own**
+    teardown, which is what the reload of `qtbot`'s registry needs, and it is not what puts
+    the leak warning first. Doing
     this earlier would delete those windows first and the leak warning would never
     fire — a gate that silently stops reporting. Measured effect of this exact
     sequence on that same 38 271-widget process: **38 271 -> 0 widgets, 1 580 -> 0

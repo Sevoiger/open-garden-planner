@@ -725,6 +725,28 @@ def test_ci_still_scans_for_committed_secrets() -> None:
     )
 
 
+def _script_lines(run: object) -> list[str]:
+    """A step's `run` as executable lines, with shell comments and blanks removed.
+
+    A `#` comment inside a `run:` block is text, not a command, and matching against it
+    makes the checks satisfiable by a comment. Measured: a step whose script was
+
+        # pytest tests/ -m perf -v -n 0
+        pytest tests/ -m 'not perf' -v -n 0
+
+    left BOTH pins green while the perf tests ran nothing - the selector and the substring
+    assertions were reading the comment. Shell semantics cannot be pinned statically, but
+    this much is: a comment is not the command.
+    """
+    if isinstance(run, list):  # a YAML list is not a shell script; fail loudly elsewhere
+        return []
+    return [
+        line
+        for line in str(run).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 def _needs_of(job: dict) -> list[str]:
     """Normalise a job's `needs`, which YAML may give as a string or a list."""
     needs = job.get("needs")
@@ -780,12 +802,18 @@ def test_ci_runs_the_whole_perf_set_serially() -> None:
         # Matches `-m perf`, `-m 'perf'` AND `-m 'not perf'`. The parallel coverage step
         # is a perf step by virtue of DESELECTING the marker, so a filter that saw only
         # the positive form would miss the very step whose deselection is the point.
+        #
+        # Comments are stripped first, by `_script_lines`. Without that, a step whose
+        # script is `# pytest tests/ -m perf -v -n 0` above a real
+        # `pytest tests/ -m 'not perf' -v -n 0` satisfied this selector and both substring
+        # assertions while running nothing - measured, and the reason the stripping exists.
         selector = re.compile(r"-m\s+'?((?:not\s+)?perf)'?")
-        return [
-            " ".join(step["run"].split())
-            for step in jobs[job]["steps"]
-            if step.get("run") and selector.search(step["run"])
-        ]
+        found: list[str] = []
+        for step in jobs[job]["steps"]:
+            script = " ".join(" ".join(_script_lines(step.get("run"))).split())
+            if script and selector.search(script):
+                found.append(script)
+        return found
 
     test_steps = perf_steps("test")
     assert len(test_steps) == 1, (
@@ -873,11 +901,11 @@ def test_the_perf_steps_cannot_be_neutralised() -> None:
             "skipped entirely, which is reported differently from passing"
         )
         for step in job.get("steps", []):
-            run = step.get("run")
-            if not (run and selector.search(run)):
+            script = "\n".join(_script_lines(step.get("run")))
+            if not (script and selector.search(script)):
                 continue
             found += 1
-            where = f"{job_name} / {step.get('name') or run[:40]}"
+            where = f"{job_name} / {step.get('name') or script[:40]}"
             assert not step.get("continue-on-error"), (
                 f"`{where}` has continue-on-error: the perf tests would run, could fail, "
                 "and the job would still be green — a gate that reports nothing"
@@ -904,7 +932,13 @@ def test_the_perf_steps_cannot_be_neutralised() -> None:
                 f"`{gate_job}` needs `{_dependency}`, which does not exist - GitHub would "
                 "fail the workflow, and nothing here was checking that either"
             )
-            assert _dependency not in _seen, f"cycle in the needs graph at `{_dependency}`"
+            # A processed-set, not a "seen" set used as a cycle test: a DIAMOND is
+            # valid YAML and common (two jobs that both need a shared setup), and a first
+            # version of this walk failed `test.needs: [lint, agent-context]` plus
+            # `lint.needs: [agent-context]` with "cycle in the needs graph" - three lines
+            # of valid configuration diagnosed as a defect that did not exist.
+            if _dependency in _seen:
+                continue
             _seen.add(_dependency)
             assert "if" not in jobs[_dependency], (
                 f"`{gate_job}` needs `{_dependency}`, which is conditional. If that `if:` is "
@@ -933,8 +967,12 @@ def test_the_perf_steps_cannot_be_neutralised() -> None:
     #     * a perf step moved into a reusable workflow is caught by `found >= 3` and by
     #       `len(test_steps) == 1`.
     #
-    # Shell semantics cannot be pinned statically; recording the boundary can be, which is
-    # the same remedy `test_perf_marker_guard.py` applies to its own holes.
+    # These two are NOT unpinnable - `|| true`, `--co` and `PYTEST_ADDOPTS` are literal
+    # text in the parsed YAML, and a check for them is cheap. They are unchecked because
+    # nobody has written the check yet, which is a different statement, and an earlier
+    # version of this note mislabelled the boundary as a limit of static analysis. The
+    # three holes this file HAS closed were all closed the same way: by someone measuring
+    # the mutation rather than reasoning about it.
 
 
 class TestCheckNoSecrets:

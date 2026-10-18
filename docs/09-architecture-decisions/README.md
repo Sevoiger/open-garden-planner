@@ -2725,8 +2725,8 @@ the general one — a suite that grows a slow file should not silently lose a wo
   behind review of every unrelated line.
 
 **The timing tests are excluded deliberately, and this is a scheduling principle rather
-than a convenience.** Tests fail intermittently when they share a runner with eight
-workers — the NFR repaint budget and the map-picker close bound among them — and
+than a convenience.** Two tests were observed failing intermittently when they share a
+runner with the parallel workers — the NFR repaint budget and the map-picker close bound among them — and
 §11.4's #354 entry already holds that a performance test must protect a *sustained*
 regression statistically rather than assert that one shared runner owns a quiet CPU. A
 single-step gate here would have been a gate that cries wolf.
@@ -2795,33 +2795,14 @@ is a shared-*state* defect and was fixed by isolating the arm, not by scheduling
   point-snapper mean < 16 ms, spatial-index medians < 200 ms / < 1 ms) run beside workers on
   a 4-vCPU runner. `-n auto` is 4 workers there and 20 on the dev box; the "eight" this ADR
   quotes elsewhere is the measurement harness, which matches neither.
-  **The deselect and the append are one decision, not two, and two earlier drafts of this
-  ADR got it wrong in opposite directions.** The first claimed the append "restores the
-  margin to fourteen"; the second retracted that as "adds no coverage — a no-op for the
-  figure". Both are false, and the measurement that refutes both was on the same page.
-  Measured with the gate itself: step 1 alone is `agent_api` **2012 of 2195 with the gate
-  exiting 1**; step 1 plus the serial append is **2026 of 2195 with `regressions: []`**. The
-  delta is exactly the fourteen `stop()` escalation lines. The second draft's error was
-  comparing two shapes that *both* contained the append — step 1 running everything, versus
-  step 1 deselecting — so they matched by construction. The shape that answers the question
-  is step 1 **alone**.
-  So: the append is load-bearing for the coverage gate, and it is also the single place the
-  three zero-slack budgets run. Delete it and `Coverage` goes red on `agent_api`; delete the
-  deselect and it becomes redundant. The margin against the floor is six either way.
-  The fourteen statements the filter removed are `stop()`'s forced escalation — `_run`'s
-  `_forced_stop` branch, `_cancel_loop_tasks`, `_force_stop`, the #373 fix — not `start()`,
-  which is covered by `test_agent_api_lifecycle.py` and `test_agent_api_server.py`. Exact
-  lines, from diffing two `--cov` JSON reports: 2686, 2691, 2715, 2716, 2718, 2719, 2720,
-  2728, 2729, 2733, 2734, 2735, 2737, 2768.
-
-**Evidence.** `scripts/measure_test_suite_latency.py` reproduces the concentration table
-from a recorded `--durations` report (11 unit tests pin its arithmetic against a
-hand-computable fixture, including the ways it could report a confident wrong number);
-`docs/11-risks-and-technical-debt/test-suite-latency-2026-10.md` holds the full baseline,
-the per-layer and per-file tables, the widget-leak measurement and the corrections to
-issue #509's stated facts. The CI `Test` job uploads its `--durations=0` report as the
-`test-durations-linux` artifact, so the baseline refreshes on every push rather than
-drifting until someone remembers to re-measure.
+  **The deselect and the append are one decision, not two — measured, and stated once:**
+  step 1 alone is `agent_api` **2012 of 2195 with the gate exiting 1**; step 1 plus the
+  serial append is **2026 of 2195 with `regressions: []`**. The delta is exactly the
+  fourteen `stop()` escalation lines. Two earlier drafts of this ADR got the same
+  measurement wrong in opposite directions ("restores the margin to fourteen", then
+  "adds no coverage"); both are retracted, and the working is in
+  `docs/11-risks-and-technical-debt/test-suite-latency-2026-10.md` rather than repeated
+  here.
 
 ### ADR-042 addendum: the runtime tint becomes a luminance map (issue #502, 16 October 2026)
 
