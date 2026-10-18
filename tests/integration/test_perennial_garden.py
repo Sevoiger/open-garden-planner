@@ -330,3 +330,52 @@ def test_idempotence_receipt_survives_undo_and_refuses_late_resurrection(garden,
     fresh.load(other_scene, path)
     other = GardenMemoryService(fresh, CommandManager(), other_scene)
     assert other.add_event(body, "durable-once")["deleted"]
+
+
+@pytest.mark.parametrize("label", ["", "Autour de la Toussaint, année incertaine"])
+def test_unrelated_gui_edits_preserve_structured_periods(garden, qtbot, label):
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor, GardenMemoryDialog
+
+    scene, pm, commands, service, bed, plant = garden
+    original = {"precision": "month", "value": "2023-10", "label": label}
+    service.set_card(str(plant.item_id), {"kind": "group", "period": original})
+    dialog = GardenMemoryDialog(service, str(plant.item_id))
+    qtbot.addWidget(dialog)
+    dialog.notes_edit.setPlainText("Note indépendante de la date")
+    dialog._save_card()
+    assert plant.metadata["garden_tracking"]["period"] == original
+    body = {**fields(plant), "period": original}
+    event_id = service.add_event(body, "structured-period")["event_id"]
+    editor = EventEditor(body["targets"], pm.garden_memory["events"][event_id])
+    qtbot.addWidget(editor)
+    editor.description.setPlainText("Description indépendante de la date")
+    editor.accept()
+    assert editor.value["period"] == original
+    service.edit_event(event_id, editor.value)
+    assert pm.garden_memory["events"][event_id]["period"] == original
+    # An intentional date change still updates the structured value.
+    dialog.period_edit.setText("2024")
+    dialog._save_card()
+    assert plant.metadata["garden_tracking"]["period"]["precision"] == "year"
+    editor.date_edit.clear()
+    editor.accept()
+    assert editor.value["period"]["precision"] == "unknown"
+
+
+def test_locked_intervention_delete_shows_error_and_keeps_history(garden, qtbot, monkeypatch):
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+
+    scene, pm, commands, service, bed, plant = garden
+    service.add_event(fields(plant), "delete-locked")
+    dialog = GardenMemoryDialog(service, str(plant.item_id))
+    qtbot.addWidget(dialog)
+    dialog.events.setCurrentRow(0)
+    layer = scene.layers[0]
+    plant.layer_id = layer.id
+    layer.locked = True
+    before, depth = pm.garden_memory, commands.undo_depth
+    errors = []
+    monkeypatch.setattr(dialog, "_error", lambda exc: errors.append(str(exc)))
+    dialog._delete_event()
+    assert errors and "locked" in errors[0]
+    assert pm.garden_memory == before and commands.undo_depth == depth

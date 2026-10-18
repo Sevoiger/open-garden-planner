@@ -2308,3 +2308,19 @@ actual selection palette, not just stylesheet text.
 headless screenshot can miss. This evidence does not establish native visual
 acceptance or explain the owner's reported apparent automatic clicks. Pins:
 `tests/integration/test_perennial_garden.py`, `tests/unit/test_theme.py`.
+
+## Case study: unrelated edits losing a structured period (personal fork, 2026-10-18)
+
+**Symptom.** Independent review supplied a valid month with an empty label, then
+changed only a note: both record editors reconstructed the date from its label
+and silently changed it to unknown. Arbitrary human labels also blocked edits.
+
+**Evidence.** Real dialog/service tests reproduce empty and unparseable labels
+on cards and interventions. They assert the complete structured period survives
+unrelated edits and that deliberately changing/clearing the field still works.
+
+**Fix.** Retain the original structured period while its displayed text is
+unchanged; show the canonical value if the original label is empty. Parse only
+an intentional text change. A label is presentation, not the date's source of
+truth. Also catch service refusals in intervention deletion, preserving data and
+history when a target becomes locked. Pins: `test_perennial_garden.py`.

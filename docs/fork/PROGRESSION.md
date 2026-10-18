@@ -87,3 +87,12 @@ refus, répétition, modification, sauvegarde et réouverture. Les saisons fran�
 anglaises et allemandes et les virgules décimales sont prises en charge.
 
 Revue et contrôles finaux de la tranche en cours. Aucun merge, tag ou release.
+
+Première revue de la tranche : P0 reproduit sur les périodes structurées dont le
+libellé est vide/arbitraire. Les deux formulaires conservent maintenant la période
+originale lorsqu'on modifie une autre donnée ; tests des deux éditeurs et des
+changements de date intentionnels. P1 corrigés : refus de suppression sur cible
+verrouillée affiché sans exception non interceptée, icône existante du menu ajoutée.
+Les noms longs de la liste sont abrégés avec infobulle complète.
+Le run complet intermédiaire a été arrêté après les échecs d'iconographie pour
+relancer sur ces corrections ; ce run ne constitue pas le résultat final.

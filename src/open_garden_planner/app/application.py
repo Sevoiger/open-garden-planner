@@ -4499,6 +4499,7 @@ class GardenPlannerApp(QMainWindow):
         """Set up the Garden menu actions (US-12.10a — soil)."""
         records = QAction(self.tr("Garden records…"), self)
         records.triggered.connect(lambda _checked=False: self._on_garden_records())
+        self._set_action_icon(records, "tab_calendar")
         menu.addAction(records)
         menu.addSeparator()
 

@@ -1310,3 +1310,10 @@ selection foregrounds fix the measured palette. Tests cover actual small-form
 minimums and selection palette colors. Native owner acceptance remains pending;
 these observations do not explain the reported apparent spontaneous clicks.
 See the paired debug-verbose case study and ADR-058/059.
+
+A subsequent independent review reproduced a valid structured date becoming unknown
+when only a note/description changed: the label may legally be empty or non-parsable.
+Both editors now preserve the structured period until its displayed text changes;
+empty labels display the canonical value. Regression tests cover both editors,
+empty/arbitrary labels and intentional date changes. Deletion catches locked-target
+refusals without changing records/history. See the paired debug-verbose case study.

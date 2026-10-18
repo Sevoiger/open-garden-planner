@@ -51,6 +51,11 @@ def event_type_choices() -> list[tuple[str, str]]:
         ]
 
 
+def _edited_period(text: str, original: dict[str, str]) -> dict[str, str]:
+    """Keep structured precision/labels when an unrelated field is edited."""
+    return period(original) if text == (original["label"] or original["value"]) else period(text)
+
+
 class EventEditor(QDialog):
     """A single intervention; an empty occurrence date explicitly means unknown."""
 
@@ -76,7 +81,9 @@ class EventEditor(QDialog):
         self.status_combo.addItem(self.tr("Completed"), "done")
         self.status_combo.setCurrentIndex(max(0, self.status_combo.findData(event.get("status", "done"))))
         form.addRow(self.tr("Status:"), self.status_combo)
-        self.date_edit = QLineEdit(event.get("period", {}).get("label", ""))
+        self._original_period = period(event.get("period"))
+        self.date_edit = QLineEdit(self._original_period["label"] or self._original_period["value"])
+        self.date_edit.setToolTip(self._original_period["value"])
         self.date_edit.setPlaceholderText(self.tr("YYYY-MM-DD, YYYY-MM, autumn 2023, YYYY, or blank"))
         form.addRow(self.tr("Occurrence:"), self.date_edit)
         self.description = QPlainTextEdit(event.get("description", ""))
@@ -175,7 +182,7 @@ class EventEditor(QDialog):
                     self.targets.append(target.data(Qt.ItemDataRole.UserRole))
             value: dict[str, Any] = {
                 "type": self.type_combo.currentData(), "status": self.status_combo.currentData(),
-                "period": period(self.date_edit.text()), "description": self.description.toPlainText(),
+                "period": _edited_period(self.date_edit.text(), self._original_period), "description": self.description.toPlainText(),
                 "targets": self.targets, "media": self.media,
             }
             for key, edit in self.optional.items():
@@ -206,6 +213,8 @@ class GardenMemoryDialog(QDialog):
         layout = QVBoxLayout(self)
         split = QSplitter()
         self.targets = QListWidget()
+        self.targets.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.targets.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.targets.setMinimumWidth(150)
         self.targets.setMaximumWidth(280)
         self.targets.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
@@ -325,6 +334,7 @@ class GardenMemoryDialog(QDialog):
         current = all_row
         for obj in garden_objects(self._snapshot()):
             row = QListWidgetItem(obj.get("name") or obj["object_type"])
+            row.setToolTip(row.text())
             row.setData(Qt.ItemDataRole.UserRole, obj["item_id"])
             self.targets.addItem(row)
             if obj["item_id"] == self.target_id:
@@ -348,7 +358,8 @@ class GardenMemoryDialog(QDialog):
             self.name_edit.setText(card["name"])
             self.kind_combo.setCurrentIndex(self.kind_combo.findData(card["kind"]))
             self.state_combo.setCurrentIndex(self.state_combo.findData(card["state"]))
-            self.period_edit.setText(card["period"]["label"])
+            self._original_card_period = card["period"]
+            self.period_edit.setText(card["period"]["label"] or card["period"]["value"])
             self.quantity_edit.setText("" if card.get("quantity") is None else str(card["quantity"]))
             self.notes_edit.setPlainText(card["notes"])
             self.zone_combo.clear()
@@ -390,7 +401,7 @@ class GardenMemoryDialog(QDialog):
                 card.pop(key, None)
             card.update(name=self.name_edit.text(), notes=self.notes_edit.toPlainText(),
                         kind=self.kind_combo.currentData(), state=self.state_combo.currentData(),
-                        period=period(self.period_edit.text()),
+                        period=_edited_period(self.period_edit.text(), self._original_card_period),
                         quantity=optional_number(self.quantity_edit.text(), "quantity"),
                         zone_id=self.zone_combo.currentData())
             self.service.set_card(self.target_id, card)
@@ -418,7 +429,7 @@ class GardenMemoryDialog(QDialog):
                 status = self.tr("Completed") if entry["status"] == "done" else self.tr("Planned")
                 row = QListWidgetItem(prefix + when + " — " + status + ": " + entry["description"])
                 type_name = {code: label for label, code in event_type_choices()}[entry["type"]]
-                row.setToolTip(status + " / " + type_name)
+                row.setToolTip(row.text() + "\n" + status + " / " + type_name)
                 row.setData(Qt.ItemDataRole.UserRole, entry["id"])
                 self.events.addItem(row)
         except (ValueError, TypeError) as exc:
@@ -507,5 +518,8 @@ class GardenMemoryDialog(QDialog):
     def _delete_event(self) -> None:
         row = self.events.currentItem()
         if row:
-            self.service.edit_event(row.data(Qt.ItemDataRole.UserRole), None)
-            self._refresh_events()
+            try:
+                self.service.edit_event(row.data(Qt.ItemDataRole.UserRole), None)
+                self._refresh_events()
+            except (ValueError, TypeError) as exc:
+                self._error(exc)
