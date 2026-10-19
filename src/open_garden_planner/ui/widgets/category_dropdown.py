@@ -4,15 +4,16 @@ Opens directly under a toolbar category button. Supports click-to-activate
 and drag-to-canvas, plus an in-popup search field that filters thumbnails.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, QRect, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QContextMenuEvent,
     QDrag,
     QShowEvent,
 )
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -53,7 +54,6 @@ class _ThumbnailButton(QToolButton):
         self._item = item
         self._drag_start_pos: QPoint | None = None
 
-        self.setFixedSize(THUMB_SIZE + 16, THUMB_SIZE + 24)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._list_store: PlantListStore | None = None
@@ -97,9 +97,21 @@ class _ThumbnailButton(QToolButton):
         name_label = QLabel(item.name)
         name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         name_label.setWordWrap(True)
-        name_label.setStyleSheet("font-size: 9px;")
-        name_label.setMaximumHeight(20)
+        # Labels and tool buttons can have different fonts under the theme.
+        # Measure the actual label, including translated compound words.
+        metrics = name_label.fontMetrics()
+        longest_word = max((metrics.horizontalAdvance(word) for word in item.name.split()), default=0)
+        name_label.setMinimumWidth(max(THUMB_SIZE, longest_word + 4))
+        self.setMinimumWidth(max(THUMB_SIZE + 32, longest_word + 12))
+        self.setMinimumHeight(THUMB_SIZE + metrics.lineSpacing() * 3 + 14)
+        required_text = name_label.fontMetrics().boundingRect(
+            QRect(0, 0, name_label.minimumWidth(), 10000), Qt.TextFlag.TextWordWrap, item.name,
+        )
+        name_label.setMinimumHeight(max(name_label.fontMetrics().lineSpacing() * 3, required_text.height()) + 2)
         layout.addWidget(name_label)
+        # QToolButton's own size hint does not account for a child form whose
+        # wrapped title is taller than three lines. Contain the whole layout.
+        self.setMinimumSize(self.minimumSize().expandedTo(layout.minimumSize()))
 
         self._update_favorite_state()
 
@@ -266,11 +278,14 @@ class CategoryDropdown(QWidget):
 
     tool_selected = pyqtSignal(ToolType)
     item_selected = pyqtSignal(object)
+    database_search_requested = pyqtSignal(str, str)
 
     def __init__(self, category: GalleryCategory, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self._category = category
         self._buttons: list[_ThumbnailButton] = []
+        self._catalog_records: dict[str, dict[str, Any]] | None = None
+        self._catalog_offset = 0
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -314,10 +329,39 @@ class CategoryDropdown(QWidget):
         self.trait_filters.changed.connect(lambda: self._apply_filter(self._search_box.text()))
         content_layout.addWidget(self.trait_filters)
 
+        from open_garden_planner.ui.widgets.catalog_palette import ICON_GROUPS, CatalogList
+
+        self._catalog_group = ICON_GROUPS.get(self._category.icon_name)
+        self._catalog_list = None
+        if self._catalog_group:
+            self._all_plants = QCheckBox(self.tr("All plants (including unclassified)"))
+            self._all_plants.toggled.connect(lambda: self._apply_filter(self._search_box.text()))
+            content_layout.addWidget(self._all_plants)
+            self._catalog_count = QLabel()
+            self._catalog_count.setWordWrap(True)
+            content_layout.addWidget(self._catalog_count)
+            self._catalog_list = CatalogList(self)
+            self._catalog_list.item_chosen.connect(self._on_item_clicked)
+            content_layout.addWidget(self._catalog_list)
+            pages = QHBoxLayout()
+            self._previous_page = QPushButton(self.tr("Previous plants"))
+            self._next_page = QPushButton(self.tr("Next plants"))
+            self._previous_page.clicked.connect(lambda: self._change_page(-1))
+            self._next_page.clicked.connect(lambda: self._change_page(1))
+            pages.addWidget(self._previous_page)
+            pages.addWidget(self._next_page)
+            content_layout.addLayout(pages)
+            self._database_button = QPushButton(self.tr("Search plant databases…"))
+            self._database_button.clicked.connect(self._search_databases)
+            content_layout.addWidget(self._database_button)
+            content_layout.addWidget(QLabel(self.tr("Illustrations and generic shapes")))
+
         grid_widget = QWidget()
         grid_layout = QGridLayout(grid_widget)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(4)
+        grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._grid_layout = grid_layout
 
         for i, item in enumerate(self._category.items):
             row = i // GRID_COLS
@@ -334,7 +378,7 @@ class CategoryDropdown(QWidget):
         self._empty_label.hide()
 
         self.adjustSize()
-        max_width = (THUMB_SIZE + 16) * GRID_COLS + 32
+        max_width = grid_widget.minimumSizeHint().width() + 32
         if not self.trait_filters.isHidden():
             max_width = max(max_width, self.trait_filters.minimumSizeHint().width() + 32)
         self._preferred_width = max_width
@@ -345,21 +389,61 @@ class CategoryDropdown(QWidget):
         self.item_selected.emit(item)
         self.close()
 
+    def _search_databases(self) -> None:
+        query = self._search_box.text()
+        self.close()
+        self.database_search_requested.emit(query, self._catalog_group or "flower")
+
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
+        while self._grid_layout.count():
+            self._grid_layout.takeAt(0)
+        position = 0
         for btn in self._buttons:
             from open_garden_planner.ui.widgets.gallery_data import gallery_matches
 
             visible = gallery_matches(btn.item, needle, layers=self.trait_filters.layers,
                                       functions=self.trait_filters.functions)
             btn.setVisible(visible)
+            if visible:
+                self._grid_layout.addWidget(btn, position // GRID_COLS, position % GRID_COLS)
+                position += 1
         self._empty_label.setVisible(all(btn.isHidden() for btn in self._buttons))
+        self._catalog_offset = 0
+        self._populate_catalog(text)
 
     def clear_filters(self) -> None:
         """Start each category opening with all objects, never stale hidden chips."""
         self._search_box.clear()
         self.trait_filters.clear()
+        if self._catalog_list is not None:
+            self._all_plants.setChecked(False)
         self._apply_filter("")
+
+    def _change_page(self, direction: int) -> None:
+        from open_garden_planner.ui.widgets.catalog_palette import PAGE_SIZE
+
+        self._catalog_offset = max(0, self._catalog_offset + direction * PAGE_SIZE)
+        self._populate_catalog(self._search_box.text())
+
+    def _populate_catalog(self, text: str) -> None:
+        if self._catalog_list is None or self._catalog_records is None:
+            return
+        from open_garden_planner.ui.widgets.catalog_palette import PAGE_SIZE, matching_records
+
+        matches = matching_records(
+            self._catalog_records, text, group=None if self._all_plants.isChecked() else self._catalog_group,
+            layers=self.trait_filters.layers, functions=self.trait_filters.functions,
+        )
+        page = matches[self._catalog_offset:self._catalog_offset + PAGE_SIZE]
+        self._catalog_list.populate(page, self._catalog_group or "flower")
+        self._catalog_count.setText(self.tr("{count} plants — {first}–{last}").format(
+            count=len(matches), first=self._catalog_offset + 1 if page else 0,
+            last=self._catalog_offset + len(page),
+        ))
+        self._previous_page.setEnabled(self._catalog_offset > 0)
+        self._next_page.setEnabled(self._catalog_offset + PAGE_SIZE < len(matches))
+        self._empty_label.setVisible(not matches and all(btn.isHidden() for btn in self._buttons))
 
     def refresh_thumbnails(self) -> None:
         """Re-pull each button's pixmap after a theme switch (see §8.21)."""
@@ -368,6 +452,10 @@ class CategoryDropdown(QWidget):
 
     def show_below(self, anchor: QWidget) -> None:
         """Show the popup directly beneath the given anchor widget."""
+        if self._catalog_group:
+            from open_garden_planner.services.species_catalog import offline_catalog
+
+            self._catalog_records = offline_catalog()
         self.clear_filters()
         for btn in self._buttons:
             btn._update_favorite_state()

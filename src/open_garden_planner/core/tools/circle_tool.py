@@ -1,6 +1,7 @@
 """Circle drawing tool."""
 
-from typing import TYPE_CHECKING, cast
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any, cast
 
 from PyQt6.QtCore import QT_TR_NOOP, QLineF, QPointF, Qt
 from PyQt6.QtGui import QBrush, QColor, QKeyEvent, QMouseEvent, QPen
@@ -49,6 +50,7 @@ class CircleTool(BaseTool):
         self._is_drawing = False
         self._plant_category: object | None = None
         self._plant_species: str = ""
+        self._species_data: dict[str, Any] | None = None
 
     def activate(self) -> None:
         """Called when this tool becomes the active tool.
@@ -59,9 +61,10 @@ class CircleTool(BaseTool):
         super().activate()
         self._plant_category = None
         self._plant_species = ""
+        self._species_data = None
 
     def set_plant_info(
-        self, category: object | None = None, species: str = ""
+        self, category: object | None = None, species: str = "", species_data: dict[str, Any] | None = None,
     ) -> None:
         """Set plant category/species for the next item created.
 
@@ -71,6 +74,7 @@ class CircleTool(BaseTool):
         """
         self._plant_category = category
         self._plant_species = species
+        self._species_data = deepcopy(species_data)
 
     def mouse_press(self, event: QMouseEvent, scene_pos: QPointF) -> bool:
         """Handle click for center or rim point."""
@@ -79,6 +83,14 @@ class CircleTool(BaseTool):
 
         # Snap the position to grid if enabled
         snapped_pos = self._view.snap_point(scene_pos)
+
+        if self._species_data is not None:
+            from open_garden_planner.core.plant_sizing import catalog_footprint_diameter_cm
+
+            self._center_point = snapped_pos
+            diameter = catalog_footprint_diameter_cm(self._species_data, self._object_type.name)
+            self._finalize_circle(snapped_pos + QPointF(diameter / 2, 0))
+            return True
 
         if not self._is_drawing:
             # First click: set center
@@ -170,6 +182,7 @@ class CircleTool(BaseTool):
                 item = build_plant(
                     scene, self._center_point, self._object_type, radius,
                     species_name=self._plant_species, plant_category=cast("PlantCategory | None", self._plant_category),
+                    species_dict=self._species_data,
                     auto_assign=bool(manager and manager.auto_assign_permaculture_layers),
                 )
             else:
@@ -208,6 +221,12 @@ class CircleTool(BaseTool):
 
     def commit_typed_coordinate(self, point: QPointF) -> bool:
         """Set the center on the first call, finalize the radius on the second."""
+        if self._species_data is not None:
+            from open_garden_planner.core.plant_sizing import catalog_footprint_diameter_cm
+
+            self._center_point = QPointF(point)
+            self._finalize_circle(point + QPointF(catalog_footprint_diameter_cm(self._species_data, self._object_type.name) / 2, 0))
+            return True
         if not self._is_drawing:
             self._center_point = QPointF(point)
             self._is_drawing = True

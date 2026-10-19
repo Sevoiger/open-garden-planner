@@ -45,7 +45,19 @@ design; this module's job is only ever the first two.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any, Protocol
+
+
+def catalog_footprint_diameter_cm(record: dict[str, Any], object_type: str) -> float:
+    """Bound a new catalog symbol's footprint without changing recorded spread."""
+    try:
+        spread = _positive_number(record.get("max_spread_cm"))
+    except OverflowError:
+        spread = None
+    if spread is not None and isfinite(spread) and spread > 2:
+        return min(spread, 5000.0)
+    return {"TREE": 200.0, "SHRUB": 100.0}.get(object_type, 60.0)
 
 
 def _positive_number(value: Any) -> float | None:

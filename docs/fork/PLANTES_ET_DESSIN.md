@@ -1,5 +1,29 @@
 # Plantes classiques, dessin et cercles
 
+## Catalogue dans les catégories du haut
+
+Les menus **Trees**, **Shrubs & Hedges**, **Flowers & Perennials** et
+**Vegetables & Herbs** proposent maintenant les fiches du catalogue local,
+avec recherche, filtres et pages de 48 plantes. **Previous plants / Next plants**
+changent de page. **All plants (including unclassified)** donne accès à toutes
+les fiches, y compris celles dont le type n'est pas renseigné.
+
+Choisir une fiche, puis cliquer une fois sur le plan pour la placer ; le
+glisser-déposer fonctionne aussi. La fiche botanique complète, sa provenance et
+son identité sont conservées. L'emprise initiale utilise l'envergure connue
+(plafonnée à 50 m pour le dessin) ou la taille générique habituelle. Annuler puis
+rétablir conserve le même sujet. **Search plant databases…** ouvre la recherche
+existante avec les fournisseurs configurés ; cliquer **Search online** dans cette
+fenêtre pour interroger les API. La confirmation prépare un nouveau placement.
+
+La section **Illustrations and generic shapes** propose séparément les dessins :
+246 illustrations de plantes et 15 formes génériques, dont 138 nouveaux dessins
+validés le 19 octobre. Ces raccourcis gardent le dessin centre puis bord du cercle.
+Les dessins sont conventionnels : ils ne prouvent ni une espèce ni une variété,
+et leurs couleurs ne décrivent pas nécessairement votre cultivar. Une fiche sans
+dessin spécifique utilise une silhouette générique. La recherche globale de la
+barre trouve aussi les fiches locales et privilégie les résultats botaniques.
+
 ## Bibliothèques disponibles
 
 OGP contient déjà 118 fiches botaniques hors ligne et 11 catégories d'objets dans
@@ -160,3 +184,29 @@ ne devient pas un catalogue embarqué pour les autres installations.
 Une fiche **Sophora prostrata** est aussi disponible dans la recherche et dans
 **Plant Lists > Mes plantes — Sophora prostrata**. Elle confirme l'identité
 botanique ; préciser soi-même la variété et les dimensions connues.
+
+## Mes propres dessins de plantes
+
+Sélectionner une plante déjà associée à une fiche, puis ouvrir **Plant Details**.
+Dans la partie défilante, **Import personal PNG…** permet de choisir un dessin vu
+du dessus, idéalement sur fond transparent. L'image conserve ses proportions et
+ses couleurs ; elle remplace la silhouette du plan et la miniature de la fiche.
+Les dimensions, espacements et informations botaniques restent identiques.
+
+**Remember visual in library** mémorise ce dessin pour les prochains placements
+de cette même fiche, y compris depuis les catégories du haut. C'est une préférence
+de bibliothèque : les plantes déjà posées conservent leur propre version.
+**Use default illustration** rétablit la silhouette standard pour la plante
+sélectionnée ; mémoriser ensuite si ce choix doit aussi devenir le défaut futur.
+L'import et le retour à la silhouette standard s'annulent avec Cmd+Z dans le plan.
+
+Le PNG est intégré au fichier .ogp : déplacer ou supprimer le fichier image
+d'origine ne casse pas le plan. Formats acceptés : PNG, 4 Mio maximum et
+16 mégapixels maximum. Un PNG endommagé dans un plan utilise la silhouette
+standard. Les images personnelles dans **visuals/** sont privées et ignorées
+par Git. Une image personnelle ne devient pas un dessin fourni avec l'application.
+
+Le gros catalogue local est utile hors ligne, mais la recherche en ligne suffit
+pour découvrir des plantes au fil du projet. Pour un usage simple, partir de ses
+propres fiches et favoris ; il n'est pas nécessaire de parcourir les milliers de
+fiches importées. Les fiches existantes restent conservées.

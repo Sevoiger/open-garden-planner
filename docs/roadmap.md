@@ -3104,3 +3104,13 @@ ad hoc guild-membership form use natural-minimum scroll containment and availabl
 screen bounds (ADR-062 / FR-FORK-UI-03). Wide action rows remain horizontally
 accessible. Automated small-desktop/large-font/tab and Preferences persistence
 checks added. Native owner acceptance remains pending.
+
+### Personal catalog/illustration follow-up (2026-10-19, ADR-063)
+
+Toolbar botanical categories now browse the offline catalog in bounded pages,
+including unclassified plants through an explicit all-plants option. Click/drag
+placement keeps provider identity, full data and existing undo/parenting paths.
+The existing database search is reachable from each plant category. All 246
+plant illustrations are exposed, with 138 additional procedural drawings approved
+by the owner on a QtSvg contact sheet. Native workflow acceptance remains pending;
+no merge, release or upstream publication.

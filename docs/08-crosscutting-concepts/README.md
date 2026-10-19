@@ -2651,3 +2651,14 @@ The audit instantiates all 38 types, walks their tabs, checks styled button text
 rectangles and field/group minima on a 600 × 440 desktop (13 pt dark English and
 18 pt light German), then verifies a real Preferences save/reopen. Map layout uses
 a QWidget stand-in for WebEngine, with no browser or network request.
+
+### Personal catalog palettes: bounded rows and separate artwork (ADR-063)
+
+Text and trait filters apply to the entire catalog before a 48-row category page
+or 12-row global-search limit. Only displayed botanical rows get pixmaps; the
+small shared illustration cache is capped at 256 paths. Category reopening
+refreshes library data; global-search focus invalidates its snapshot. Unknown
+growth forms are accessible through All plants, not guessed from height.
+Illustration shortcuts remain available separately and retain centre/rim drawing.
+Long row labels wrap instead of eliding; all content remains in the screen-bounded
+scroll area. A catalog snapshot gives click/drag creation full provider identity.

@@ -671,3 +671,24 @@ compressing text. Terminal action rows remain outside form scrolling and get the
 own horizontal scrolling when necessary. Reopening a dialog does not duplicate the
 container, disconnect acceptance/validation, or change stored preferences. Existing
 native Qt file/color/message dialogs retain platform behavior.
+
+### FR-FORK-PLANTS-03: Catalog placement from toolbar categories
+
+Trees, shrubs, flowers/perennials and vegetables/herbs expose the complete offline
+catalog through text/trait filters, 48-record pages and an explicit all-plants
+option for unclassified records. Presentation groups use recorded layers or known
+illustrations, never height alone; no botanical traits are inferred from artwork.
+Choosing a record places its full provider snapshot on the next plan click or drag,
+through the existing creation/parenting command. Undo, redo and save/load preserve
+identity and cultivar uncertainty. The database shortcut uses the existing search
+dialog and configured providers; it does not modify selected plants.
+The palette exposes 246 stylized plant illustrations plus 15 generic forms, including
+138 additional illustrations approved by the owner on 2026-10-19. Generic and genus
+symbols do not claim cultivar-accurate appearance. No bulk external photo download.
+
+### FR-FORK-PLANTS-04 — Personal plan visuals
+
+The personal fork accepts a bounded owner PNG from Plant Details, preserving alpha
+and aspect. Import/default changes are undoable, portable in .ogp, and do not alter
+plant geometry or identity. An explicit library preference reuses the visual for
+future placements while preserving existing snapshots and backing up the library.

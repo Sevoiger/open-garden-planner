@@ -474,3 +474,19 @@ classic-list import runs with the app closed, validates the old store, prepares 
 snapshot, backs up existing bytes, then imports missing collections atomically through
 the existing list service. Retry skips completed descriptions and does not overwrite
 user-edited entries. The next GUI launch loads the four collections normally.
+
+## Personal toolbar catalog placement (ADR-063)
+
+Open category → snapshot offline catalog → filter before paging → build up to 48
+rows. Choose a record → activate the corresponding CircleTool with a deep-copied
+provider snapshot → click plan → build_plant → CreateItemCommand → parent/dirty/undo
+notifications. Drag uses the same snapshot and creation path. Save writes the
+existing plant_species metadata; reload retains identity and illustration key.
+The database shortcut opens the existing search dialog with the category query;
+confirming activates placement rather than assigning species to a selected item.
+
+Personal visual flow (ADR-064): Plant Details imports a bounded PNG into the
+selected species snapshot through one undoable property command. Paint/export
+prefers this image, preserving aspect/alpha and compensating the scene Y-flip.
+Explicitly remembering it patches the library; future catalog placements carry
+that embedded visual while existing placements retain their own snapshot.

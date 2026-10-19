@@ -1,4 +1,4 @@
-"""Generate all plant sprite SVGs (108 species + 15 categories) — issue #281.
+"""Generate all plant sprite SVGs (246 illustrations + 15 categories) — issue #281.
 
 This script IS the provenance record for every file under
 `src/open_garden_planner/resources/plants/` (see PROVENANCE.md there).
@@ -21,13 +21,14 @@ Usage:
     venv/Scripts/python.exe scripts/generate_plant_sprites.py --only tomato lettuce
 """
 
-# ruff: noqa: C408 - dict() keyword style is deliberate: the 123-entry recipe
+# ruff: noqa: C408 - dict() keyword style is deliberate: the original recipe
 # tables read far better as dict(a=..., pal=...) than as quoted-key literals.
 
 from __future__ import annotations
 
 import argparse
 import colorsys
+import json
 import math
 import random
 import sys
@@ -1157,6 +1158,10 @@ SPECIES: dict[str, dict] = {
 }
 
 # --------------------------------------------------------------------------- #
+# Additional plan symbols use the same primitives, budgets and seeded style.
+_ILLUSTRATIONS = json.loads((PLANTS_DIR / "illustrations.json").read_text(encoding="utf-8"))["illustrations"]
+SPECIES.update({row["id"]: row["recipe"] for row in _ILLUSTRATIONS if "recipe" in row})
+
 # category table (15)
 # --------------------------------------------------------------------------- #
 CATEGORIES: dict[str, dict] = {
@@ -1203,7 +1208,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="restrict to these sprite names (stems)")
     args = parser.parse_args(argv)
 
-    assert len(SPECIES) == 108, f"species table has {len(SPECIES)} entries, expected 108"
+    assert set(SPECIES) == {row["id"] for row in _ILLUSTRATIONS}
     assert len(CATEGORIES) == 15, f"category table has {len(CATEGORIES)} entries, expected 15"
 
     files = generate_all()

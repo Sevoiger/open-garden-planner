@@ -2935,3 +2935,55 @@ change. Existing inner list/tab/form scroll areas remain in place; an outer bar
 appears only when their minimum cannot fit. The 38-type inventory and an ad hoc
 constructor check prevent a future custom dialog from silently bypassing the
 policy. Automated evidence cannot replace the owner's native visual acceptance.
+
+## ADR-063: Bounded catalog palettes and explicit botanical snapshots (2026-10-19)
+
+**Status:** Accepted for the personal macOS fork; visual lot approved by owner.
+
+**Context:** Toolbar categories held a small fixed artwork list while the local
+plant library held thousands of botanical records. Adding every record as a
+thumbnail widget would make startup and menus expensive, and artwork strings alone
+cannot retain provider identity or distinguish species from cultivars.
+
+**Decision:** Keep illustration shortcuts distinct from botanical rows.
+`services/plant_palette.py` owns Qt-free presentation grouping and exact/name/genus
+art lookup; `resources/plants/illustrations.json` records 246 illustration aliases,
+French labels, groups and 138 added deterministic recipes. Generic illustrations
+are a visual convention, never evidence of plant traits. Unknown records remain
+available through All plants; do not infer growth form from height. The existing
+`species_catalog.offline_catalog` remains the catalog source. Category palettes
+refresh on opening and render at most 48 botanical rows; global search refreshes
+its snapshot on focus and presents at most 12 results.
+
+A `GalleryItem.species_data` snapshot crosses click placement and the existing
+`application/x-ogp-plant-data` MIME channel. CircleTool passes a defensive copy into
+`build_plant`; creation still goes through CreateItemCommand for undo and parenting.
+Catalog records place on one click, while illustration-only circle tools retain
+centre/rim drawing. A new helper in `core/plant_sizing.py` bounds initial drawn
+footprints to 5000 cm and uses existing type defaults for unusable dimensions;
+recorded spread and spacing semantics are unchanged. No file-format version bump.
+The category database shortcut reuses the existing search dialog and one settings
+credentials factory in the application, with explicit online requests unchanged.
+
+**Consequences:** Full plant data are available without a matching botanical drawing.
+No new dependency, online image ingestion or user-library write path is added.
+Full snapshots already persist in .ogp metadata. The two new modules are covered by
+`tests/integration/test_catalog_palette.py`; all added SVGs pass the original
+QtSvg allowlist, size, determinism and rendered visual-weight gates. Owner native
+workflow acceptance remains separate from approval of the illustration sheet.
+
+### ADR-064 — Personal PNG plant visuals (personal macOS fork, 2026-10-19)
+
+Store original PNG bytes as base64 in the additive species snapshot field
+`raw_data.personal_visual_png`. This keeps placed plants portable through existing
+plan serialization, copying and catalog MIME without a file-version change or
+external path. Only the owner's explicit library-save action patches this field
+in the matching canonical species record; provider identity, botanical fields,
+unknown keys and unrelated records are preserved. New provider records keep their
+source identity. Back up the original library and use same-directory atomic replace.
+Document import/default actions use the command stack and never resize the plant;
+library preferences are explicitly separate from document undo. Existing placements
+retain their embedded snapshot. PNG decoding has byte/pixel limits and bounded caches;
+invalid embedded images fall back to standard art. Preserve aspect and alpha, with
+Y-flip compensation only in the canvas painter, including scene-based exports.
+Owner artwork stays private, outside the shipped asset/provenance registry.

@@ -2508,3 +2508,56 @@ preserving intentionally hidden descendants; do not hide the bug behind a test
 processEvents call. Existing real-bed/default-bed and snippet-toggle regressions,
 plus all perennial/responsive tests, pass together (143 checks). A former exact
 800 px client assertion now checks the entire native frame fits the desktop.
+
+## Case study: catalog MIME could make a new plan unsavable (personal fork, 2026-10-19)
+
+**Symptom.** An independent offscreen probe changed max_spread_cm to NaN in a
+valid catalog MIME payload. The drop created one item, then ProjectManager.save
+raised PlanValidationError on metadata.plant_species.max_spread_cm. A second
+probe supplied 15 partial Rose matches plus one exact Rose; the 12-result global
+search omitted the exact record.
+
+**Evidence before fix.** The finite-footprint fallback prevented oversized Qt
+geometry but did not validate the persisted snapshot. PlantSpeciesData.from_dict
+converts enums and fills defaults; it does not enforce all annotated field types
+or finite nested numbers. Alphabetical sorting before a UI limit is not relevance.
+
+**Fix.** validate_catalog_snapshot checks model field types, preserves additive
+source/search fields and delegates the numeric trust boundary to validate_plan_data
+before a drop creates anything. Click selection validates before arming placement;
+invalid data returns to Select with a translated status message. Names and aliases
+rank exact, then prefix, then substring before paging/limiting; exact non-plant
+tools remain reachable.
+
+**Regression evidence.** test_catalog_palette covers unchanged scene/history on
+non-finite nested values and wrong identity/list/number types, cancelled invalid
+click selection, preserved extra fields, three exact-name/alias axes and an exact
+object tool among many botanical substrings. Probes remain offscreen and isolated
+from production app data. No debug prints or captured user data are shipped.
+
+## Case study: an enlarged tile still clipped its label (personal fork, 2026-10-19)
+
+**Symptom.** The 18-point German contact render cut several long illustration
+names. Increasing the thumbnail button's width alone did not fix its label.
+
+**Measured evidence.** For Rundkronen-Laubbaum, actual label advance was 252 px,
+button minimum/actual width 264 px, yet label width stayed 139 px with minimum 0.
+The centred QVBoxLayout used the child's narrower preferred width. A separate
+wrapped Verveine de Buenos Aires needed 52 px height while 3×font height gave 51.
+
+**Fix.** Measure the actual QLabel font; floor both label and tile widths to
+complete words, and floor label height to wrapped boundingRect/lineSpacing plus
+rounding slack. Preferred popup width follows the real grid minimum; outer
+scrolling and screen bounds still govern overflow. Reflow visible filtered tiles
+to the first rows. Do not infer a child's usable text rectangle from its parent's
+size.
+
+**Regression.** test_all_illustration_titles_fit_complete_words_and_wrapped_lines
+checks every label's contents rectangle at 13-point English and 18-point German.
+All 67 combined catalog/category/popup checks pass after correction, including
+last-item access and screen bounds. Only local offscreen widgets were rendered.
+
+The parent bound is a separate assertion: one 18-pt Verveine label was 98 px
+tall and extended to y=165 inside a 150-px tile. Expanding the tile minimum to
+the complete layout minimum contains the label, image, spacing and margins.
+All 11 categories are now checked in both typography cases and both themes.

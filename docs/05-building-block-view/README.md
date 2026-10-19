@@ -545,3 +545,17 @@ show it moves the completed form layout into a minimum-constrained scroll body,
 retains a terminal pure action row in a separate horizontal scroll container, and
 bounds the native frame to the dialog screen. Constructors, fields, callbacks and
 QDialog acceptance codes remain those of each original dialog.
+
+## Personal catalog palette (ADR-063)
+
+`services/plant_palette` is the Qt-free presentation/illustration lookup over the
+existing offline catalog; `ui/widgets/catalog_palette` builds bounded botanical
+rows and MIME snapshots. CategoryDropdown owns pagination and refresh-on-open;
+GlobalSearchField owns a focus-scoped snapshot. Application wiring supplies the
+shared provider manager and hands selected snapshots to CircleTool. Existing
+`build_plant` and CreateItemCommand remain the creation/parenting/undo path.
+
+The personal fork's `core.personal_plant_visual` decodes bounded embedded owner PNGs
+for plan items and catalog/profile thumbnails. `services.personal_plant_visual`
+explicitly remembers only that art field in the private library with a backup and
+atomic write; the panel keeps document art changes on the command stack (ADR-064).

@@ -325,3 +325,76 @@ gabarit ou besoin cultural n'est déduit. Le catalogue réel atteint maintenant
 **9288 fiches** ; la recherche exacte et la collection à une entrée sont vérifiées.
 Les sauvegardes des bibliothèques et collections sont présentes. L'utilisateur a
 confirmé la fermeture ; l'installation avait aussi vérifié l'absence du processus.
+
+## Catalogue dans les menus et lot de visuels (19 octobre 2026, ADR-063)
+
+Demande : retrouver les nouvelles fiches dans les catégories du haut, avec un
+maximum de visuels 2D. Le propriétaire a validé la planche des 138 nouveaux dessins
+avant intégration. Le registre expose désormais 246 illustrations et 15 formes
+génériques, toutes régénérables sans ressource externe.
+
+- Recherche/pagination des fiches dans les quatre catégories botaniques, 48 lignes
+  maximum ; recherche globale limitée à 12 résultats avec priorité des noms/alias
+  exacts. Les fiches complètes passent au placement en un clic ou au glisser-déposer.
+- Copie isolée du catalogue privé : 9 288 fiches, dont 1 880 classables comme arbres,
+  2 024 comme arbustes, 1 216 fleurs/vivaces, 215 potagères/aromatiques et 3 953 sans
+  type connu. Ces dernières restent dans All plants sans inventer leur strate.
+- Mesure hors écran sur cette copie : snapshot froid 0,539 s, ouverture de la palette
+  d'arbustes 0,061 s avec 48 lignes, recherche Sophora 0,009 s avec une fiche exacte.
+  Les 138 nouveaux dessins ne sont pas 138 nouvelles identifications botaniques.
+- 1 621 contrôles ciblés initiaux réussis (conformité/rendu de tous les SVG, anciens
+  menus, listes et dimensionnement). Revue indépendante : deux P1 reproduits puis
+  corrigés (MIME non fini bloquant une sauvegarde ; résultat exact exclu par le top12).
+  Les 32 contrôles métier dédiés passent après correction. Quatre cas typographiques supplémentaires
+  mesurent tous les libellés des 11 catégories à 13 pt EN et 18 pt DE, clair/sombre ; les 67 contrôles combinés
+  catalogue/catégories/popups passent avec la correction finale de lisibilité.
+  Suite complète du snapshot métier terminée ; détail ci-dessous.
+- Typer les deux nouveaux modules n'ajoute aucune erreur ; total strict global
+  inchangé à 1 928 diagnostics hérités, sans hausse par fichier. Traductions EN/DE
+  compilées avec 2 731 clés ; ruff, parité des contextes et sources wiki passent.
+
+Aucune écriture du catalogue privé ni manipulation de l'application native ouverte.
+La validation du style est acquise ; le nouveau parcours natif reste à essayer
+après fermeture et relance. PR personnelle conservée en brouillon, sans merge/release.
+
+Le contrôle des 9 288 fiches réelles par la nouvelle frontière de validation
+réussit intégralement (1,003 s sur copie isolée). Les nouveaux minima de libellés
+sont fondés sur les dimensions du QLabel, pas seulement du bouton parent.
+
+### Bilan final des vérifications du catalogue
+
+La suite complète du snapshot métier corrigé termine avec **9 733 réussites,
+46 skips, 2 tests CLI incompatibles Darwin désélectionnés, 2 échecs bruts**, en
+1 151,79 s. L'un reste le round-trip DXF à largeur nulle déjà reproduit sur
+l'amont inchangé 603e303. L'autre est un **KeyboardInterrupt envoyé par l'agent**
+et capturé par pytest-qt dans combo_wheel_guard.eventFilter pendant le contrôle
+d'inactivité avec overlay : ce n'est pas une assertion de boucle au repos. La
+relance propre des sept contrôles d'inactivité réussit en 27,20 s. Le résultat brut
+et l'interruption restent dans le bilan ; aucun test n'est retiré pour les masquer.
+
+Le seul fichier Python de production changé après ce snapshot complet est
+CategoryDropdown : le dernier correctif de dimensions de vignettes est validé
+séparément par **67 contrôles UI réussis**, puis par les **4 cas typographiques
+exhaustifs sur les 11 catégories** (13 pt EN / 18 pt DE × clair / sombre).
+La revue indépendante finale confirme la résolution des P1 de confiance, de
+classement et de confinement des libellés, sans autre P0/P1. Ruff, Bandit HIGH,
+traductions 2 731 clés, parité/citations des skills, secrets et sources wiki passent.
+Mypy demeure à 1 928 diagnostics hérités, sans hausse par fichier.
+
+Manuel restant : dans l'application relancée, rechercher Sophora prostrata depuis
+Arbustes, placer d'un clic, annuler/rétablir puis enregistrer/rouvrir. Essayer
+All plants, pagination et dernière silhouette avec la taille de fenêtre habituelle.
+Aucun merge, tag, release ou publication amont.
+
+### Dessins personnels et contrôles ciblés — 19 octobre 2026
+
+À la demande du propriétaire, les changements courants utilisent des vérifications
+ciblées ; la suite amont complète reste réservée aux changements de fond ou aux
+audits explicites. Les tests hérités sont conservés. Aucun nouvel import massif
+ni retrait du catalogue personnel n'est effectué.
+
+Plant Details propose l’import PNG, le retour à la silhouette standard et la
+mémorisation en bibliothèque. Le plan emporte l’image ; identité et géométrie
+restent inchangées. Contrôles ciblés et revue indépendante validés. Le Rosa Ketchup
+& Mustard utilise le PNG fourni, avec sauvegarde et conservation des 9288 fiches.
+Les dessins restent privés. Voir ADR-064 et PLANTES_ET_DESSIN.

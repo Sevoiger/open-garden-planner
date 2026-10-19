@@ -89,6 +89,7 @@ if TYPE_CHECKING:
 
     from open_garden_planner.agent_api import AgentApiServer
     from open_garden_planner.core.sim_clock import SimChange
+    from open_garden_planner.services import PlantAPIManager
     from open_garden_planner.services.update_checker import ReleaseInfo
 
 logger = logging.getLogger(__name__)
@@ -4741,6 +4742,7 @@ class GardenPlannerApp(QMainWindow):
         self.constraint_toolbar.tool_selected.connect(self._on_tool_selected)
         self.category_toolbar.tool_selected.connect(self._on_tool_selected)
         self.category_toolbar.item_selected.connect(self._on_gallery_item_selected)
+        self.category_toolbar.database_search_requested.connect(self._on_catalog_database_search)
         self.canvas_view.tool_changed.connect(self.update_tool)
         self.canvas_view.tool_type_changed.connect(self._sync_toolbar_state_by_type)
         self.canvas_view.import_background_image_requested.connect(
@@ -7693,7 +7695,21 @@ class GardenPlannerApp(QMainWindow):
         if isinstance(active_tool, CircleTool):
             category = getattr(item, "plant_category", None)
             species = getattr(item, "species", "")
-            active_tool.set_plant_info(category=category, species=species)
+            snapshot = getattr(item, "species_data", None)
+            if snapshot is not None:
+                from open_garden_planner.services.plant_palette import validate_catalog_snapshot
+
+                try:
+                    snapshot = validate_catalog_snapshot(snapshot)
+                except Exception:
+                    logger.warning("Rejected invalid catalog plant selection")
+                    self.canvas_view.set_active_tool(ToolType.SELECT)
+                    status = self.statusBar()
+                    if status is not None:
+                        status.showMessage(self.tr("Invalid plant data; placement cancelled."), 5000)
+                    return
+            active_tool.set_plant_info(category=category, species=species,
+                                       species_data=snapshot)
 
     def _sync_toolbar_state_by_type(self, tool_type: ToolType) -> None:
         """Sync toolbar button states when the active tool changes.
@@ -8047,13 +8063,12 @@ class GardenPlannerApp(QMainWindow):
             self.canvas_view.command_manager.execute(dialog.command)
             self._update_companion_panel()
 
-    def _on_search_plant_database(self) -> None:
-        """Handle Search Plant Database action."""
+    def _plant_api_manager_from_settings(self) -> "PlantAPIManager":
+        """One credentials path for species assignment and catalog placement."""
         import os
 
         from open_garden_planner.app.settings import get_settings
         from open_garden_planner.services import PlantAPIManager
-        from open_garden_planner.ui.dialogs import PlantSearchDialog
 
         # Read API credentials from QSettings, with env var fallback
         settings = get_settings()
@@ -8062,14 +8077,29 @@ class GardenPlannerApp(QMainWindow):
         permapeople_id = settings.permapeople_key_id or os.environ.get("PERMAPEOPLE_KEY_ID", "")
         permapeople_secret = settings.permapeople_key_secret or os.environ.get("PERMAPEOPLE_KEY_SECRET", "")
 
-        api_manager = PlantAPIManager(
+        return PlantAPIManager(
             trefle_api_token=trefle_token or None,
             perenual_api_key=perenual_key or None,
             permapeople_key_id=permapeople_id or None,
             permapeople_key_secret=permapeople_secret or None,
         )
 
-        dialog = PlantSearchDialog(api_manager, self)
+    def _on_catalog_database_search(self, query: str, group: str) -> None:
+        from open_garden_planner.ui.dialogs import PlantSearchDialog
+        from open_garden_planner.ui.widgets.catalog_palette import catalog_item
+
+        dialog = PlantSearchDialog(self._plant_api_manager_from_settings(), self)
+        dialog.search_input.setText(query)
+        if dialog.exec() and dialog.selected_plant is not None:
+            item = catalog_item(dialog.selected_plant.to_dict(), group)
+            self.canvas_view.set_active_tool(item.tool_type)
+            self._on_gallery_item_selected(item)
+
+    def _on_search_plant_database(self) -> None:
+        """Handle Search Plant Database action."""
+        from open_garden_planner.ui.dialogs import PlantSearchDialog
+
+        dialog = PlantSearchDialog(self._plant_api_manager_from_settings(), self)
         if dialog.exec():
             # User selected a plant species
             plant_data = dialog.selected_plant

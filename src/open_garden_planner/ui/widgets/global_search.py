@@ -10,8 +10,10 @@ keystroke after the first would land on the popup and be lost.
 """
 
 
+from typing import Any
+
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QFocusEvent, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -122,6 +124,7 @@ class GlobalSearchField(QLineEdit):
     ) -> None:
         super().__init__(parent)
         self._all_items = all_items(categories)
+        self._catalog_records: dict[str, dict[str, Any]] | None = None
         self._popup = _ResultsPopup(self)
         self._popup.item_chosen.connect(self._on_item_chosen)
 
@@ -150,11 +153,27 @@ class GlobalSearchField(QLineEdit):
 
         hits = [it for it in self._all_items if gallery_matches(
             it, needle, layers=filters.layers, functions=filters.functions)][:MAX_RESULTS]
+        from open_garden_planner.services.species_catalog import offline_catalog
+        from open_garden_planner.ui.widgets.catalog_palette import catalog_item, matching_records
+
+        if self._catalog_records is None:
+            self._catalog_records = offline_catalog()
+        records = matching_records(self._catalog_records, needle,
+                                   layers=filters.layers, functions=filters.functions)
+        # Botanical records precede illustration-only hits for the same query.
+        exact_tools = [item for item in hits if not item.species and not item.plant_category
+                       and item.name.casefold() == needle]
+        hits = (exact_tools + [catalog_item(r) for r in records[:MAX_RESULTS]]
+                + [item for item in hits if item not in exact_tools])[:MAX_RESULTS]
         if not hits and not (filters.layers or filters.functions):
             self._popup.hide()
             return
         self._popup.populate(hits)
         show_popup_below(self._popup, self, self._popup._preferred_size)
+
+    def focusInEvent(self, event: QFocusEvent | None) -> None:  # noqa: N802
+        self._catalog_records = None
+        super().focusInEvent(event)
 
     def _on_focus_changed(self, _old: QWidget | None, new: QWidget | None) -> None:
         # This is connected to the *application*-wide focusChanged, which

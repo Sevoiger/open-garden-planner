@@ -321,3 +321,18 @@ Personal macOS dialog follow-up (2026-10-19): screen-bounded natural-minimum scr
 forms across all 38 custom types plus the ad hoc guild form; wide action rows scroll
 horizontally. See ADR-062, FR-FORK-UI-03 and docs/fork/PROGRESSION.md. Native owner
 acceptance remains pending; no new credential or garden-data write path.
+
+Personal catalog/visual follow-up (2026-10-19, ADR-063): toolbar categories now
+search/page the offline library and place full provider snapshots by click/drag
+through existing creation commands. Unknown growth form stays unspecified.
+All 246 plant illustrations are exposed; the owner approved 138 added procedural
+symbols before integration. Native workflow acceptance remains pending.
+
+Owner workflow override (2026-10-19): use focused checks for routine UI, plant
+catalog, artwork and documentation changes. Reserve the full upstream suite for
+shared core/persistence/undo changes, dependency/platform work or an explicit
+comprehensive audit. Keep the inherited tests; do not delete them to reduce counts.
+Choose tests by the affected behavior, add a regression when warranted, inspect
+the result and report scope/limits. Independent review and data-protection rules
+remain. This owner instruction overrides blanket full-suite requirements in the
+upstream skills for ordinary personal-fork changes.

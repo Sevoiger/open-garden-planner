@@ -1402,3 +1402,26 @@ snippets failed even though delayed screenshots looked correct. Show the form an
 action scroll areas, retain explicitly hidden descendants, and keep the existing
 immediate-visibility tests. An exact client width of 800 px is invalid on an 800 px
 desktop once native decoration is included; assert available frame bounds instead.
+
+### Catalog snapshots: conversion is not trust-boundary validation (2026-10-19)
+
+ADR-063 review supplied NaN in a valid catalog MIME snapshot: footprint sizing
+fell back safely, but the non-finite metadata made the resulting plan unsavable.
+PlantSpeciesData.from_dict converts enums/defaults; it does not validate all field
+types or finite nested data. The new catalog boundary checks annotated fields and
+uses validate_plan_data before creation/activation, preserving additive fields.
+Bad payload regressions assert unchanged scene and command history. Relevance
+also precedes presentation limits: exact names/aliases rank ahead of partial matches.
+
+### Centred gallery layouts need label minima, not only wider parents (2026-10-19)
+
+At 18 pt, Rundkronen-Laubbaum advanced 252 px. Its widened tile measured 264 px
+but the centred inner QLabel remained 139 px wide, with minimum width zero.
+Floor the label's own width from its actual font, then the tile; use wrapped text
+bounds/lineSpacing with rounding slack for height (one measured 52-vs-51-px case).
+The 13-point EN / 18-point DE full-label regression checks all plant illustrations.
+
+Containment is checked twice: text inside QLabel, and QLabel inside tile. One
+98-px label reached y=165 in a 150-px tile; flooring the complete layout minimum
+(image + label + spacing + margins) fixes the parent's clipping too. The audit
+covers all 11 categories, EN/DE typography and light/dark themes.
