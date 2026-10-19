@@ -1377,3 +1377,28 @@ now prepends tests/child_app_bootstrap.py isolation for settings and libraries b
 imports, and asserts the constructed app's library/list paths are confined. Both
 spike child probes use this helper. Launcher tests use fake interpreters; import CLI
 tests pass explicit temporary paths. Static/import-only children never construct OGP.
+
+**Personal-fork Preferences compression (2026-10-19).** A root layout's natural
+minimum does not guarantee readable controls when the dialog is explicitly made
+smaller. Preferences contained seven groups without scroll containment; measured
+button heights fell to 0–12 px while glyphs required 17 px. Use a natural-minimum
+scroll body and screen-bounded frame (ADR-062), leaving action rows accessible.
+Native/QSS button hints can change after first show: a garden-records action's
+minimum was initially 110 px and its final text hint 170 px. Refresh that floor
+after show. Check actual styled text rectangles, not just window dimensions.
+Internal QLineEdit widgets of Qt spin boxes/editable combos have their own frame
+geometry; audit their public parent control, rather than imposing a second border
+on the private editor. Keep map layout tests free of Chromium/network side effects.
+
+Visual QA also caught a footer-ownership defect missed by green glyph tests:
+`QLayout.addItem` did not adopt the detached footer's widget subtree, so buttons
+painted over the introduction. Reinsert with `addWidget` or `addLayout`, which
+reparents children. Assert ancestry and final viewport position as well as text
+rectangles, and inspect top/bottom renders of the form.
+
+New containers built inside a visible parent's showEvent must be shown explicitly.
+Without that, synchronous visibility checks for real-bed amendments and AI manual
+snippets failed even though delayed screenshots looked correct. Show the form and
+action scroll areas, retain explicitly hidden descendants, and keep the existing
+immediate-visibility tests. An exact client width of 800 px is invalid on an 800 px
+desktop once native decoration is included; assert available frame bounds instead.

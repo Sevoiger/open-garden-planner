@@ -104,10 +104,14 @@ Le message No matching objects l'indique ; Clear filters réaffiche tous les obj
 La réouverture d'une catégorie repart sans filtre de recherche ni caractéristique.
 
 
-## Faire défiler sans changer une fiche
+## Faire défiler les formulaires
 
 Sur un menu déroulant fermé, la molette ou le pavé tactile fait défiler le formulaire,
 sans modifier la valeur du menu, même après lui avoir donné le focus. Cliquer pour
 ouvrir la liste puis sélectionner une valeur ; le clavier reste utilisable. La liste
 ouverte garde son défilement. Cette protection concerne les menus déroulants dans
 l’ensemble de l’application, pas les champs numériques ni le zoom du plan.
+
+Les formulaires gardent leurs champs lisibles. Si nécessaire, utiliser les barres de
+défilement verticale et horizontale. Les boutons de validation restent en bas ; une
+longue rangée de boutons dispose aussi d’un défilement horizontal.

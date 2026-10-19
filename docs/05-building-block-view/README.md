@@ -538,3 +538,10 @@ and routes wheel gestures over closed choices to their nearest scroll viewport.
 search/list stores; `french_plant_catalog.py` builds name-localized and unspecified
 starter snapshots from resource metadata. `scripts/import_local_plants.py` is an
 explicit closed-app operation, not a startup hook.
+
+Personal fork: `ui/widgets/responsive_dialog.py` supplies `ResponsiveDialog`, the
+base for the 38 custom dialog types and the ad hoc guild-membership form. At first
+show it moves the completed form layout into a minimum-constrained scroll body,
+retains a terminal pure action row in a separate horizontal scroll container, and
+bounds the native frame to the dialog screen. Constructors, fields, callbacks and
+QDialog acceptance codes remain those of each original dialog.

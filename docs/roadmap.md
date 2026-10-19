@@ -3098,3 +3098,9 @@ Personal macOS follow-up (2026-10-18): wheel-safe closed choices; French common-
 catalog, 80 unspecified starter cards and explicit private JSON import into offline
 search + Plant Lists. French guides can be read as a single paginated PDF. Native
 owner acceptance remains pending; the owner is drawing a new plan manually.
+
+Personal macOS Preferences follow-up (2026-10-19): all 38 custom dialogs and the
+ad hoc guild-membership form use natural-minimum scroll containment and available
+screen bounds (ADR-062 / FR-FORK-UI-03). Wide action rows remain horizontally
+accessible. Automated small-desktop/large-font/tab and Preferences persistence
+checks added. Native owner acceptance remains pending.

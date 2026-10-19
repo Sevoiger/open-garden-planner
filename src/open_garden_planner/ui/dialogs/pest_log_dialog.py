@@ -43,9 +43,10 @@ from PyQt6.QtWidgets import (
 from open_garden_planner.app.paths import default_dialog_dir
 from open_garden_planner.models.pest_log import PestLogHistory, PestLogRecord
 from open_garden_planner.ui.theme import theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class PestLogDialog(QDialog):
+class PestLogDialog(ResponsiveDialog):
     """Modal dialog for entering a single pest/disease record."""
 
     def __init__(
@@ -246,12 +247,12 @@ class PestLogDialog(QDialog):
             and self._command_manager is not None
         ):
             edit_btn = QPushButton(self.tr("Edit"))
-            edit_btn.setFixedWidth(60)
+            edit_btn.setMinimumWidth(60)
             edit_btn.clicked.connect(lambda _, r=rec: self._on_edit_record(r))
             h.addWidget(edit_btn)
 
             del_btn = QPushButton(self.tr("Delete"))
-            del_btn.setFixedWidth(60)
+            del_btn.setMinimumWidth(60)
             del_btn.clicked.connect(lambda _, r=rec: self._on_delete_record(r))
             h.addWidget(del_btn)
 

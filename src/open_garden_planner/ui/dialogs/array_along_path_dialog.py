@@ -2,7 +2,6 @@
 
 from PyQt6.QtWidgets import (
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -13,8 +12,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class ArrayAlongPathDialog(QDialog):
+
+class ArrayAlongPathDialog(ResponsiveDialog):
     """Dialog for creating an array of items along a polyline path.
 
     Allows specifying count or spacing, start/end offsets, and rotation mode

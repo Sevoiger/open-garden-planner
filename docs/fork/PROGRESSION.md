@@ -244,3 +244,84 @@ les mêmes empreintes qu’avant la suite. Ruff, Bandit HIGH=0, traductions EN/D
 parité, citations, secrets et sources wiki passent ; mypy reste à 1928 erreurs héritées
 sans augmentation par fichier. Confirmation visuelle native de la molette encore
 nécessaire. PR personnelle en brouillon, sans fusion ni release.
+
+## Préférences et audit des formulaires — 19 octobre 2026
+
+La capture fournie dans toPatch confirme une compression du formulaire Préférences.
+Le probe isolé mesure des boutons à 0–12 px pour 17 px de texte ; le groupe Agent API
+fait 82 px pour un minimum de 235 px. Après correction, les boutons font 31 px et
+les groupes retrouvent leur minimum. Les 38 types de boîtes personnalisées et le
+formulaire d'association à une guilde partagent maintenant une protection contre
+la compression : défilement du contenu, boutons terminaux séparés, défilement
+horizontal des longues rangées, limites de l'écran et conservation des tailles
+maximales explicites. Les largeurs fixes de textes/boutons ont été assouplies.
+L'audit couvre les onglets, les champs, les groupes et les rectangles de texte des
+boutons, en anglais sombre 13 pt et allemand clair 18 pt sur 600 × 440. La sauvegarde
+et la réouverture des préférences utilisent le chemin existant, sous isolation.
+
+La clé Permapeople configurée fonctionne : un contrôle en lecture seule renvoie
+HTTP 200 pour trois recherches Sophora. Aucun résultat `Sophora prostrata`, même
+avec l'orthographe correcte ; aucune autre espèce n'a été assignée à sa place.
+Aucune clé n'est affichée ou copiée dans les sources. L'application native ouverte
+n'a été ni fermée ni pilotée ; validation manuelle du correctif encore nécessaire.
+
+La vérification visuelle a aussi révélé un défaut du nouveau pied de formulaire :
+un transfert générique de QLayoutItem laissait Cancel/Save superposés au texte du
+haut. Le transfert utilise maintenant addWidget/addLayout pour adopter les enfants.
+Les tests vérifient parentage, position et présence dans le viewport ; les rendus
+haut/bas corrigés ont été inspectés et relus indépendamment. Les 80 contrôles
+responsive ont été relancés avec succès par le reviewer, sans P0/P1 restant.
+
+La suite générale a ensuite révélé deux régressions d'affichage immédiat : les
+recommandations d'un massif et le code de connexion IA restaient masqués sans
+attendre la boucle d'événements. Les nouveaux conteneurs sont maintenant affichés
+explicitement ; les sections volontairement cachées le restent. Les 143 tests
+amendements/connexion/suivi/formulaires passent ensemble. L'ancienne assertion de
+largeur client exactement 800 px vérifie désormais que le cadre entier tient dans
+l'écran. Le contrôle natif après redémarrage reste à confirmer par le propriétaire.
+
+Bilan final du correctif : **8736 tests réussis, 46 skips, 2 tests CLI explicitement
+incompatibles Darwin désélectionnés, 1 échec**, en 853,23 s. Seul échec : le round-trip
+DXF déjà reproduit sur la base amont. Les deux contrôles lock/version passent avec
+uv 0.12.23 et un cache accessible. Ruff, traductions compilées EN/DE, parité, scan des
+secrets, sources wiki et Bandit HIGH=0 passent. Mypy reste à 1928 erreurs héritées,
+sans augmentation par fichier ; le nouveau module est sans erreur. Revue finale
+sur un worktree frais favorable, 109 tests relancés dans cette copie ; les 143 tests
+ciblés avaient aussi été relancés indépendamment. Aucun pilotage de fenêtre native.
+
+## Catalogue massif privé — 19 octobre 2026
+
+La clé déjà configurée a permis une lecture paginée complète de Permapeople :
+9166 profils, dont 295 marqués Variety. Après dédoublonnage des espèces de même
+nom botanique et conservation des identités existantes, 9040 fiches supplémentaires
+ont été préparées puis installées dans la bibliothèque hors ligne : 8745 espèces
+et 295 variétés. Les 247 fiches précédentes restent strictement identiques, avec
+leurs noms français et leurs données personnelles. Les espèces supplémentaires
+s'affichent sous leur nom botanique ; le nom anglais source reste un alias de
+recherche. Les variétés gardent leur libellé source et leur filiation brute.
+Les caractéristiques composites ou ambiguës restent non renseignées dans les
+champs simples ; les valeurs originales, crédits, liens et licence CC BY-SA 4.0
+sont conservés dans chaque fiche. Aucune image n'a été téléchargée en masse.
+
+L'import est privé et explicite, dans les stockages existants ; aucune donnée de
+ce catalogue ni clé n'est embarquée dans le dépôt. L'ajout concerne la recherche
+hors ligne, pour éviter une collection graphique de 9000 vignettes. Le cache et
+les outils ponctuels restent dans `.local/plant-catalog/` et `.local/`. Avant
+installation : validation du modèle, contrôle de l'application fermée, relecture
+indépendante, sauvegarde exacte et remplacement atomique du fichier. Le reçu
+empêche un rejeu de rétablir des fiches supprimées ensuite. Vérification après
+écriture : sauvegarde identique octet pour octet, anciennes fiches inchangées,
+rejeu sans écriture. Le guard de processus vérifie l'exécutable et ses arguments,
+car les arguments des outils peuvent eux-mêmes citer le nom de l'application.
+
+Un contrôle sur copie mesure 9287 fiches disponibles : chargement à froid 0,47 s,
+recherches ciblées Sauge/Tomate/Sophora 0,04 à 0,065 s, recherche vide limitée à
+100 résultats 0,27 s. Ce sont des mesures locales, pas une garantie générale.
+
+Sophora prostrata reste absent des réponses du fournisseur. Une fiche d'identité
+séparée, sourcée par Flora of New Zealand, a donc été ajoutée via l'importeur
+existant, avec la collection « Mes plantes — Sophora prostrata ». Aucun cultivar,
+gabarit ou besoin cultural n'est déduit. Le catalogue réel atteint maintenant
+**9288 fiches** ; la recherche exacte et la collection à une entrée sont vérifiées.
+Les sauvegardes des bibliothèques et collections sont présentes. L'utilisateur a
+confirmé la fermeture ; l'installation avait aussi vérifié l'absence du processus.

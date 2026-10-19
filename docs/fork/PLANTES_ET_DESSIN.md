@@ -135,3 +135,28 @@ interrompu entre les deux, le relancer termine l’installation. La relance n’
 pas les fiches, notes, renommages ou retraits déjà personnalisés. Un nouveau lot doit
 porter un autre nom de dossier ou un **--collection-key** distinct. Les données
 personnelles dans plants/ et les documents de sortie dans output/ restent hors Git.
+
+## Une plante absente du fournisseur
+
+Une clé API donne accès au catalogue du fournisseur, sans garantir toutes les
+espèces ou variétés. Vérification du 19 octobre 2026 : la recherche Permapeople
+répond correctement pour `Sophora`, `Sophora prostrata` et la coquille
+`Sophora protrata`, mais ses réponses ne contiennent pas `Sophora prostrata`.
+Le nom botanique correct est confirmé par
+[Flora of New Zealand](https://www.nzflora.info/factsheet/taxon/Sophora-prostrata.html).
+Ne pas remplacer cette plante par une autre espèce de Sophora renvoyée par la
+recherche. Une fiche personnalisée reste possible ; une variété horticole ne doit
+être ajoutée que si elle est connue. Les autres fournisseurs peuvent compléter
+la recherche, sans garantie d'exhaustivité.
+
+L'installation personnelle du 19 octobre 2026 dispose désormais de **9288 fiches
+hors ligne**, dont 295 variétés issues de Permapeople. Les noms français existants
+sont conservés ; les espèces supplémentaires utilisent leur nom botanique, avec
+le nom anglais source disponible à la recherche. Les conditions ambiguës restent
+à préciser. Les crédits, liens d'origine et licence CC BY-SA 4.0 accompagnent les
+fiches Permapeople. Le téléchargement est local et privé, avec sauvegardes ; il
+ne devient pas un catalogue embarqué pour les autres installations.
+
+Une fiche **Sophora prostrata** est aussi disponible dans la recherche et dans
+**Plant Lists > Mes plantes — Sophora prostrata**. Elle confirme l'identité
+botanique ; préciser soi-même la variété et les dimensions connues.

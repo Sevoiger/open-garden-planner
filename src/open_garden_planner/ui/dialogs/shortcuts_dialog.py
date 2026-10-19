@@ -2,7 +2,6 @@
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -12,8 +11,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class ShortcutsDialog(QDialog):
+
+class ShortcutsDialog(ResponsiveDialog):
     """Dialog showing all keyboard shortcuts."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -200,7 +201,7 @@ class ShortcutsDialog(QDialog):
                 "  font-weight: bold;"
                 "}"
             )
-            shortcut_label.setFixedWidth(140)
+            shortcut_label.setMinimumWidth(140)
             shortcut_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             # Description label

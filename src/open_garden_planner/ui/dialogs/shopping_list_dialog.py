@@ -16,7 +16,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QBrush, QColor, QFont
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
     QDialogButtonBox,
     QFileDialog,
     QHeaderView,
@@ -38,6 +37,7 @@ from open_garden_planner.models.shopping_list import (
 from open_garden_planner.services.export_service import ExportService
 from open_garden_planner.services.pdf_report_service import PdfReportService
 from open_garden_planner.ui.theme import ThemeColors
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 if TYPE_CHECKING:
     from open_garden_planner.services.shopping_list_service import ShoppingListService
@@ -56,7 +56,7 @@ _COL_TOTAL = 6
 _COL_NOTES = 7
 
 
-class ShoppingListDialog(QDialog):
+class ShoppingListDialog(ResponsiveDialog):
     """Modal dialog displaying the shopping list with editable prices."""
 
     def __init__(

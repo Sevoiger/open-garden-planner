@@ -2,7 +2,6 @@
 
 from PyQt6.QtWidgets import (
     QButtonGroup,
-    QDialog,
     QDialogButtonBox,
     QGroupBox,
     QLabel,
@@ -11,9 +10,10 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.services.export_service import ExportService
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class ExportPngDialog(QDialog):
+class ExportPngDialog(ResponsiveDialog):
     """Dialog for configuring PNG export settings.
 
     Allows the user to select output size and DPI (resolution) for the exported image

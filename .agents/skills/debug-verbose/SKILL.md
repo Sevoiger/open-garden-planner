@@ -2448,3 +2448,63 @@ redirection before imports in both spike child probes. The actual app-startup te
 asserts the loaded custom/list paths remain confined. Static/import-only subprocesses
 do not instantiate the app; launcher tests use a fake interpreter, and import CLI
 regressions supply explicit temporary paths. The11 child/confinement checks pass.
+
+
+## Case study: Preferences compressed its controls without a scroll body (2026-10-19)
+
+**Symptom.** The owner's toPatch capture showed overlapping API groups and nearly
+invisible buttons in Preferences. The same layout pattern existed in other forms.
+
+**Evidence.** An isolated offscreen dark-theme probe at 550 × 780 with Helvetica
+13 measured the Agent API group at 82 px against a 235 px minimum hint; Copy and
+Regenerate were 0 px high, while button glyphs required 17 px. Other buttons were
+3–12 px high. After scroll containment, groups preserve their minimum and buttons
+measure 31 px, with 17 px of text contents. A constrained garden-records splitter
+also squeezed a 170 px Add intervention button to 131 px; its initial native/QSS
+hint had been 110 px before showing.
+
+**Root cause / fix.** A constrained root dialog layout compressed its children;
+there was no scroll body to preserve natural form minima. Explicitly derive all
+38 custom dialog types and the ad hoc guild form from ResponsiveDialog. Transfer
+the completed layout once into a minimum-constrained scroll widget, recognize the
+terminal pure action row, give wide action rows horizontal scrolling, preserve
+explicit maximum sizes and clamp the native frame. Polish before sizing and
+refresh button minima after show, when Qt can revise native/QSS hints. The garden
+records splitter preserves its right pane minimum; text button/spin/shortcut fixed
+widths become minimum widths. No font reduction or settings-write change.
+
+**Rejected assumptions / lesson.** A large minimumSizeHint alone did not prevent
+compression. Merely scrolling the outer form did not stop a nested splitter's
+button row from shrinking. Check final styled glyph rectangles and all tabs at
+small screen sizes and enlarged fonts, not only constructor hints. Internal
+spin/combo line edits belong to their public control's geometry contract. Qt's
+offscreen backend has only its actual screen: negative monitor origins are tested
+with pure frame arithmetic, not by inventing an inconsistent fake native desktop.
+Map layout uses a QWidget stand-in; no Chromium or real API request is needed.
+
+**Regression.** tests/integration/test_responsive_dialogs.py audits all 38 types at
+600 × 440, 13 pt dark English and 18 pt light German, checks controls/groups and
+button glyph rectangles, walks tabs, scrolls both axes, reopens without duplicate
+containers, and saves/reloads test preferences. Independent review confirmed
+Enter/Escape acceptance after reparenting and reran all 80 checks successfully.
+
+
+**Footer ownership follow-up.** Visual QA caught Cancel/Save painted over the
+Preferences introduction despite readable glyph rectangles. Moving a QLayoutItem
+with addItem did not reparent its widget subtree into the new footer. Use addWidget
+for a widget footer or addLayout for a layout footer, letting Qt adopt the children.
+All-dialog assertions now reject direct orphan button children; the Preferences
+round-trip checks footer ancestry, placement below the scroll body and viewport
+containment. The corrected top/bottom offscreen renders were inspected independently.
+Glyph dimensions alone cannot prove placement or ownership.
+
+
+**Initial visibility follow-up.** The full suite caught two regressions that the
+constructor matrix did not cover: real-bed amendments were not synchronously
+visible after SoilTestDialog.show(), and toggling an AI manual snippet left its
+ancestor hidden. Scroll containers created inside an already-showing parent's
+showEvent need explicit show() calls. Show the new form/action scroll containers,
+preserving intentionally hidden descendants; do not hide the bug behind a test
+processEvents call. Existing real-bed/default-bed and snippet-toggle regressions,
+plus all perennial/responsive tests, pass together (143 checks). A former exact
+800 px client assertion now checks the entire native frame fits the desktop.

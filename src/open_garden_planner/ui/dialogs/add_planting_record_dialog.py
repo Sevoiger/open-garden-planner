@@ -6,7 +6,6 @@ from datetime import date
 
 from PyQt6.QtWidgets import (
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QFormLayout,
     QLineEdit,
@@ -20,9 +19,10 @@ from open_garden_planner.models.crop_rotation import (
     SEASONS,
     PlantingRecord,
 )
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class AddPlantingRecordDialog(QDialog):
+class AddPlantingRecordDialog(ResponsiveDialog):
     """Dialog to create a new PlantingRecord for a specific bed/area.
 
     Args:

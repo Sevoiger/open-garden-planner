@@ -2,7 +2,6 @@
 
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -13,8 +12,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class GridArrayDialog(QDialog):
+
+class GridArrayDialog(ResponsiveDialog):
     """Dialog for creating a rectangular grid array of an object.
 
     Allows specifying rows, columns, row spacing, and column spacing

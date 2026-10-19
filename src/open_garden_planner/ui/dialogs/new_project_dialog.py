@@ -5,7 +5,6 @@ from datetime import date
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -16,8 +15,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class NewProjectDialog(QDialog):
+
+class NewProjectDialog(ResponsiveDialog):
     """Dialog for creating a new project with specified canvas dimensions.
 
     Allows the user to specify width and height in meters, which are

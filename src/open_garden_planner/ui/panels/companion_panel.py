@@ -26,6 +26,7 @@ from open_garden_planner.services.companion_planting_service import (
 )
 from open_garden_planner.ui.icons import get_icon, get_pixmap
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 _NEARBY_ROLE = Qt.ItemDataRole.UserRole + 1  # bool: row carries the nearby star
 
@@ -489,7 +490,7 @@ class CompanionPanel(QWidget):
             self.highlight_species_requested.emit(member)
 
 
-class CompatibleSetDialog(QDialog):
+class CompatibleSetDialog(ResponsiveDialog):
     """Dialog showing compatible plant sets for a bed (US-D3.1).
 
     Sets are ranked by how many of the bed's CURRENT plants each one already

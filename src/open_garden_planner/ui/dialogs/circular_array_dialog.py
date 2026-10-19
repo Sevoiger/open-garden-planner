@@ -1,7 +1,6 @@
 """Circular Array placement dialog."""
 
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -12,8 +11,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class CircularArrayDialog(QDialog):
+
+class CircularArrayDialog(ResponsiveDialog):
     """Dialog for creating a circular array of an object.
 
     Allows specifying count, radius, start angle, and sweep angle to place

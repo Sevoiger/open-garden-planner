@@ -3,7 +3,6 @@
 from PyQt6.QtCore import QLineF, QPointF, Qt
 from PyQt6.QtGui import QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QGraphicsScene,
     QGraphicsView,
@@ -14,8 +13,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class CalibrationDialog(QDialog):
+
+class CalibrationDialog(ResponsiveDialog):
     """Dialog for calibrating background image scale using two points.
 
     User clicks two points on the image and enters the real-world distance

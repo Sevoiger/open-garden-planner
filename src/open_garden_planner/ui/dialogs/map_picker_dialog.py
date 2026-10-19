@@ -50,7 +50,6 @@ from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
@@ -89,6 +88,7 @@ from open_garden_planner.services.google_maps_service import (
     get_api_key,
     has_api_key,
 )
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 _KEY_MISSING_FAILURE = "google_maps_key_missing"
 _UNEXPECTED_FETCH_FAILURE = "unexpected_satellite_fetch_failure"
@@ -291,7 +291,7 @@ class _FetchWorker(QThread):
         self.finished_ok.emit(result)
 
 
-class MapPickerDialog(QDialog):
+class MapPickerDialog(ResponsiveDialog):
     """Embedded Google Maps picker with rectangle selection."""
 
     HTML_FILE = (

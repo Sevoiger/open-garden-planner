@@ -45,6 +45,7 @@ from open_garden_planner.models.amendment import AmendmentRecommendation
 from open_garden_planner.models.soil_test import SoilTestHistory, SoilTestRecord
 from open_garden_planner.services.soil_service import SoilService
 from open_garden_planner.ui.widgets import SoilSparklineWidget
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 # Categorical labels for Rapitest scale. Index = stored level value.
 # N/P share the 0–4 scale (Depleted/Deficient/Adequate/Sufficient/Surplus).
@@ -54,7 +55,7 @@ _NPK_LABELS_KEY = ("Depleted", "Deficient", "Adequate", "Sufficient", "Surplus")
 _SECONDARY_LABELS_KEY = ("Low", "Medium", "High")
 
 
-class SoilTestDialog(QDialog):
+class SoilTestDialog(ResponsiveDialog):
     """Modal dialog for entering a single soil test record."""
 
     def __init__(
@@ -335,12 +336,12 @@ class SoilTestDialog(QDialog):
             and self._command_manager is not None
         ):
             edit_btn = QPushButton(self.tr("Edit"))
-            edit_btn.setFixedWidth(60)
+            edit_btn.setMinimumWidth(60)
             edit_btn.clicked.connect(lambda _, r=rec: self._on_edit_record(r))
             h.addWidget(edit_btn)
 
             del_btn = QPushButton(self.tr("Delete"))
-            del_btn.setFixedWidth(60)
+            del_btn.setMinimumWidth(60)
             del_btn.clicked.connect(lambda _, r=rec: self._on_delete_record(r))
             h.addWidget(del_btn)
 

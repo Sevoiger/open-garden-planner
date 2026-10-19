@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
-    QDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -26,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.ui.theme import rgba, theme_color, theme_qcolor
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 if TYPE_CHECKING:
     from open_garden_planner.services.companion_planting_service import (
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
+
 class PlantPairResult:
     """Result of checking one plant pair."""
 
@@ -115,7 +116,7 @@ def analyse_plan(
     return beneficial, antagonistic
 
 
-class CompanionCheckDialog(QDialog):
+class CompanionCheckDialog(ResponsiveDialog):
     """Report dialog for whole-plan companion planting compatibility."""
 
     def __init__(

@@ -5,7 +5,6 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -16,8 +15,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class DxfImportDialog(QDialog):
+
+class DxfImportDialog(ResponsiveDialog):
     """Dialog for configuring DXF import options.
 
     Allows the user to choose a scale factor and which DXF layers to import.

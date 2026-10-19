@@ -2,7 +2,6 @@
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
@@ -18,9 +17,10 @@ from PyQt6.QtWidgets import (
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.services import get_plant_library
 from open_garden_planner.ui.theme import set_text_role
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class CustomPlantsDialog(QDialog):
+class CustomPlantsDialog(ResponsiveDialog):
     """Dialog for viewing and managing custom plant species.
 
     Allows users to view, edit, and delete plants in their custom library.

@@ -266,7 +266,10 @@ def test_tracking_forms_fit_small_windows_and_attachment_buttons_are_readable(ga
         dialog.show()
         dialog.resize(800, 600)
         qtbot.wait(10)
-        assert dialog.width() == 800 and dialog.height() == 600
+        # The native frame must fit too: an 800 px desktop cannot host an
+        # 800 px client plus decoration. Keep the requested height when it fits.
+        assert dialog.screen().availableGeometry().contains(dialog.frameGeometry())
+        assert 0 < dialog.width() <= 800 and dialog.height() == 600
         editor = EventEditor([{"id": str(plant.item_id), "name": plant.name}])
         qtbot.addWidget(editor)
         editor.show()

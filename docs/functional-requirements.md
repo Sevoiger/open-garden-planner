@@ -662,3 +662,12 @@ backed up and replaced atomically per file. Replay completes a partial installat
 without overwriting edited records or installed collections. Personal source files
 and generated documents remain untracked. An instance's Variety field remains the
 existing write path; importing never plants the garden.
+
+### FR-FORK-UI-03: Readable, screen-bounded dialogs
+
+All custom dialogs use a shared screen-bounded form container. Natural control
+minima are preserved; overflow scrolls vertically and horizontally instead of
+compressing text. Terminal action rows remain outside form scrolling and get their
+own horizontal scrolling when necessary. Reopening a dialog does not duplicate the
+container, disconnect acceptance/validation, or change stored preferences. Existing
+native Qt file/color/message dialogs retain platform behavior.

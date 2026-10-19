@@ -9,7 +9,6 @@ from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QGraphicsScene,
     QGroupBox,
@@ -17,6 +16,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QVBoxLayout,
 )
+
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 # Scale presets: display name -> scale denominator (0 = fit to page)
 SCALE_PRESETS = [
@@ -29,7 +30,7 @@ SCALE_PRESETS = [
 ]
 
 
-class PrintOptionsDialog(QDialog):
+class PrintOptionsDialog(ResponsiveDialog):
     """Dialog for configuring print options before showing print preview.
 
     Allows user to select scale, and toggle grid/labels/legend inclusion.

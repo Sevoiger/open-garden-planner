@@ -2637,3 +2637,17 @@ Tests isolate file-backed app data as well as QSettings: conftest overrides the
 plant-library path resolver before collection (protecting captured function aliases),
 then redirects each test and resets plant/list/seed stores. Production path resolution
 and directory creation retain their platform behavior; there is no new setting or flag.
+
+Personal-fork dialog sizing (FR-FORK-UI-03): use `ResponsiveDialog` for custom
+forms. The first show transfers the existing layout to a scroll body and preserves
+its natural minimum, with automatic scrollbars on both axes. Final pure button
+rows stay outside form scrolling; wide action rows scroll horizontally. Respect
+explicit maximum sizes and clamp minimums/frame dimensions to available logical
+screen geometry. Resolve stylesheet hints after show as well as before reparenting:
+native button hints can change when shown. Do not reduce fonts to fit. The garden
+records splitter explicitly preserves its right pane's layout minimum. Fixed text
+button/spin/shortcut widths are minimum widths, allowing longer locale strings.
+The audit instantiates all 38 types, walks their tabs, checks styled button text
+rectangles and field/group minima on a 600 × 440 desktop (13 pt dark English and
+18 pt light German), then verifies a real Preferences save/reopen. Map layout uses
+a QWidget stand-in for WebEngine, with no browser or network request.

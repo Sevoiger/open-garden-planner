@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -39,6 +40,7 @@ from open_garden_planner.services.garden_queries import (
     garden_record,
     search_events,
 )
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
 def event_type_choices() -> list[tuple[str, str]]:
@@ -56,7 +58,7 @@ def _edited_period(text: str, original: dict[str, str]) -> dict[str, str]:
     return period(original) if text == (original["label"] or original["value"]) else period(text)
 
 
-class EventEditor(QDialog):
+class EventEditor(ResponsiveDialog):
     """A single intervention; an empty occurrence date explicitly means unknown."""
 
     def __init__(self, targets: list[dict[str, str]], event: dict[str, Any] | None = None,
@@ -200,7 +202,7 @@ class EventEditor(QDialog):
         super().accept()
 
 
-class GardenMemoryDialog(QDialog):
+class GardenMemoryDialog(ResponsiveDialog):
     """Select any shape (including obscured plants), edit its card and browse history."""
 
     def __init__(self, service: GardenMemoryService, target_id: str | None = None,
@@ -222,6 +224,7 @@ class GardenMemoryDialog(QDialog):
         split.addWidget(self.targets)
         body = QWidget()
         right = QVBoxLayout(body)
+        right.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         form = QFormLayout()
         self.name_edit = QLineEdit()
         form.addRow(self.tr("Label:"), self.name_edit)

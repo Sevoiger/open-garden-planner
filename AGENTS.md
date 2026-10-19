@@ -316,3 +316,8 @@ a fresh plan manually. plants/ and generated output/ remain local and untracked.
 Test isolation follow-up: file-backed app-data resolution is overridden before
 collection and each test resets plant/list/seed stores to a temporary directory.
 Previously imported path aliases stay isolated; production path policy is unchanged.
+
+Personal macOS dialog follow-up (2026-10-19): screen-bounded natural-minimum scroll
+forms across all 38 custom types plus the ad hoc guild form; wide action rows scroll
+horizontally. See ADR-062, FR-FORK-UI-03 and docs/fork/PROGRESSION.md. Native owner
+acceptance remains pending; no new credential or garden-data write path.

@@ -19,8 +19,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class ConstraintConflictDialog(QDialog):
+
+class ConstraintConflictDialog(ResponsiveDialog):
     """Offer the user an Override-or-Cancel choice when a constraint conflicts.
 
     Populated with the conflicting constraints' descriptions; returns the set

@@ -2912,3 +2912,26 @@ it does not change the existing interactive write behavior. Explicit collection 
 are installation markers; a new batch uses a new key. No live cache is modified:
 the application must be closed. Localize only still-original names in the earlier
 Classiques lists, preserving identities and user edits.
+
+## ADR-062: Shared scroll containment for personal-fork dialogs (2026-10-19)
+
+**Status:** Implemented on the personal feature branch; native owner acceptance pending.
+
+**Context:** The owner's Preferences capture showed overlapping API groups. An
+isolated 550 × 780 dark-theme probe measured buttons at 0–12 px high for 17 px
+of glyphs, with an Agent API group at 82 px versus a 235 px minimum hint. Several
+other custom forms had the same unbounded vertical-layout pattern.
+
+**Decision:** Use an explicit `ResponsiveDialog` base for every custom dialog and
+the guild-membership form. Once constructed, transfer the existing layout into
+a scroll body at its natural minimum. Preserve final pure action rows separately,
+with horizontal scrolling for wide rows. Clamp the native frame to the available
+screen and retain each dialog's explicit maximum size. Refresh native/QSS button
+minima after show. Avoid application-wide font reductions or per-dialog fixed
+pixel heights; preserve the original field references, signals and save paths.
+
+**Consequences:** No dependency, settings key, project format or data-write path
+change. Existing inner list/tab/form scroll areas remain in place; an outer bar
+appears only when their minimum cannot fit. The 38-type inventory and an ad hoc
+constructor check prevent a future custom dialog from silently bypassing the
+policy. Automated evidence cannot replace the owner's native visual acceptance.

@@ -54,6 +54,7 @@ from open_garden_planner.models.succession import (
 )
 from open_garden_planner.ui.icons import get_icon
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 _NOTE_KIND_ROLE = Qt.ItemDataRole.UserRole + 1  # "good" | "warn" | "neutral"
 
@@ -227,7 +228,7 @@ class _SeasonBandWidget(QWidget):
         painter.end()
 
 
-class _EntryDialog(QDialog):
+class _EntryDialog(ResponsiveDialog):
     """Sub-dialog for adding or editing a single SuccessionEntry."""
 
     def __init__(
@@ -374,7 +375,7 @@ class _EntryDialog(QDialog):
         return self._result_entry
 
 
-class SuccessionPlanDialog(QDialog):
+class SuccessionPlanDialog(ResponsiveDialog):
     """Modal dialog for planning succession crops in a single bed."""
 
     def __init__(

@@ -18,7 +18,6 @@ from PyQt6.QtCore import QDate, Qt, QUrl
 from PyQt6.QtGui import QDesktopServices, QPixmap
 from PyQt6.QtWidgets import (
     QDateEdit,
-    QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
@@ -34,9 +33,10 @@ from PyQt6.QtWidgets import (
 from open_garden_planner.app.paths import default_dialog_dir
 from open_garden_planner.models.journal_note import JournalNote
 from open_garden_planner.ui.theme import theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class JournalNoteDialog(QDialog):
+class JournalNoteDialog(ResponsiveDialog):
     """Modal dialog for adding or editing a single garden-journal note."""
 
     def __init__(

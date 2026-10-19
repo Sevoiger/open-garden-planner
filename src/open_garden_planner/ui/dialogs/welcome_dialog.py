@@ -6,7 +6,6 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -20,9 +19,10 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.app.settings import get_settings
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class WelcomeDialog(QDialog):
+class WelcomeDialog(ResponsiveDialog):
     """Welcome screen shown at application startup.
 
     Displays the application logo, recent projects list, and quick actions
