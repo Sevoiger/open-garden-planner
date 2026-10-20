@@ -16,7 +16,7 @@ def personal_pattern_brush(record: object) -> QBrush | None:
         return None
     encoded = record.get("png")
     width = record.get("width_cm")
-    if not isinstance(encoded, str) or type(width) not in (int, float):
+    if not isinstance(encoded, str) or not isinstance(width, (int, float)) or isinstance(width, bool):
         return None
     if not 1 <= width <= 10000 or not math.isfinite(width):
         return None

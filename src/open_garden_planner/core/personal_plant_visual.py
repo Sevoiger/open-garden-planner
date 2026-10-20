@@ -5,7 +5,8 @@ from functools import lru_cache
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPixmap
 
-from open_garden_planner.core.png_asset import decode_png, import_png  # noqa: F401
+from open_garden_planner.core.png_asset import decode_png
+from open_garden_planner.core.png_asset import import_png as import_png
 
 VISUAL_KEY = "personal_visual_png"
 

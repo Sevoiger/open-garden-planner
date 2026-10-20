@@ -91,6 +91,7 @@ class MinimapWidget(QWidget):
         # Install event filter on the *view* (not viewport) to catch resize
         canvas_view.installEventFilter(self)
         self._viewport = canvas_view.viewport()
+        assert self._viewport is not None
         self._viewport.installEventFilter(self)
 
         # Defer initial position until after the window is fully laid out

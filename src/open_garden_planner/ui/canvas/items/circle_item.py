@@ -92,7 +92,7 @@ def _show_properties_dialog(item: QGraphicsEllipseItem) -> None:
             # Apply pattern brush and store pattern
             if hasattr(item, 'fill_pattern'):
                 item.fill_pattern = style.fill_pattern
-            brush = create_pattern_brush(style.fill_pattern, style.fill_color, item.metadata.get("personal_fill_pattern"))
+            brush = create_pattern_brush(style.fill_pattern, style.fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"))
             item.setBrush(brush)
 
         # Apply custom fill color and pattern (overrides type default)
@@ -103,7 +103,7 @@ def _show_properties_dialog(item: QGraphicsEllipseItem) -> None:
             item.fill_pattern = fill_pattern
         if hasattr(item, 'fill_color'):
             item.fill_color = fill_color
-        brush = create_pattern_brush(fill_pattern, fill_color, item.metadata.get("personal_fill_pattern"))
+        brush = create_pattern_brush(fill_pattern, fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"))
         item.setBrush(brush)
 
         # Apply custom stroke properties (overrides type default)

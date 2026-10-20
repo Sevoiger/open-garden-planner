@@ -28,6 +28,11 @@ de positionnement et profil réussis également avec Qt Cocoa natif, hors sandbo
 La tentative Cocoa confinée s'interrompait avant création de la fenêtre ; aucune
 modification de l'application n'a été nécessaire pour le lancement natif.
 Ruff et contrôle source/catalogues/binaires des traductions réussis.
+Après les diagnostics CI, les nouvelles surfaces Qt ont reçu leurs annotations
+explicites et l'import PNG son export typé. Les trois modules PNG passent mypy
+sans erreur ; l'analyse locale avec cible de typage Linux ne dépasse aucun budget
+existant. Aucun seuil ni baseline n'a été assoupli. Les 93 tests affectés par ces
+dernières corrections et le contrôle des traductions ont de nouveau réussi.
 La revue indépendante `senior-reviewer` a été demandée sur le diff indexé mais
 n'a pas pu démarrer, quota du service atteint. Auto-relecture effectuée ; cette
 limite est à conserver dans la draft PR. L'acceptation visuelle sur le plan

@@ -425,7 +425,8 @@ class CategoryDropdown(QWidget):
         self.trait_filters.clear()
         if self._catalog_list is not None:
             self._all_plants.setChecked(False)
-            self._illustrations_toggle.setChecked(False)
+            if self._illustrations_toggle is not None:
+                self._illustrations_toggle.setChecked(False)
         self._apply_filter("")
 
     def _change_page(self, direction: int) -> None:
