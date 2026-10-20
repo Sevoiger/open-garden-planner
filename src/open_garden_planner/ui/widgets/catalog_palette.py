@@ -101,7 +101,7 @@ class CatalogList(QListWidget):
             row = QListWidgetItem(QIcon(item.thumbnail) if item.thumbnail is not None else QIcon(), label)
             row.setData(Qt.ItemDataRole.UserRole, item)
             row.setToolTip(QCoreApplication.translate(
-                "CatalogPalette", "{name}\nStylized plan symbol; cultivar appearance may differ.\nChoose, then click the plan to place."
+                "CatalogPalette", "{name}\nStylized plan symbol; cultivar appearance may differ.\nChoose, then set center and edge on the plan. Uncheck size choice for one-click placement."
             ).format(name=label))
             self.addItem(row)
 

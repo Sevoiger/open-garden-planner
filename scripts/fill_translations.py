@@ -761,6 +761,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
     # ── CategoryDropdown (popup under each toolbar category button) ──
     "CategoryDropdown": {
+        "Choose size on plan (center, then edge)": "Größe im Plan wählen (Mitte, dann Rand)",
         "Filter…": "Filtern…",
         "Add to Favorites": "Zu Favoriten hinzufügen",
         "Remove from Favorites": "Aus Favoriten entfernen",
@@ -1272,6 +1273,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Click to open": "Zum Öffnen klicken",
         "Click to keep open": "Zum Offenhalten klicken",
         "Click to collapse": "Zum Einklappen klicken",
+    },
+    "_PanelResizeGrip": {
+        "Drag to resize this panel. Double-click to restore its default height.":
+            "Ziehen, um die Panelhöhe zu ändern. Doppelklicken, um die Standardhöhe wiederherzustellen.",
+    },
+    "CatalogPalette": {
+        "{name}\nStylized plan symbol; cultivar appearance may differ.\n"
+        "Choose, then set center and edge on the plan. Uncheck size choice for one-click placement.":
+            "{name}\nStilisiertes Plansymbol; das Aussehen der Sorte kann abweichen.\n"
+            "Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mit einem Klick deaktivieren.",
     },
 
     # ── NewProjectDialog ──

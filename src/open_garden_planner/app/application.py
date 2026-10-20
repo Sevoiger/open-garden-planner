@@ -5338,7 +5338,7 @@ class GardenPlannerApp(QMainWindow):
         for _key, panel in canonical_panels:
             sidebar_layout.removeWidget(panel)
 
-        self._sidebar_controller = SidebarController()
+        self._sidebar_controller = SidebarController(resizable_panels=True)
         for key, panel in canonical_panels:
             self._sidebar_controller.add_panel(key, panel)  # registers COLLAPSED
         # The selection-driven panels have nothing to show until a matching item
@@ -7709,7 +7709,8 @@ class GardenPlannerApp(QMainWindow):
                         status.showMessage(self.tr("Invalid plant data; placement cancelled."), 5000)
                     return
             active_tool.set_plant_info(category=category, species=species,
-                                       species_data=snapshot)
+                                       species_data=snapshot,
+                                       interactive_size=getattr(item, "interactive_size", True))
 
     def _sync_toolbar_state_by_type(self, tool_type: ToolType) -> None:
         """Sync toolbar button states when the active tool changes.

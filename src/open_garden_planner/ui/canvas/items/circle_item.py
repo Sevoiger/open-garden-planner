@@ -381,11 +381,24 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
 
             pixmap = personal_visual_pixmap(self.metadata.get("plant_species"), canvas=True)
             if pixmap is None:
+                symbol_species = self._plant_species
+                snapshot = self.metadata.get("plant_species")
+                if isinstance(snapshot, dict):
+                    raw = snapshot.get("raw_data")
+                    explicit_art = isinstance(raw, dict) and bool(raw.get("plan_illustration_id"))
+                    if explicit_art or not symbol_species or symbol_species in (
+                        snapshot.get("common_name"), snapshot.get("scientific_name"),
+                    ):
+                        from open_garden_planner.services.plant_palette import illustration_for
+
+                        art = illustration_for(snapshot)
+                        if art is not None:
+                            symbol_species = art["id"].replace("_", " ")
                 pixmap = render_plant_pixmap(
                     object_type=self.object_type,
                     diameter=render_diameter,
                     item_id=str(self._item_id),
-                    species=self._plant_species,
+                    species=symbol_species,
                     category=self._plant_category,
                     tint_color=self.fill_color,
                 )

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +29,41 @@ _QWIDGETSIZE_MAX = 16777215
 # Open/collapse animation duration (ms). Short enough to feel responsive,
 # long enough to read as an organic expansion rather than a hard switch.
 _PANEL_ANIM_MS = 160
+
+
+class _PanelResizeGrip(QFrame):
+    """Bottom edge of one open sidebar panel; dragging uses global coordinates."""
+
+    def __init__(self, panel: "CollapsiblePanel") -> None:
+        super().__init__(panel)
+        self._panel = panel
+        self._drag_origin: tuple[int, int] | None = None
+        self.setFixedHeight(8)
+        self.setFrameShape(QFrame.Shape.HLine)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self.setToolTip(self.tr("Drag to resize this panel. Double-click to restore its default height."))
+
+    def mousePressEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
+        if event is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_origin = (int(event.globalPosition().y()), self._panel.height())
+            event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
+        if event is not None and self._drag_origin is not None:
+            y, height = self._drag_origin
+            self._panel.set_preferred_height(height + int(event.globalPosition().y()) - y)
+            event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
+        self._drag_origin = None
+        if event is not None:
+            event.accept()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802
+        self._drag_origin = None
+        if event is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._panel.set_preferred_height(self._panel._default_height)
+            event.accept()
 
 
 class _HeaderFrame(QFrame):
@@ -87,6 +123,10 @@ class CollapsiblePanel(QWidget):
         self._content_widget = content
         self._info_label: QLabel | None = None
         self._anim: QPropertyAnimation | None = None
+        self._body_scroll: QScrollArea | None = None
+        self._resize_grip: _PanelResizeGrip | None = None
+        self._preferred_height: int | None = None
+        self._default_height = 300
 
         self._setup_ui()
         self.set_expanded(expanded, emit=False)
@@ -147,7 +187,7 @@ class CollapsiblePanel(QWidget):
                 and (self._anim is None or self._anim.state() != QAbstractAnimation.State.Running)):
             # New rows/content can arrive after the opening animation finished.
             # Keep the open panel's floor in step with its current content.
-            height = self.sizeHint().height()
+            height = self._preferred_height or self.sizeHint().height()
             if self.minimumHeight() != height:
                 self.setMinimumHeight(height)
         return result
@@ -159,12 +199,57 @@ class CollapsiblePanel(QWidget):
             widget: Widget to display in content area
         """
         if self._content_widget:
+            if self._body_scroll is not None:
+                self._body_scroll.takeWidget()
             self._content_widget.setParent(None)
 
         self._content_widget = widget
         if widget:
-            self.layout().addWidget(widget)
+            if self._body_scroll is not None:
+                self._body_scroll.setWidget(widget)
+            else:
+                self.layout().addWidget(widget)
             widget.setVisible(self._expanded)
+
+    def enable_resizing(self, default_height: int = 300) -> None:
+        """Give managed panels independent scrolling and an adjustable bottom edge."""
+        if self._body_scroll is not None:
+            return
+        layout = self.layout()
+        assert isinstance(layout, QVBoxLayout)
+        body = QScrollArea(self)
+        body.setWidgetResizable(True)
+        body.setFrameShape(QFrame.Shape.NoFrame)
+        body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        if self._content_widget is not None:
+            layout.removeWidget(self._content_widget)
+            body.setWidget(self._content_widget)
+        layout.addWidget(body, 1)
+        self._body_scroll = body
+        self._resize_grip = _PanelResizeGrip(self)
+        layout.addWidget(self._resize_grip)
+        self._default_height = default_height
+        self._preferred_height = default_height
+        body.setVisible(self._expanded)
+        self._resize_grip.setVisible(self._expanded)
+        if self._expanded:
+            self.set_preferred_height(default_height)
+
+    def preferred_height(self) -> int | None:
+        """Session-local height, retained through content changes and collapse."""
+        return self._preferred_height
+
+    def set_preferred_height(self, height: int) -> None:
+        if self._body_scroll is None:
+            return
+        self._preferred_height = max(self.header_height() + 100, min(1600, height))
+        if self._expanded:
+            if self._anim is not None:
+                self._anim.stop()
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(self._preferred_height)
+            self.setMinimumHeight(self._preferred_height)
+            self.updateGeometry()
 
     def is_expanded(self) -> bool:
         """Check if panel is expanded.
@@ -193,6 +278,10 @@ class CollapsiblePanel(QWidget):
         # Show/hide content
         if self._content_widget:
             self._content_widget.setVisible(expanded)
+        if self._body_scroll is not None:
+            self._body_scroll.setVisible(expanded)
+        if self._resize_grip is not None:
+            self._resize_grip.setVisible(expanded)
 
         if emit:
             self.expanded_changed.emit(expanded)
@@ -343,7 +432,9 @@ class CollapsiblePanel(QWidget):
         self.setMaximumHeight(_QWIDGETSIZE_MAX)
         # Floor at the content height so a stretchy open panel never shrinks
         # below its content (it grows ABOVE this to absorb surplus space).
-        self.setMinimumHeight(self.sizeHint().height())
+        self.setMinimumHeight(self._preferred_height or self.sizeHint().height())
+        if self._preferred_height is not None:
+            self.setMaximumHeight(self._preferred_height)
 
     def collapse_now(self) -> None:
         """Snap to collapsed: content hidden, height clamped to the header."""
@@ -378,7 +469,9 @@ class CollapsiblePanel(QWidget):
         # several panels share the surplus space. Min is set only now — during
         # the tween it stays 0, else min > the animating max would jump the panel.
         self.setMaximumHeight(_QWIDGETSIZE_MAX)
-        self.setMinimumHeight(self.sizeHint().height())
+        self.setMinimumHeight(self._preferred_height or self.sizeHint().height())
+        if self._preferred_height is not None:
+            self.setMaximumHeight(self._preferred_height)
 
     def animate_collapse(self) -> None:
         """Tween closed: shrink the height clamp to the header, then hide content."""
@@ -394,4 +487,8 @@ class CollapsiblePanel(QWidget):
     def _after_animate_collapse(self) -> None:
         if self._content_widget is not None:
             self._content_widget.setVisible(False)
+        if self._body_scroll is not None:
+            self._body_scroll.hide()
+        if self._resize_grip is not None:
+            self._resize_grip.hide()
         self.setMaximumHeight(self.header_height())

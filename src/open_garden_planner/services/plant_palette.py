@@ -89,6 +89,11 @@ def illustration_for(record: dict[str, Any]) -> dict[str, Any] | None:
     raw = record.get("raw_data") or {}
     if not isinstance(raw, dict):
         raw = {}
+    chosen = raw.get("plan_illustration_id")
+    if isinstance(chosen, str):
+        match = next((row for row in illustrations() if row["id"] == chosen), None)
+        if match is not None:
+            return match
     aliases = record.get("aliases")
     raw_aliases = raw.get("aliases")
     names = [record.get("scientific_name", ""), record.get("common_name", ""),
@@ -99,6 +104,13 @@ def illustration_for(record: dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(name, str) and normalized(name) in exact:
             return exact[normalized(name)]
     scientific = normalized(record.get("scientific_name") or "")
+    words = scientific.split()
+    # A named cultivar can share its species/genus drawing without acquiring
+    # that drawing's identity or traits. Prefer the longest botanical prefix.
+    for end in range(len(words) - 1, 0, -1):
+        parent = exact.get(" ".join(words[:end]))
+        if parent is not None:
+            return parent
     return genera.get(scientific.split(" ")[0]) if scientific else None
 
 

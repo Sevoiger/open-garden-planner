@@ -4,6 +4,7 @@ Opens directly under a toolbar category button. Supports click-to-activate
 and drag-to-canvas, plus an in-popup search field that filters thumbnails.
 """
 
+from copy import copy
 from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, QRect, QSize, Qt, pyqtSignal
@@ -334,7 +335,11 @@ class CategoryDropdown(QWidget):
         self._catalog_group = ICON_GROUPS.get(self._category.icon_name)
         self._catalog_list = None
         self._illustrations_toggle = None
+        self._choose_size = None
         if self._catalog_group:
+            self._choose_size = QCheckBox(self.tr("Choose size on plan (center, then edge)"))
+            self._choose_size.setChecked(True)
+            content_layout.addWidget(self._choose_size)
             self._all_plants = QCheckBox(self.tr("All plants (including unclassified)"))
             self._all_plants.toggled.connect(lambda: self._apply_filter(self._search_box.text()))
             content_layout.addWidget(self._all_plants)
@@ -356,6 +361,7 @@ class CategoryDropdown(QWidget):
             self._database_button.clicked.connect(self._search_databases)
             content_layout.addWidget(self._database_button)
             self._illustrations_toggle = QCheckBox(self.tr("Illustrations and generic shapes"))
+            self._illustrations_toggle.setChecked(True)
             content_layout.addWidget(self._illustrations_toggle)
 
         grid_widget = QWidget()
@@ -376,7 +382,6 @@ class CategoryDropdown(QWidget):
         content_layout.addWidget(grid_widget)
         self._grid_widget = grid_widget
         if self._illustrations_toggle is not None:
-            grid_widget.hide()
             self._illustrations_toggle.toggled.connect(grid_widget.setVisible)
             self._illustrations_toggle.toggled.connect(lambda: self._apply_filter(self._search_box.text()))
         self._empty_label = QLabel(self.tr("No matching objects"))
@@ -392,6 +397,9 @@ class CategoryDropdown(QWidget):
         self._header = header
 
     def _on_item_clicked(self, item: GalleryItem) -> None:
+        item = copy(item)
+        if self._choose_size is not None:
+            item.interactive_size = self._choose_size.isChecked()
         self.tool_selected.emit(item.tool_type)
         self.item_selected.emit(item)
         self.close()
@@ -426,7 +434,7 @@ class CategoryDropdown(QWidget):
         if self._catalog_list is not None:
             self._all_plants.setChecked(False)
             if self._illustrations_toggle is not None:
-                self._illustrations_toggle.setChecked(False)
+                self._illustrations_toggle.setChecked(True)
         self._apply_filter("")
 
     def _change_page(self, direction: int) -> None:

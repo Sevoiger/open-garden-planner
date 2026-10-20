@@ -41,7 +41,96 @@ def plants(scene):
     return [i for i in scene.items() if isinstance(i, CircleItem)]
 
 
-def test_plant_palette_starts_with_catalog_and_drawings_open_on_request(qtbot):
+def test_catalog_default_requires_size_and_preserves_botanical_spread(qtbot, monkeypatch):
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_maybe_start_agent_api", lambda _self: None)
+    get_plant_library().add_plant(sophora())
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    window.canvas_view.set_snap_enabled(False)
+    dropdown = next(d for d in window.category_toolbar._category_dropdowns if d._catalog_group == "shrub")
+    anchor = QWidget()
+    qtbot.addWidget(anchor)
+    anchor.show()
+    dropdown.show_below(anchor)
+    dropdown._search_box.setText("Sophora prostrata")
+    assert dropdown._choose_size.isChecked()
+    dropdown._catalog_list._choose(dropdown._catalog_list.item(0))
+    tool = window.canvas_view.active_tool
+    tool.commit_typed_coordinate(QPointF(300, 300))
+    assert not plants(window.canvas_scene)
+    assert window.canvas_view.command_manager.undo_depth == 0
+    tool.commit_typed_coordinate(QPointF(390, 300))
+    plant = plants(window.canvas_scene)[0]
+    assert plant.radius == 90
+    assert plant.metadata["plant_species"]["max_spread_cm"] == 140
+    assert window.canvas_view.command_manager.undo_depth == 1
+    window.canvas_view.command_manager.undo()
+    assert not plants(window.canvas_scene)
+    window.canvas_view.command_manager.redo()
+    assert plants(window.canvas_scene)[0] is plant
+    window._project_manager.mark_clean()
+    window.close()
+
+
+def test_cultivar_illustration_uses_parent_or_explicit_approximation_without_changing_identity():
+    record = {"scientific_name": "Magnolia grandiflora Treyve", "raw_data": {}}
+    before = deepcopy(record)
+    assert illustration_for(record)["id"] == "magnolia"
+
+    assert record == before
+    record["raw_data"]["plan_illustration_id"] = "lily"
+    assert illustration_for(record)["id"] == "lily"
+    record["raw_data"]["plan_illustration_id"] = "../../outside"
+    assert illustration_for(record)["id"] == "magnolia"
+
+
+def test_plant_list_drop_uses_assigned_illustration_and_keeps_identity(canvas, monkeypatch):
+    from open_garden_planner.models.plant_data import PlantSpeciesData
+    from open_garden_planner.models.plant_lists import get_plant_list_store
+
+    plant = PlantSpeciesData(scientific_name="Callicarpa bodinieri Profusion",
+                             common_name="Callicarpe Profusion", data_source="custom",
+                             source_id="test:callicarpa", max_height_cm=250, max_spread_cm=180,
+                             raw_data={"plan_illustration_id": "viburnum", "future_field": True})
+    store = get_plant_list_store()
+    collection = store.create_list("My garden")
+    entry = store.add_entry(collection.id, plant)
+    from PyQt6.QtCore import QMimeData
+
+    mime = QMimeData()
+    mime.setText(f"plant_list:{entry.id}")
+    event = QDropEvent(QPointF(canvas.mapFromScene(QPointF(300, 300))), Qt.DropAction.CopyAction,
+                       mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    canvas.dropEvent(event)
+    item = plants(canvas.scene())[0]
+    assert item.plant_species == plant.common_name
+    assert item.metadata["plant_species"]["scientific_name"] == plant.scientific_name
+    assert item.metadata["plant_species"]["raw_data"] == plant.raw_data
+    from PyQt6.QtGui import QImage, QPainter
+
+    import open_garden_planner.ui.canvas.items.circle_item as circle_module
+
+    render = circle_module.render_plant_pixmap
+    rendered_species = []
+
+    def render_symbol(**kwargs):
+        rendered_species.append(kwargs["species"])
+        return render(**kwargs)
+
+    monkeypatch.setattr(circle_module, "render_plant_pixmap", render_symbol)
+    image = QImage(400, 400, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    item.paint(painter, None)
+    painter.end()
+    assert rendered_species == ["viburnum"]
+
+
+def test_plant_palette_keeps_illustrations_visible_and_can_hide_them(qtbot):
     category = next(c for c in build_toolbar_categories() if c.icon_name == "shrub")
     dropdown = CategoryDropdown(category)
     anchor = QWidget()
@@ -50,12 +139,12 @@ def test_plant_palette_starts_with_catalog_and_drawings_open_on_request(qtbot):
     anchor.show()
     dropdown.show_below(anchor)
     assert dropdown._catalog_list.isVisible()
-    assert dropdown._grid_widget.isHidden()
-    dropdown._illustrations_toggle.click()
     assert dropdown._grid_widget.isVisible()
+    dropdown._illustrations_toggle.click()
+    assert dropdown._grid_widget.isHidden()
     dropdown.close()
     dropdown.show_below(anchor)
-    assert dropdown._grid_widget.isHidden()
+    assert dropdown._grid_widget.isVisible()
 
 
 @pytest.fixture
@@ -83,6 +172,7 @@ def test_catalog_selection_preserves_reference_and_places_once_with_undo_and_rel
     qtbot.addWidget(anchor)
     anchor.show()
     dropdown.show_below(anchor)
+    dropdown._choose_size.setChecked(False)
     dropdown._search_box.setText("Sophora prostrata")
     assert dropdown._catalog_list.count() == 1
     row = dropdown._catalog_list.item(0)
@@ -278,6 +368,8 @@ def test_database_shortcut_uses_query_and_activates_placement_without_editing_se
     tool = window.canvas_view.active_tool
     assert tool.tool_type == ToolType.SHRUB
     tool.commit_typed_coordinate(QPointF(450, 450))
+    assert len(plants(window.canvas_scene)) == 1
+    tool.commit_typed_coordinate(QPointF(520, 450))
     created = next(p for p in plants(window.canvas_scene) if p is not original)
     assert species_key(created.metadata["plant_species"]) == species_key(sophora().to_dict())
     assert created.radius == 70
