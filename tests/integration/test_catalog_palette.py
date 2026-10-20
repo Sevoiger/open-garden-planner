@@ -41,6 +41,23 @@ def plants(scene):
     return [i for i in scene.items() if isinstance(i, CircleItem)]
 
 
+def test_plant_palette_starts_with_catalog_and_drawings_open_on_request(qtbot):
+    category = next(c for c in build_toolbar_categories() if c.icon_name == "shrub")
+    dropdown = CategoryDropdown(category)
+    anchor = QWidget()
+    qtbot.addWidget(anchor)
+    qtbot.addWidget(dropdown)
+    anchor.show()
+    dropdown.show_below(anchor)
+    assert dropdown._catalog_list.isVisible()
+    assert dropdown._grid_widget.isHidden()
+    dropdown._illustrations_toggle.click()
+    assert dropdown._grid_widget.isVisible()
+    dropdown.close()
+    dropdown.show_below(anchor)
+    assert dropdown._grid_widget.isHidden()
+
+
 @pytest.fixture
 def canvas(qtbot):
     scene = CanvasScene(width_cm=2000, height_cm=1500)
@@ -339,6 +356,8 @@ def test_all_illustration_titles_fit_complete_words_and_wrapped_lines(qtbot, fon
             dropdown = CategoryDropdown(category)
             qtbot.addWidget(dropdown)
             dropdown.show_below(anchor)
+            if dropdown._illustrations_toggle is not None:
+                dropdown._illustrations_toggle.setChecked(True)
             app.processEvents()
             for button in dropdown._buttons:
                 label = next(label for label in button.findChildren(QLabel) if label.text() == button.item.name)

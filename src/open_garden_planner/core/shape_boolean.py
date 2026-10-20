@@ -34,16 +34,13 @@ def item_to_painter_path(item: QGraphicsItem) -> QPainterPath | None:
     elif isinstance(item, RectangleItem):
         local_path.addRect(item.rect())
     elif isinstance(item, CircleItem):
-        local_path.addEllipse(item.boundingRect())
+        local_path.addEllipse(item.rect())
     else:
         return None
 
     # Map to scene coordinates to handle position, rotation, transforms
-    scene_polygon = item.mapToScene(local_path.toFillPolygon())
-    scene_path = QPainterPath()
-    scene_path.addPolygon(scene_polygon)
-    scene_path.closeSubpath()
-    return scene_path
+    local_path.closeSubpath()
+    return item.mapToScene(local_path)
 
 
 def boolean_union(

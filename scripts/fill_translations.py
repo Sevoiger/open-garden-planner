@@ -1639,6 +1639,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
     # ── PropertiesPanel ──
     "PropertiesPanel": {
+        "Import fill PNG…": "Füllmuster-PNG importieren…",
+        "Personal PNG": "Eigenes PNG",
+        "Personal fill pattern": "Eigenes Füllmuster",
+        "Tile width:": "Kachelbreite:",
+        "Use built-in fill": "Integriertes Füllmuster verwenden",
+        "Use a seamless PNG. Original colors are preserved; the image is embedded in the plan.":
+            "Verwenden Sie ein nahtloses PNG. Originalfarben bleiben erhalten; das Bild wird im Plan eingebettet.",
+        "Choose a valid PNG up to 4 MiB and 16 megapixels.\n{error}":
+            "Wählen Sie ein gültiges PNG mit höchstens 4 MiB und 16 Megapixeln.\n{error}",
         # US-E9 asset-forge pilot fill patterns (#264)
         "Decking": "Terrassendielen",
         "Corten steel": "Cortenstahl",

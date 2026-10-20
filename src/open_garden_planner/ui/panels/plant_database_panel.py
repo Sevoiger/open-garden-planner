@@ -1332,6 +1332,7 @@ class PlantDatabasePanel(QWidget):
         """Hide plant details and show 'no selection' message."""
         self._current_plant_data = None
         self._current_plant_item = None
+        self._clear_profile_header()
         self._visual_controls.hide()
         self._update_favorite_button()
         self.no_selection_label.setText(self.tr("Select a plant to view details"))
@@ -1368,6 +1369,7 @@ class PlantDatabasePanel(QWidget):
         # Keep the plant item reference so Create Custom can use it
         # self._current_plant_item is set by set_selected_items
         self._current_plant_data = None
+        self._clear_profile_header()
         self._visual_controls.hide()
         self._update_favorite_button()
         self.no_selection_label.setText(
@@ -1396,6 +1398,23 @@ class PlantDatabasePanel(QWidget):
                         widget = layout.itemAt(j).widget()
                         if widget:
                             widget.setVisible(False)
+
+    def _clear_profile_header(self) -> None:
+        """Discard identity, art and attribution belonging to the previous selection."""
+        self._profile_header.hide()
+        for label in (
+            self._profile_name, self._profile_scientific, self._profile_description,
+            self._profile_source, self._profile_links, self._profile_thumbnail,
+        ):
+            label.clear()
+        if hasattr(self, "_license_label"):
+            self._license_label.hide()
+        parent = self.parent()
+        while parent:
+            if hasattr(parent, "set_info_tooltip"):
+                parent.set_info_tooltip("")
+                break
+            parent = parent.parent()
 
     def _show_plant_data(
         self, plant_data: PlantSpeciesData, plant_item: QGraphicsItem

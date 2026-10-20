@@ -19,6 +19,11 @@ fenêtre pour interroger les API. La confirmation prépare un nouveau placement.
 La section **Illustrations and generic shapes** propose séparément les dessins :
 246 illustrations de plantes et 15 formes génériques, dont 138 nouveaux dessins
 validés le 19 octobre. Ces raccourcis gardent le dessin centre puis bord du cercle.
+Cette section est repliée à l'ouverture : cocher son intitulé pour afficher les
+dessins. Les fiches botaniques restent visibles en premier. Choisir une fiche
+prépare un placement ; **Plant Details** décrit la sélection du plan. Une plante
+sans fiche affiche le message d'absence de données, sans conserver le profil de
+la plante précédente.
 Les dessins sont conventionnels : ils ne prouvent ni une espèce ni une variété,
 et leurs couleurs ne décrivent pas nécessairement votre cultivar. Une fiche sans
 dessin spécifique utilise une silhouette générique. La recherche globale de la
@@ -210,3 +215,77 @@ Le gros catalogue local est utile hors ligne, mais la recherche en ligne suffit
 pour découvrir des plantes au fil du projet. Pour un usage simple, partir de ses
 propres fiches et favoris ; il n'est pas nécessaire de parcourir les milliers de
 fiches importées. Les fiches existantes restent conservées.
+
+## Retour au catalogue d'origine
+
+À la demande du propriétaire, le 20 octobre 2026, les fiches ajoutées et les
+collections personnelles ont été retirées de la bibliothèque active, application
+fermée. Les deux fichiers `custom_plants.json` et `plant_lists.json` ont d'abord
+été copiés et vérifiés octet par octet dans un dossier
+`catalog-before-factory-<date>` du stockage utilisateur. Un manifeste contient
+leurs tailles et empreintes SHA-256. Les sauvegardes antérieures sont conservées.
+
+Le catalogue actif revient aux **118 fiches embarquées** ; les chiffres d'import
+plus haut décrivent donc l'historique, pas l'état actif. Les collections ajoutées
+ne sont pas réinstallées au démarrage. Les plans `.ogp`, leurs fiches et leurs
+images intégrées, les clés API et les réglages de l'application restent conservés.
+Ce retour concerne la bibliothèque de plantes, pas tous les réglages du logiciel.
+
+Pour restaurer l'ancienne bibliothèque, fermer OGP, sauvegarder les deux fichiers
+actifs s'ils ont été recréés, puis recopier les fichiers archivés à leur emplacement
+d'origine. Ne pas relancer les scripts d'import si l'on souhaite garder le catalogue
+d'origine. **Plant Lists** et **Create Custom** permettent de reconstruire une petite
+bibliothèque personnelle au fil des besoins.
+
+## Fusionner des formes : rectangle à bouts arrondis
+
+La fonction existe déjà pour deux formes fermées : rectangle, cercle ou polygone.
+Dessiner un rectangle puis un cercle de diamètre égal à sa largeur à chaque
+extrémité, avec les centres sur les petits côtés. Les formes doivent se chevaucher.
+Passer à l'outil de sélection, sélectionner le rectangle et un cercle avec Maj,
+puis **clic droit > Boolean > Union** et confirmer l'aperçu. Sélectionner ensuite
+le résultat et le second cercle et répéter l'union. On obtient un seul polygone
+éditable, sauvegardable, avec deux étapes d'annulation. Les arrondis deviennent une
+approximation polygonale ; les ombres et l'épaisseur du trait n'agrandissent pas
+la géométrie fusionnée. L'opération reste limitée à deux objets à la fois.
+
+## Importer un remplissage personnel
+
+Sélectionner une surface (rectangle, polygone, cercle géométrique ou ellipse),
+puis **Properties > Import fill PNG…**. Le PNG doit faire au plus 4 Mio et
+16 mégapixels. **Tile width** règle la largeur réelle de chaque répétition en
+centimètres ; la hauteur suit les proportions de l'image. La valeur initiale est
+256 cm. Les couleurs et la transparence d'origine sont conservées : la couleur
+du remplissage standard ne recolore pas l'image personnelle.
+
+Choisir une image déjà répétable sans raccord (*seamless/tileable*) : l'import
+répète le PNG mais ne répare pas ses bords. Le PNG est intégré aux métadonnées du
+`.ogp` ; le fichier source peut ensuite être déplacé. L'import, la taille et le
+retour au remplissage standard sont annulables. **Use built-in fill**, ou choisir
+un motif standard dans **Fill Pattern**, retire le remplacement personnel ; annuler
+le restaure. Un PNG intégré invalide utilise le remplissage standard.
+
+Cette fonction vise les surfaces 2D. Les plantes et objets illustrés conservent
+leurs dessins, et les chemins linéaires leurs styles dédiés. Les anciennes versions
+de l'application peuvent afficher le motif standard à la place de l'image personnelle.
+La mini-vue doit rester dans le coin inférieur droit de la zone de dessin, y compris
+lorsque la disposition ou les barres de défilement changent. On peut la masquer via
+**View > Overlays > Show Minimap**.
+
+## Recherche d'une interface française existante
+
+Vérification du 20 octobre 2026 : aucun catalogue français trouvé dans les 24
+branches publiques du dépôt amont, ni dans les branches par défaut des cinq autres
+forks publics recensés. Les recherches d'issues/PR amont sur « French » et
+« français » n'ont pas trouvé de demande correspondante. La recherche web n'a pas
+identifié d'extension française associée. Cela ne couvre pas les dépôts privés ni
+les travaux non publiés.
+
+Le [dossier des traductions amont](https://github.com/cofade/open-garden-planner/tree/master/src/open_garden_planner/resources/translations)
+contient anglais, allemand et espagnol au moment de cette vérification ; ce fork
+enregistre toujours anglais et allemand. Aucun changement amont sans rapport n'a
+été importé. Les [forks publics](https://github.com/cofade/open-garden-planner/forks)
+et les [branches amont](https://github.com/cofade/open-garden-planner/branches)
+permettent de reprendre la recherche ultérieurement. Les traductions de noms de
+plantes ne constituent pas une traduction de l'interface. Ajouter le français
+nécessite un catalogue Qt complet selon `docs/TRANSLATING.md`.

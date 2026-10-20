@@ -1,5 +1,38 @@
 # Progression — fork personnel macOS
 
+## Prise en main, formes et textures — 20 octobre 2026
+
+Branche `feature/garden-usability-shapes-textures`, basée sur le travail personnel
+déjà présent. Les menus de plantes affichent d'abord les fiches botaniques et
+replient les illustrations génériques. Le profil précédent est effacé lorsqu'une
+plante sans fiche est sélectionnée. La mini-vue suit aussi les changements de
+taille du viewport, sans attendre un redimensionnement de toute la vue.
+
+Import de remplissages PNG personnels dans les surfaces 2D : image intégrée au
+`.ogp`, répétition à largeur réglable en cm, proportions/couleurs/alpha conservés,
+annulation et retour aux motifs intégrés. Le décodeur borné est partagé avec les
+visuels personnels de plantes. La fusion existante **Boolean > Union** a été
+vérifiée sur un rectangle à deux bouts arrondis ; les cercles utilisent leur vraie
+géométrie, sans agrandissement dû au trait ou à l'ombre.
+
+Retour local au catalogue d'origine effectué à la demande du propriétaire,
+application fermée, après archivage vérifié des deux stockages de plantes.
+Aucune donnée personnelle n'est ajoutée au dépôt. Le guide
+`PLANTES_ET_DESSIN.md` porte l'usage, la restauration et la recherche d'une
+traduction française existante : aucun catalogue FR trouvé dans les 24 branches
+amont et les cinq autres forks publics examinés.
+
+Validation : 264 tests formes/remplissages/persistance/panneaux/catalogue et
+40 tests profil botanique/mini-vue/visuels personnels réussis ; trois contrôles
+de positionnement et profil réussis également avec Qt Cocoa natif, hors sandbox.
+La tentative Cocoa confinée s'interrompait avant création de la fenêtre ; aucune
+modification de l'application n'a été nécessaire pour le lancement natif.
+Ruff et contrôle source/catalogues/binaires des traductions réussis.
+La revue indépendante `senior-reviewer` a été demandée sur le diff indexé mais
+n'a pas pu démarrer, quota du service atteint. Auto-relecture effectuée ; cette
+limite est à conserver dans la draft PR. L'acceptation visuelle sur le plan
+habituel du propriétaire reste distincte de ces vérifications techniques.
+
 Base: `603e3035cfdf345fa5f190d25cb95b5f325376e5` (1.30.10).
 Branche: `feature/personal-macos-garden`. Mission: `/MISSION_AGENT_JARDIN.md`.
 Aucun changement préexistant hormis la mission. Dépôt remonté à la racine
