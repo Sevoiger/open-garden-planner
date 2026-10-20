@@ -1,5 +1,26 @@
 # Progression — fork personnel macOS
 
+## Français sélectionnable — 20 octobre 2026
+
+Le registre Qt propose désormais **Français** dans **View > Language**. Le choix
+est mémorisé et chargé au redémarrage ; le menu devient **Affichage > Langue**.
+Le catalogue source et son binaire compilé couvrent les 2 751 clés actives de
+l'inventaire : menus, dialogues, outils, suivi du jardin et noms usuels intégrés.
+Les noms scientifiques, saisies personnelles et contenus externes restent intacts.
+
+Le rendu natif a révélé des noms d'outils laissés en anglais : ils sont maintenant
+traduits à la création de la vue, sans modifier les identifiants des outils. Trois
+libellés de construction/rognage ont aussi été ajoutés aux catalogues EN/DE.
+Les lettres d'accès des menus français sont distinctes dans chaque menu.
+
+Validation : contrôle complet inventaire/variables/catalogues/binaires réussi,
+38 tests ciblés menus, langue mémorisée et outils réussis après correction ;
+sélection du français au redémarrage et raccourcis de menus également vérifiés
+par deux tests Qt Cocoa natifs. Fenêtre et préférences inspectées dans les thèmes
+clair et sombre sur des réglages et bibliothèques de test isolés. Ruff et
+`git diff --check` passent. Auto-relecture du diff ; acceptation sur le plan
+personnel distincte des contrôles techniques.
+
 ## Illustrations retrouvées, import01 et panneaux réglables — 20 octobre 2026
 
 Les 246 illustrations et 15 silhouettes n'avaient pas été supprimées par le

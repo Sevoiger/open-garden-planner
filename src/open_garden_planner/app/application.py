@@ -5098,7 +5098,7 @@ class GardenPlannerApp(QMainWindow):
         self.update_zoom(self.canvas_view.zoom_percent)
 
         # Initial tool display
-        self.update_tool("Select")
+        self.update_tool(self.tr("Select"))
 
         # Initial selection display
         self.update_selection(0, [])

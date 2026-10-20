@@ -383,7 +383,10 @@ class CanvasView(QGraphicsView):
     def _setup_tools(self) -> None:
         """Register and initialize drawing tools."""
         # Register basic tools
-        self._tool_manager.register_tool(SelectTool(self))
+        self._tool_manager.register_tool(
+            SelectTool(self),
+            display_name=QCoreApplication.translate("SelectTool", 'Select'),
+        )
         self._tool_manager.register_tool(MeasureTool(self))
         self._tool_manager.register_tool(ConstraintTool(self))
         self._tool_manager.register_tool(EdgeLengthConstraintTool(self))
@@ -400,51 +403,99 @@ class CanvasView(QGraphicsView):
         self._tool_manager.register_tool(SymmetryConstraintTool(self))
 
         # Register construction geometry tools
-        self._tool_manager.register_tool(ConstructionLineTool(self))
-        self._tool_manager.register_tool(ConstructionCircleTool(self))
+        self._tool_manager.register_tool(
+            ConstructionLineTool(self),
+            display_name=QCoreApplication.translate("ConstructionLineTool", 'Construction Line'),
+        )
+        self._tool_manager.register_tool(
+            ConstructionCircleTool(self),
+            display_name=QCoreApplication.translate("ConstructionCircleTool", 'Construction Circle'),
+        )
 
         # Register CAD editing tools
-        self._tool_manager.register_tool(TrimExtendTool(self))
-        self._tool_manager.register_tool(OffsetTool(self))
+        self._tool_manager.register_tool(
+            TrimExtendTool(self),
+            display_name=QCoreApplication.translate("TrimExtendTool", 'Trim/Extend'),
+        )
+        self._tool_manager.register_tool(
+            OffsetTool(self),
+            display_name=QCoreApplication.translate("OffsetTool", 'Offset'),
+        )
         # Phase 13 Package B (US-B3): fillet & chamfer corner editors.
-        self._tool_manager.register_tool(FilletTool(self))
-        self._tool_manager.register_tool(ChamferTool(self))
+        self._tool_manager.register_tool(
+            FilletTool(self),
+            display_name=QCoreApplication.translate("FilletTool", 'Fillet'),
+        )
+        self._tool_manager.register_tool(
+            ChamferTool(self),
+            display_name=QCoreApplication.translate("ChamferTool", 'Chamfer'),
+        )
         # Phase 13 Package B (US-B4): mirror selection across an axis.
-        self._tool_manager.register_tool(MirrorTool(self))
+        self._tool_manager.register_tool(
+            MirrorTool(self),
+            display_name=QCoreApplication.translate("MirrorTool", 'Mirror'),
+        )
 
         # Register generic shape tools
         rect_tool = RectangleTool(self, object_type=ObjectType.GENERIC_RECTANGLE)
         rect_tool.shortcut = "R"
-        self._tool_manager.register_tool(rect_tool)
+        self._tool_manager.register_tool(
+            rect_tool,
+            display_name=QCoreApplication.translate("RectangleTool", 'Rectangle'),
+        )
 
         poly_tool = PolygonTool(self, object_type=ObjectType.GENERIC_POLYGON)
         poly_tool.shortcut = "P"
-        self._tool_manager.register_tool(poly_tool)
+        self._tool_manager.register_tool(
+            poly_tool,
+            display_name=QCoreApplication.translate("PolygonTool", 'Polygon'),
+        )
 
         circle_tool = CircleTool(self, object_type=ObjectType.GENERIC_CIRCLE)
         circle_tool.shortcut = "C"
-        self._tool_manager.register_tool(circle_tool)
+        self._tool_manager.register_tool(
+            circle_tool,
+            display_name=QCoreApplication.translate("CircleTool", 'Circle'),
+        )
 
         ellipse_tool = EllipseTool(self, object_type=ObjectType.GENERIC_ELLIPSE)
         ellipse_tool.shortcut = "E"
-        self._tool_manager.register_tool(ellipse_tool)
+        self._tool_manager.register_tool(
+            ellipse_tool,
+            display_name=QCoreApplication.translate("EllipseTool", 'Ellipse'),
+        )
 
         # Phase 13 Package B (US-B2): 3-point arc tool.
         arc_tool = ArcTool(self)
-        self._tool_manager.register_tool(arc_tool)
+        self._tool_manager.register_tool(
+            arc_tool,
+            display_name=QCoreApplication.translate("ArcTool", 'Arc (3-point)'),
+        )
 
         # Phase 13 Package B (US-B1): cubic Bezier pen tool.
         bezier_tool = BezierTool(self)
-        self._tool_manager.register_tool(bezier_tool)
+        self._tool_manager.register_tool(
+            bezier_tool,
+            display_name=QCoreApplication.translate("BezierTool", 'Bezier'),
+        )
 
         text_tool = TextTool(self)
-        self._tool_manager.register_tool(text_tool)
+        self._tool_manager.register_tool(
+            text_tool,
+            display_name=QCoreApplication.translate("TextTool", 'Text'),
+        )
 
         callout_tool = CalloutTool(self)
-        self._tool_manager.register_tool(callout_tool)
+        self._tool_manager.register_tool(
+            callout_tool,
+            display_name=QCoreApplication.translate("CalloutTool", 'Callout'),
+        )
 
         journal_pin_tool = JournalPinTool(self)
-        self._tool_manager.register_tool(journal_pin_tool)
+        self._tool_manager.register_tool(
+            journal_pin_tool,
+            display_name=QCoreApplication.translate("JournalPinTool", 'Journal Pin'),
+        )
 
         # Register property object tools (polygon-based)
         house_tool = PolygonTool(self, object_type=ObjectType.HOUSE)

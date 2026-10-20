@@ -316,7 +316,19 @@ La mini-vue doit rester dans le coin inférieur droit de la zone de dessin, y co
 lorsque la disposition ou les barres de défilement changent. On peut la masquer via
 **View > Overlays > Show Minimap**.
 
-## Recherche d'une interface française existante
+## Interface française
+
+Choisir **View > Language > Français**, puis redémarrer l'application. Le choix
+est mémorisé ; le menu devient **Affichage > Langue** et permet aussi de revenir
+à English ou Deutsch. Le catalogue Qt français couvre les 2 751 textes actifs de
+l'inventaire actuel : menus, panneaux, dialogues, outils de dessin, messages et
+noms usuels intégrés. Les noms scientifiques, données personnelles et textes
+libres provenant de services en ligne conservent leur contenu d'origine.
+
+Les fichiers source `.ts` et compilé `.qm` sont livrés ensemble. Pour maintenir
+la traduction lors d'un ajout de texte, suivre `docs/TRANSLATING.md`.
+
+### Recherche préalable d'une traduction existante
 
 Vérification du 20 octobre 2026 : aucun catalogue français trouvé dans les 24
 branches publiques du dépôt amont, ni dans les branches par défaut des cinq autres
@@ -327,12 +339,12 @@ les travaux non publiés.
 
 Le [dossier des traductions amont](https://github.com/cofade/open-garden-planner/tree/master/src/open_garden_planner/resources/translations)
 contient anglais, allemand et espagnol au moment de cette vérification ; ce fork
-enregistre toujours anglais et allemand. Aucun changement amont sans rapport n'a
+enregistrait alors anglais et allemand. Aucun changement amont sans rapport n'a
 été importé. Les [forks publics](https://github.com/cofade/open-garden-planner/forks)
 et les [branches amont](https://github.com/cofade/open-garden-planner/branches)
 permettent de reprendre la recherche ultérieurement. Les traductions de noms de
-plantes ne constituent pas une traduction de l'interface. Ajouter le français
-nécessite un catalogue Qt complet selon `docs/TRANSLATING.md`.
+plantes ne constituent pas une traduction de l'interface. Un catalogue Qt complet
+a ensuite été ajouté à ce fork selon `docs/TRANSLATING.md`.
 
 ## Extensions et bibliothèques d'illustrations
 

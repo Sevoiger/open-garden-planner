@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from open_garden_planner.app.application import GardenPlannerApp
 from open_garden_planner.app.settings import get_settings
 from open_garden_planner.core.i18n import SUPPORTED_LANGUAGES, load_translator
+from open_garden_planner.core.tools import ToolType
 from tests.translation_helpers import catalog_path, catalogs, project
 
 
@@ -67,8 +68,22 @@ def test_language_menu_persists_then_next_window_uses_translation(qtbot, monkeyp
             texts = {action.text() for action in second.menuBar().actions()}
             expected = QApplication.translate("GardenPlannerApp", "&View")
             assert expected in texts
-            if locale == "de":
+            if locale != "en":
                 assert expected != "&View"
+            if locale == "fr":
+                assert expected == "&Affichage"
+                assert second._language_actions[locale].text() == "Français"
+                assert second.tool_label.text() == "Sélectionner"
+                assert QApplication.translate("PropertiesPanel", "Fill Pattern:") == "Motif de remplissage :"
+                assert QApplication.translate("GalleryData", "Apple Tree") == "Pommier"
+                for tool, label in (
+                    (ToolType.SELECT, "Sélectionner"),
+                    (ToolType.CIRCLE, "Cercle"),
+                    (ToolType.CONSTRUCTION_LINE, "Ligne de construction"),
+                    (ToolType.MIRROR, "Symétrie"),
+                ):
+                    second.canvas_view.set_active_tool(tool)
+                    assert second.tool_label.text() == label
             app.processEvents()
             assert second._language_actions[locale].isChecked()
         finally:
