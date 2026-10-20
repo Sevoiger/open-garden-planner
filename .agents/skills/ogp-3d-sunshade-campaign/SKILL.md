@@ -1,19 +1,13 @@
 ---
 name: ogp-3d-sunshade-campaign
-description: >
-  Reference pack for Open Garden Planner's SHIPPED 3D + sun/shade subsystems
-  (Phase 14, v1.24.5 – v1.24.12 — complete; epic #255 closed). Load this skill
-  when MAINTAINING or debugging any of it: 3D view, Qt3D usage, sun path or
-  solar position math, shadow projection/casting, shade or hours-of-sun
-  heatmaps, object height property, seasonal/time-of-day sun animation,
-  first-person walkthrough, or growth visualization. It is a reference, NOT a
-  plan — its "TO BUILD" markers are historical and that code already exists. Also load when someone
-  says "sun study", "shade map", "solar", "azimuth", "elevation angle",
-  "shadow length", "height of fence/wall/tree", or asks which 3D engine to
-  use. Contains verified repo asset inventory, the NOAA solar formulas with
-  pinned reference numbers, Y-axis discipline for azimuth→scene conversion,
-  and GO/NO-GO gates for the 3D engine spike.
+description: Reference for maintaining the shipped legacy Qt3D view, solar math and shade calculations.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # Phase 14 Campaign: 3D Visualization & Sun/Shade
 

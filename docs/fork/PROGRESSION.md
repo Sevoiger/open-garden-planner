@@ -398,3 +398,40 @@ mémorisation en bibliothèque. Le plan emporte l’image ; identité et géomé
 restent inchangées. Contrôles ciblés et revue indépendante validés. Le Rosa Ketchup
 & Mustard utilise le PNG fourni, avec sauvegarde et conservation des 9288 fiches.
 Les dessins restent privés. Voir ADR-064 et PLANTES_ET_DESSIN.
+
+## Nettoyage Git, tests et consignes agents — 20 octobre 2026
+
+Les 19 commits du fork étaient déjà poussés et le dossier principal propre.
+L'historique publié est conservé ; ce nettoyage ajoute un commit cohérent et
+actualise la PR personnelle brouillon existante, sans merge ni release.
+
+Les sept anciens worktrees de revue/validation ont été retirés après vérification
+de leur contenu et de l'absence de processus de test associé. Quatre contenaient
+des copies modifiées des travaux précédents : leurs fichiers modifiés/non suivis,
+les diffs binaires et les commits de base sont conservés dans des archives privées
+sous `.local/worktree-backups/2026-10-20/`. Le manifeste SHA-256 et les fichiers
+ont été vérifiés avant retrait. Les trois autres ne contenaient que des caches.
+Il reste uniquement le worktree principal. Aucune bibliothèque personnelle modifiée.
+
+`AGENTS.md` et `CLAUDE.md` passent de 53 947 à 5 793 octets chacun. Le guide place
+le mandat macOS, les protections des données et la validation proportionnée au
+premier plan. Les 23 descriptions de skills sont resserrées ; trois procédures
+transversales sont réécrites, les références techniques conservées et les anciens
+renvois vers le guide corrigés. Les deux reviewers utilisent une revue factuelle,
+centrée sur le diff, sans posture hostile ni suite complète automatique. Les
+métadonnées YAML héritées non reconnues par Codex sont retirées. Le budget de
+contexte local revient à 32 Kio. Voir `AGENT_WORKFLOW.md` et ses sources OpenAI.
+
+Le profil facultatif `pytest-macos.ini` réutilise cinq fichiers, soit **79 cas**.
+La première exécution donne **78 réussites et un refus sandbox de socket locale**
+en 96,24 s ; le seul test MCP réel est rejoué avec loopback autorisée et passe en
+0,93 s (deux avertissements de dépréciation du SDK). Ces résultats ne constituent
+pas une exécution exhaustive. Les **46 contrôles documentaires existants** passent,
+ainsi que ruff, parité des contextes, citations et validation des 23 skills.
+Revue indépendante du diff de nettoyage et relecture des derniers ajustements :
+aucun P0/P1. Aucun nouveau test créé, aucune régression héritée supprimée.
+
+La suite complète reste accessible pour les changements de fond et les audits.
+Le profil court et la sélection par risque remplacent son lancement systématique.
+Pas de nouvelle vérification native nécessaire pour ce changement documentaire ;
+les essais des fonctionnalités précédentes restent ceux décrits plus haut.

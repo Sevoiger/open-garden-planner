@@ -1,17 +1,13 @@
 ---
 name: ogp-proof-and-analysis-toolkit
-description: >
-  First-principles proof methods for Open Garden Planner — how this project verifies
-  claims instead of assuming them. Load when: you are about to assert something about a
-  third-party library's behavior (mcp/FastMCP, PyQt6, Qt geometry, numpy); you are about
-  to write or trust geometry/transform code (rotation, resize, coordinate frames,
-  serialization invariants); you are choosing a tolerance, threshold, or epsilon; two
-  coordinate frames (scene vs pixel, local vs scene) might disagree; a reviewer or doc
-  claims something about the code and you're deciding whether to act on it; you're
-  designing tests for a class of inputs (shapes × angles × handles) or hardening a
-  trust boundary against hostile files; or any claim needs proof before it goes into a
-  PR, ADR, or doc. Theme: "prove it, don't just install it."
+description: Design evidence for OGP geometry, coordinate transforms, tolerances and trust boundaries.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Proof & Analysis Toolkit
 

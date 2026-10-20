@@ -1,8 +1,13 @@
 ---
 name: analyze-pr
-description: Analyze a GitHub PR for the open-garden-planner repo — fetch metadata + linked issues, check out the branch, run every test layer the agent can run locally (pytest unit/integration/ui, ruff, bandit, i18n gate, PyInstaller exe smoke), then produce a copy-paste-ready manual-test plan for whatever's left. Invoke with a PR number ("analyze-pr 191"), with no argument (auto-pick if exactly one open PR), or on the current branch ("analyze-pr current").
-user_invocable: true
+description: Review a specified OGP pull request and report applicable checks and remaining manual tests.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # analyze-pr
 
@@ -63,7 +68,7 @@ The diff stat tells you which areas were touched. Use it for the "Risk surface" 
 
 ## Phase 3 — Run every test layer the agent can run
 
-Commands come from `CLAUDE.md` Quick Reference. Run the four fast layers in parallel as **background** tasks (`run_in_background: true`), then the PyInstaller smoke test once they finish:
+Commands come from docs/07-deployment-view/ (historical upstream procedure). Run the four fast layers in parallel as **background** tasks (`run_in_background: true`), then the PyInstaller smoke test once they finish:
 
 ```powershell
 venv/Scripts/python.exe -m pytest tests/unit/ tests/integration/ tests/ui/ -q
@@ -84,9 +89,9 @@ deliberately not copied here.
 |---|---|---|---|
 | pytest (unit + integration + ui) | `pytest tests/unit/ tests/integration/ tests/ui/ -q` | All Python correctness incl. Qt UI tests via pytest-qt | Never. Always run — this is the project's only test surface. |
 | Ruff | `ruff check src/` | Lint, style, common bugs | Never. ~1 s. |
-| Bandit | `bandit -r src/ --severity-level high` | High-severity SAST | Never. ~10 s. CLAUDE.md § 8.11. |
+| Bandit | `bandit -r src/ --severity-level high` | High-severity SAST | Never. ~10 s. AGENTS.md § 8.11. |
 | Translation gate | `pytest tests/unit/test_i18n.py -v` | `test_german_ts_has_no_unfinished` catches missed `.qm` compiles; `test_no_hardcoded_english_in_src` catches `tr()`-less English strings | Never. Redundant with the full pytest run but explicit — call it out separately in the report if UI strings were added. |
-| PyInstaller exe smoke + `--selftest` | build, then **both** checks per `ogp-change-control` §2.8 (exit 124, then exit 0) — clean launch | Verifies the bundled `.exe` launches without import errors. **Mandatory before every merge** per CLAUDE.md Quick Reference. | If the diff is docs-only AND touches nothing under `src/`, `installer/`, `pyproject.toml`, `requirements*.txt`. |
+| PyInstaller exe smoke + `--selftest` | build, then **both** checks per `ogp-change-control` §2.8 (exit 124, then exit 0) — clean launch | Verifies the bundled `.exe` launches without import errors. **Mandatory before every merge** per docs/07-deployment-view/ (historical upstream procedure). | If the diff is docs-only AND touches nothing under `src/`, `installer/`, `pyproject.toml`, `requirements*.txt`. |
 | Senior-reviewer agent | `subagent_type: senior-reviewer` against the branch diff | P0/P1/P2 findings on architecture, regressions, missed tests | This skill does **not** launch it (it's heavier; the user runs it explicitly via `finalize-us`). Flag in the report if the PR body shows no evidence of a senior-review pass for a feature-sized change. |
 
 Also pull the GitHub CI rollup from the PR view — `statusCheckRollup[].conclusion` (Lint / Test / Security). If CI is green and the local layers above are green, the PR's automated story is complete.
@@ -168,9 +173,9 @@ Structure (markdown, keep it under one screen):
 3. **Scope** — one-sentence "what this PR does", plus the diff stat by area (`src/core/snap/`, `ui/paper_space/`, `tests/`, `docs/`).
 4. **Local validation** — table: layer → result → tail of output. Mark CI-only layers as "CI green (not re-run locally)" where applicable.
 5. **Manual tests remaining** — numbered list from Phase 4 (groupings + falsifiable steps).
-6. **CLAUDE.md gate reminders** — only mention if the PR description does not already show evidence:
+6. **AGENTS.md gate reminders** — only mention if the PR description does not already show evidence:
    - Senior-reviewer pass (`subagent_type: senior-reviewer` against the branch in a fresh worktree)
-   - arc42 doc updates per `CLAUDE.md` "Contributing to Documentation" table
+   - arc42 doc updates per ogp-docs-and-writing document map
    - ADR for new dependencies / pattern choices
    - Wiki sync for completed user stories (`../open-garden-planner.wiki/Roadmap.md`)
 7. **Verdict** — one sentence: "ready for manual QA" / "blocked on automated failure: …" / "needs senior-review pass before merge".

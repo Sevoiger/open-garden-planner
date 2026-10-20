@@ -1,17 +1,13 @@
 ---
 name: ogp-config-and-flags
-description: >
-  Catalog of every configuration axis in Open Garden Planner: QSettings keys
-  (AppSettings), UI-state persistence (UiStateStore), environment variables
-  (.env / OGP_GOOGLE_MAPS_KEY / QT_QPA_PLATFORM / PYTHONUTF8), project-file
-  version + per-plan settings, hidden-feature toggles in code, tooling config
-  (pyproject/ruff/mypy/pytest/pins/ogp.spec), and CI knobs. Load this when:
-  adding or changing a setting or flag; wondering what a settings key does or
-  what its default is; configuring environment variables or .env; touching the
-  Preferences dialog; deciding whether a change needs a FILE_VERSION bump; or
-  a feature seems mysteriously disabled (hidden panel, missing API key,
-  default-off snap mode). Includes the "how to add a setting" checklist.
+description: Reference for OGP settings, environment variables and feature flags when changing or diagnosing configuration.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Configuration & Flags Catalog
 
@@ -170,7 +166,7 @@ persistence without revisiting ADR-030.
 |---|---|---|---|
 | `OGP_GOOGLE_MAPS_KEY` | production, **user-supplied, never bundled** | Google Maps satellite background picker fallback (ADR-019, docs/08 §8.15) | Preferences (`api_keys/google_maps_key`) takes precedence; this environment/`.env` value is the fallback. The "load satellite background" menu action is disabled with a tooltip when neither source is set; `GoogleMapsKeyMissingError` if reached anyway. Bundling either source in the installer would let it be reverse-engineered and abused (`services/google_maps_service.py` docstring). |
 | `QT_QPA_PLATFORM=offscreen` | production (test infra) | Headless Qt rendering | Set by `tests/conftest.py` via `os.environ.setdefault(...)` (line 11) AND by `ci.yml`'s test job env. Without it, tests need a display server. |
-| `PYTHONUTF8=1` | production (script infra) | Forces UTF-8 I/O for `scripts/fill_translations.py` / `compile_translations.py` (German umlauts) | Mojibake / encode errors on Windows. Per CLAUDE.md, always run translation scripts with it. |
+| `PYTHONUTF8=1` | production (script infra) | Forces UTF-8 I/O for `scripts/fill_translations.py` / `compile_translations.py` (German umlauts) | Mojibake / encode errors on Windows. Per AGENTS.md, always run translation scripts with it. |
 
 **.env loading (verified in `main.py` lines 14–27):** `python-dotenv`'s
 `load_dotenv()` on the first existing candidate of, in order:
@@ -322,7 +318,7 @@ copy that pattern.
    270), **save** in `_save_and_accept()` (ending with `settings.sync()`).
    Reference class constants for ranges (`AppSettings.MIN_AGENT_API_PORT`).
 3. **i18n**: wrap every label/tooltip in `self.tr(...)` — no exceptions
-   (CLAUDE.md MUST).
+   (AGENTS.md MUST).
 4. **Register the strings** in `scripts/fill_translations.py` (the Agent API
    entries sit at ~lines 1875 and 2300), then run
    `PYTHONUTF8=1 venv/Scripts/python.exe scripts/fill_translations.py` and

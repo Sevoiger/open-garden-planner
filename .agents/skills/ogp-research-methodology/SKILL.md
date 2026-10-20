@@ -1,22 +1,19 @@
 ---
 name: ogp-research-methodology
-description: >
-  The discipline that turns a hunch into an accepted result in Open Garden Planner.
-  Load this when: starting any investigation (bug, performance question, design doubt);
-  forming a hypothesis about why something behaves the way it does; deciding whether the
-  evidence you have is sufficient to adopt a change; tempted to declare a fix "done" after
-  a green test run; planning an experiment or instrumentation pass; a senior-review finding
-  contradicts your understanding; or a manual test contradicts your green tests. Encodes
-  the project's evidence bar, prediction-before-experiment rule, adversarial review culture,
-  manual-test sovereignty, the idea lifecycle from hunch to docs-of-record (or documented
-  retirement), and the named anti-patterns this project has already paid for.
+description: Design a falsifiable experiment for an OGP investigation with unresolved competing explanations.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Research Methodology
 
 How this project decides that something is *true* — and that a change deserves to exist.
 Every rule below is extracted from a named, verifiable episode in this repo's history
-(AGENTS.md progress tables, `docs/11-risks-and-technical-debt/` §11.4, `docs/roadmap.md`,
+(docs/roadmap.md delivery history, `docs/11-risks-and-technical-debt/` §11.4, `docs/roadmap.md`,
 `.agents/skills/debug-verbose/SKILL.md`, `.codex/agents/senior-reviewer.toml`). Nothing here
 is aspirational; it is all case law. (Repo state: v1.23.0, verified 2026-07-05.)
 
@@ -109,14 +106,14 @@ them. The `senior-reviewer` agent (`.codex/agents/senior-reviewer.toml`) is that
 design: fresh context every run ("fresh eyes every time" — no credit for fixing what was
 asked), reads **diffs and source, not commit messages** ("trust code, not commit messages"),
 cites file:line for every claim, and ranks findings P0 (blocks merge) / P1 (fix before
-merge) / P2 (nits) with explicit severity discipline. AGENTS.md workflow step 7 makes this
+merge) / P2 (nits) with explicit severity discipline. AGENTS.md independent-review policy makes this
 pass mandatory before any draft PR; `finalize-us` repeats it pre-PR.
 
 Multiple rounds are **normal, not failure**:
 
 - **#213 / PR #217**: three senior-review rounds; the P0 was caught in round 2 — the species
   resize kept the visual centre fixed but not `transformOriginPoint`, so a *rotated* plant
-  saved displaced geometry. Round 1 had passed the unrotated case green. (AGENTS.md progress
+  saved displaced geometry. Round 1 had passed the unrotated case green. (docs/roadmap.md delivery
   table + §11.4.)
 - **PR #236 (US-C4 smart symbols)**: three senior-review rounds, each catching a new
   exception family escaping a too-narrow catch, until the structural fix landed. (§11.4.)
@@ -185,7 +182,7 @@ Every accepted change in this project traversed this pipeline; use it as the map
 2. **GitHub issue / roadmap US with acceptance criteria** — `docs/roadmap.md` for user
    stories; issues for defects and follow-ups (the project files follow-ups aggressively:
    #206, #209, #210, #225 each born inside another change's review).
-3. **Feature branch** — the experiment space; never master (AGENTS.md workflow step 1).
+3. **Feature branch** — the experiment space; never master (AGENTS.md feature-branch policy).
 4. **Instrumented investigation** — `/debug-verbose` at the first sign of any non-obvious
    bug, before theorising. Predictions written first (§2).
 5. **Implementation with pinned tests** — every mechanism gets a test that *fails without

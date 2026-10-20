@@ -1,18 +1,13 @@
 ---
 name: ogp-research-frontier
-description: >
-  The ambition map for Open Garden Planner — five open research/engineering
-  frontiers where THIS project could advance the state of the art, each with
-  the verified in-repo asset that makes it credible, the first three concrete
-  steps, and a falsifiable "you have a result when…" milestone. Load this when:
-  picking the next big direction; evaluating whether an idea is genuinely novel
-  or already solved elsewhere; scoping Package D2/D3 (agent write tools, domain
-  intelligence) or Phase-15+ ambitions (visual refresh, Phase 16 platform work);
-  someone asks "what should this project do next" or "where is the frontier
-  here"; or you are about to resurrect a retired idea and need to check whether
-  it was deliberately killed. Everything in here is OPEN or CANDIDATE work —
-  nothing in this file is shipped unless explicitly marked as an existing asset.
+description: Explore candidate OGP research directions when the user asks for future work.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Research Frontier
 
@@ -77,7 +72,7 @@ demonstrate.
   boundary is **write-ready**: "later edit tools route through it identically."
 - A mature command architecture with the two-chokepoint invariant (exactly two
   ways onto the undo stack: `CommandManager.execute()` and
-  `register_applied()`, both dirty the document — see CLAUDE.md #209/#211 and
+  `register_applied()`, both dirty the document — see AGENTS.md #209/#211 and
   `docs/08-crosscutting-concepts/` §8.2). One agent op → one `execute()` → one
   undo step falls out of existing machinery; no new transaction system needed.
 - `agent_api/providers.py` — the `AgentProviders` dataclass is the documented
@@ -241,7 +236,7 @@ evaluator — but zero ecosystem around it.
   schema artifact is candidate work, not an existing asset.
 - The panel is hidden by one line: `application.py:5343` `set_panel_visible("smart_symbols", False)`.
   Persistence, properties editing, and DXF BLOCK/INSERT export all
-  ship and are tested (CLAUDE.md US-C4 entry) — unhiding is a UI decision,
+  ship and are tested (AGENTS.md US-C4 entry) — unhiding is a UI decision,
   not an engineering lift.
 
 ### (c) First three concrete steps in this repo
@@ -419,7 +414,7 @@ no-tools baseline on the same task.
   ("Platform & Community (Future)": plugin system, template sharing,
   "Cross-platform packaging (macOS, Linux)", `docs/roadmap.md`).
   Candidate only; the entire build/verify pipeline (`installer/ogp.spec`,
-  NSIS, the CLAUDE.md exe smoke test) is Windows-shaped today. First honest
+  NSIS, the AGENTS.md exe smoke test) is Windows-shaped today. First honest
   step: a Linux PyInstaller CI job that merely *builds and launches* headless
   (`QT_QPA_PLATFORM=offscreen`). Not a result until a non-Windows user runs a
   release artifact.
@@ -435,7 +430,7 @@ no-tools baseline on the same task.
 ## What we will NOT pursue (settled retirements — do not resurrect)
 
 - **US-B7 Paper Space MVP** — dropped during PR #191 manual-test review
-  (CLAUDE.md, Package B note): `pdf_report_service` already covers
+  (AGENTS.md, Package B note): `pdf_report_service` already covers
   print-to-PDF at chosen paper sizes; a second-space CAD-style print workflow
   added nothing. The `paper_layouts` key from short-lived draft builds is
   silently ignored on load. A "layout/paper space" idea is not new ambition;
@@ -464,7 +459,7 @@ one-liners from repo root; expected hits noted):
 - Solver debt: `grep -n "TD-007\|TD-008" docs/11-risks-and-technical-debt/README.md` (if gone, Frontier 4 milestones may be met — update this file)
 - Qt-free engines: `head -25 src/open_garden_planner/services/task_generator.py`
 - Boolean vs offset kernels: `head -1 src/open_garden_planner/core/shape_boolean.py && grep -rn pyclipper src/open_garden_planner/core/tools/offset_tool.py pyproject.toml`
-- US-B7 stays dead: `grep -n "US-B7" CLAUDE.md`
+- US-B7 stays dead: `grep -n "US-B7" AGENTS.md`
 
 When any milestone in (d) is met: mark it here, update `docs/roadmap.md`, and
 only then involve **ogp-external-positioning** for any outward claim.

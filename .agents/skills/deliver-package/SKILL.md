@@ -1,14 +1,13 @@
 ---
 name: deliver-package
-description: >
-  Pick the next package of open issues and deliver it end to end — establish ground truth
-  from GitHub, choose the package, plan against the issue bodies, implement in dependency
-  order, run the full gate battery, verify on the frozen exe / live app, senior-review to
-  clean, open a draft PR, and report only the manual tests the owner must still do. Use
-  when asked to "take the next package", "pick the next issues and implement them",
-  "deliver package N", or to work autonomously through a cluster of related issues rather
-  than a single user story.
+description: Deliver a cluster of OGP issues when the user requests a package of work.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # Deliver a package
 

@@ -1,17 +1,13 @@
 ---
 name: ogp-config-and-flags
-description: >
-  Catalog of every configuration axis in Open Garden Planner: QSettings keys
-  (AppSettings), UI-state persistence (UiStateStore), environment variables
-  (.env / OGP_GOOGLE_MAPS_KEY / QT_QPA_PLATFORM / PYTHONUTF8), project-file
-  version + per-plan settings, hidden-feature toggles in code, tooling config
-  (pyproject/ruff/mypy/pytest/pins/ogp.spec), and CI knobs. Load this when:
-  adding or changing a setting or flag; wondering what a settings key does or
-  what its default is; configuring environment variables or .env; touching the
-  Preferences dialog; deciding whether a change needs a FILE_VERSION bump; or
-  a feature seems mysteriously disabled (hidden panel, missing API key,
-  default-off snap mode). Includes the "how to add a setting" checklist.
+description: Reference for OGP settings, environment variables and feature flags when changing or diagnosing configuration.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Configuration & Flags Catalog
 

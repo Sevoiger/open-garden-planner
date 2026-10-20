@@ -1,15 +1,13 @@
 ---
 name: ogp-external-positioning
-description: >
-  Load when doing anything outward-facing for Open Garden Planner: writing or editing the
-  README, release notes, announcements, wiki pages, or any public claim about capabilities;
-  adding or upgrading a dependency (license-compatibility check); integrating or documenting
-  an external service (Google Maps, plant APIs, weather); answering licensing questions
-  (GPLv3, PyQt6, asset/texture licensing); positioning the project against other tools;
-  or publishing benchmarks / accuracy claims. This skill is the anti-oversell guardian —
-  it defines what may be claimed today, what must not be, and the trust obligations
-  (checksums, unsigned installer, CI-owned releases) that come with every release.
+description: Check OGP public capability, licensing and external-service claims when preparing outward-facing material.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP External Positioning — licensing, claims, ecosystem, release trust
 
@@ -99,7 +97,7 @@ garden planner with…", never "the first" flat.
 | Read-only MCP surface: `get_plan_summary`, `list_objects`, `get_object`, `get_geometry`, spatial tools, `get_diagnostics`, `render_canvas_image` | US-D1.1–D1.3 and D2.6 geometry read shipped; integration tests incl. real MCP client end-to-end. `get_geometry` reports current live scene-frame vertices, not raw serializer points. |
 | Optional token-gated MCP editing: create/move/set-position/resize/rotate/delete, species/bed links, layers, stacking, polygon/polyline vertex edits, global undo/redo | US-D2.0–D2.6 (ADR-036, FR-AGENT-13–21); the tools appear only when editing is enabled and a token is configured, and every call rechecks the token. Constrained geometry remains permanently refused; do not imply solver-backed edits. |
 | Loopback-only, read-only, disable-able in Settings | ADR-033 (bound 127.0.0.1; Settings toggle) |
-| cm-precision canvas, snap engine, bezier/arc/fillet, DXF import/export, satellite calibration | Phases 1–13 Packages A/B per roadmap/CLAUDE.md, each with tests |
+| cm-precision canvas, snap engine, bezier/arc/fillet, DXF import/export, satellite calibration | Phases 1–13 Packages A/B per roadmap/AGENTS.md, each with tests |
 
 **MUST NOT be claimed until shipped (do not let these leak into README/releases/replies):**
 
@@ -175,7 +173,7 @@ README, but only with shipped, tested items.
   the compensating controls.
 - **CI owns releases.** Never publish a release, create a tag, or upload assets manually —
   `release.yml` auto-tags, generates checksums, and creates the GitHub Release on merge to
-  master (docs/07 §7.3; CLAUDE.md: "Never create git tags manually"). The docs/07 "manual
+  master (docs/07 §7.3; AGENTS.md: "Never create git tags manually"). The docs/07 "manual
   fallback" is for CI-outage emergencies only. Pipeline mechanics: `ogp-change-control`.
 
 ## 6. Reproducibility standard for public claims
@@ -235,7 +233,7 @@ Facts verified 2026-07-05 against v1.23.0. Re-verify volatile facts before publi
 - Weather provider: `grep -n 'URL\|api\.' src/open_garden_planner/services/weather_service.py | head -5`
 - Plant API chain/terms: `sed -n '1,15p;140,150p' docs/03-context-and-scope/PLANT_API_SETUP.md`
 - Google Maps key rules: `grep -n -A5 '8.15' docs/08-crosscutting-concepts/README.md | head -30`
-- MCP shipped surface (claim ceiling): `grep -n 'D1\.\|D2' CLAUDE.md | head` and `ls src/open_garden_planner/agent_api/`
+- MCP shipped surface (claim ceiling): `grep -n 'D1\.\|D2' AGENTS.md | head` and `ls src/open_garden_planner/agent_api/`
 - Unsigned/SmartScreen risk: `grep -rn -i 'smartscreen\|signing\|attestation' docs/11-risks-and-technical-debt/README.md`
 - Release/checksum ownership: `grep -n -i 'SHA256\|release' docs/07-deployment-view/README.md | head`
 - README drift check: `grep -n 'Phases\|Status' README.md` (fix staleness when touched)

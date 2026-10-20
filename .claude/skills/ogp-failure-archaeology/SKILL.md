@@ -1,24 +1,19 @@
 ---
 name: ogp-failure-archaeology
-description: >
-  The chronicle of every major OGP investigation, dead end, rejected fix, and revert — so
-  nobody re-fights a settled battle. Load this skill when: (1) you are about to change a
-  subsystem that has history (rotation/resize, properties panel, undo stack, task status,
-  sidebar lists, exception handling at file-load, release workflow, installer, i18n,
-  Agent API render); (2) a bug you're chasing resembles something described here; (3) you
-  are tempted to "fix" code that looks wrong (a broad `except Exception`, a debounce plus
-  a flush queue, a `rect().center()` pivot, a write-only `task_completions` mirror — it
-  may be the scar of a fixed bug); or (4) you're investigating WHY code is written in a
-  strange way. Fast triage for a live bug = ogp-debugging-playbook; the invariants as
-  forward-looking contracts = ogp-architecture-contract. This skill records how those
-  invariants were learned, the hard way.
+description: Look up prior OGP investigations when a proposed fix may conflict with an established workaround.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Failure Archaeology
 
 Repo state when written: v1.23.0, 2026-07-03, default branch `master`, history is
 squash-merged PRs. Sources: `docs/11-risks-and-technical-debt/README.md` §11.4 (the
-richest), `CLAUDE.md` progress tables, `.claude/skills/debug-verbose/SKILL.md` case
+richest), `docs/roadmap.md` delivery history, `.claude/skills/debug-verbose/SKILL.md` case
 studies, `docs/roadmap.md`, `docs/09-architecture-decisions/README.md`, `git log`.
 Every "pinned by" test file was verified to exist on disk on 2026-07-03.
 
@@ -371,7 +366,7 @@ CLAUDE.md issue table.
 
 ## 10. i18n incidents — hardcoded strings and mojibake
 
-Source: §11.4 (two entries) + CLAUDE.md Translation section.
+Source: §11.4 (two entries) + docs/TRANSLATING.md.
 
 - **Hardcoded-English class** (the gate's mechanics/blind-spot are owned by
   `ogp-diagnostics-and-tooling` §1.2/1.3 — in one line: the gate only checks
@@ -792,7 +787,7 @@ thumbnails fell through to the round fallback because a SOLID fill has no textur
 Primary sources, in order of density: `docs/11-risks-and-technical-debt/README.md`
 §11.4 (read PAST line 127 — the file is 167 lines and the truncation point hides
 #199/#209/#206/#210/#227/#235 entries), `.claude/skills/debug-verbose/SKILL.md` case
-studies, `CLAUDE.md` progress tables, `docs/roadmap.md` (US-B7 note ~line 2277),
+studies, `docs/roadmap.md` delivery history, `docs/roadmap.md` (US-B7 note ~line 2277),
 `docs/09-architecture-decisions/README.md`, `git log --oneline`.
 
 Re-verification one-liners (run from repo root):

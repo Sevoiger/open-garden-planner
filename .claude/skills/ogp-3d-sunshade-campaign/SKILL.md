@@ -1,19 +1,13 @@
 ---
 name: ogp-3d-sunshade-campaign
-description: >
-  Reference pack for Open Garden Planner's SHIPPED 3D + sun/shade subsystems
-  (Phase 14, v1.24.5 – v1.24.12 — complete; epic #255 closed). Load this skill
-  when MAINTAINING or debugging any of it: 3D view, Qt3D usage, sun path or
-  solar position math, shadow projection/casting, shade or hours-of-sun
-  heatmaps, object height property, seasonal/time-of-day sun animation,
-  first-person walkthrough, or growth visualization. It is a reference, NOT a
-  plan — its "TO BUILD" markers are historical and that code already exists. Also load when someone
-  says "sun study", "shade map", "solar", "azimuth", "elevation angle",
-  "shadow length", "height of fence/wall/tree", or asks which 3D engine to
-  use. Contains verified repo asset inventory, the NOAA solar formulas with
-  pinned reference numbers, Y-axis discipline for azimuth→scene conversion,
-  and GO/NO-GO gates for the 3D engine spike.
+description: Reference for maintaining the shipped legacy Qt3D view, solar math and shade calculations.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # Phase 14 Campaign: 3D Visualization & Sun/Shade
 
@@ -78,7 +72,7 @@ Y-flipped canvas is the single most likely way to ship a wrong feature here).
 `ogp-change-control` (branch/PR/release gates), `ogp-validation-and-qa`
 (evidence bar), `ogp-build-and-run` (exe smoke), `ogp-debugging-playbook` +
 `ogp-failure-archaeology` (pitfall precedents), `ogp-garden-domain-reference`
-(species/geo data). If present in `.claude/skills/`, also:
+(species/geo data). If present in `.agents/skills/`, also:
 `ogp-qt-cad-reference` (Y-up coordinate theory), `ogp-proof-and-analysis-toolkit`,
 `ogp-research-methodology` (hypothesis→numbers discipline). Some of these are
 all sibling skills now exist on disk (the full 16-skill library).
@@ -228,7 +222,7 @@ sun/shade value is deliverable entirely in 2D and stands alone even if the
 |---|---|---|---|
 | 0.1 | `venv/Scripts/python.exe -c "import pyclipper, numpy; print('deps ok')"` / `venv/bin/python -c "..."` | `deps ok` | `pip install -e .` in the venv; if pyclipper missing from pyproject, STOP — inventory table is stale, re-verify everything. |
 | 0.2 | `grep -n "FILE_VERSION" src/open_garden_planner/core/project.py` | `FILE_VERSION = "1.4"` (or later) | If bumped since 2026-07: read the bump's ADR before assuming additive-metadata rules still hold. |
-| 0.3 | `python3 .claude/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py` (stdlib only — works in any Python ≥3.11, venv not required) | `RESULT: ALL CHECKS PASSED`, exit 0 | The oracle itself is broken or Python's math changed (it didn't) — debug the script BEFORE writing `core/solar.py`; the campaign's numbers all flow from it. |
+| 0.3 | `python3 .agents/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py` (stdlib only — works in any Python ≥3.11, venv not required) | `RESULT: ALL CHECKS PASSED`, exit 0 | The oracle itself is broken or Python's math changed (it didn't) — debug the script BEFORE writing `core/solar.py`; the campaign's numbers all flow from it. |
 | 0.4 | `venv/Scripts/python.exe -m pytest tests/ -x -q` (Linux: `venv/bin/python -m pytest tests/ -x -q`) | All green on `master` | Fix master first (`ogp-debugging-playbook`); never start a campaign on a red base. |
 
 **Deliverable (gate to exit Phase 0):** a US breakdown proposal for
@@ -252,7 +246,7 @@ megabranch the campaign.
 **Contract:** Qt-free module, stdlib `math`/`datetime` only, implementing the
 NOAA "General Solar Position Calculations" (Meeus-derived). The shipped
 reference implementation is in
-`.claude/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py` —
+`.agents/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py` —
 **copy `solar_position()` and `_julian_day()` from it verbatim**; it passed
 all 10 self-checks on 2026-07-04 (Appendix). API:
 
@@ -394,7 +388,7 @@ migration, no warning needed.
 | Command | Expected | If not → |
 |---|---|---|
 | `venv/Scripts/python.exe -m pytest tests/unit/test_object_height.py tests/integration/test_height_property.py -v` | Round-trip test green: set height 250 on a WALL → save `.ogp` → load → resolver returns 250; unset item of type FENCE → default 120; plant w/ species Tomato → 200 (from `max_height_cm`) | If round-trip loses the key: you bypassed `set_metadata` or built the item without passing `metadata=` through the deserializer — trace `project.py` item-load path for your item class. |
-| `venv/Scripts/python.exe -m pytest tests/unit/test_i18n.py::TestTranslationFiles::test_german_ts_has_no_unfinished -v` after `PYTHONUTF8=1 venv/Scripts/python.exe scripts/fill_translations.py && PYTHONUTF8=1 venv/Scripts/python.exe scripts/compile_translations.py` | pass | A UI string missed `tr()` — remember the f-string trap (CLAUDE.md i18n section). |
+| `venv/Scripts/python.exe -m pytest tests/unit/test_i18n.py::TestTranslationFiles::test_german_ts_has_no_unfinished -v` after `PYTHONUTF8=1 venv/Scripts/python.exe scripts/fill_translations.py && PYTHONUTF8=1 venv/Scripts/python.exe scripts/compile_translations.py` | pass | A UI string missed `tr()` — remember the f-string trap (AGENTS.md i18n section). |
 | Manual: edit height, Ctrl+Z | Height reverts in one step; dirty flag set (the #209 invariant) | You mutated metadata outside `execute()`/`register_applied()` — route through the command. |
 
 ---
@@ -496,7 +490,7 @@ keep the math in scene cm.
 
 | Command | Expected | If not → |
 |---|---|---|
-| `python3 .claude/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py \| grep "shadow"` | `Berlin Jun 21 12:00Z: … shadow 59.4 cm, canvas dir (dx=+0.403, dy=+0.915)`; `Berlin Dec 21 12:00Z: … shadow 430.4 cm, canvas dir (dx=+0.226, dy=+0.974)` | Oracle drift — re-run full script; if self-checks fail, stop. |
+| `python3 .agents/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py \| grep "shadow"` | `Berlin Jun 21 12:00Z: … shadow 59.4 cm, canvas dir (dx=+0.403, dy=+0.915)`; `Berlin Dec 21 12:00Z: … shadow 430.4 cm, canvas dir (dx=+0.226, dy=+0.974)` | Oracle drift — re-run full script; if self-checks fail, stop. |
 | `venv/Scripts/python.exe -m pytest tests/unit/test_shadow_geometry.py -v` | Qt-free geometry tests: 100 cm object, α=59.29° → L=59.4±0.1 cm; α=13.08° → 430.4±1 cm; direction vectors ±0.01 | tan/atan mixup or degrees passed raw into `math.tan` — the L formula takes RADIANS internally. |
 | `venv/Scripts/python.exe -m pytest tests/integration/test_shadow_overlay.py -v` | The pixel assertion described above passes; shadow recompute count ≤1 per change event (assert with a counter, the #206 discipline) | Mirrored → Y-boundary flip misplaced. Recompute storm → you wired recompute to `scene.changed` raw instead of debounced. |
 | Profile: `venv/Scripts/python.exe -m pytest tests/integration/test_shadow_overlay.py -k perf -v` (write one: 200 items with heights, one recompute) | < 50 ms per recompute on dev hardware (pyclipper is C++; 200 Minkowski+union at garden vertex counts is small) | >50 ms: check you're not converting through QPainterPath per item (stay in raw coordinate lists until the final path build); check integer scale factor isn't absurd (1000 is plenty). |
@@ -563,7 +557,7 @@ Appendix):
 
 | Command | Expected | If not → |
 |---|---|---|
-| `python3 .claude/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py \| grep -A3 "toy-case"` | `Dec 21: 0 min`, `Jun 21: 540 min (9.0 h)` | Oracle drift — full re-run. |
+| `python3 .agents/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py \| grep -A3 "toy-case"` | `Dec 21: 0 min`, `Jun 21: 540 min (9.0 h)` | Oracle drift — full re-run. |
 | `venv/Scripts/python.exe -m pytest tests/unit/test_shade_aggregation.py -v` | Your production aggregator reproduces 0 min (Dec) and 540 ± 15 min (Jun — one sample of slack for grid discretization) on the same toy scene | Dec ≠ 0 → your shadow polygons leak or azimuth window wrong (Y-flip again — check the direction test first). Jun far off → daylight window or sampling step wrong; print the per-sample lit/shaded trace and compare to the Appendix hourly table. |
 | Manual + machine: render the heatmap via `render_canvas_image`, sample the pixel at the toy point | Deep-shade band color (Dec), ~9 h band (Jun) — assert via the RenderMeta pixel formula | Overlay drawn in the wrong frame — same fix path as Phase 3 gate. |
 
@@ -620,7 +614,7 @@ campaign-specific overlay).
 | Tests | `venv/Scripts/python.exe -m pytest tests/ -v` | green, incl. the new pinned-number tests |
 | Lint | `venv/Scripts/python.exe -m ruff check src/` | clean |
 | Security | `venv/Scripts/python.exe -m bandit -r src/ --severity-level high` | clean |
-| i18n | `PYTHONUTF8=1 venv/Scripts/python.exe scripts/fill_translations.py && PYTHONUTF8=1 venv/Scripts/python.exe scripts/compile_translations.py && venv/Scripts/python.exe -m pytest "tests/unit/test_i18n.py::TestTranslationFiles::test_german_ts_has_no_unfinished" -v` | pass — remember: f-strings bypass `tr()` (the CLAUDE.md trap); sun/shade has LOTS of user-visible strings (menu, hints, band labels, command descriptions) |
+| i18n | `PYTHONUTF8=1 venv/Scripts/python.exe scripts/fill_translations.py && PYTHONUTF8=1 venv/Scripts/python.exe scripts/compile_translations.py && venv/Scripts/python.exe -m pytest "tests/unit/test_i18n.py::TestTranslationFiles::test_german_ts_has_no_unfinished" -v` | pass — remember: f-strings bypass `tr()` (the AGENTS.md trap); sun/shade has LOTS of user-visible strings (menu, hints, band labels, command descriptions) |
 | Exe | build, then **both** checks per `ogp-change-control` §2.8 — `--selftest` is **the check that caught #277**, this campaign's own Qt3D micro-mismatch, which startup and the 8-second smoke both survived because Qt3D imports lazily | exit code 124, then 0 |
 | Integration test | mandatory per §8.10 — each phase's gate table above names the file | in `tests/integration/` |
 | Review | `senior-reviewer` agent on the branch diff, fresh worktree; fix P0/P1; re-run for a clean pass | clean pass BEFORE the PR |
@@ -640,7 +634,7 @@ Place a 1 m-tall post. EXPECTED: shadow ~59 cm long pointing north-northeast
 due north." — the numbers come from the Appendix, so a failed manual test
 localizes instantly to render-vs-math.
 
-**Documentation duties (per `ogp-change-control` / CLAUDE.md matrix):**
+**Documentation duties (per `ogp-change-control` / AGENTS.md matrix):**
 - **ADR-037**: solar engine + shadow architecture (Qt-free core, canvas-frame
   math, overlay non-serialization, aggregation strategy). **ADR-038**: 3D
   engine GO/NO-GO. (ADRs live in `docs/09-architecture-decisions/README.md`;
@@ -663,7 +657,7 @@ localizes instantly to render-vs-math.
 ## Appendix — Pinned reference numbers (generated 2026-07-04)
 
 Produced by running the shipped oracle in this container
-(`python3 .claude/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py`,
+(`python3 .agents/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py`,
 Python 3.x stdlib, exit code 0). Regenerate after ANY edit to the script and
 re-paste; never hand-edit numbers.
 
@@ -714,7 +708,7 @@ All repo facts verified 2026-07-04 against the working tree at v1.23.0;
 re-verified 2026-07-19 at v1.24.3 (ADR numbering corrected to 037/038, all
 other facts held). One-line re-verification commands (run from repo root):
 
-- Solar oracle still green: `python3 .claude/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py --quiet; echo $?` → expect final `RESULT: ALL CHECKS PASSED`, exit 0.
+- Solar oracle still green: `python3 .agents/skills/ogp-3d-sunshade-campaign/scripts/solar_reference.py --quiet; echo $?` → expect final `RESULT: ALL CHECKS PASSED`, exit 0.
 - Phase 14 roadmap section: `grep -n "Phase 14" docs/roadmap.md` → line ~2447.
 - Qt3D open question still open: `grep -n "Qt3D" docs/11-risks-and-technical-debt/README.md` → line ~10 (delete the Phase 5 spike if this row is closed by an ADR).
 - Location dict: `grep -n "latitude, longitude, elevation_m" src/open_garden_planner/core/project.py` → ~line 747.

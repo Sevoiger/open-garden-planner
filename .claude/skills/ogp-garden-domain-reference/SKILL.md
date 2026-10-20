@@ -1,18 +1,13 @@
 ---
 name: ogp-garden-domain-reference
-description: >
-  Gardening/horticulture domain knowledge pack for Open Garden Planner — as
-  encoded in THIS codebase, not a gardening textbook. Load when: touching
-  species data, plants, beds/containers/trellises, soil tests/amendments,
-  companion planting, spacing, tasks/calendar, succession, crop rotation,
-  harvest logs, frost/weather, propagation, or seed inventory; when you need
-  to know what a diagnostic (antagonist badge, spacing overlap, soil mismatch,
-  capacity overrun) means agronomically and where it is computed; when you
-  need the canonical species_key rules, the plant-sizing precedence, the
-  Rapitest soil scale, or the meaning of a domain term (brassica, hardiness
-  zone, amendment, succession). Also load before adding any bed/container
-  feature or editing bundled JSON data files.
+description: Reference OGP plant, soil, bed, season and task semantics for domain-model changes.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Garden Domain Reference
 

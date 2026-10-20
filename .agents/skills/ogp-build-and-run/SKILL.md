@@ -1,14 +1,13 @@
 ---
 name: ogp-build-and-run
-description: >
-  Environment setup, running, building, and packaging Open Garden Planner.
-  Load this skill when: setting up the dev environment from scratch (Windows or
-  Linux/CI/cloud), running the app or the test suite, building the PyInstaller
-  exe or the NSIS installer, adding or bumping a dependency, hitting an
-  ImportError / ModuleNotFoundError / frozen-exe startup failure, wondering
-  where artifacts, autosaves, settings, or user data land on disk, or checking
-  whether the embedded Agent API (MCP) server is up.
+description: Set up or troubleshoot OGP environments, dependencies and startup. Use macOS fork setup for this repository.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Build & Run
 
@@ -218,7 +217,7 @@ Running it locally is what makes it a merge gate rather than a post-mortem.
 | UPX vs pydantic_core | `upx_exclude=["pydantic_core*.pyd"]` | UPX can corrupt that compiled extension, killing the Agent API at runtime |
 | PyQt6-WebEngine pin | `PyQt6-WebEngine>=6.10.0,<6.11` in `pyproject.toml` | Pinned below 6.11 (satellite map picker uses QWebEngineView); do not bump casually |
 | mcp major pin | `mcp>=1.23,<2.0` | mcp v2 renames `FastMCP` → `MCPServer` (pyproject comment); `structured_output=False` behavior verified against mcp 1.28.1 |
-| Any new dependency | Re-run the exe build + `timeout 8` smoke **and `--selftest`** BEFORE merge | Frozen imports diverge from dev imports, and the smoke alone cannot see a subsystem that died silently (#291, #277) — see the `--selftest` section above (AGENTS.md Quick Reference) |
+| Any new dependency | Re-run the exe build + `timeout 8` smoke **and `--selftest`** BEFORE merge | Frozen imports diverge from dev imports, and the smoke alone cannot see a subsystem that died silently (#291, #277) — see the `--selftest` section above (docs/07-deployment-view/ (historical upstream procedure)) |
 | WebEngine import order | `PyQt6.QtWebEngineCore/Widgets/WebChannel` are explicit hiddenimports; the import must run before `QApplication` is created (handled in `main.py`) | Spec comment |
 
 ## Building the NSIS installer

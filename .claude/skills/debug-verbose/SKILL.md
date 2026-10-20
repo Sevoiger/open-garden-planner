@@ -1,9 +1,13 @@
 ---
 name: debug-verbose
-description: Evidence-based debugging via targeted verbose instrumentation. Apply at the first sign of any non-obvious bug — before theorising. Grows with each bug fixed in this project.
-user_invocable: true
-argument: "Optional: short description of the bug or area to instrument"
+description: Diagnose an unresolved OGP bug with targeted instrumentation when existing evidence is insufficient.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # Verbose Debug Instrumentation
 

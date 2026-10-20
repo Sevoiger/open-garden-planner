@@ -1,5 +1,5 @@
-# Load the complete synchronized root instructions, including protected finalization.
-project_doc_max_bytes = 65536
+# Keep repository guidance within the standard 32 KiB budget.
+project_doc_max_bytes = 32768
 
 [mcp_servers.garden]
 url = "http://127.0.0.1:8765/mcp"

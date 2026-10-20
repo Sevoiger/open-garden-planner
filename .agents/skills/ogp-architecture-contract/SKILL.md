@@ -1,16 +1,13 @@
 ---
 name: ogp-architecture-contract
-description: >
-  The load-bearing architecture contract for Open Garden Planner: the invariant
-  table, the module dependency map, the command-pattern write path, and the
-  known weak points. Load this BEFORE designing any feature, adding a module or
-  package, or touching serialization (.ogp / FILE_VERSION), undo/redo, layers,
-  beds/containers/plant-parents, task status, plant sizing, rotation/resize
-  geometry, or the agent_api (MCP) surface — and whenever you are asking "is
-  this allowed architecturally?", "does an ADR already cover this?", or "which
-  predicate / write path / chokepoint do I use?". Also load it before reviewing
-  someone else's design.
+description: OGP invariants for changes to persistence, commands, module boundaries or the Agent API.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Architecture Contract
 

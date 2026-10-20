@@ -1,15 +1,13 @@
 ---
 name: ogp-qt-cad-reference
-description: >
-  Domain-theory knowledge pack for Qt Graphics View + CAD geometry as used in
-  Open Garden Planner. Load when: touching canvas items or tools, anything
-  involving coordinates or the Y-flip, rendering/export (PNG/PDF/SVG/DXF/agent
-  render tool), rotation/resize/transformOriginPoint, snapping or the
-  constraint solver, drag handles / ItemIgnoresTransformations, curves and
-  arcs, scene/signal lifecycle bugs, or writing Qt tests (qtbot, QTest,
-  tool.mouse_press). Teaches the mental models a zero-context engineer lacks;
-  every claim is grounded in this repo's source and docs.
+description: Reference Qt Graphics View coordinates, transforms, handles and event delivery for canvas changes.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Qt + CAD Reference
 
@@ -48,7 +46,7 @@ reading source, not by running Qt.
 | `QPropertyAnimation` | Animates a Qt property over time (used for sidebar expand/collapse). |
 | `QSettings` | Platform-native persistent key/value store for preferences. |
 | `QTransform` | 3×3 affine matrix. Note: `t.scale(...)` then `t.translate(...)` applies the *translate first* when mapping a point (later calls compose innermost). |
-| `qtbot` | pytest-qt fixture; ensures a `QApplication` exists and manages widget lifetime. Required in every Qt test *even if unused* (repo rule, `CLAUDE.md`). |
+| `qtbot` | pytest-qt fixture; ensures a `QApplication` exists and manages widget lifetime. Required in every Qt test *even if unused* (repo rule, `AGENTS.md`). |
 | `QTest` | Qt's synthetic-input module (`PyQt6.QtTest`): `QTest.mousePress(widget, ...)` goes through the real event pipeline. |
 | z-value | Stacking order within the scene — always **derived**, never stored as intent (issue #338, ADR-043). Each layer owns the open band `[z_order*100, z_order*100+100)`; per-object stacking order (a sparse `stack_order` rank, §8.25) spreads a layer's items across its own band. **Not** "≥100 is reserved for overlays" — that was only ever true on a single-layer plan. Fixed overlay z's are all ≥ 900 (dimension lines 900/901, tool previews 999–1003, journal pins 9500, transient previews 9999, soil badge 10002, minimap cutoff 10000) — see §8.25's reserved-band table for the authoritative list. |
 

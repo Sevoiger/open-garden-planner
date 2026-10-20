@@ -1,9 +1,13 @@
 ---
 name: finalize-us
-description: End-of-user-story procedure - commit, push, reviewed PR, protected merge, release, automatic version-sync PR, wiki sync, branch cleanup
-user_invocable: true
-argument: "US number and PR title, e.g. 'US-11.2 Plant spacing circles'"
+description: Commit, push and prepare an OGP draft PR when the user requests finalization. Personal fork stops before merge.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # Finalize User Story
 

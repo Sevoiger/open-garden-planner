@@ -1,15 +1,13 @@
 ---
 name: ogp-qt-cad-reference
-description: >
-  Domain-theory knowledge pack for Qt Graphics View + CAD geometry as used in
-  Open Garden Planner. Load when: touching canvas items or tools, anything
-  involving coordinates or the Y-flip, rendering/export (PNG/PDF/SVG/DXF/agent
-  render tool), rotation/resize/transformOriginPoint, snapping or the
-  constraint solver, drag handles / ItemIgnoresTransformations, curves and
-  arcs, scene/signal lifecycle bugs, or writing Qt tests (qtbot, QTest,
-  tool.mouse_press). Teaches the mental models a zero-context engineer lacks;
-  every claim is grounded in this repo's source and docs.
+description: Reference Qt Graphics View coordinates, transforms, handles and event delivery for canvas changes.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Qt + CAD Reference
 

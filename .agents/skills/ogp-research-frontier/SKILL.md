@@ -1,18 +1,13 @@
 ---
 name: ogp-research-frontier
-description: >
-  The ambition map for Open Garden Planner — five open research/engineering
-  frontiers where THIS project could advance the state of the art, each with
-  the verified in-repo asset that makes it credible, the first three concrete
-  steps, and a falsifiable "you have a result when…" milestone. Load this when:
-  picking the next big direction; evaluating whether an idea is genuinely novel
-  or already solved elsewhere; scoping Package D2/D3 (agent write tools, domain
-  intelligence) or Phase-15+ ambitions (visual refresh, Phase 16 platform work);
-  someone asks "what should this project do next" or "where is the frontier
-  here"; or you are about to resurrect a retired idea and need to check whether
-  it was deliberately killed. Everything in here is OPEN or CANDIDATE work —
-  nothing in this file is shipped unless explicitly marked as an existing asset.
+description: Explore candidate OGP research directions when the user asks for future work.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Research Frontier
 

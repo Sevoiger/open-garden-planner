@@ -1,17 +1,13 @@
 ---
 name: ogp-diagnostics-and-tooling
-description: >
-  Catalogue of every diagnostic instrument in Open Garden Planner, with
-  interpretation guides — how to MEASURE instead of eyeball. Load when you need
-  to: verify a claim about behavior, measure what the code actually does, run or
-  interpret quality gates (pytest / ruff / bandit / mypy / i18n gate), inspect a
-  LIVE running plan via the Agent API (MCP on 127.0.0.1:8765), check
-  translations or exports, detect mojibake, trace a geometry bug numerically,
-  find when/why something changed in git history, smoke-test the built exe, or
-  simply choose the right instrument for an investigation. Also load when a
-  pytest run shows "Fatal Python error: Aborted", "passes alone fails together",
-  or you're unsure what a gate can and cannot catch.
+description: Choose OGP measurement tools for runtime inspection, profiling and quality-gate diagnosis.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Diagnostics & Tooling — measure, don't eyeball
 
