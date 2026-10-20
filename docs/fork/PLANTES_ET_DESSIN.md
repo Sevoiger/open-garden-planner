@@ -329,6 +329,13 @@ l'apparence d'un objet source. Les plantes, objets liés ou contraints et formes
 portant des données incompatibles sont refusés pour préserver leurs informations.
 Intersection et soustraction restent limitées à deux formes.
 
+Un double-clic ouvre l'édition des sommets. Pour les contours denses (plus de
+24 points), les poignées sont espacées à l'écran et renouvelées au zoom ou au
+déplacement de la vue ; les coordonnées et longueurs des grandes arêtes sont
+consultables au survol. Zoomer pour atteindre un point plus précis. Les petits
+segments des arrondis n'affichent plus chacun une cote et une poignée d'insertion.
+La géométrie enregistrée reste complète ; Échap ou désélection ferme l'édition.
+
 Pour un contour libre, les outils polygone et courbe de Bézier permettent aussi
 de dessiner directement une forme personnalisée.
 

@@ -1,5 +1,24 @@
 # Progression — fork personnel macOS
 
+## Édition des contours denses — 20 octobre 2026
+
+La capture du propriétaire a été reproduite sur une capsule fusionnée de
+255 sommets : l'édition créait 510 poignées et 510 annotations superposées.
+Au-delà de 24 sommets, les annotations passent en infobulles et les poignées
+conservent leurs indices d'origine, filtrées selon visibilité et espacement en
+pixels, avec un plafond de 128 sommets et 128 milieux d'arête. Seules les arêtes
+assez longues à l'écran proposent une insertion. Zoom et déplacement de vue
+renouvellent les poignées sans supprimer celle en cours de glissement.
+Aucun sommet du modèle n'est supprimé ni simplifié.
+
+Validation : 63 tests ciblés (polygone, fusion, poignées, polylignes, courbes et
+rendu) réussis ; les cinq régressions passent aussi en Qt Cocoa natif, dont
+le double-clic et le drag dans le viewport, l'undo/redo et l'insertion sur un
+bord visible aux extrémités hors écran. Rendu natif inspecté ; gate de traduction,
+Ruff et diff check réussis. Revue senior indépendante : défaut de visibilité
+initial des milieux corrigé puis revu sans nouveau finding. Le plan personnel
+modifié dans examples/jardin-demo.ogp reste hors du commit.
+
 ## Colonne étroite et fusion multiple — 20 octobre 2026
 
 La colonne de droite accepte une largeur réduite sans être bloquée par le contenu.

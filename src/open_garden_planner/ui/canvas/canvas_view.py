@@ -746,6 +746,19 @@ class CanvasView(QGraphicsView):
         # Translate to put origin at bottom-left after flip
         transform.translate(0, -self._canvas_scene.height_cm)
         self.setTransform(transform)
+        self._refresh_dense_vertex_overlays()
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        self._refresh_dense_vertex_overlays()
+
+    def _refresh_dense_vertex_overlays(self) -> None:
+        scene = self.scene()
+        if scene is not None:
+            for item in scene.selectedItems():
+                refresh = getattr(item, "refresh_vertex_edit_overlay", None)
+                if refresh is not None:
+                    refresh()
 
     # Properties
 
