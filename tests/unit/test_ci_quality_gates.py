@@ -198,15 +198,6 @@ def test_documented_ci_inventory_matches_workflow_keys() -> None:
     assert documented == jobs and len(jobs) == 7
 
 
-def test_finalization_has_no_bypass_and_uses_version_sync_prs() -> None:
-    root = Path(__file__).resolve().parents[2]
-    for tree in (".agents", ".claude"):
-        text = (root / tree / "skills/finalize-us/SKILL.md").read_text(encoding="utf-8")
-        assert "--admin" not in text
-        assert "--match-head-commit VERIFIED_HEAD" in text
-        assert "draft chore PR" in text and "prepare_version_sync.py" in text
-
-
 @pytest.mark.parametrize("change", ["missing", "pending", "failed-coverage", "head", "skipped"])
 def test_current_head_verifier_refuses_absence_and_failed_checks(change: str) -> None:
     pr = {"headRefOid": "abc", "baseRefName": "master", "statusCheckRollup": [

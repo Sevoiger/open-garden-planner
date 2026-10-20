@@ -1,7 +1,10 @@
----
-name: ogp-research-methodology
-description: Design a falsifiable experiment for an OGP investigation with unresolved competing explanations.
----
+# Historical technical reference
+
+Use for evidence and incident lookup only. Historical release, testing, review,
+platform and mirrored-document procedures below are superseded by root AGENTS.md.
+Do not execute them as a workflow. Verify volatile facts against current source.
+
+
 
 ## Personal fork scope
 

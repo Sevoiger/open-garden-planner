@@ -435,3 +435,25 @@ La suite complète reste accessible pour les changements de fond et les audits.
 Le profil court et la sélection par risque remplacent son lancement systématique.
 Pas de nouvelle vérification native nécessaire pour ce changement documentaire ;
 les essais des fonctionnalités précédentes restent ceux décrits plus haut.
+
+## Codex autonome et preuves techniques — 20 octobre 2026
+
+À la demande du propriétaire, remplacement de la politique de symétrie Claude/Codex
+par un unique AGENTS.md orienté fork léger et GPT-6.1 Sol. Suppression des miroirs
+Claude suivis, livraison limitée à la draft PR du fork, revue indépendante selon
+le risque. Réécriture des workflows de livraison/revue/setup ; création du skill
+`ogp-extension-design`. Cinq historiques volumineux deviennent des références
+chargées à la demande. Documentation et sources : `AGENT_WORKFLOW.md`.
+
+Les contrôles de contexte/citations et leurs tests suivent l’arbre Codex unique.
+Les tests applicatifs restent inchangés ; les assertions de parité supprimées
+concernaient exclusivement les miroirs retirés. Aucun modèle global ni permission
+système reconfiguré, aucune nouvelle dépendance applicative.
+
+Validation de cette refonte : 140 tests distincts passent, 2 cas de commandes
+Windows documentaires sont sans objet (aucune commande restante à paramétrer).
+Contexte, citations, liens déplacés, format des 24 skills et Ruff global passent.
+Les 7 échecs initiaux des canaris de secrets provenaient du staging Git bloqué
+par le sandbox ; les 13 tests de ce détecteur passent avec accès à l’index.
+Revue indépendante du diff puis des corrections : aucun P0/P1 résiduel.
+Pas de suite applicative ni de lancement GUI pour ce changement de consignes/outillage.

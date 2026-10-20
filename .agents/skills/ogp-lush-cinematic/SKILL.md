@@ -94,6 +94,11 @@ less golden than the 6° anchor, which `sunset` shows.
 
 ## 5. Beauty Board procedure
 
+For this fork, select shots and measurements affected by the change. Use the full
+board for global renderer/lighting changes or an explicit visual audit. The command
+below documents the upstream Linux host; use the native macOS renderer runbook here.
+Independent review follows AGENTS.md; no automatic chain of two reviews.
+
 Fixture: `tests/fixtures/plans/bench_small.ogp` (24×16 m showcase garden, every object class;
 regenerate with `scripts/make_bench_plans.py`, never hand-edit). Until the production harness
 exists (Package L1.2), render through the spike:

@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL_TREES = (REPO_ROOT / ".claude" / "skills", REPO_ROOT / ".agents" / "skills")
+SKILL_TREES = (REPO_ROOT / ".agents" / "skills",)
 
 
 def _skill_text(rel: str) -> str:
@@ -108,7 +108,7 @@ class TestCiJobCount:
 class TestAgentApiAuthClaim:
     def test_failure_archaeology_marks_token_auth_as_shipped(self) -> None:
         """Reads are still loopback trust, so the correction must stay precise."""
-        text = _skill_text("ogp-failure-archaeology/SKILL.md")
+        text = _skill_text("ogp-failure-archaeology/references/technical-history.md")
         assert "**no auth**" not in text, (
             "ogp-failure-archaeology still states the loopback Agent API has "
             "no auth; US-D2.0 shipped the bearer-token gate for writes (ADR-036)"
@@ -122,7 +122,7 @@ class TestAgentApiAuthClaim:
         by banning a phrase, because the corrected entry legitimately quotes
         that overclaim in order to warn against it.
         """
-        text = _skill_text("ogp-failure-archaeology/SKILL.md").lower()
+        text = _skill_text("ogp-failure-archaeology/references/technical-history.md").lower()
         assert "reads" in text and "loopback" in text, (
             "the #398 correction must keep reads explicitly unauthenticated"
         )
@@ -166,22 +166,6 @@ class TestAdrRangeClaim:
             "docs/09 ADR count unexpectedly low — the §N.M heading form may "
             "have changed and this guard would pass vacuously"
         )
-
-
-class TestSkillTreesStayIdentical:
-    @pytest.mark.parametrize(
-        "rel",
-        [
-            "ogp-change-control/SKILL.md",
-            "ogp-validation-and-qa/SKILL.md",
-            "ogp-failure-archaeology/SKILL.md",
-            "ogp-architecture-contract/SKILL.md",
-        ],
-    )
-    def test_both_copies_are_byte_identical(self, rel: str) -> None:
-        claude = (SKILL_TREES[0] / rel).read_bytes()
-        agents = (SKILL_TREES[1] / rel).read_bytes()
-        assert claude == agents, f"{rel} differs between .claude and .agents"
 
 
 class TestDependencyPinsMatchPyproject:
@@ -237,7 +221,7 @@ class TestDependencyPinsMatchPyproject:
         pins = self._pyproject_pins()
         stale: list[str] = []
         for tree in SKILL_TREES:
-            for path in sorted(tree.rglob("SKILL.md")):
+            for path in sorted(tree.rglob("*.md")):
                 text = path.read_text(encoding="utf-8")
                 for name, actual in pins.items():
                     real_floor = re.search(r">=([\d][\d.]*)", actual)
@@ -262,7 +246,7 @@ class TestDependencyPinsMatchPyproject:
         pins = self._pyproject_pins()
         found = 0
         for tree in SKILL_TREES:
-            for path in sorted(tree.rglob("SKILL.md")):
+            for path in sorted(tree.rglob("*.md")):
                 text = path.read_text(encoding="utf-8")
                 for name in pins:
                     found += len(re.findall(rf"{re.escape(name)}\s*>=", text))

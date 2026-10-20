@@ -1,98 +1,101 @@
-# Open Garden Planner — personal macOS fork
+# Open Garden Planner — fork personnel macOS
 
-PyQt6 garden planner with CAD geometry. Target: native Apple Silicon macOS,
-editable source execution. Python environment: `.venv/bin/python`.
+Application PyQt6 de dessin et suivi du jardin. Ce fork reste léger : répondre
+aux besoins du propriétaire et ouvrir des points d’extension utiles, en conservant
+la compatibilité avec l’amont. Cible : Apple Silicon, exécution depuis les sources
+avec `.venv/bin/python`. Répondre en français.
 
-## Scope and delivery
+## Autonomie et résultat attendu
 
-- Follow the current user request. `MISSION_AGENT_JARDIN.md`, when present, is
-  private owner context; keep it and real garden data outside Git.
-- Work on a feature branch. Preserve unrelated edits. Inspect `git status`,
-  remotes and recent commits before Git operations.
-- Push only to the personal fork (`origin`, Sevoiger/open-garden-planner).
-  Finish changes in a draft PR, updating an existing one for the same branch.
-  No merge, release, manual tag, upstream post or wiki publication in this fork.
-- Keep published commit history stable. Use coherent commits; do not force-push
-  or rewrite shared history without explicit authorization.
-- Remove obsolete worktrees only after checking for uncommitted/untracked work
-  and active use. Archive unique work locally before removal.
-- Review non-trivial changes independently with `senior-reviewer`; scope it to
-  the actual change. A temporary review worktree is optional. Resolve P0/P1 and
-  review fixes. If unavailable, disclose the unmet review in the draft PR.
-- Windows/Linux packaging and frozen-exe checks are outside acceptance scope.
-  Historical upstream release instructions in skills do not authorize them.
+- Mener la demande jusqu’au résultat utilisable : comprendre le parcours concerné,
+  modifier, vérifier techniquement, corriger les défauts introduits et livrer.
+- Décider seul des choix locaux réversibles. Une ambiguïté mineure se résout avec
+  une hypothèse annoncée. Questionner seulement si la réponse change le besoin,
+  engage les données personnelles ou implique une action irréversible non autorisée.
+- Un plan détaillé, une recherche web, un sous-agent ou une revue ne sont pas des
+  passages obligés. Lire les sources pertinentes, pas toute la bibliothèque de skills.
+- Pour une extension, réutiliser services, commandes et formats existants. Ajouter
+  un point d’extension à la frontière réellement nécessaire ; éviter les frameworks,
+  réécritures et couches génériques sans cas d’usage concret.
+- Terminer quand le comportement demandé est démontré et les risques du diff couverts.
+  Ne pas prolonger par des contrôles redondants ou du nettoyage hors périmètre.
+  Bilan court : résultat, preuve, limite éventuelle, lien vers la PR.
 
-## Run and verify
+## Vérification technique
+
+Choisir la preuve selon ce qui peut casser, pas selon un quota de tests.
+
+| Changement | Preuve attendue |
+| --- | --- |
+| Documentation / consignes | Références et formats valides ; tests des outils modifiés seulement |
+| UI / catalogue | Tests existants affectés ; interaction ou rendu si le défaut est visuel |
+| Géométrie / Qt | Coordonnées et transformations réelles ; événements viewport si concernés |
+| Persistance / import / undo | Parcours isolé sauvegarde–réouverture, undo/redo et échec pertinent |
+| MCP | Frontière concernée : authentification, validation, rejeu, thread Qt |
+| Dépendance / plateforme / transversal | Intégrations affectées ; suite élargie ou complète si justifiée |
+
+Reproduire un bug avant de conclure ; traces ciblées si la cause reste incertaine.
+Un test doit protéger un comportement observable. Ajouter une régression seulement
+si la couverture existante laisse un risque utile à couvrir. Conserver les régressions
+héritées sauf obsolescence ou redondance démontrée. Après réussite, relancer uniquement
+si une modification ou un doute concret le justifie. Un rendu offscreen ne prouve pas
+l’acceptation visuelle native. Signaler les échecs préexistants et les contrôles impossibles.
 
 ```bash
-bash scripts/setup_macos.sh              # initial setup / dependency change
-.venv/bin/python -m open_garden_planner   # or open Lancer-Jardin.command
-.venv/bin/python -m pytest -c pytest-macos.ini  # small existing workflow set
+bash scripts/setup_macos.sh                 # installation / dépendances seulement
+.venv/bin/python -m open_garden_planner      # lancement natif, si nécessaire
 .venv/bin/python -m pytest tests/path_to_affected_test.py
+.venv/bin/python -m pytest -c pytest-macos.ini # petit socle facultatif, non exhaustif
 .venv/bin/python -m ruff check src/ tests/ scripts/
-.venv/bin/python scripts/check_agent_context.py
+.venv/bin/python scripts/check_agent_context.py # si contexte agent modifié
 ```
 
-Tests use temporary app-data/settings. Preserve that isolation, including child
-interpreters; never test against the owner's library or plan. Local disposable
-checks and fixes within the request can proceed without repeated confirmation.
+Les fixtures isolent données et réglages ; préserver cette isolation, y compris
+pour les sous-processus. Ne jamais tester sur la bibliothèque ou le plan personnels.
+Faire soi-même les vérifications accessibles ; ne demander au propriétaire que
+les observations réellement impossibles à établir ici.
 
-## Tests proportional to risk — owner policy, 20 October 2026
+## Contrats à préserver
 
-- Ordinary UI, catalog, artwork and documentation work: run relevant existing
-  tests and applicable static checks. Documentation alone needs no app suite.
-- `pytest-macos.ini` is a small starting set, not a completeness claim. Add
-  affected tests when the change reaches beyond it. Plain `pytest tests/`
-  retains the complete inherited suite.
-- Core/persistence/undo, dependency/platform changes or an explicit audit:
-  broaden to the affected integration suites and full suite as appropriate;
-  explain the scope and any platform exclusions.
-- No quota of new tests and no integration test for every small change. Add or
-  extend a regression when it protects meaningful behavior not already covered.
-  Prefer a real workflow with save/reopen, undo or failure handling where relevant.
-- Avoid tests of wording, private implementation details and exhaustive cosmetic
-  combinations without distinct risk. Reuse fixtures and existing parametrization.
-- Keep inherited regressions. Remove/consolidate a test only with evidence that
-  it is redundant or obsolete; reducing a reported count is not evidence.
-- Do not rerun passing broad suites without a new change or unresolved concern.
-  Report actual results, omissions and pre-existing failures without hiding them.
+- `.ogp` : champs inconnus, compatibilité, écritures atomiques et sauvegardes.
+  Les mutations passent par les services/commandes et l’undo/redo existants.
+- Redimensionnement rectangulaire : `ui/canvas/geometry_apply.py` ; arrangement :
+  `ui/canvas/arrange.py::build_arrange_command`. `CanvasScene.clear()` vide son
+  suivi privé avant que Qt détruise les items.
+- Distinguer identité botanique, observation et conseil inféré. Une date ou un trait
+  inconnu reste inconnu. Import personnel : sauvegarde et rejeu sûr ; application
+  fermée pour écrire dans son stockage utilisateur.
+- MCP : conserver authentification, validation, idempotence et exécution sur thread Qt.
+- Textes UI traduisibles via Qt ; compléter les catalogues enregistrés, compiler et
+  exécuter `scripts/check_translations.py` selon `docs/TRANSLATING.md`.
+- Garder hors Git secrets, données réelles et `MISSION_AGENT_JARDIN.md` (contexte privé).
 
-## Data and implementation contracts
+## Livraison et revue
 
-- Preserve `.ogp` compatibility, unknown fields, atomic writes and backups.
-  Route mutations through existing services/commands and normal undo/redo.
-- `ui/canvas/geometry_apply.py`: shared rect-backed resize path.
-  `ui/canvas/arrange.py::build_arrange_command`: shared arrange path.
-  `CanvasScene.clear()`: clears private tracking before Qt destroys items.
-- Keep plant identity, recorded observations and inferred advice distinct.
-  Unknown dates/traits stay unknown. Personal imports require backups and replay
-  safety; user-storage imports require the app closed.
-- MCP writes keep authentication, validation, idempotence and Qt-thread handling.
-  Never print tokens, credentials or private garden data.
-- UI strings use `self.tr`, `QCoreApplication.translate` or `QT_TR_NOOP`.
-  After changing strings: update/complete registered catalogs, compile and run
-  `scripts/check_translations.py`; see `docs/TRANSLATING.md`.
+Inspecter état Git, remotes et commits récents avant les opérations Git. Travailler
+sur une branche de fonctionnalité, préserver les changements étrangers et l’historique
+publié. Commit cohérent, push uniquement sur `origin` (`Sevoiger/open-garden-planner`),
+création ou mise à jour de la draft PR de cette branche. Pas de merge, release, tag,
+publication wiki ou intervention amont. Aucun build Windows/Linux exigé pour ce fork.
 
-## Read documentation when relevant
+Revue indépendante `senior-reviewer` pour changement à risque : persistance,
+import, undo partagé, authentification, dépendance ou refonte transversale ; également
+sur demande explicite. Les petites modifications ont une auto-relecture du diff.
+Mandater la revue sur le diff exact et les risques identifiés ; corriger P0/P1,
+faire revoir les corrections à risque, sans boucle de revues pour la forme.
+Si indisponible, préciser la limite dans la PR. Pour la 3D, utiliser une revue visuelle
+spécialisée quand le changement le justifie, avec mesures et images du parcours affecté.
+Avant suppression d’un worktree : vérifier travail unique et usage actif, archiver si besoin.
 
-| Need | Source |
-| --- | --- |
-| Personal fork status and manual acceptance | `docs/fork/PROGRESSION.md` |
-| Drawing/catalog guide | `docs/fork/PLANTES_ET_DESSIN.md` |
-| Upstream stories / requirements | `docs/roadmap.md`, `docs/functional-requirements.md` |
-| Persistence, commands, module boundaries | `ogp-architecture-contract` skill |
-| Canvas geometry / Qt event behavior | `ogp-qt-cad-reference` skill |
-| 3D rendering / art review | `ogp-3d-renderer`, `ogp-lush-cinematic` skills |
-| Known failures / diagnostic tools | `ogp-debugging-playbook`, `ogp-diagnostics-and-tooling` |
-| Decisions / technical history | `docs/09-architecture-decisions/`, `docs/11-risks-and-technical-debt/` |
+## Références à la demande
 
-Skills are task-specific references. Select by relevance; do not load the whole
-library before an edit. Their historical blanket test/build/release procedures
-are superseded by this fork policy. For a bug, reproduce and gather evidence;
-add temporary tagged logging or stack traces when they help, then remove it.
+- État du fork : `docs/fork/PROGRESSION.md` ; usage : `docs/fork/PLANTES_ET_DESSIN.md`.
+- Choix du workflow et Codex GPT-6.1 Sol : `docs/fork/AGENT_WORKFLOW.md`.
+- Skills locaux : `.agents/skills/` ; charger uniquement celui lié au problème.
+- Contrats détaillés : `docs/09-architecture-decisions/` ; incidents :
+  `docs/11-risks-and-technical-debt/`. Les procédures amont historiques ne sont pas
+  des obligations de livraison de ce fork.
 
-Update the relevant document when behavior or a contract changes. Record fork
-progress in one place, `docs/fork/PROGRESSION.md`; do not grow a history here.
-Keep `AGENTS.md` and `CLAUDE.md` identical, mirrored project skills aligned, and
-native reviewer instructions equivalent. Check parity after changing them.
-See `docs/fork/AGENT_WORKFLOW.md` for the documentation audit and test selection.
+Mettre à jour le document qui porte le comportement changé. Aucun ADR ou récit de
+bug obligatoire pour un petit correctif. `AGENTS.md` est l’unique consigne racine ;
+aucun miroir Claude à maintenir. La configuration du compte Codex reste à son propriétaire.

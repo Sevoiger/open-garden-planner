@@ -178,9 +178,9 @@ multi-round review cycles.
    semantics written down. A `FILE_VERSION` bump needs an ADR-grade
    justification (it locks out old installs) — see ADR-032 for the graceful
    alternative pattern.
-5. **New ADR needed?** CLAUDE.md triggers: new dependency, choosing between
-   approaches, changing a pattern, or a non-obvious constraint. If your design
-   doc contains the word "instead", it probably needs an ADR.
+5. **New ADR needed?** Document a durable architecture decision or non-obvious
+   compatibility constraint. A small extension or implementation choice does not
+   automatically require an ADR; follow AGENTS.md.
 6. **Can the logic be Qt-free?** If yes, it must be (invariant 10): pure module
    in `core/`/`services/`, thin Qt adapter, unit tests without `qtbot`.
 7. **Plan the tests that enforce, not just cover:** parametrised-over-shapes for

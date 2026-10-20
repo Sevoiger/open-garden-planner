@@ -7,10 +7,9 @@ reacted to "eight documents prescribe a weaker gate" by copying the corrected
 command into ten more, then guarding the copies with a hand-maintained list of
 filenames. A reviewer named it: the response to *"a second copy of a gate list is
 how a gate goes missing"* was to make eighteen copies. So the literals now live
-only in :data:`SANCTIONED_HOMES` — the canonical definition
-(``ogp-change-control`` §2.8), its mechanics (``ogp-build-and-run``) and the
-copy-paste Quick Reference in the root instructions — and every other document
-**cites** §2.8 by name. The CI workflow that actually runs the gate is checked
+only in :data:`SANCTIONED_HOMES`. The personal macOS fork now has no
+such instructional homes; executable upstream release commands remain in CI.
+The obsolete requirements to duplicate them in agent guidance were removed. The CI workflow that actually runs the gate is checked
 separately, on its own terms (see :data:`_RELEASE_WORKFLOW`).
 
 **Rule 2 — wherever it does appear, it must work.** The command was wrong twice
@@ -55,20 +54,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The only files allowed to carry the command literal. Everything else cites
-#: ``ogp-change-control`` §2.8 by name. Short and meaningful by construction —
-#: unlike the eighteen-name list this replaced, adding an entry here is a
-#: decision to accept another copy, not routine maintenance.
-SANCTIONED_HOMES = frozenset(
-    {
-        "CLAUDE.md",
-        "AGENTS.md",
-        ".claude/skills/ogp-change-control/SKILL.md",
-        ".agents/skills/ogp-change-control/SKILL.md",
-        ".claude/skills/ogp-build-and-run/SKILL.md",
-        ".agents/skills/ogp-build-and-run/SKILL.md",
-    }
-)
+# The macOS fork no longer prescribes frozen-exe commands in agent guidance.
+# Keep command-shape regression fixtures and the real upstream CI checks below.
+SANCTIONED_HOMES: frozenset[str] = frozenset()
 
 #: The CI step that actually runs the gate. Deliberately NOT in
 #: :data:`SANCTIONED_HOMES`: it declares ``shell: pwsh``, so no bash ever sees
@@ -319,23 +307,6 @@ def test_only_sanctioned_homes_carry_the_command() -> None:
     )
 
 
-def test_every_sanctioned_home_still_carries_it() -> None:
-    """The other direction: a home that quietly loses the gate is the original
-    failure mode (#291 hid for six releases behind a weaker check)."""
-    missing = sorted(SANCTIONED_HOMES - set(_files_with_runnable_invocations()))
-    assert not missing, f"sanctioned homes with no exe invocation at all: {missing}"
-
-
-def test_the_canonical_definition_prescribes_selftest() -> None:
-    """§2.8 defines the command; it must define the *whole* gate, not half."""
-    for name in (
-        ".claude/skills/ogp-change-control/SKILL.md",
-        ".agents/skills/ogp-change-control/SKILL.md",
-    ):
-        text = (_REPO_ROOT / name).read_text(encoding="utf-8")
-        assert _SELFTEST_LINE.search(text), f"{name} does not prescribe --selftest"
-
-
 def test_the_release_workflow_still_runs_selftest() -> None:
     """The one place the gate actually executes, checked on its own terms.
 
@@ -362,12 +333,6 @@ def test_the_release_workflow_still_runs_selftest() -> None:
         "the check passes whatever the selftest found"
     )
     assert "$p.ExitCode" in text, "release.yml never inspects the exit code"
-
-
-def test_discovery_is_not_vacuous() -> None:
-    """Guard the guard: a changed marker would make the rules pass over nothing."""
-    assert _LINES, "no --selftest invocations discovered at all"
-    assert set(_files_with_runnable_invocations()) == SANCTIONED_HOMES
 
 
 @pytest.mark.parametrize("doc,line", _LINES, ids=_IDS)

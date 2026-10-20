@@ -1,7 +1,10 @@
----
-name: debug-verbose
-description: Diagnose an unresolved OGP bug with targeted instrumentation when existing evidence is insufficient.
----
+# Historical technical reference
+
+Use for evidence and incident lookup only. Historical release, testing, review,
+platform and mirrored-document procedures below are superseded by root AGENTS.md.
+Do not execute them as a workflow. Verify volatile facts against current source.
+
+
 
 ## Personal fork scope
 
@@ -607,7 +610,7 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Root cause**: `models/plant_data.py:210` `to_dict` and `models/plant_data.py:275` `from_dict` — neither was updated when `n_demand`/`p_demand`/`k_demand` were added to the dataclass.
 
-**Fix**: Add the three keys to both serialization sites. Add a regression test [tests/unit/test_plant_data_serialization.py](tests/unit/test_plant_data_serialization.py) that iterates over every `dataclasses.fields(PlantSpeciesData)` and asserts presence in `to_dict()` output, plus a full equality round-trip.
+**Fix**: Add the three keys to both serialization sites. Add a regression test [tests/unit/test_plant_data_serialization.py](../../../../tests/unit/test_plant_data_serialization.py) that iterates over every `dataclasses.fields(PlantSpeciesData)` and asserts presence in `to_dict()` output, plus a full equality round-trip.
 
 **Lesson**: When adding a field to a dataclass that already has `to_dict`/`from_dict` methods, **immediately grep for the dataclass name in the same file and update both serialization sites** — and write a `dataclasses.fields()`-driven round-trip test. The integration tests passed because they constructed `PlantSpeciesData` instances directly and never round-tripped through dict; the bug only surfaced on the canvas → metadata → canvas data path. **Construct-and-test is not the same as serialize-and-test.** Whenever a dataclass has both code paths, both must be exercised.
 
@@ -624,7 +627,7 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Key signal from the user**: a screenshot of the plant details panel showing **no row** for pH or NPK demand. The fields existed on the dataclass and round-tripped through dict, but **the UI never showed them**. So the user had no way to set them — every plant arrived with `None` because the bundled data files (\`planting_calendar.json\`) only carry \`nutrient_demand: "heavy"\` and the API doesn't return pH ranges, leaving the new fields permanently empty.
 
-**Root cause**: [src/open_garden_planner/ui/panels/plant_database_panel.py](src/open_garden_planner/ui/panels/plant_database_panel.py) — `_create_editable_fields()` had no rows for `ph_min`, `ph_max`, `n_demand`, `p_demand`, `k_demand`, or `nutrient_demand`. The model exposed the fields; the panel didn't.
+**Root cause**: [src/open_garden_planner/ui/panels/plant_database_panel.py](../../../../src/open_garden_planner/ui/panels/plant_database_panel.py) — `_create_editable_fields()` had no rows for `ph_min`, `ph_max`, `n_demand`, `p_demand`, `k_demand`, or `nutrient_demand`. The model exposed the fields; the panel didn't.
 
 **Fix**: Added 5 new form rows (pH range Min/Max, N/P/K demand combos, overall demand combo) between Hardiness and Planted, with read-back in `_on_field_changed` and population in `_show_plant_data`. After any field change the panel calls `view.refresh_soil_mismatches()` so the bed border updates live.
 
@@ -685,7 +688,7 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Key signal**: the *outer* dialog's status bar showed "Soil test recorded" after the user closed the dialog with OK. They thought OK = "save my changes", but the outer dialog's `result_record()` had already been built from the entry tab, which was populated at construction time with the *pre-edit* `existing_latest`. So `AddSoilTestCommand` appended a stale copy.
 
-**Root cause**: [application.py:_open_soil_test_dialog](src/open_garden_planner/app/application.py) unconditionally fired `AddSoilTestCommand` on every accepted dialog, regardless of whether the entry tab actually changed.
+**Root cause**: [application.py:_open_soil_test_dialog](../../../../src/open_garden_planner/app/application.py) unconditionally fired `AddSoilTestCommand` on every accepted dialog, regardless of whether the entry tab actually changed.
 
 **Fix**: Compare `result_record()` to the original `existing` field-by-field (ignoring `id` and `date`); if equal, status-bar "No changes" and skip the command. The user's OK becomes a no-op when they only used History-tab affordances.
 
@@ -716,7 +719,7 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Symptom**: With German locale active, the soil-test dialog's amendments list and the Amendment Plan table both showed substance names in English ("Dolomite lime", "Blood meal") despite the bundled `amendments.json` carrying perfect German `name_de` translations and the `Amendment` dataclass having a `display_name(lang)` helper.
 
-**Root cause**: [`format_amendment_line`](src/open_garden_planner/ui/dialogs/soil_test_dialog.py) and [`AmendmentPlanDialog._populate_table`](src/open_garden_planner/ui/dialogs/amendment_plan_dialog.py) both read `rec.amendment.name` directly — bypassing the localisation helper.
+**Root cause**: [`format_amendment_line`](../../../../src/open_garden_planner/ui/dialogs/soil_test_dialog.py) and [`AmendmentPlanDialog._populate_table`](../../../../src/open_garden_planner/ui/dialogs/amendment_plan_dialog.py) both read `rec.amendment.name` directly — bypassing the localisation helper.
 
 **Lesson**: When you add a localisation helper to a model (`display_name(lang)`), grep every read of the underlying field (`.name`) in the same package and switch them over. A helper added without consumers is dead code that gives a false impression of i18n coverage. Same family of bug as F2 ("ghost field") but at the *call site* instead of the UI layer.
 
@@ -792,7 +795,7 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Root cause**: the welded-tangent the user wants is `POINT_ON_CIRCLE` (contact on rim) + tangency. The trap was *how* tangency was expressed. Expressed as **"signed perpendicular distance centre→line = ±radius"**, its gradient is the *line-normal*, which at a tangent config is **parallel** to `POINT_ON_CIRCLE`'s *radial* gradient → rank-deficient Jacobian → the pair is degenerate and the solver drifts/stalls/flips (v1–v3 were all faces of this one ill-conditioning, compounded by an unsigned-`|cross|` kink and a stale from-original warm-start). Dropping POINT_ON_CIRCLE (v4) removed the degeneracy but lost the weld. The fix is to express tangency by a residual whose gradient is *orthogonal* to the radial one.
 
-**Fix**: redefine `ConstraintType.TANGENT` as **"the edge is perpendicular to the radius at the contact"** — residual `(C−v1)·(v0−v1)/|edge|` (radius projected onto the edge → 0), gradient *along the edge*. Emit it **with** `POINT_ON_CIRCLE`: the radial gradient (POINT_ON_CIRCLE) and the edge-aligned gradient (TANGENT) are **orthogonal** → full-rank, non-degenerate. The contact is welded to the rim AND stays tangent, and co-moves with the circle. Enforce both passes (Gauss-Seidel translates along the edge by the residual — closed-form; Newton residual as backup) and keep the continuity warm-start (the contact-on-rim still has 2 antipodal solutions; continuity picks the near one). Files: [core/auto_constraint.py](src/open_garden_planner/core/auto_constraint.py), [core/constraints.py](src/open_garden_planner/core/constraints.py), [core/constraint_solver_newton.py](src/open_garden_planner/core/constraint_solver_newton.py), [ui/canvas/canvas_view.py](src/open_garden_planner/ui/canvas/canvas_view.py). See ADR-024.
+**Fix**: redefine `ConstraintType.TANGENT` as **"the edge is perpendicular to the radius at the contact"** — residual `(C−v1)·(v0−v1)/|edge|` (radius projected onto the edge → 0), gradient *along the edge*. Emit it **with** `POINT_ON_CIRCLE`: the radial gradient (POINT_ON_CIRCLE) and the edge-aligned gradient (TANGENT) are **orthogonal** → full-rank, non-degenerate. The contact is welded to the rim AND stays tangent, and co-moves with the circle. Enforce both passes (Gauss-Seidel translates along the edge by the residual — closed-form; Newton residual as backup) and keep the continuity warm-start (the contact-on-rim still has 2 antipodal solutions; continuity picks the near one). Files: [core/auto_constraint.py](../../../../src/open_garden_planner/core/auto_constraint.py), [core/constraints.py](../../../../src/open_garden_planner/core/constraints.py), [core/constraint_solver_newton.py](../../../../src/open_garden_planner/core/constraint_solver_newton.py), [ui/canvas/canvas_view.py](../../../../src/open_garden_planner/ui/canvas/canvas_view.py). See ADR-024.
 
 **Lesson**: (a) When pairing constraints, **the residual *formulation* decides conditioning, not just the geometry you mean**. "Tangent" can be written as "distance-to-line = r" (gradient ∥ radial → degenerate with POINT_ON_CIRCLE) or as "edge ⟂ radius" (gradient ⟂ radial → well-conditioned). Same geometry, opposite numerical behaviour. Before concluding "this pair is impossible," try re-expressing one residual so its gradient is orthogonal to the other's at the solution. (b) Two constraints whose gradients are *parallel at the solution* are rank-deficient — the solver drifts no matter how good the warm-start. (c) A constraint with multiple solutions (contact-on-rim = 2 antipodes) needs *continuous* warm-starting; any driver that re-solves "from scratch" each frame breaks it while single-solution constraints keep working, hiding the bug until you add a multi-solution one. (d) When a GUI bug won't reproduce headless, get the *exact* user coordinates from instrumentation and drive the *exact* event path (live `_propagate_constraints_during_drag`, not `_compute_constraint_propagation`) — the `[TANGENT]` log pinned magnitude + direction and turned a non-reproducing test red.
 
@@ -809,7 +812,7 @@ Three brand-new fields were declared on the dataclass (US-12.10d) but never adde
 
 **Root cause**: `CanvasView` works around a PyQt6 bug where Qt **silently drops the mouse grab on `ItemIgnoresTransformations` child items between events** by tracking `self._active_drag_handle` on press and re-establishing the grab in `mouseMoveEvent`/`mouseReleaseEvent`. That tracking only fires for an allow-list of handle types (`isinstance(grabber, (ResizeHandle, RotationHandle, VertexHandle, RectCornerHandle, MidpointHandle))`). The new `CurveControlHandle` wasn't in the tuple, so the press grabbed but the grab was dropped before the first move and never re-established → the handle got the press and *no moves* → inert.
 
-**Fix**: add `CurveControlHandle` to the allow-list tuple (and its import) in [ui/canvas/canvas_view.py](src/open_garden_planner/ui/canvas/canvas_view.py). One-line behavioural change. Regression test `TestHandleDragViaView` drives the real path with `QTest` and asserts `view._active_drag_handle is handle` after the press (fails without the fix, passes with it).
+**Fix**: add `CurveControlHandle` to the allow-list tuple (and its import) in [ui/canvas/canvas_view.py](../../../../src/open_garden_planner/ui/canvas/canvas_view.py). One-line behavioural change. Regression test `TestHandleDragViaView` drives the real path with `QTest` and asserts `view._active_drag_handle is handle` after the press (fails without the fix, passes with it).
 
 **Lesson**: (a) **Any new in-scene handle that uses `ItemIgnoresTransformations` must be registered in `CanvasView`'s `_active_drag_handle` allow-list** — the dropped-grab workaround is opt-in by type, so a faithful copy of `VertexHandle` is still dead until the view knows about it. Grep `_active_drag_handle` when adding a handle class. (b) Tests that call item hooks directly can't see a view-routing bug; the riskiest layer (press→grab→move delivery) needs a **real** event-path test. (c) `QGraphicsView` does **not** deliver a hand-constructed `QMouseEvent` to `ItemIgnoresTransformations` children — use `QTest.mousePress/Move/Release` on `view.viewport()` (and `centerOn` the target first so it's inside the viewport) for faithful handle-drag tests.
 

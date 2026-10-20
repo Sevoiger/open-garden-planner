@@ -12,7 +12,7 @@ or when an unresolved concern requires it.
 
 ## Select evidence
 
-- Documentation/process only: links, context parity and applicable script checks.
+- Documentation/process only: links, context validity and applicable script checks.
 - UI/catalog/art: existing affected workflows plus rendering/interaction checks
   where relevant. pytest-macos.ini provides a small optional starting set.
 - Persistence/undo/core: round trips, old/additive data, failed-write atomicity,

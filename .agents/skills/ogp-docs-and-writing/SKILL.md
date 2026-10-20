@@ -26,9 +26,8 @@ French. Use UTF-8. Cite concrete behavior and evidence, date volatile measuremen
 and describe limitations. Link to history rather than repeating incident narratives
 in skills, root instructions and progress tables.
 
-Keep AGENTS.md/CLAUDE.md identical and the .agents/.claude skill trees aligned;
-check scripts/check_agent_context.py and scripts/check_skill_citations.py after
-changes. Native reviewer instructions must agree across the two agent formats.
+AGENTS.md is the single root instruction file. Skills live in .agents/skills.
+After changing agent tooling, run its focused checks; no mirrored library is maintained.
 
 Wiki sources are in docs/wiki/. Validate with scripts/sync_wiki.py --check if
 those sources change; this fork does not publish the live wiki. No automatic

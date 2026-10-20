@@ -10,8 +10,8 @@ understanding of existing work; use a feature branch and preserve owner data.
 Before pushing, check the remote: only Sevoiger/open-garden-planner is authorized.
 Use coherent conventional commits and update the branch's existing draft PR.
 
-Independent senior review remains required for non-trivial changes. Review the
-actual diff, resolve correctness/data/security findings and review corrections.
+Apply the risk-based independent review policy in AGENTS.md. Review the actual
+diff; resolve correctness/data/security findings and review risky corrections.
 If review cannot run, disclose that limit in the draft PR. No merge, release,
 tag, version-sync release PR or wiki publication is authorized in this fork.
 

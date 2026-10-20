@@ -40,10 +40,8 @@ _CORPUS = sorted(
     [
         *REPO_ROOT.glob("docs/**/*.md"),
         REPO_ROOT / "docs" / "roadmap.md",
-        REPO_ROOT / "CLAUDE.md",
         REPO_ROOT / "AGENTS.md",
-        *REPO_ROOT.glob(".claude/skills/*/SKILL.md"),
-        *REPO_ROOT.glob(".agents/skills/*/SKILL.md"),
+        *REPO_ROOT.glob(".agents/skills/**/*.md"),
         *REPO_ROOT.glob("tests/**/*.py"),
     ]
 )

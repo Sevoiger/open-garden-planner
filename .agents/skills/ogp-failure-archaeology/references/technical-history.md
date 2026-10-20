@@ -1,7 +1,10 @@
----
-name: ogp-failure-archaeology
-description: Look up prior OGP investigations when a proposed fix may conflict with an established workaround.
----
+# Historical technical reference
+
+Use for evidence and incident lookup only. Historical release, testing, review,
+platform and mirrored-document procedures below are superseded by root AGENTS.md.
+Do not execute them as a workflow. Verify volatile facts against current source.
+
+
 
 ## Personal fork scope
 

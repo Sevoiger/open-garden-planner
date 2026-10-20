@@ -1,7 +1,10 @@
----
-name: ogp-debugging-playbook
-description: Triage recurring OGP failures using documented symptoms and prior investigations.
----
+# Historical technical reference
+
+Use for evidence and incident lookup only. Historical release, testing, review,
+platform and mirrored-document procedures below are superseded by root AGENTS.md.
+Do not execute them as a workflow. Verify volatile facts against current source.
+
+
 
 ## Personal fork scope
 

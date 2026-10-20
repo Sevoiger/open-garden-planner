@@ -11,7 +11,7 @@ on:
 
 jobs:
   agent-context:
-    name: Agent context parity
+    name: Agent context
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.11.9"
 
-      - name: Check Claude/Codex context parity
+      - name: Check Codex context
         run: python scripts/check_agent_context.py
 
       - name: Check external action pins
