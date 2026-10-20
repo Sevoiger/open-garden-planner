@@ -1,18 +1,37 @@
-"""Scroll forms without accidentally editing their closed drop-down fields."""
+"""Keep wheel gestures from editing values or navigating popup menus."""
 
 from PyQt6.QtCore import QEvent, QObject, QPointF
 from PyQt6.QtGui import QWheelEvent
-from PyQt6.QtWidgets import QAbstractScrollArea, QApplication, QComboBox, QWidget
+from PyQt6.QtWidgets import (
+    QAbstractScrollArea,
+    QAbstractSlider,
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
+    QMenu,
+    QScrollBar,
+    QWidget,
+)
 
 
 class ComboWheelGuard(QObject):
-    """Application event filter; open choice lists retain normal wheel scrolling."""
+    """Block field/menu wheel changes; preserve scrolling of enclosing forms."""
 
     def eventFilter(self, watched: QObject | None, event: QEvent | None) -> bool:  # noqa: N802
-        if isinstance(watched, QComboBox) and isinstance(event, QWheelEvent):
-            view = watched.view()
-            if view is not None and view.isVisible():
-                return super().eventFilter(watched, event)
+        if not isinstance(event, QWheelEvent) or not isinstance(watched, QWidget):
+            return super().eventFilter(watched, event)
+        ancestor: QWidget | None = watched
+        while ancestor is not None:
+            if isinstance(ancestor, QMenu):
+                event.accept()
+                return True
+            if isinstance(ancestor, QComboBox) and ancestor.view().isVisible():
+                event.accept()
+                return True
+            ancestor = ancestor.parentWidget()
+        if isinstance(watched, (QComboBox, QAbstractSpinBox)) or (
+            isinstance(watched, QAbstractSlider) and not isinstance(watched, QScrollBar)
+        ):
             # Ignoring the event alone does not reliably scroll its enclosing
             # form. Forward the original gesture (including trackpad pixels and
             # phase) to the nearest scroll viewport, never to a sibling editor.

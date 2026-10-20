@@ -254,27 +254,27 @@
     <context>
         <name>ArrangeActions</name>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1356" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1358" />
             <source>Arrange</source>
             <translation>Anordnen</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1370" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1372" />
             <source>Bring Forward</source>
             <translation>Weiter nach vorn</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1365" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1367" />
             <source>Bring to Front</source>
             <translation>Ganz nach vorn</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1375" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1377" />
             <source>Send Backward</source>
             <translation>Weiter nach hinten</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1380" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1382" />
             <source>Send to Back</source>
             <translation>Ganz nach hinten</translation>
         </message>
@@ -1709,7 +1709,7 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation>Objekt verschieben</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2286" />
+            <location filename="../../ui/panels/properties_panel.py" line="2300" />
             <source>Move item (constrained)</source>
             <translation>Objekt verschieben (mit Bedingung)</translation>
         </message>
@@ -1821,13 +1821,13 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation>Fett</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2633" />
+            <location filename="../../ui/panels/properties_panel.py" line="2647" />
             <source>fill color</source>
             <translation>Füllfarbe</translation>
         </message>
         <message>
             <location filename="../../ui/panels/properties_panel.py" line="2087" />
-            <location filename="../../ui/panels/properties_panel.py" line="2539" />
+            <location filename="../../ui/panels/properties_panel.py" line="2553" />
             <source>fill pattern</source>
             <translation>Füllmuster</translation>
         </message>
@@ -1857,7 +1857,7 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation>Kursiv</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2499" />
+            <location filename="../../ui/panels/properties_panel.py" line="2513" />
             <source>label visibility</source>
             <translation>Beschriftungssichtbarkeit</translation>
         </message>
@@ -1866,7 +1866,7 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation type="vanished">Ebene</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2445" />
+            <location filename="../../ui/panels/properties_panel.py" line="2459" />
             <source>name</source>
             <translation>Name</translation>
         </message>
@@ -1876,7 +1876,7 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation>Objekthöhe</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2593" />
+            <location filename="../../ui/panels/properties_panel.py" line="2607" />
             <source>path/fence style</source>
             <translation>Pfad-/Zaunstil</translation>
         </message>
@@ -1896,17 +1896,17 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation>Pflanzabstand</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2656" />
+            <location filename="../../ui/panels/properties_panel.py" line="2670" />
             <source>stroke color</source>
             <translation>Linienfarbe</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2575" />
+            <location filename="../../ui/panels/properties_panel.py" line="2589" />
             <source>stroke style</source>
             <translation>Linienstil</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2557" />
+            <location filename="../../ui/panels/properties_panel.py" line="2571" />
             <source>stroke width</source>
             <translation>Linienbreite</translation>
         </message>
@@ -1921,8 +1921,8 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation>Textinhalt</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1521" />
-            <location filename="../../ui/panels/properties_panel.py" line="2481" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1568" />
+            <location filename="../../ui/panels/properties_panel.py" line="2495" />
             <source>type</source>
             <translation>Typ</translation>
         </message>
@@ -5018,14 +5018,24 @@ Use 0.1 for DXF in mm, 100 for DXF in metres.</source>
     <context>
         <name>GardenItemMixin</name>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1461" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1508" />
             <source>Change Type</source>
             <translation>Typ ändern</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/items/garden_item.py" line="1406" />
+            <source>Lock position</source>
+            <translation>Position sperren</translation>
         </message>
         <message>
             <location filename="../../ui/canvas/items/garden_item.py" line="1312" />
             <source>Move to Layer</source>
             <translation>Auf Ebene verschieben</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/items/garden_item.py" line="1405" />
+            <source>Unlock position</source>
+            <translation>Position entsperren</translation>
         </message>
     </context>
     <context>
@@ -7319,22 +7329,27 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
         <name>GuildActions</name>
         <message>
             <location filename="../../ui/guild_actions.py" line="29" />
-            <location filename="../../ui/guild_actions.py" line="69" />
+            <location filename="../../ui/guild_actions.py" line="75" />
             <source>Add to guild…</source>
             <translation>Zu Gilde hinzufügen…</translation>
         </message>
         <message>
-            <location filename="../../ui/guild_actions.py" line="37" />
+            <location filename="../../ui/guild_actions.py" line="32" />
+            <source>Choose an existing plant association and the role of this plant. To create an association first, use Garden &gt; Insert guild…</source>
+            <translation>Wählen Sie eine vorhandene Pflanzengemeinschaft und die Rolle dieser Pflanze. Erstellen Sie bei Bedarf zuerst eine Gemeinschaft über Garten &gt; Gilde einfügen…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/guild_actions.py" line="43" />
             <source>Guild:</source>
             <translation>Gilde:</translation>
         </message>
         <message>
-            <location filename="../../ui/guild_actions.py" line="38" />
+            <location filename="../../ui/guild_actions.py" line="44" />
             <source>Intended role:</source>
             <translation>Vorgesehene Rolle:</translation>
         </message>
         <message>
-            <location filename="../../ui/guild_actions.py" line="91" />
+            <location filename="../../ui/guild_actions.py" line="97" />
             <source>Remove from guild</source>
             <translation>Aus Gilde entfernen</translation>
         </message>
@@ -7543,92 +7558,92 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
     <context>
         <name>GuildTemplateEditor</name>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="110" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="113" />
             <source>Add role</source>
             <translation>Rolle hinzufügen</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="166" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="169" />
             <source>All suggested species are resolved and function-eligible.</source>
             <translation>Alle vorgeschlagenen Arten sind aufgelöst und funktional geeignet.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="100" />
             <source>Attribution:</source>
             <translation>Quellenangabe:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="137" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="140" />
             <source>Bundled template is read-only. Use Duplicate to create a user template.</source>
             <translation>Mitgelieferte Vorlage ist schreibgeschützt. Mit Duplizieren eine eigene Vorlage erstellen.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="191" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="194" />
             <source>Centre species is unresolved</source>
             <translation>Zentrale Pflanzenart ist nicht aufgelöst</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="98" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
             <source>Centre:</source>
             <translation>Zentrum:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="189" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="192" />
             <source>Choose a new ID; this template already exists.</source>
             <translation>Eine neue ID wählen; diese Vorlage ist bereits vorhanden.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="96" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="97" />
             <source>Description:</source>
             <translation>Beschreibung:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="103" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
             <source>Function</source>
             <translation>Funktion</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="82" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="83" />
             <source>Function: {function}</source>
             <translation>Funktion: {function}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="97" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="98" />
             <source>German description:</source>
             <translation>Deutsche Beschreibung:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="95" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="96" />
             <source>German name:</source>
             <translation>Deutscher Name:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="66" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="67" />
             <source>Guild template editor</source>
             <translation>Gildenvorlagen bearbeiten</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="94" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="95" />
             <source>ID:</source>
             <translation>ID:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="98" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
             <source>License:</source>
             <translation>Lizenz:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="103" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
             <source>Minimum</source>
             <translation>Mindestanzahl</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="94" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="95" />
             <source>Name:</source>
             <translation>Name:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="105" />
             <source>Radius</source>
             <translation>Radius</translation>
         </message>
@@ -7637,42 +7652,42 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
             <translation type="vanished">Radius (cm oder Kronenrand)</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="111" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="114" />
             <source>Remove role</source>
             <translation>Rolle entfernen</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="194" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="197" />
             <source>Replace unresolved or function-ineligible suggested species</source>
             <translation>Nicht aufgelöste oder funktional ungeeignete Vorschläge ersetzen</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="100" />
             <source>Sources (one per line):</source>
             <translation>Quellen (eine pro Zeile):</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="105" />
             <source>Suggested species (keys, ordered)</source>
             <translation>Vorgeschlagene Arten (Schlüssel, geordnet)</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="198" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="201" />
             <source>Template could not be saved: {error}</source>
             <translation>Vorlage konnte nicht gespeichert werden: {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="165" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="168" />
             <source>Unresolved or function-ineligible species: {keys}</source>
             <translation>Nicht aufgelöste oder funktional ungeeignete Arten: {keys}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="87" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="88" />
             <source>Unresolved: {key}</source>
             <translation>Nicht aufgelöst: {key}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="153" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="156" />
             <source>Use canonical species keys separated by commas. Suggestions must record the selected function.</source>
             <translation>Artschlüssel durch Kommas trennen. Vorschläge müssen die gewählte Funktion aufweisen.</translation>
         </message>
@@ -7998,48 +8013,53 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
     <context>
         <name>InsertGuildDialog</name>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="81" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="84" />
             <source> cm</source>
             <translation> cm</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="84" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="56" />
+            <source>A plant association combines plants with complementary roles, often around a tree. Choose a template, then adjust the plants and their positions.</source>
+            <translation>Eine Pflanzengemeinschaft verbindet Pflanzen mit ergänzenden Aufgaben, oft um einen Baum. Wählen Sie eine Vorlage und passen Sie Pflanzen und Positionen an.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="87" />
             <source>Centre X:</source>
             <translation>Zentrum X:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="85" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="88" />
             <source>Centre Y:</source>
             <translation>Zentrum Y:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="75" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="78" />
             <source>Centre species:</source>
             <translation>Zentrale Pflanzenart:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="137" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="140" />
             <source>Create a new centre</source>
             <translation>Neues Zentrum erstellen</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="60" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="63" />
             <source>Duplicate</source>
             <translation>Duplizieren</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="61" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="64" />
             <source>Edit</source>
             <translation>Bearbeiten</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="76" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="79" />
             <source>Existing centre:</source>
             <translation>Vorhandenes Zentrum:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="205" />
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="222" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="208" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="225" />
             <source>Guild cannot be placed: {error}</source>
             <translation>Gilde kann nicht platziert werden: {error}</translation>
         </message>
@@ -8049,38 +8069,38 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
             <translation>Pflanzengilde einfügen…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="74" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="77" />
             <source>Instance name:</source>
             <translation>Gildenname:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="59" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="62" />
             <source>New</source>
             <translation>Neu</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="95" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="98" />
             <source>Preview placement</source>
             <translation>Platzierungsvorschau</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="62" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="65" />
             <source>Reload</source>
             <translation>Neu laden</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="188" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="191" />
             <source>Select a valid guild template</source>
             <translation>Eine gültige Gildenvorlage auswählen</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="148" />
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="162" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="151" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="165" />
             <source>Unresolved: {key}</source>
             <translation>Nicht aufgelöst: {key}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="125" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="128" />
             <source>{filename}: {reason} — repair the JSON file and Reload.</source>
             <translation>{filename}: {reason} — JSON-Datei korrigieren und neu laden.</translation>
         </message>
@@ -12475,12 +12495,12 @@ angehakt = immer schützen, nicht angehakt = nie schützen, unbestimmt = Standar
     <context>
         <name>RadiusEditor</name>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="41" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="42" />
             <source>Canopy edge</source>
             <translation>Kronenrand</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="42" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="43" />
             <source>Distance (cm)</source>
             <translation>Abstand (cm)</translation>
         </message>

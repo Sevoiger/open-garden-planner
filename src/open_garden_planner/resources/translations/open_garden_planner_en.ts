@@ -246,27 +246,27 @@
     <context>
         <name>ArrangeActions</name>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1356" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1358" />
             <source>Arrange</source>
             <translation>Arrange</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1370" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1372" />
             <source>Bring Forward</source>
             <translation>Bring Forward</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1365" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1367" />
             <source>Bring to Front</source>
             <translation>Bring to Front</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1375" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1377" />
             <source>Send Backward</source>
             <translation>Send Backward</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1380" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1382" />
             <source>Send to Back</source>
             <translation>Send to Back</translation>
         </message>
@@ -1689,7 +1689,7 @@ Choose, then set center and edge on the plan. Uncheck size choice for one-click 
             <translation>Move item</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2286" />
+            <location filename="../../ui/panels/properties_panel.py" line="2300" />
             <source>Move item (constrained)</source>
             <translation>Move item (constrained)</translation>
         </message>
@@ -1801,13 +1801,13 @@ Choose, then set center and edge on the plan. Uncheck size choice for one-click 
             <translation>bold</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2633" />
+            <location filename="../../ui/panels/properties_panel.py" line="2647" />
             <source>fill color</source>
             <translation>fill color</translation>
         </message>
         <message>
             <location filename="../../ui/panels/properties_panel.py" line="2087" />
-            <location filename="../../ui/panels/properties_panel.py" line="2539" />
+            <location filename="../../ui/panels/properties_panel.py" line="2553" />
             <source>fill pattern</source>
             <translation>fill pattern</translation>
         </message>
@@ -1837,12 +1837,12 @@ Choose, then set center and edge on the plan. Uncheck size choice for one-click 
             <translation>italic</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2499" />
+            <location filename="../../ui/panels/properties_panel.py" line="2513" />
             <source>label visibility</source>
             <translation>label visibility</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2445" />
+            <location filename="../../ui/panels/properties_panel.py" line="2459" />
             <source>name</source>
             <translation>name</translation>
         </message>
@@ -1852,7 +1852,7 @@ Choose, then set center and edge on the plan. Uncheck size choice for one-click 
             <translation>object height</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2593" />
+            <location filename="../../ui/panels/properties_panel.py" line="2607" />
             <source>path/fence style</source>
             <translation>path/fence style</translation>
         </message>
@@ -1872,17 +1872,17 @@ Choose, then set center and edge on the plan. Uncheck size choice for one-click 
             <translation>spacing radius</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2656" />
+            <location filename="../../ui/panels/properties_panel.py" line="2670" />
             <source>stroke color</source>
             <translation>stroke color</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2575" />
+            <location filename="../../ui/panels/properties_panel.py" line="2589" />
             <source>stroke style</source>
             <translation>stroke style</translation>
         </message>
         <message>
-            <location filename="../../ui/panels/properties_panel.py" line="2557" />
+            <location filename="../../ui/panels/properties_panel.py" line="2571" />
             <source>stroke width</source>
             <translation>stroke width</translation>
         </message>
@@ -1897,8 +1897,8 @@ Choose, then set center and edge on the plan. Uncheck size choice for one-click 
             <translation>text content</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1521" />
-            <location filename="../../ui/panels/properties_panel.py" line="2481" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1568" />
+            <location filename="../../ui/panels/properties_panel.py" line="2495" />
             <source>type</source>
             <translation>type</translation>
         </message>
@@ -4958,14 +4958,24 @@ Use 0.1 for DXF in mm, 100 for DXF in metres.</translation>
     <context>
         <name>GardenItemMixin</name>
         <message>
-            <location filename="../../ui/canvas/items/garden_item.py" line="1461" />
+            <location filename="../../ui/canvas/items/garden_item.py" line="1508" />
             <source>Change Type</source>
             <translation>Change Type</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/items/garden_item.py" line="1406" />
+            <source>Lock position</source>
+            <translation>Lock position</translation>
         </message>
         <message>
             <location filename="../../ui/canvas/items/garden_item.py" line="1312" />
             <source>Move to Layer</source>
             <translation>Move to Layer</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/items/garden_item.py" line="1405" />
+            <source>Unlock position</source>
+            <translation>Unlock position</translation>
         </message>
     </context>
     <context>
@@ -7215,22 +7225,27 @@ Please save your project to a permanent location.</translation>
         <name>GuildActions</name>
         <message>
             <location filename="../../ui/guild_actions.py" line="29" />
-            <location filename="../../ui/guild_actions.py" line="69" />
+            <location filename="../../ui/guild_actions.py" line="75" />
             <source>Add to guild…</source>
             <translation>Add to guild…</translation>
         </message>
         <message>
-            <location filename="../../ui/guild_actions.py" line="37" />
+            <location filename="../../ui/guild_actions.py" line="32" />
+            <source>Choose an existing plant association and the role of this plant. To create an association first, use Garden &gt; Insert guild…</source>
+            <translation>Choose an existing plant association and the role of this plant. To create an association first, use Garden &gt; Insert guild…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/guild_actions.py" line="43" />
             <source>Guild:</source>
             <translation>Guild:</translation>
         </message>
         <message>
-            <location filename="../../ui/guild_actions.py" line="38" />
+            <location filename="../../ui/guild_actions.py" line="44" />
             <source>Intended role:</source>
             <translation>Intended role:</translation>
         </message>
         <message>
-            <location filename="../../ui/guild_actions.py" line="91" />
+            <location filename="../../ui/guild_actions.py" line="97" />
             <source>Remove from guild</source>
             <translation>Remove from guild</translation>
         </message>
@@ -7439,132 +7454,132 @@ Please save your project to a permanent location.</translation>
     <context>
         <name>GuildTemplateEditor</name>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="110" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="113" />
             <source>Add role</source>
             <translation>Add role</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="166" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="169" />
             <source>All suggested species are resolved and function-eligible.</source>
             <translation>All suggested species are resolved and function-eligible.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="100" />
             <source>Attribution:</source>
             <translation>Attribution:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="137" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="140" />
             <source>Bundled template is read-only. Use Duplicate to create a user template.</source>
             <translation>Bundled template is read-only. Use Duplicate to create a user template.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="191" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="194" />
             <source>Centre species is unresolved</source>
             <translation>Centre species is unresolved</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="98" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
             <source>Centre:</source>
             <translation>Centre:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="189" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="192" />
             <source>Choose a new ID; this template already exists.</source>
             <translation>Choose a new ID; this template already exists.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="96" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="97" />
             <source>Description:</source>
             <translation>Description:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="103" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
             <source>Function</source>
             <translation>Function</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="82" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="83" />
             <source>Function: {function}</source>
             <translation>Function: {function}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="97" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="98" />
             <source>German description:</source>
             <translation>German description:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="95" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="96" />
             <source>German name:</source>
             <translation>German name:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="66" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="67" />
             <source>Guild template editor</source>
             <translation>Guild template editor</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="94" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="95" />
             <source>ID:</source>
             <translation>ID:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="98" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
             <source>License:</source>
             <translation>License:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="103" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
             <source>Minimum</source>
             <translation>Minimum</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="94" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="95" />
             <source>Name:</source>
             <translation>Name:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="105" />
             <source>Radius</source>
             <translation>Radius</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="111" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="114" />
             <source>Remove role</source>
             <translation>Remove role</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="194" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="197" />
             <source>Replace unresolved or function-ineligible suggested species</source>
             <translation>Replace unresolved or function-ineligible suggested species</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="99" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="100" />
             <source>Sources (one per line):</source>
             <translation>Sources (one per line):</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="104" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="105" />
             <source>Suggested species (keys, ordered)</source>
             <translation>Suggested species (keys, ordered)</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="198" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="201" />
             <source>Template could not be saved: {error}</source>
             <translation>Template could not be saved: {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="165" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="168" />
             <source>Unresolved or function-ineligible species: {keys}</source>
             <translation>Unresolved or function-ineligible species: {keys}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="87" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="88" />
             <source>Unresolved: {key}</source>
             <translation>Unresolved: {key}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="153" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="156" />
             <source>Use canonical species keys separated by commas. Suggestions must record the selected function.</source>
             <translation>Use canonical species keys separated by commas. Suggestions must record the selected function.</translation>
         </message>
@@ -7890,48 +7905,53 @@ Please save your project to a permanent location.</translation>
     <context>
         <name>InsertGuildDialog</name>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="81" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="84" />
             <source> cm</source>
             <translation> cm</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="84" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="56" />
+            <source>A plant association combines plants with complementary roles, often around a tree. Choose a template, then adjust the plants and their positions.</source>
+            <translation>A plant association combines plants with complementary roles, often around a tree. Choose a template, then adjust the plants and their positions.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="87" />
             <source>Centre X:</source>
             <translation>Centre X:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="85" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="88" />
             <source>Centre Y:</source>
             <translation>Centre Y:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="75" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="78" />
             <source>Centre species:</source>
             <translation>Centre species:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="137" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="140" />
             <source>Create a new centre</source>
             <translation>Create a new centre</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="60" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="63" />
             <source>Duplicate</source>
             <translation>Duplicate</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="61" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="64" />
             <source>Edit</source>
             <translation>Edit</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="76" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="79" />
             <source>Existing centre:</source>
             <translation>Existing centre:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="205" />
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="222" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="208" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="225" />
             <source>Guild cannot be placed: {error}</source>
             <translation>Guild cannot be placed: {error}</translation>
         </message>
@@ -7941,38 +7961,38 @@ Please save your project to a permanent location.</translation>
             <translation>Insert guild…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="74" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="77" />
             <source>Instance name:</source>
             <translation>Instance name:</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="59" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="62" />
             <source>New</source>
             <translation>New</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="95" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="98" />
             <source>Preview placement</source>
             <translation>Preview placement</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="62" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="65" />
             <source>Reload</source>
             <translation>Reload</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="188" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="191" />
             <source>Select a valid guild template</source>
             <translation>Select a valid guild template</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="148" />
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="162" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="151" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="165" />
             <source>Unresolved: {key}</source>
             <translation>Unresolved: {key}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="125" />
+            <location filename="../../ui/dialogs/insert_guild_dialog.py" line="128" />
             <source>{filename}: {reason} — repair the JSON file and Reload.</source>
             <translation>{filename}: {reason} — repair the JSON file and Reload.</translation>
         </message>
@@ -12255,12 +12275,12 @@ checked = always protect, unchecked = never protect, indeterminate = use the pla
     <context>
         <name>RadiusEditor</name>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="41" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="42" />
             <source>Canopy edge</source>
             <translation>Canopy edge</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/guild_template_editor.py" line="42" />
+            <location filename="../../ui/dialogs/guild_template_editor.py" line="43" />
             <source>Distance (cm)</source>
             <translation>Distance (cm)</translation>
         </message>

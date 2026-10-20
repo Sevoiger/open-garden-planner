@@ -10,7 +10,7 @@ import math
 from uuid import UUID
 
 from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF, QTransform
 from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPathItem,
@@ -171,6 +171,11 @@ class DimensionLineManager:
                 constraint.anchor_a.anchor_type,
                 constraint.anchor_a.anchor_index,
             )
+            if pos_a is None:
+                # Text, callouts and groups can be fixed without CAD anchors.
+                item = self._find_item_by_id(constraint.anchor_a.item_id)
+                if item is not None:
+                    pos_a = item.mapToScene(item.boundingRect().center())
             if pos_a is None:
                 return
             group = DimensionLineGroup(constraint.constraint_id)
@@ -1108,6 +1113,10 @@ class DimensionLineManager:
         half = 6.0
         path = QPainterPath()
         path.addRect(QRectF(pos.x() - half, pos.y() - half / 2, half * 2, half * 1.5))
+        # Paths below are authored in screen-style Y-down coordinates. The
+        # canvas is Y-up: reflect around the anchor so the shackle stays above.
+        upright = QTransform(1, 0, 0, -1, 0, 2 * pos.y())
+        path = upright.map(path)
         body = QGraphicsPathItem(path)
         body.setPen(QPen(color.darker(120), 1.0))
         body.setBrush(QBrush(color))
@@ -1123,7 +1132,7 @@ class DimensionLineManager:
             180,
             -180,
         )
-        shackle = self._scene.addPath(arc_path, QPen(color.darker(120), 2.5))
+        shackle = self._scene.addPath(upright.map(arc_path), QPen(color.darker(120), 2.5))
         shackle.setZValue(DIMENSION_LINE_Z + 1)
         group.items.append(shackle)
 

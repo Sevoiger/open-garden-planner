@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from PyQt6.QtCore import QCoreApplication, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QSignalBlocker, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFocusEvent, QIcon, QPen, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
@@ -819,7 +819,7 @@ class PropertiesPanel(QWidget):
         row.addWidget(QLabel(bed_name))
 
         unlink_btn = QPushButton(self.tr("Unlink"))
-        unlink_btn.setFixedWidth(60)
+        unlink_btn.setMinimumWidth(60)
 
         def _do_unlink() -> None:
             from open_garden_planner.core.commands import SetParentBedCommand
@@ -2230,6 +2230,20 @@ class PropertiesPanel(QWidget):
 
         scene = item.scene()
         if not scene:
+            return
+
+        from open_garden_planner.core.constraints import ConstraintType
+
+        if hasattr(scene, "constraint_graph") and any(
+            c.constraint_type == ConstraintType.FIXED
+            and c.anchor_a.item_id == getattr(item, "item_id", None)
+            for c in scene.constraint_graph.constraints.values()
+        ):
+            # An isolated FIXED item has no neighbour to propagate to. Reject
+            # the edit here rather than falling through to an ordinary move.
+            with QSignalBlocker(x_spin), QSignalBlocker(y_spin):
+                x_spin.setValue(old_top_left_scene.x())
+                y_spin.setValue(old_top_left_scene.y())
             return
 
         # Calculate delta in scene coordinates

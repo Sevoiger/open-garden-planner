@@ -1,5 +1,29 @@
 # Progression — fork personnel macOS
 
+## Confort des contrôles et français — 20 octobre 2026
+
+Survol des panneaux sans changement de fond. La molette ne change plus les
+valeurs numériques, dates, listes et curseurs, ni la navigation des menus ouverts ;
+le défilement des panneaux/formulaires et le zoom du plan sont conservés.
+La FR emploie « association » pour les guildes de plantes, avec explication dans
+les dialogues agrandis. Les colonnes de rôles et boutons à texte long ne sont
+plus contraints à des largeurs trop petites.
+
+Ajout du verrouillage/déverrouillage de position au clic droit via les commandes
+de contrainte FIXED existantes, sans nouveau champ de stockage. Cadenas corrigé
+pour le repère Y-up, y compris pour les objets sans ancre de dessin. La revue a
+révélé un contournement par X/Y dans Propriétés ; il est corrigé et sa régression
+vérifie aussi le déplacement après déverrouillage et son annulation.
+
+Validation : 195 tests ciblés réussis avant les deux régressions supplémentaires
+(coordonnées verrouillées, largeur des boutons FR), elles-mêmes réussies ;
+39 tests de menus contextuels existants réussis. Les 18 tests verrouillage et
+molette passent également en Qt Cocoa natif. Inspection native des dialogues
+860×700 et 620×320 et du cadenas ; audit des 38 dialogues en FR avec police
+agrandie et petit écran. Catalogues EN/DE/FR complets et recompilés, Ruff et
+diff check réussis. Revue senior indépendante : P1/P2 corrigés puis corrections
+revues sans nouveau finding. Aucun plan ni réglage personnel utilisé pour les tests.
+
 ## Français sélectionnable — 20 octobre 2026
 
 Le registre Qt propose désormais **Français** dans **View > Language**. Le choix

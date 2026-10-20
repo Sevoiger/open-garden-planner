@@ -1353,6 +1353,8 @@ class GardenItemMixin:
 
         from open_garden_planner.ui.icons import get_icon
 
+        # All object context menus pass through this shared builder.
+        self._build_position_lock_action(parent_menu)
         label = QCoreApplication.translate("ArrangeActions", "Arrange")
         arrange_menu: QMenu = parent_menu.addMenu(label)
         submenu_icon = get_icon("arrange")
@@ -1388,6 +1390,51 @@ class GardenItemMixin:
             if icon is not None:
                 action.setIcon(icon)
         return arrange_menu
+
+    def _build_position_lock_action(self, menu: "QMenu") -> None:
+        """Expose the existing FIXED constraint, without a second lock state."""
+        from open_garden_planner.core.constraints import ConstraintType
+        from open_garden_planner.ui.icons import get_icon
+
+        scene = self.scene()  # type: ignore[attr-defined]
+        if scene is None or not hasattr(scene, "constraint_graph"):
+            return
+        fixed = any(c.constraint_type == ConstraintType.FIXED and
+                    c.anchor_a.item_id == self.item_id
+                    for c in scene.constraint_graph.constraints.values())
+        label = (QCoreApplication.translate("GardenItemMixin", "Unlock position") if fixed else
+                 QCoreApplication.translate("GardenItemMixin", "Lock position"))
+        action = menu.addAction(label)
+        action.setObjectName("toggle_position_lock")
+        action.setIcon(get_icon("lock_open" if fixed else "lock"))
+        layer = scene.get_layer_by_id(self.layer_id)
+        action.setEnabled(scene.get_command_manager() is not None and layer is not None and not layer.locked)
+        action.triggered.connect(self._toggle_position_lock)
+
+    def _toggle_position_lock(self) -> None:
+        from open_garden_planner.core.commands import AddConstraintCommand, RemoveConstraintCommand
+        from open_garden_planner.core.constraints import AnchorRef, ConstraintType
+        from open_garden_planner.core.measure_snapper import AnchorType
+
+        scene = self.scene()  # type: ignore[attr-defined]
+        if scene is None:
+            return
+        manager = scene.get_command_manager()
+        layer = scene.get_layer_by_id(self.layer_id)
+        if manager is None or layer is None or layer.locked:
+            return
+        graph = scene.constraint_graph
+        fixed = [c for c in graph.constraints.values() if c.constraint_type == ConstraintType.FIXED
+                 and c.anchor_a.item_id == self.item_id]
+        if fixed:
+            for constraint in fixed:
+                manager.execute(RemoveConstraintCommand(graph, constraint))
+        else:
+            ref = AnchorRef(self.item_id, AnchorType.CENTER, 0)
+            pos = self.pos()  # type: ignore[attr-defined]
+            manager.execute(AddConstraintCommand(graph, ref, ref, 0.0,
+                            constraint_type=ConstraintType.FIXED,
+                            target_x=pos.x(), target_y=pos.y()))
 
     def _dispatch_arrange(self, mode: ArrangeMode) -> None:
         """Arrange the selected items (or just *self*) within their layer(s).

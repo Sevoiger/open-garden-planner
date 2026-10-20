@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
@@ -64,7 +65,7 @@ class GuildTemplateEditor(ResponsiveDialog):
         self.readonly = readonly
         self.saved_template: GuildTemplate | None = None
         self.setWindowTitle(self.tr("Guild template editor"))
-        self.resize(850, 650)
+        self.resize(960, 740)
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.id_edit = QLineEdit(template.id if template and not duplicate else "guild-" + uuid4().hex[:12])
@@ -104,6 +105,8 @@ class GuildTemplateEditor(ResponsiveDialog):
                                                     self.tr("Radius"), self.tr("Suggested species (keys, ordered)")])
         header = self.roles_table.horizontalHeader()
         if header is not None:
+            for column in range(3):
+                header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
             header.setStretchLastSection(True)
         layout.addWidget(self.roles_table)
         actions = QHBoxLayout()

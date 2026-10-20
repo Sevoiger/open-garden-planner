@@ -51,8 +51,11 @@ class InsertGuildDialog(ResponsiveDialog):
         self._preview: list[QGraphicsEllipseItem] = []
         self.role_choices: dict[str, QComboBox] = {}
         self.setWindowTitle(self.tr("Insert guild…"))
-        self.resize(650, 550)
+        self.resize(860, 700)
         layout = QVBoxLayout(self)
+        hint = QLabel(self.tr("A plant association combines plants with complementary roles, often around a tree. Choose a template, then adjust the plants and their positions."))
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
         self.template_combo = QComboBox()
         layout.addWidget(self.template_combo)
         actions = QHBoxLayout()

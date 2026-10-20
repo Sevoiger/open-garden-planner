@@ -149,7 +149,7 @@ def assert_readable_controls(dialog, class_name):
 
 
 @pytest.mark.parametrize('module_name,class_name', CASES, ids=[c[1] for c in CASES])
-@pytest.mark.parametrize('font_size,theme,language', [(13, ThemeMode.DARK, 'en'), (18, ThemeMode.LIGHT, 'de')])
+@pytest.mark.parametrize('font_size,theme,language', [(13, ThemeMode.DARK, 'en'), (18, ThemeMode.LIGHT, 'de'), (18, ThemeMode.LIGHT, 'fr')])
 def test_forms_keep_controls_readable_on_small_desktop(
     qtbot, qapp, monkeypatch, tmp_path, module_name, class_name, font_size, theme, language,
 ):
@@ -245,3 +245,25 @@ def test_preferences_can_save_from_scrolled_form(qtbot, qapp):
     restored = PreferencesDialog()
     qtbot.addWidget(restored)
     assert restored._permapeople_key_id.text() == 'layout-test-id'
+
+
+def test_french_rotation_buttons_fit_their_text(qtbot, qapp):
+    from open_garden_planner.services.crop_rotation_service import CropRotationService
+    from open_garden_planner.ui.panels.crop_rotation_panel import CropRotationPanel
+
+    apply_theme(qapp, ThemeMode.LIGHT)
+    assert load_translator(qapp, 'fr')
+    try:
+        panel = CropRotationPanel(CropRotationService())
+        qtbot.addWidget(panel)
+        panel.resize(700, 800)
+        panel.show()
+        qapp.processEvents()
+        for button in (panel._edit_record_btn, panel._delete_record_btn):
+            option = QStyleOptionButton()
+            option.initFrom(button)
+            contents = button.style().subElementRect(QStyle.SubElement.SE_PushButtonContents, option, button)
+            assert contents.width() >= button.fontMetrics().horizontalAdvance(button.text())
+    finally:
+        load_translator(qapp, 'en')
+        apply_theme(qapp, ThemeMode.DARK)

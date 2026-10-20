@@ -60,6 +60,34 @@ défile également lorsque plusieurs panneaux ouverts dépassent la fenêtre ; l
 ordre reste fixe. Les hauteurs reviennent à leurs valeurs initiales au prochain
 lancement de l'application.
 
+Le fond des en-têtes reste identique au survol ; la bordure et le dépliage
+continuent d'indiquer le panneau actif. La molette fait défiler les panneaux et
+les formulaires, mais ne modifie plus les nombres, dates, listes de choix et
+curseurs. Les menus et listes déroulantes ouverts ignorent aussi la molette ;
+leurs choix restent accessibles au clic et au clavier.
+
+### Associations de plantes et verrouillage
+
+L'interface française utilise **association** à la place du terme spécialisé
+« guilde » : un ensemble de plantes aux rôles complémentaires, souvent autour
+d'un arbre. **Jardin > Insérer une association…** crée l'ensemble depuis un
+modèle ; **clic droit sur une plante > Ajouter à une association…** rattache une
+plante à un ensemble existant. Les rôles indiquent l'intention du jardinier et
+ne garantissent pas une compatibilité biologique. Les noms et descriptions des
+modèles conservent les traductions disponibles dans leurs fichiers.
+
+Les dialogues de choix, d'insertion et d'édition s'ouvrent avec davantage de
+place et restent bornés à l'écran. Les colonnes de rôles et les boutons
+Modifier, Supprimer et Dissocier s'adaptent au texte français.
+
+Le clic droit sur un objet propose **Verrouiller la position** puis
+**Déverrouiller la position**. Ce sont les contraintes de position existantes :
+le verrou est sauvegardé dans le plan, visible par un cadenas orienté vers le
+haut lorsque les contraintes sont affichées, et annulable/rétablissable. Les
+coordonnées X/Y dans Propriétés respectent aussi ce verrou. Le verrou porte sur
+la position ; les autres propriétés restent modifiables. Un calque verrouillé
+doit d'abord être déverrouillé dans Calques.
+
 ## Bibliothèques disponibles
 
 OGP contient déjà 118 fiches botaniques hors ligne et 11 catégories d'objets dans
