@@ -1,5 +1,27 @@
 # Progression — fork personnel macOS
 
+## Colonne étroite et fusion multiple — 20 octobre 2026
+
+La colonne de droite accepte une largeur réduite sans être bloquée par le contenu.
+Le séparateur est plus facile à saisir ; les détails de plante proposent
+Rechercher / Charger / Créer, empilés si nécessaire. Le contenu plus large reste
+accessible par défilement horizontal.
+
+Une sélection de formes fermées reliées par contact ou chevauchement se fusionne
+via clic droit > Combiner les formes > Fusionner. Rectangles, cercles, ellipses
+et polygones sont acceptés ; un seul undo restitue les originaux. La géométrie,
+les métadonnées compatibles et le style sont conservés par les mécanismes existants.
+Les sujets botaniques, objets liés/contraints et métadonnées incompatibles sont
+refusés avant confirmation. Les courbes deviennent des contours polygonaux.
+
+Validation : 82 tests ciblés réussis, 9 tests Qt Cocoa natifs et inspection native
+à 240 px et du contour rectangle + deux cercles. Undo/redo et sauvegarde–réouverture
+couverts. Une attente de scrollbar dépendant d'un layout périmé a été remplacée
+par un débordement réel après redimensionnement. Les 2 759 clés EN/DE/FR sont
+complètes et recompilées ; Ruff et diff check passent. Revue senior indépendante,
+remarque de couverture corrigée, aucun défaut source restant identifié.
+Données de test isolées ; aucun plan personnel utilisé.
+
 ## Confort des contrôles et français — 20 octobre 2026
 
 Survol des panneaux sans changement de fond. La molette ne change plus les

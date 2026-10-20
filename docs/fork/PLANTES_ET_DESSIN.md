@@ -55,6 +55,11 @@ rétablit sa hauteur initiale. La hauteur choisie est conservée pendant la sess
 y compris après fermeture/réouverture du panneau ou changement de sélection.
 **Properties** démarre plus haut pour laisser lire ses champs.
 
+Faire glisser le séparateur entre le plan et la colonne pour régler sa largeur.
+Les boutons des détails de plante deviennent **Rechercher / Charger / Créer** ;
+ils s'empilent quand la colonne est étroite. Si un autre contenu reste plus large,
+un défilement horizontal permet de l'atteindre sans imposer sa largeur à la colonne.
+
 Le contenu de chaque panneau peut défiler indépendamment. La colonne complète
 défile également lorsque plusieurs panneaux ouverts dépassent la fenêtre ; leur
 ordre reste fixe. Les hauteurs reviennent à leurs valeurs initiales au prochain
@@ -311,15 +316,21 @@ bibliothèque personnelle au fil des besoins.
 
 ## Fusionner des formes : rectangle à bouts arrondis
 
-La fonction existe déjà pour deux formes fermées : rectangle, cercle ou polygone.
-Dessiner un rectangle puis un cercle de diamètre égal à sa largeur à chaque
-extrémité, avec les centres sur les petits côtés. Les formes doivent se chevaucher.
-Passer à l'outil de sélection, sélectionner le rectangle et un cercle avec Maj,
-puis **clic droit > Boolean > Union** et confirmer l'aperçu. Sélectionner ensuite
-le résultat et le second cercle et répéter l'union. On obtient un seul polygone
-éditable, sauvegardable, avec deux étapes d'annulation. Les arrondis deviennent une
-approximation polygonale ; les ombres et l'épaisseur du trait n'agrandissent pas
-la géométrie fusionnée. L'opération reste limitée à deux objets à la fois.
+Dessiner le rectangle puis deux cercles, dont les centres sont sur les petits
+côtés et le diamètre correspond à la largeur du rectangle. Sélectionner les trois
+objets avec Maj, puis **clic droit > Combiner les formes > Fusionner** et confirmer
+l'aperçu. On obtient un seul polygone éditable et sauvegardable, avec une seule
+étape d'annulation qui restitue tous les objets d'origine.
+
+La fusion accepte plusieurs rectangles, cercles, ellipses ou polygones reliés
+par contact ou chevauchement. Les arrondis deviennent une approximation polygonale ;
+ombres et épaisseur du trait ne modifient pas le contour. Le résultat reprend
+l'apparence d'un objet source. Les plantes, objets liés ou contraints et formes
+portant des données incompatibles sont refusés pour préserver leurs informations.
+Intersection et soustraction restent limitées à deux formes.
+
+Pour un contour libre, les outils polygone et courbe de Bézier permettent aussi
+de dessiner directement une forme personnalisée.
 
 ## Importer un remplissage personnel
 

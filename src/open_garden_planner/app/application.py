@@ -4723,7 +4723,7 @@ class GardenPlannerApp(QMainWindow):
         self._main_splitter.addWidget(self.sidebar)
         self._main_splitter.setStretchFactor(0, 1)  # Canvas takes most space
         self._main_splitter.setStretchFactor(1, 0)  # Sidebar fixed width
-        self._main_splitter.setHandleWidth(1)  # Minimal splitter handle
+        self._main_splitter.setHandleWidth(6)  # Usable grab target for sidebar width
         # Set initial sizes: give sidebar 450px, canvas gets the rest
         self._main_splitter.setSizes([1000, 450])
         splitter = self._main_splitter

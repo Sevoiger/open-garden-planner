@@ -220,7 +220,7 @@ class CollapsiblePanel(QWidget):
         body = QScrollArea(self)
         body.setWidgetResizable(True)
         body.setFrameShape(QFrame.Shape.NoFrame)
-        body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         if self._content_widget is not None:
             layout.removeWidget(self._content_widget)
             body.setWidget(self._content_widget)

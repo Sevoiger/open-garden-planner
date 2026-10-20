@@ -47,7 +47,10 @@ def test_drag_resize_collapse_reopen_and_scroll(qtbot):
     assert panel._body_scroll.verticalScrollBar().value() == 100
     qtbot.mouseDClick(grip, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: panel.height() == 360)
-    assert controller._scroll.verticalScrollBar().maximum() > 0
+    # 360 + 300 fits the original 700px viewport after the reset.
+    # Force genuine overflow and wait for Qt to finish updating its layout.
+    controller.resize(350, 500)
+    qtbot.waitUntil(lambda: controller._scroll.verticalScrollBar().maximum() > 0)
 
 
 def test_properties_content_change_does_not_shrink_user_height(qtbot):

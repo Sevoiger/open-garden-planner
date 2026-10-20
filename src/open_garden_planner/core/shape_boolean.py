@@ -20,10 +20,11 @@ def _polygon_area(poly: QPolygonF) -> float:
 def item_to_painter_path(item: QGraphicsItem) -> QPainterPath | None:
     """Convert a shape item to a QPainterPath in scene coordinates.
 
-    Supports PolygonItem, RectangleItem, and CircleItem.
+    Supports PolygonItem, RectangleItem, CircleItem and EllipseItem.
     Returns None for unsupported item types.
     """
     from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+    from open_garden_planner.ui.canvas.items.ellipse_item import EllipseItem
     from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
     from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
 
@@ -33,7 +34,7 @@ def item_to_painter_path(item: QGraphicsItem) -> QPainterPath | None:
         local_path.addPolygon(item.polygon())
     elif isinstance(item, RectangleItem):
         local_path.addRect(item.rect())
-    elif isinstance(item, CircleItem):
+    elif isinstance(item, (CircleItem, EllipseItem)):
         local_path.addEllipse(item.rect())
     else:
         return None
@@ -47,7 +48,17 @@ def boolean_union(
     path_a: QPainterPath, path_b: QPainterPath
 ) -> QPolygonF | None:
     """Compute the union of two paths. Returns None if result is degenerate."""
-    result = path_a.united(path_b).simplified()
+    return boolean_union_many([path_a, path_b])
+
+
+def boolean_union_many(paths: list[QPainterPath]) -> QPolygonF | None:
+    """Union all paths before flattening, retaining holes and curved outlines."""
+    if not paths:
+        return None
+    result = QPainterPath(paths[0])
+    for path in paths[1:]:
+        result = result.united(path)
+    result = result.simplified()
     poly = result.toFillPolygon()
     if _polygon_area(poly) < 1.0:
         return None
