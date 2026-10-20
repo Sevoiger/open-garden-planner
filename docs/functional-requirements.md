@@ -608,3 +608,87 @@ Acceptance: `tests/unit/test_stacking.py` (the Qt-free arrange algorithm — nor
   keys/values and fail startup clearly when protection cannot be established.
 - **FR-SAFETY-04**: Thumbnail/Static Maps responses have byte/pixel limits and full
   decoding checks; failed input does not publish partial caches or replace the background.
+
+
+## Personal fork: perennial garden records (2026-10-18, ADR-059)
+
+- **FR-FORK-GARDEN-01**: Named individual/group/zone cards retain object UUIDs, shared
+  notes and geometry. Dormant, uncertain, confirmed-dead and removed states are distinct;
+  an anonymous bulb group requires neither exact identity nor quantity.
+- **FR-FORK-GARDEN-02**: Partial/unknown planting dates retain precision and entered
+  labels. A multi-target intervention has planned/completed status, optional material,
+  quantity/unit, historical area/depth, attachments and stable ID. Direct and zone
+  history remain distinct and are filterable by type/text/date.
+- **FR-FORK-GARDEN-03**: GUI and protected local MCP edits share one command path,
+  persistent creation receipts and global undo/redo. Save/reopen and enriched season
+  copies preserve records; migration keeps an original backup. JSON, CSV and portable
+  ZIP restoration into a new folder support data recovery without replacing the open
+  document. No automatic save or Home Assistant integration is implied.
+
+Acceptance: `test_garden_memory.py`, `test_perennial_garden.py`,
+`test_garden_memory_mcp.py`; owner native visual check remains required.
+
+
+- **FR-FORK-UI-01** (ADR-060): sidebar headers open/close by click in the personal
+  fork, retaining contextual selection opening and stable order. All category/search
+  popups stay within the anchor screen; scrolling reaches oversized content. Welcome
+  actions retain enough content area for their text at small window sizes. Tests:
+  `test_macos_popups.py`, existing category/sidebar/welcome suites. Owner native visual
+  confirmation remains required. Category filters reset on reopening; empty results
+  show a message and an explicit reset action.
+
+
+- **FR-FORK-UI-02**: an expanded sidebar accommodates later layer additions/removals
+  without overlapping list, opacity and action controls; inline rename keeps space
+  for its text. Stable order and undo paths remain. Tests: test_layer_layout_growth.py.
+- **FR-FORK-PLANTS-01**: explicit automated import creates four reusable lists/36 bundled
+  species, preserving existing favorites/lists with a pre-change backup, refusing
+  unreadable stores and supporting idempotent retries. Standard portable list exports
+  are included; no real-garden placement occurs. Tests: test_classic_plant_lists.py.
+
+### FR-FORK-UI-03: Scroll forms without modifying closed choices
+
+Closed combo boxes ignore wheel editing even when focused; the gesture scrolls the
+nearest enclosing form, including pixel-only trackpad updates. Explicit open lists
+retain scrolling, and mouse/keyboard selection remain available application-wide.
+
+### FR-FORK-PLANTS-02: French starter catalog and local JSON sheets
+
+Explicit closed-app import exposes 118 bundled identities under French common names,
+80 unspecified gardening labels and owner-supplied JSON sheets in offline search and
+reusable lists. Existing identities, source fields and raw ambiguities are preserved;
+missing dimensions/traits are not inferred. Existing stores are strictly validated,
+backed up and replaced atomically per file. Replay completes a partial installation
+without overwriting edited records or installed collections. Personal source files
+and generated documents remain untracked. An instance's Variety field remains the
+existing write path; importing never plants the garden.
+
+### FR-FORK-UI-03: Readable, screen-bounded dialogs
+
+All custom dialogs use a shared screen-bounded form container. Natural control
+minima are preserved; overflow scrolls vertically and horizontally instead of
+compressing text. Terminal action rows remain outside form scrolling and get their
+own horizontal scrolling when necessary. Reopening a dialog does not duplicate the
+container, disconnect acceptance/validation, or change stored preferences. Existing
+native Qt file/color/message dialogs retain platform behavior.
+
+### FR-FORK-PLANTS-03: Catalog placement from toolbar categories
+
+Trees, shrubs, flowers/perennials and vegetables/herbs expose the complete offline
+catalog through text/trait filters, 48-record pages and an explicit all-plants
+option for unclassified records. Presentation groups use recorded layers or known
+illustrations, never height alone; no botanical traits are inferred from artwork.
+Choosing a record places its full provider snapshot on the next plan click or drag,
+through the existing creation/parenting command. Undo, redo and save/load preserve
+identity and cultivar uncertainty. The database shortcut uses the existing search
+dialog and configured providers; it does not modify selected plants.
+The palette exposes 246 stylized plant illustrations plus 15 generic forms, including
+138 additional illustrations approved by the owner on 2026-10-19. Generic and genus
+symbols do not claim cultivar-accurate appearance. No bulk external photo download.
+
+### FR-FORK-PLANTS-04 — Personal plan visuals
+
+The personal fork accepts a bounded owner PNG from Plant Details, preserving alpha
+and aspect. Import/default changes are undoable, portable in .ogp, and do not alter
+plant geometry or identity. An explicit library preference reuses the visual for
+future placements while preserving existing snapshots and backing up the library.

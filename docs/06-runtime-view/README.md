@@ -433,3 +433,60 @@ launch. Rejection and cancellation never reach process launch.
 Linux startup creates QApplication, secures the settings backend, loads preferences
 and constructs the main window. An ownership/permission failure exits with a visible
 error before the preference and window steps.
+
+## Personal macOS source launch
+
+`Lancer-Jardin.command` resolves its directory, validates `.venv/bin/python`,
+then runs `python -m open_garden_planner` once with startup output appended to
+`.local/logs/launcher.log`. Normal Qt shutdown returns the process exit code;
+a nonzero exit displays the log tail and waits for acknowledgement. Installation
+is separate (`scripts/setup_macos.sh`). No rebuilding or automatic restart occurs.
+On macOS `apply_theme` selects Fusion before the existing QSS is applied (ADR-058).
+
+
+## Personal fork: garden record edit and restore (ADR-059)
+
+A selected object opens Garden records; the master list also reaches obscured shapes.
+Saving a card or intervention validates first and executes one global undo command.
+MCP uses the same service through the Qt-thread bridge after existing opt-in/token
+checks. Repeating an event request key returns its receipt; conflicting content refuses
+without mutation. Undo/deletion retain receipts, while Save persists current records.
+The first enriched overwrite retains the original plan beside it. Save As relocates
+relative media; an enriched New Season retains UUIDs, notes and events. Portable restore
+validates into staging and publishes a new directory only after plan/media checks;
+it never replaces the active document. See `docs/fork/UTILISATION_JARDIN.md`.
+
+
+### Personal fork popup opening and sidebar input (ADR-060)
+
+A category click resets its search/scroll, measures desired content, bounds the popup
+to the anchor's available screen and focuses its search input. Large content scrolls.
+Global search uses the same placement without taking focus from the input. A sidebar
+header hover leaves state unchanged by default; clicking opens/closes the pinned
+panel. Canvas selection still reveals relevant contextual panels.
+
+
+### Personal fork: list growth and explicit collection import
+
+After the opening animation, a sidebar layout request recalculates the open panel's
+height floor; other panels scroll instead of squeezing its layer controls. An explicit
+classic-list import runs with the app closed, validates the old store, prepares every
+snapshot, backs up existing bytes, then imports missing collections atomically through
+the existing list service. Retry skips completed descriptions and does not overwrite
+user-edited entries. The next GUI launch loads the four collections normally.
+
+## Personal toolbar catalog placement (ADR-063)
+
+Open category → snapshot offline catalog → filter before paging → build up to 48
+rows. Choose a record → activate the corresponding CircleTool with a deep-copied
+provider snapshot → click plan → build_plant → CreateItemCommand → parent/dirty/undo
+notifications. Drag uses the same snapshot and creation path. Save writes the
+existing plant_species metadata; reload retains identity and illustration key.
+The database shortcut opens the existing search dialog with the category query;
+confirming activates placement rather than assigning species to a selected item.
+
+Personal visual flow (ADR-064): Plant Details imports a bounded PNG into the
+selected species snapshot through one undoable property command. Paint/export
+prefers this image, preserving aspect/alpha and compensating the scene Y-flip.
+Explicitly remembering it patches the library; future catalog placements carry
+that embedded visual while existing placements retain their own snapshot.

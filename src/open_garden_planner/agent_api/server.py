@@ -1252,6 +1252,45 @@ def build_server(
     # tool checks the token first (in this async task, before the thread hop),
     # then routes through a provider that runs ONE undoable command on the Qt
     # main thread — invariants #3/#4/#13: one agent write = one Ctrl-Z step.
+    @mcp.tool(structured_output=False)
+    async def get_garden_record(item_id: str) -> dict[str, Any]:
+        """Read a perennial card, disjoint direct/zone interventions and zone plantings.
+
+        Partial dates keep precision and original labels. Legacy exact planting
+        dates remain exact; missing dates stay unknown. Read-only, in-memory.
+        """
+        from open_garden_planner.services.garden_queries import garden_record
+
+        snapshot = await anyio.to_thread.run_sync(providers.snapshot)
+        return garden_record(snapshot, item_id)
+
+    @mcp.tool(structured_output=False)
+    async def list_zone_plantings(zone_id: str) -> list[dict[str, Any]]:
+        """List explicit durable zone members, with stable IDs and partial dates.
+
+        Visual proximity is not membership. Existing legacy automatic bed
+        containment is separate from the explicit tracking zone link.
+        """
+        from open_garden_planner.services.garden_queries import garden_record
+
+        snapshot = await anyio.to_thread.run_sync(providers.snapshot)
+        return list(garden_record(snapshot, zone_id)["plantings"])
+
+    @mcp.tool(structured_output=False)
+    async def search_garden_interventions(target_id: str | None = None, event_type: str | None = None,
+                                          since: str | None = None, until: str | None = None,
+                                          text: str = "") -> list[dict[str, Any]]:
+        """Search occurrence periods by target/type/text and inclusive ISO day bounds.
+
+        Partial periods use CONVENTIONAL northern-hemisphere calendar bounds
+        for overlap, not exact observation dates. Unknown dates match only an
+        unbounded search. Reads include planned and completed entries separately.
+        """
+        from open_garden_planner.services.garden_queries import search_events
+
+        snapshot = await anyio.to_thread.run_sync(providers.snapshot)
+        return search_events(snapshot, target_id, event_type, since, until, text)
+
     if writes_active:
 
         @mcp.tool()
@@ -1531,6 +1570,71 @@ def build_server(
                 lambda: providers.set_succession_plan(bed_id, entries, year)
             )
             return WriteResult(**result)
+
+        async def _garden_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+            # Auth runs in the request task before hopping to the Qt provider.
+            _require_write_auth(write_token)
+            provider = providers.garden_write
+            if provider is None:
+                raise ValueError("Garden tracking writes are not available in this application")
+            return await anyio.to_thread.run_sync(lambda: provider(operation, payload))
+
+        @mcp.tool(structured_output=False)
+        async def set_garden_card(item_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+            """Replace tracking fields on an existing shape in one undo command.
+
+            fields: name (provisional labels accepted), kind individual/group/zone,
+            state planned/in_place/dormant/uncertain/confirmed_dead/removed_moved,
+            period {precision:day/month/season/year/unknown,value,label} or a
+            recognised date string; quantity optional; zone_id explicitly links
+            an existing bed. Notes/cultivar reuse existing instance fields.
+            The shape's identity, footprint and growth rings remain distinct.
+            Token required. Changes are in memory; call save_plan to persist.
+            """
+            return await _garden_write("card", {"item_id": item_id, "fields": fields})
+
+        @mcp.tool(structured_output=False)
+        async def add_garden_intervention(target_ids: list[str], event_type: str, description: str,
+                                           request_key: str, occurrence: dict[str, str] | str | None = None,
+                                           status: str = "done", details: dict[str, Any] | None = None) -> dict[str, Any]:
+            """Record one intervention on one or more stable target IDs, undoable.
+
+            Types: planting, relocation, amendment, fertilisation, mulching,
+            sowing, pruning, watering, observation, removal_loss. status is
+            planned or done; a recommendation never proves completion.
+            Occurrence accepts exact/partial dates; omitted means UNKNOWN.
+            details optionally contains material, quantity, unit, application,
+            area_m2 (historical treated area), depth_cm, project-relative media.
+            Missing quantities are not zero. Nothing recalculates measured soil.
+            Durable request_key is required: identical retry returns the same ID,
+            changed content conflicts, and retry after deletion never recreates it.
+            Token required; result persisted=false means memory only: use save_plan.
+            """
+            allowed = {"material", "quantity", "unit", "application", "area_m2", "depth_cm", "media"}
+            if details and set(details) - allowed:
+                raise ValueError("Unknown intervention detail fields")
+            fields = {**(details or {}), "type": event_type, "description": description,
+                      "status": status, "period": occurrence,
+                      "targets": [{"id": identity, "name": identity} for identity in target_ids]}
+            return await _garden_write("add", {"fields": fields, "request_key": request_key})
+
+        @mcp.tool(structured_output=False)
+        async def edit_garden_intervention(event_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+            """Patch one intervention, preserving its identity and creation time.
+
+            Targets require {id,name} records, retaining readable historical
+            names if an object was deleted. Same validation/undo service as GUI.
+            Token required; changes remain in memory until save_plan.
+            """
+            return await _garden_write("edit", {"event_id": event_id, "fields": fields})
+
+        @mcp.tool(structured_output=False)
+        async def delete_garden_intervention(event_id: str) -> dict[str, Any]:
+            """Delete one intervention in one undo step; keep idempotence receipts.
+
+            Token required. Undo restores its data; save_plan persists the change.
+            """
+            return await _garden_write("edit", {"event_id": event_id, "fields": None})
 
         # --- US-D3.3: manual-task writes ------------------------------------
 

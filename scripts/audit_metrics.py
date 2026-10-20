@@ -560,16 +560,15 @@ def git_section(root: Path) -> dict[str, Any]:
 
 def hygiene_section(root: Path) -> dict[str, Any]:
     present = {f: (root / f).exists() for f in HYGIENE_FILES}
-    claude = root / "CLAUDE.md"
     agents = root / "AGENTS.md"
-    skills = sorted((root / ".claude" / "skills").glob("*/SKILL.md"))
+    skills = sorted((root / ".agents" / "skills").glob("*/SKILL.md"))
     largest = sorted(
         ({"path": rel_posix(p, root), "bytes": p.stat().st_size} for p in skills),
         key=lambda d: -d["bytes"],
     )
     return {
         "standard_files": present,
-        "claude_md_bytes": claude.stat().st_size if claude.exists() else None,
+        "claude_md_bytes": None,  # Retained for snapshot schema compatibility.
         "agents_md_bytes": agents.stat().st_size if agents.exists() else None,
         "skills": len(skills),
         "skill_md_total_bytes": sum(p.stat().st_size for p in skills),

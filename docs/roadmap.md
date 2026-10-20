@@ -3072,3 +3072,45 @@ colour that *is* `GENERIC_RECTANGLE`'s default, so it could not fail; see §11.4
   `TestTheMaskIsTheItem` asserts that invariant, because a mask in the wrong coordinate frame does
   not fail, it *reads background*, which is what a luminance statistic calls texture. ADR-057
   addendum, §11.4.11.
+
+## Personal macOS fork — tranche 1 (2026-10-18)
+
+Owner-authorized scope lives in the local mission; it does not alter the upstream
+issue queue. Editable Apple Silicon launch and perennial cards/journal, partial dates,
+explicit zones, undo, protected MCP, media/export/restore and a fictional demo are
+implemented on `feature/personal-macos-garden`. Independent review and automated gates
+are recorded in `docs/fork/PROGRESSION.md`. Native visual acceptance remains pending;
+there is no release or merge. Future Home Assistant architecture is documented only.
+
+Personal-fork manual feedback follow-up (2026-10-18, ADR-060): explicit sidebar clicks,
+screen-bounded scrollable category/search popups and readable welcome actions are
+implemented and regression-tested. Category filters reset on reopening and explain empty results;
+new native visual acceptance is pending. See docs/fork/PROGRESSION.md.
+
+
+Second personal-fork UI feedback (2026-10-18): late sidebar height growth and layer
+rename sizing fixed; four classic-plant collections prepared through the existing
+list importer (ADR-061). Circle input and sketch/calibration prerequisites documented
+in docs/fork/PLANTES_ET_DESSIN.md. Native owner confirmation and a real source drawing
+remain separate; no merge/release authorization is inferred.
+
+Personal macOS follow-up (2026-10-18): wheel-safe closed choices; French common-name
+catalog, 80 unspecified starter cards and explicit private JSON import into offline
+search + Plant Lists. French guides can be read as a single paginated PDF. Native
+owner acceptance remains pending; the owner is drawing a new plan manually.
+
+Personal macOS Preferences follow-up (2026-10-19): all 38 custom dialogs and the
+ad hoc guild-membership form use natural-minimum scroll containment and available
+screen bounds (ADR-062 / FR-FORK-UI-03). Wide action rows remain horizontally
+accessible. Automated small-desktop/large-font/tab and Preferences persistence
+checks added. Native owner acceptance remains pending.
+
+### Personal catalog/illustration follow-up (2026-10-19, ADR-063)
+
+Toolbar botanical categories now browse the offline catalog in bounded pages,
+including unclassified plants through an explicit all-plants option. Click/drag
+placement keeps provider identity, full data and existing undo/parenting paths.
+The existing database search is reachable from each plant category. All 246
+plant illustrations are exposed, with 138 additional procedural drawings approved
+by the owner on a QtSvg contact sheet. Native workflow acceptance remains pending;
+no merge, release or upstream publication.

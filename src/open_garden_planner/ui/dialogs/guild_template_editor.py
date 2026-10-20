@@ -6,7 +6,6 @@ from uuid import uuid4
 from PyQt6.QtWidgets import (
     QComboBox,
     QCompleter,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -27,6 +26,7 @@ from open_garden_planner.services.guild_library import GuildLibrary
 from open_garden_planner.services.species_catalog import offline_catalog
 from open_garden_planner.ui.guild_errors import guild_error_message
 from open_garden_planner.ui.plant_traits import species_display_name
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 from open_garden_planner.ui.widgets.trait_filters import trait_label
 
 
@@ -53,7 +53,7 @@ class RadiusEditor(QWidget):
         return "canopy_edge" if self.mode.currentIndex() == 0 else self.distance.value()
 
 
-class GuildTemplateEditor(QDialog):
+class GuildTemplateEditor(ResponsiveDialog):
     def __init__(self, library: GuildLibrary, template: GuildTemplate | None = None, *, duplicate: bool = False,
                  readonly: bool = False, parent: QWidget | None = None) -> None:
         super().__init__(parent)

@@ -555,7 +555,10 @@ def inventory(root: Path) -> dict[Key, set[tuple[str, str]]]:
     if sources.errors:
         raise CatalogError("\n".join(sources.errors))
     with tempfile.TemporaryDirectory(prefix="ogp-i18n-") as temporary:
-        target = Path(temporary) / "source.ts"
+        # pylupdate computes relative locations from the path we pass it.
+        # Canonicalise before extraction: on macOS /var aliases /private/var,
+        # so resolving only while reading adds a different number of parents.
+        target = (Path(temporary) / "source.ts").resolve()
         result = subprocess.run(
             [
                 sys.executable,

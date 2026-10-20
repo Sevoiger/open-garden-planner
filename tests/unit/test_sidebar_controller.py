@@ -23,7 +23,7 @@ _KEYS = ["a", "b", "c", "d"]
 
 def _make_controller(qtbot, keys: list[str] | None = None) -> SidebarController:
     keys = keys or _KEYS
-    ctrl = SidebarController()
+    ctrl = SidebarController(hover_peek=True)
     qtbot.addWidget(ctrl)
     for key in keys:
         panel = CollapsiblePanel(f"Panel {key}", QLabel(f"content {key}"))

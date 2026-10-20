@@ -53,7 +53,7 @@ def test_no_exemption_is_dead(monkeypatch) -> None:
 
 
 def _write_corpus_file(root: Path, text: str) -> Path:
-    skill_dir = root / ".claude" / "skills" / "example"
+    skill_dir = root / ".agents" / "skills" / "example"
     skill_dir.mkdir(parents=True, exist_ok=True)
     path = skill_dir / "SKILL.md"
     path.write_text(text, encoding="utf-8")

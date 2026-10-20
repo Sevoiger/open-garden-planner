@@ -30,6 +30,7 @@ from open_garden_planner.core.plan_io import (
     validate_plan_data,
     write_plan,
 )
+from open_garden_planner.models.garden_memory import validate_memory
 from open_garden_planner.models.layer import Layer, create_default_layers
 
 # File format version for backward compatibility.
@@ -133,11 +134,16 @@ class ProjectData:
     # or bed UUID string.
     harvest_logs: dict[str, Any] = field(default_factory=dict)
 
+    garden_memory: dict[str, Any] = field(default_factory=dict)
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+    source_metadata: dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         data: dict[str, Any] = {
             "version": FILE_VERSION,
             "metadata": {
+                **deepcopy(self.source_metadata),
                 "modified": datetime.now(UTC).isoformat(),
             },
             "canvas": {
@@ -147,6 +153,7 @@ class ProjectData:
             "layers": self.layers,
             "objects": self.objects,
         }
+        data = {**deepcopy(self.extra_fields), **data}
         if self.constraints:
             data["constraints"] = self.constraints
         if self.guides:
@@ -190,13 +197,18 @@ class ProjectData:
             data["task_states"] = self.task_states
         if self.harvest_logs:
             data["harvest_logs"] = self.harvest_logs
+        if self.garden_memory:
+            data["garden_memory"] = validate_memory(self.garden_memory)
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProjectData:
         """Create ProjectData from dictionary."""
         canvas = data.get("canvas", {})
+        known = (set(cls.__dataclass_fields__) - {"canvas_width", "canvas_height", "extra_fields", "source_metadata"}) | {"version", "metadata", "canvas", "paper_layouts"}
         return cls(
+            extra_fields=deepcopy({key: value for key, value in data.items() if key not in known}),
+            source_metadata=deepcopy(data.get("metadata", {})) if isinstance(data.get("metadata", {}), dict) else {},
             canvas_width=canvas.get("width", 5000.0),
             canvas_height=canvas.get("height", 3000.0),
             layers=data.get("layers", []),
@@ -223,6 +235,7 @@ class ProjectData:
             manual_tasks=data.get("manual_tasks", {}),
             task_states=data.get("task_states", {}),
             harvest_logs=data.get("harvest_logs", {}),
+            garden_memory=validate_memory(data.get("garden_memory", {})),
             # Note: `data.get("paper_layouts", ...)` is intentionally
             # not consumed here — the Paper Space feature was dropped
             # before PR #191 merged but earlier draft builds may have
@@ -255,6 +268,7 @@ class ProjectManager(QObject):
     prefer_organic_changed = pyqtSignal(bool)
     succession_plans_changed = pyqtSignal(object)  # dict[str, dict]
     permaculture_assignment_changed = pyqtSignal(bool)
+    garden_memory_changed = pyqtSignal(object)
     garden_journal_notes_changed = pyqtSignal(object)  # dict[str, dict]
     manual_tasks_changed = pyqtSignal(object)  # dict[str, dict] (US-C2)
     task_states_changed = pyqtSignal(object)  # dict[str, dict] (US-C2)
@@ -281,6 +295,9 @@ class ProjectManager(QObject):
         self._prefer_organic: bool = True
         self._succession_plans: dict[str, Any] = {}
         self._auto_assign_permaculture_layers = False
+        self._extra_fields: dict[str, Any] = {}
+        self._source_metadata: dict[str, Any] = {}
+        self._garden_memory: dict[str, Any] = {}
         self._garden_journal_notes: dict[str, Any] = {}
         self._manual_tasks: dict[str, Any] = {}
         self._task_states: dict[str, Any] = {}
@@ -651,6 +668,18 @@ class ProjectManager(QObject):
         """Per-note garden journal entry dicts (US-12.9) keyed by note UUID string."""
         return dict(self._garden_journal_notes)
 
+    @property
+    def garden_memory(self) -> dict[str, Any]:
+        """Detached intervention store; only command adapters replace it."""
+        return deepcopy(self._garden_memory)
+
+    def restore_garden_memory(self, memory: dict[str, Any]) -> None:
+        """Command apply/undo seam; reject unsupported schemas before mutation."""
+        candidate = validate_memory(memory)
+        self._garden_memory = candidate
+        self.mark_dirty()
+        self.garden_memory_changed.emit(deepcopy(candidate))
+
     def get_journal_note(self, note_id: str) -> Any:
         """Return the ``JournalNote`` for ``note_id`` (``None`` when absent)."""
         from open_garden_planner.models.journal_note import JournalNote  # noqa: PLC0415
@@ -832,6 +861,10 @@ class ProjectManager(QObject):
         self._prefer_organic = True
         self._succession_plans = {}
         self.auto_assign_permaculture_layers = False
+        self._extra_fields = {}
+        self._source_metadata = {}
+        self._garden_memory = {}
+        self.garden_memory_changed.emit({})
         self._garden_journal_notes = {}
         self._manual_tasks = {}
         self._task_states = {}
@@ -867,7 +900,24 @@ class ProjectManager(QObject):
         data = self._build_project_data(scene, sync_journal=True)
         file_path = file_path.with_suffix(".ogp")
 
-        write_plan(file_path, data.to_dict())
+        candidate = data.to_dict()
+        validate_plan_data(candidate)
+        if data.garden_memory and file_path.exists() and not read_plan(file_path).get("garden_memory"):
+            import shutil
+
+            backup = file_path.with_name(file_path.stem + ".pre-jardin.ogp")
+            index = 1
+            while backup.exists():
+                backup = file_path.with_name(file_path.stem + f".pre-jardin-{index}.ogp")
+                index += 1
+            # Exclusive creation never overwrites an earlier migration backup.
+            with file_path.open("rb") as original, backup.open("xb") as saved:
+                shutil.copyfileobj(original, saved)
+        if self._current_file is not None:
+            from open_garden_planner.services.garden_archive import copy_relative_media
+
+            copy_relative_media(candidate, self._current_file.parent, file_path.parent)
+        write_plan(file_path, candidate)
         self._garden_journal_notes = data.garden_journal_notes
 
         self._current_file = file_path
@@ -912,6 +962,9 @@ class ProjectManager(QObject):
         data.prefer_organic = self._prefer_organic
         data.succession_plans = dict(self._succession_plans)
         data.auto_assign_permaculture_layers = self.auto_assign_permaculture_layers
+        data.extra_fields = deepcopy(self._extra_fields)
+        data.source_metadata = deepcopy(self._source_metadata)
+        data.garden_memory = deepcopy(self._garden_memory)
         data.garden_journal_notes = deepcopy(self._garden_journal_notes)
         if sync_journal:
             # US-12.9: the pin's pos() on the canvas is the source of truth for
@@ -1111,6 +1164,10 @@ class ProjectManager(QObject):
         self._succession_plans = dict(data.succession_plans)
         self.auto_assign_permaculture_layers = data.auto_assign_permaculture_layers
         self.succession_plans_changed.emit(self._succession_plans)
+        self._extra_fields = deepcopy(data.extra_fields)
+        self._source_metadata = deepcopy(data.source_metadata)
+        self._garden_memory = validate_memory(data.garden_memory)
+        self.garden_memory_changed.emit(deepcopy(self._garden_memory))
         self._garden_journal_notes = dict(data.garden_journal_notes)
         self.garden_journal_notes_changed.emit(self._garden_journal_notes)
         self._manual_tasks = dict(data.manual_tasks)
@@ -1139,6 +1196,22 @@ class ProjectManager(QObject):
             new_file_path: Where to write the new .ogp file
             keep_plants: Whether to copy plant objects to the new season
         """
+        if self._garden_memory:
+            # Perennial mode is activated by an explicit tracking edit. Keep
+            # every identity and all journal/observation data across years.
+            target = new_file_path.with_suffix(".ogp")
+            if self._current_file and target.resolve() == self._current_file.resolve():
+                raise ValueError("A new season must use a different project file")
+            data = self._build_project_data(scene)
+            data.season_year = new_year
+            from open_garden_planner.services.garden_archive import copy_relative_media
+
+            payload = data.to_dict()
+            if self._current_file:
+                copy_relative_media(payload, self._current_file.parent, target.parent)
+            write_plan(target, payload)
+            return
+
         # Serialize the current scene
         current_data = self._serialize_scene(scene)
         current_data.auto_assign_permaculture_layers = self.auto_assign_permaculture_layers

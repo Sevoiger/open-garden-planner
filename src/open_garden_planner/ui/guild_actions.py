@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from PyQt6.QtCore import QCoreApplication, QTimer
-from PyQt6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QVBoxLayout
+from PyQt6.QtWidgets import QComboBox, QDialogButtonBox, QFormLayout, QVBoxLayout
 
 from open_garden_planner.core.guild_commands import (
     GuildMembershipCommand,
@@ -14,6 +14,7 @@ from open_garden_planner.core.guild_commands import (
 )
 from open_garden_planner.core.object_types import is_plant_type
 from open_garden_planner.models.plant_data import PlantFunction
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 from open_garden_planner.ui.widgets.trait_filters import trait_label
 
 
@@ -24,7 +25,7 @@ def add_to_guild(item: Any, view: Any) -> None:
         return
     centres = [plant for plant in scene.items() if isinstance(getattr(plant, "metadata", {}).get("guild"), dict)
                and plant.metadata["guild"].get("role") == "centre" and plant is not item]
-    dialog = QDialog(view)
+    dialog = ResponsiveDialog(view)
     dialog.setWindowTitle(QCoreApplication.translate("GuildActions", "Add to guild…"))
     layout = QVBoxLayout(dialog)
     form = QFormLayout()

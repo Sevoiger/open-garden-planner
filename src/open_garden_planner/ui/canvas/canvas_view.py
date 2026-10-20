@@ -1970,6 +1970,20 @@ class CanvasView(QGraphicsView):
             }
             obj_type = obj_map.get(tool_type, ObjectType.TREE)
 
+            species_dict = None
+            if event.mimeData().hasFormat("application/x-ogp-plant-data"):
+                try:
+                    from open_garden_planner.services.plant_palette import validate_catalog_snapshot
+
+                    payload = json.loads(bytes(event.mimeData().data("application/x-ogp-plant-data")))
+                    species_dict = validate_catalog_snapshot(payload)
+                    from open_garden_planner.core.plant_sizing import catalog_footprint_diameter_cm
+
+                    default_diameter = catalog_footprint_diameter_cm(species_dict, obj_type.name)
+                except Exception:
+                    _log.warning("Rejected invalid catalog plant drop")
+                    return
+
             self._create_plant_item_at_scene_pos(
                 scene_pos=scene_pos,
                 tool_type=tool_type,
@@ -1977,6 +1991,7 @@ class CanvasView(QGraphicsView):
                 radius=default_diameter / 2,
                 species_name=species,
                 plant_category=plant_category,
+                species_dict=species_dict,
             )
         else:
             # Non-plant tool: activate tool

@@ -131,3 +131,29 @@ class TestCanvasViewTheme:
         colors = ThemeColors.DARK
         view.apply_theme_colors(colors)
         assert view._scale_bar_fg == QColor(colors["scale_bar_fg"])
+
+
+def test_selection_palette_uses_readable_theme_foreground(qtbot):
+    from PyQt6.QtGui import QPalette
+    from PyQt6.QtWidgets import QApplication, QListWidget
+
+    from open_garden_planner.ui.theme import apply_theme
+
+    app = QApplication.instance()
+    original_sheet = app.styleSheet()
+    original_style = app.style().objectName()
+    try:
+        apply_theme(app, ThemeMode.LIGHT)
+        widget = QListWidget()
+        qtbot.addWidget(widget)
+        widget.addItem("Readable selection")
+        widget.setCurrentRow(0)
+        widget.show()
+        widget.ensurePolished()
+        palette = widget.palette()
+        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+            assert palette.color(group, QPalette.ColorRole.HighlightedText) == QColor(ThemeColors.LIGHT["text_primary"])
+    finally:
+        app.setStyleSheet("")
+        app.setStyle(original_style or "Fusion")
+        app.setStyleSheet(original_sheet)

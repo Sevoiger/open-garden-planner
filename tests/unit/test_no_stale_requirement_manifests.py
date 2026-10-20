@@ -19,8 +19,8 @@ MANIFESTS = ["requirements.txt", "requirements-dev.txt"]
 REFERENCE_RE = re.compile(r"(?<![\w-])requirements(?:-dev)?\.txt")
 
 SCAN_DIRS = ["src", "tests", "scripts", ".github", "installer", "quality",
-             ".agents/skills", ".claude/skills", "docs/wiki"]
-SCAN_FILES = ["README.md", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "pyproject.toml"]
+             ".agents/skills", "docs/wiki"]
+SCAN_FILES = ["README.md", "AGENTS.md", "CONTRIBUTING.md", "pyproject.toml"]
 
 SELF = Path("tests/unit/test_no_stale_requirement_manifests.py")
 

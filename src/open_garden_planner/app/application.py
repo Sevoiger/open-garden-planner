@@ -89,6 +89,7 @@ if TYPE_CHECKING:
 
     from open_garden_planner.agent_api import AgentApiServer
     from open_garden_planner.core.sim_clock import SimChange
+    from open_garden_planner.services import PlantAPIManager
     from open_garden_planner.services.update_checker import ReleaseInfo
 
 logger = logging.getLogger(__name__)
@@ -244,6 +245,13 @@ class GardenPlannerApp(QMainWindow):
     def __init__(self) -> None:
         """Initialize the main window."""
         super().__init__()
+
+        from open_garden_planner.ui.widgets.combo_wheel_guard import ComboWheelGuard
+
+        self._combo_wheel_guard = ComboWheelGuard(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._combo_wheel_guard)
 
         self.setMinimumSize(800, 600)
 
@@ -3548,6 +3556,21 @@ class GardenPlannerApp(QMainWindow):
             self.tr("Agent API running at {url}").format(url=server.url), 5000
         )
 
+    def _agent_garden_write(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._agent_bridge.run_on_main(lambda: self._do_garden_write(operation, payload))
+
+    def _do_garden_write(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from open_garden_planner.core.garden_memory import GardenMemoryService
+
+        service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
+        if operation == "card":
+            return service.set_card(payload["item_id"], payload["fields"])
+        if operation == "add":
+            return service.add_event(payload["fields"], payload["request_key"])
+        if operation == "edit":
+            return service.edit_event(payload["event_id"], payload["fields"])
+        raise ValueError(f"Unknown garden write operation: {operation}")
+
     def _build_agent_providers(self) -> Any:
         """Build the one production provider graph used by the embedded MCP server.
 
@@ -3559,6 +3582,7 @@ class GardenPlannerApp(QMainWindow):
 
         return AgentProviders(
             snapshot=self._agent_snapshot,
+            garden_write=self._agent_garden_write,
             diagnostics=self._agent_diagnostics,
             render=self._agent_render,
             save_plan=self._agent_save_plan,
@@ -4469,8 +4493,24 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(check_companion_action, "companion")
         menu.addAction(check_companion_action)
 
+    def _on_garden_records(self, target_id: str | None = None) -> None:
+        """Open perennial tracking from a selected shape or the global Garden menu."""
+        from open_garden_planner.core.garden_memory import GardenMemoryService
+        from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+
+        service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
+        GardenMemoryDialog(service, target_id, self).exec()
+        self._update_properties_panel()
+        self._update_plant_database_panel()
+
     def _setup_garden_menu(self, menu: QMenu) -> None:
         """Set up the Garden menu actions (US-12.10a — soil)."""
+        records = QAction(self.tr("Garden records…"), self)
+        records.triggered.connect(lambda _checked=False: self._on_garden_records())
+        self._set_action_icon(records, "tab_calendar")
+        menu.addAction(records)
+        menu.addSeparator()
+
         # Set default soil test (project-wide fallback when a bed has no own test)
         default_soil_action = QAction(self.tr("&Set default soil test…"), self)
         default_soil_action.setStatusTip(
@@ -4539,8 +4579,10 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.ui.widgets.coordinate_input_field import (
             CoordinateInputField,
         )
+        from open_garden_planner.ui.widgets.garden_status_bar import GardenStatusBar, StatusLabel
 
-        status_bar = self.statusBar()
+        status_bar = GardenStatusBar(self)
+        self.setStatusBar(status_bar)
 
         # Coordinate label (left side, permanent). Every segment carries a
         # small themed icon (#310) so the bar scans as a row of instruments.
@@ -4560,30 +4602,38 @@ class GardenPlannerApp(QMainWindow):
         status_bar.addPermanentWidget(self.zoom_label)
 
         # Selection info label
-        status_bar.addPermanentWidget(self._make_icon_label("select", tooltip=self.tr("Selection")))
-        self.selection_label = QLabel(self.tr("No selection"))
+        selection_label_icon = self._make_icon_label("select", tooltip=self.tr("Selection"))
+        status_bar.addPermanentWidget(selection_label_icon)
+        self.selection_label = StatusLabel(self.tr("No selection"))
         self.selection_label.setMinimumWidth(150)
         status_bar.addPermanentWidget(self.selection_label)
+        status_bar.add_optional_segment(selection_label_icon, self.selection_label)
 
         # Tool label
-        status_bar.addPermanentWidget(self._make_icon_label("status_tool", tooltip=self.tr("Active tool")))
-        self.tool_label = QLabel(self.tr("Select"))
+        tool_label_icon = self._make_icon_label("status_tool", tooltip=self.tr("Active tool"))
+        status_bar.addPermanentWidget(tool_label_icon)
+        self.tool_label = StatusLabel(self.tr("Select"))
         self.tool_label.setMinimumWidth(80)
         status_bar.addPermanentWidget(self.tool_label)
+        status_bar.add_optional_segment(tool_label_icon, self.tool_label)
 
         # Location label
-        status_bar.addPermanentWidget(self._make_icon_label("location", tooltip=self.tr("Garden location")))
-        self.location_label = QLabel(self.tr("No location set"))
+        location_label_icon = self._make_icon_label("location", tooltip=self.tr("Garden location"))
+        status_bar.addPermanentWidget(location_label_icon)
+        self.location_label = StatusLabel(self.tr("No location set"))
         self.location_label.setMinimumWidth(160)
         self.location_label.setToolTip(self.tr("Garden GPS location — use File > Set Garden Location to configure"))
         status_bar.addPermanentWidget(self.location_label)
+        status_bar.add_optional_segment(location_label_icon, self.location_label)
 
         # Season label (US-10.7)
-        status_bar.addPermanentWidget(self._make_icon_label("season", tooltip=self.tr("Season")))
-        self.season_label = QLabel(self.tr("Season: —"))
+        season_label_icon = self._make_icon_label("season", tooltip=self.tr("Season"))
+        status_bar.addPermanentWidget(season_label_icon)
+        self.season_label = StatusLabel(self.tr("Season: —"))
         self.season_label.setMinimumWidth(100)
         self.season_label.setToolTip(self.tr("Current season year — use File > Manage Seasons to configure"))
         status_bar.addPermanentWidget(self.season_label)
+        status_bar.add_optional_segment(season_label_icon, self.season_label)
 
         # Sun & shade simulation hint (US-E3/E4) — night / no-location notes.
         # Lives here, NOT on the sun toolbar: a variable-width label in the
@@ -4692,6 +4742,7 @@ class GardenPlannerApp(QMainWindow):
         self.constraint_toolbar.tool_selected.connect(self._on_tool_selected)
         self.category_toolbar.tool_selected.connect(self._on_tool_selected)
         self.category_toolbar.item_selected.connect(self._on_gallery_item_selected)
+        self.category_toolbar.database_search_requested.connect(self._on_catalog_database_search)
         self.canvas_view.tool_changed.connect(self.update_tool)
         self.canvas_view.tool_type_changed.connect(self._sync_toolbar_state_by_type)
         self.canvas_view.import_background_image_requested.connect(
@@ -5091,6 +5142,7 @@ class GardenPlannerApp(QMainWindow):
         self.properties_panel = PropertiesPanel(
             command_manager=self.canvas_view.command_manager
         )
+        self.properties_panel.garden_record_requested.connect(self._on_garden_records)
         # Re-evaluate all three contextual panels when the selected item's type
         # changes (e.g. tree → house): each may need to show or hide. Companion is
         # included explicitly so its visibility does not rely on the incidental
@@ -7643,7 +7695,21 @@ class GardenPlannerApp(QMainWindow):
         if isinstance(active_tool, CircleTool):
             category = getattr(item, "plant_category", None)
             species = getattr(item, "species", "")
-            active_tool.set_plant_info(category=category, species=species)
+            snapshot = getattr(item, "species_data", None)
+            if snapshot is not None:
+                from open_garden_planner.services.plant_palette import validate_catalog_snapshot
+
+                try:
+                    snapshot = validate_catalog_snapshot(snapshot)
+                except Exception:
+                    logger.warning("Rejected invalid catalog plant selection")
+                    self.canvas_view.set_active_tool(ToolType.SELECT)
+                    status = self.statusBar()
+                    if status is not None:
+                        status.showMessage(self.tr("Invalid plant data; placement cancelled."), 5000)
+                    return
+            active_tool.set_plant_info(category=category, species=species,
+                                       species_data=snapshot)
 
     def _sync_toolbar_state_by_type(self, tool_type: ToolType) -> None:
         """Sync toolbar button states when the active tool changes.
@@ -7997,13 +8063,12 @@ class GardenPlannerApp(QMainWindow):
             self.canvas_view.command_manager.execute(dialog.command)
             self._update_companion_panel()
 
-    def _on_search_plant_database(self) -> None:
-        """Handle Search Plant Database action."""
+    def _plant_api_manager_from_settings(self) -> "PlantAPIManager":
+        """One credentials path for species assignment and catalog placement."""
         import os
 
         from open_garden_planner.app.settings import get_settings
         from open_garden_planner.services import PlantAPIManager
-        from open_garden_planner.ui.dialogs import PlantSearchDialog
 
         # Read API credentials from QSettings, with env var fallback
         settings = get_settings()
@@ -8012,14 +8077,29 @@ class GardenPlannerApp(QMainWindow):
         permapeople_id = settings.permapeople_key_id or os.environ.get("PERMAPEOPLE_KEY_ID", "")
         permapeople_secret = settings.permapeople_key_secret or os.environ.get("PERMAPEOPLE_KEY_SECRET", "")
 
-        api_manager = PlantAPIManager(
+        return PlantAPIManager(
             trefle_api_token=trefle_token or None,
             perenual_api_key=perenual_key or None,
             permapeople_key_id=permapeople_id or None,
             permapeople_key_secret=permapeople_secret or None,
         )
 
-        dialog = PlantSearchDialog(api_manager, self)
+    def _on_catalog_database_search(self, query: str, group: str) -> None:
+        from open_garden_planner.ui.dialogs import PlantSearchDialog
+        from open_garden_planner.ui.widgets.catalog_palette import catalog_item
+
+        dialog = PlantSearchDialog(self._plant_api_manager_from_settings(), self)
+        dialog.search_input.setText(query)
+        if dialog.exec() and dialog.selected_plant is not None:
+            item = catalog_item(dialog.selected_plant.to_dict(), group)
+            self.canvas_view.set_active_tool(item.tool_type)
+            self._on_gallery_item_selected(item)
+
+    def _on_search_plant_database(self) -> None:
+        """Handle Search Plant Database action."""
+        from open_garden_planner.ui.dialogs import PlantSearchDialog
+
+        dialog = PlantSearchDialog(self._plant_api_manager_from_settings(), self)
         if dialog.exec():
             # User selected a plant species
             plant_data = dialog.selected_plant

@@ -8,6 +8,7 @@ illustrations (8+ popular species).
 
 import functools
 import hashlib
+import json
 import math
 from enum import Enum, auto
 from pathlib import Path
@@ -311,6 +312,12 @@ _OBJECT_TYPE_DEFAULT_CATEGORY: dict[ObjectType, PlantCategory] = {
     ObjectType.SHRUB: PlantCategory.SPREADING_SHRUB,
     ObjectType.PERENNIAL: PlantCategory.FLOWERING_PERENNIAL,
 }
+
+# The shared plan-symbol register adds exact aliases without replacing the
+# legacy aliases used by existing plans. No artwork choice changes plant data.
+for _art in json.loads((_PLANTS_DIR / "illustrations.json").read_text(encoding="utf-8"))["illustrations"]:
+    for _alias in (_art["id"].replace("_", " "), *_art["aliases"]):
+        _SPECIES_FILES.setdefault(_alias.casefold().strip(), _art["id"])
 
 # Cache for QSvgRenderer instances (path -> renderer)
 _renderer_cache: dict[str, QSvgRenderer] = {}

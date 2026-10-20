@@ -8,7 +8,6 @@ from typing import Any
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
@@ -30,11 +29,12 @@ from open_garden_planner.services.plant_api import (
 )
 from open_garden_planner.ui.plant_species_assignment import plant_source_label
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 logger = logging.getLogger(__name__)
 
 
-class PlantSearchDialog(QDialog):
+class PlantSearchDialog(ResponsiveDialog):
     """Dialog for searching plant species from online databases.
 
     Allows users to search for plants using the PlantAPIManager,

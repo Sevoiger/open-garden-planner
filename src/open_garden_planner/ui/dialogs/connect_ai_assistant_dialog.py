@@ -32,7 +32,6 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -44,9 +43,10 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.services import ai_client_onboarding as onboarding
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class ConnectAiAssistantDialog(QDialog):
+class ConnectAiAssistantDialog(ResponsiveDialog):
     """Shows the Agent API connect URL and helps register it with AI clients."""
 
     def __init__(

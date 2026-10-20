@@ -154,6 +154,11 @@ WRITE_TOOL_NAMES = frozenset(
         # graph. Gated exactly like delete_object - it replaces or deletes a
         # stored plan.
         "set_succession_plan",
+        # Personal fork: document-owned garden records share the same gate.
+        "set_garden_card",
+        "add_garden_intervention",
+        "edit_garden_intervention",
+        "delete_garden_intervention",
     }
 )
 

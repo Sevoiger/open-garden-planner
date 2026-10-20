@@ -7,7 +7,6 @@ from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QColor, QPen
 from PyQt6.QtWidgets import (
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -34,10 +33,11 @@ from open_garden_planner.services.species_catalog import offline_catalog
 from open_garden_planner.ui.dialogs.guild_template_editor import GuildTemplateEditor
 from open_garden_planner.ui.guild_errors import guild_error_message
 from open_garden_planner.ui.plant_traits import species_display_name
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 from open_garden_planner.ui.widgets.trait_filters import trait_label
 
 
-class InsertGuildDialog(QDialog):
+class InsertGuildDialog(ResponsiveDialog):
     def __init__(self, scene: Any, *, auto_assign: bool = False, library: GuildLibrary | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.scene = scene

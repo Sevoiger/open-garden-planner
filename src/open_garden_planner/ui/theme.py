@@ -6,6 +6,7 @@ Provides light and dark color schemes with comprehensive styling.
 import contextlib
 import logging
 import os
+import sys
 import tempfile
 from collections.abc import Callable
 from enum import Enum
@@ -526,6 +527,7 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         border-radius: 6px;
         padding: 5px 8px;
         selection-background-color: {colors['selection']};
+        selection-color: {colors['text_primary']};
     }}
 
     QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
@@ -680,6 +682,7 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         color: {colors['text_primary']};
         border: 1px solid {colors['border']};
         selection-background-color: {colors['selection']};
+        selection-color: {colors['text_primary']};
     }}
 
     /* Checkboxes and radio buttons */
@@ -717,6 +720,8 @@ def generate_stylesheet(mode: ThemeMode) -> str:
 
     /* List widgets */
     QListWidget {{
+        selection-background-color: {colors['selection']};
+        selection-color: {colors['text_primary']};
         background-color: {colors['input']};
         color: {colors['text_primary']};
         border: 1px solid {colors['border']};
@@ -728,7 +733,13 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         border-radius: 4px;
     }}
 
+    /* Embedded layer rows provide their own layout padding. */
+    QListWidget#LayerList::item {{
+        padding: 0px;
+    }}
+
     QListWidget::item:selected {{
+        color: {colors['text_primary']};
         background-color: {colors['selection']};
     }}
 
@@ -1211,6 +1222,13 @@ def apply_theme(app: QApplication, mode: ThemeMode) -> None:
     # already see the new values.
     colors = ThemeColors.get_colors(mode)
     _current_colors = colors
+
+    # Native Aqua draws some toolbar/tab surfaces using the OS appearance even
+    # under QSS. Fusion keeps this application's complete custom theme coherent
+    # on macOS (including when the OS and application appearances differ).
+    style = app.style()
+    if sys.platform == "darwin" and (style is None or style.objectName().lower() != "fusion"):
+        app.setStyle("Fusion")
 
     stylesheet = generate_stylesheet(mode)
     app.setStyleSheet(stylesheet)

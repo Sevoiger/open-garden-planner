@@ -1275,3 +1275,153 @@ assigned `OffsetTool`; a real German status-message regression exposed the misma
 The tool now uses explicit `CanvasView` translation calls. Complete display fields and
 values are selected from production tables, helper calls bind their source argument,
 dynamic consumers retain comments, and unresolved receivers/helper imports fail closed.
+
+### 11.4.12 Aqua/QSS appearance mismatch and narrow status layouts (personal macOS fork)
+
+The first macOS run produced poorly delimited controls. A native Cocoa diagnostic
+with widgets never displayed recorded `.AppleSystemUIFont,13` and Aqua styling;
+rendering the main widget exposed dark native toolbar/tab surfaces beneath the
+light QSS theme, and overlapping status instruments at 800 logical pixels.
+The same render with Fusion corrected the native surfaces. `apply_theme` now
+selects Fusion on macOS, and `GardenStatusBar` fits optional complete icon/label
+pairs instead of forcing every permanent segment into a small window. Screen
+resolution is not a widget-width budget; do not reduce fonts to compensate.
+Pinned by `tests/integration/test_macos_layout.py` at 800, 1200 and 1800 pixels
+with a 13-point font. Diagnostic instrumentation is local and untracked.
+The owner's separate report of apparent automatic clicks remains unexplained;
+concurrent offscreen tests were stopped, but no causation was established.
+
+### 11.4.13 Translation paths through macOS temporary-directory aliases
+
+`/var/folders` and `/private/var/folders` have different depths but identify the
+same temporary directory. Passing an unresolved TS destination to pylupdate and
+resolving only when consuming its relative source locations produced false
+outside-source errors. Canonicalise the destination before extraction; preserve
+the source-boundary guard. Reproduced before the fix and pinned by
+`tests/integration/test_macos_translation_paths.py` using an alias at another depth.
+Both locales and compiled catalogs pass again without translation-content changes.
+
+### Personal fork: event-form width and selection contrast (2026-10-18)
+
+At 13-point font and 560×520, the attachment action row exceeded its form's
+available width. A menu button retains all actions within the scrolling form.
+The existing light QSS also left selected list text white on pale green; explicit
+selection foregrounds fix the measured palette. Tests cover actual small-form
+minimums and selection palette colors. Native owner acceptance remains pending;
+these observations do not explain the reported apparent spontaneous clicks.
+See the paired debug-verbose case study and ADR-058/059.
+
+A subsequent independent review reproduced a valid structured date becoming unknown
+when only a note/description changed: the label may legally be empty or non-parsable.
+Both editors now preserve the structured period until its displayed text changes;
+empty labels display the canonical value. Regression tests cover both editors,
+empty/arbitrary labels and intentional date changes. Deletion catches locked-target
+refusals without changing records/history. See the paired debug-verbose case study.
+
+
+### Personal fork: popup edges and squeezed welcome actions (2026-10-18)
+
+Owner captures overturned the earlier offscreen status-bar-only visual confidence.
+A category placed directly at its anchor's bottom-left can extend hundreds of logical
+pixels beyond the available screen; bounding position alone cannot fit content taller
+than the screen. Bound both size and position, then keep full content in scroll areas.
+Use the anchor screen, including negative origins, rather than primary-screen size.
+
+Welcome's explicit small window constraints compressed locally padded action buttons
+until SE_PushButtonContents measured -5/-6 pixels. Scroll natural-sized content and
+keep the footer outside the scroll area; normal button sizing restores readable text.
+The owner also rejects the upstream hover-peek interaction: default headers now wait
+for clicks. The unlocated blank-filter report remains distinct from these reproduced
+causes. ADR-060 and `test_macos_popups.py` record the boundary and regressions.
+
+### Personal fork: late layer growth and embedded row padding
+
+The accordion's post-animation minimum was a snapshot: later layers enlarged the
+fixed list without raising that floor, so a second open panel squeezed opacity/actions
+into overlapping positions. Update the open floor on layout requests, outside the
+animation, and change it only when the hint differs. Layer rows also lost10px to generic
+QListWidget item padding; their rename field got18px for a31px hint. Give embedded rows
+ownership of padding and include the hidden editor in row hints, then derive viewport
+height from those hints. Tests exercise grow/shrink, another competing panel, inline
+rename and scroll reachability in light/dark. ADR-060 follow-up; debug-verbose case study.
+
+The independent review also exercised standalone panels: hiding content on header
+close must release the expanded minimum, even without a SidebarController. This is
+now explicit in set_expanded(False), with a real-click open/close/grow/reopen test.
+
+### Personal fork: wheel editing versus form scrolling
+
+Measured before: a -120 wheel tick over a closed combo changed index1 to2 and left
+the enclosing scrollbar at0. Merely filtering/ignoring stopped editing but still
+left scroll at0. Forwarding to the viewport changes scroll by60px while index stays1.
+On this Qt offscreen backend, pixel-only (-40) updates are ignored by QScrollArea;
+apply their already-directed pixel displacement only when forwarded handling rejects
+it. Keep native open-list scrolling and keyboard editing covered independently.
+Local JSON imports preserve conflicting month data as provenance, never as inferred
+frost-relative calendar offsets. Two-store imports are replayable, not globally atomic.
+
+### Personal fork: test preferences were isolated, file libraries were not
+
+Installing a real French custom catalog exposed two tests reading owner data:
+Strawberry/Apfelbaum assertions saw Fraisier/Pommier. Stop the full run before further
+library operations; read-only comparison verified previous and imported records
+unchanged. QSettings redirection alone cannot protect custom_plants, plant_lists,
+seed inventory, weather cache or guild/companion files. Resolve the unchanged platform
+path through one private helper; conftest overrides it before collection and per-test
+singletons reset into tmp_path. Captured public-function aliases still call that helper.
+Do not override HOME or weaken localization assertions. Confinement regressions check
+real file writes and clean per-test libraries across captured service aliases.
+
+A fresh interpreter does not inherit Python monkeypatches. The spike startup probe
+now prepends tests/child_app_bootstrap.py isolation for settings and libraries before
+imports, and asserts the constructed app's library/list paths are confined. Both
+spike child probes use this helper. Launcher tests use fake interpreters; import CLI
+tests pass explicit temporary paths. Static/import-only children never construct OGP.
+
+**Personal-fork Preferences compression (2026-10-19).** A root layout's natural
+minimum does not guarantee readable controls when the dialog is explicitly made
+smaller. Preferences contained seven groups without scroll containment; measured
+button heights fell to 0–12 px while glyphs required 17 px. Use a natural-minimum
+scroll body and screen-bounded frame (ADR-062), leaving action rows accessible.
+Native/QSS button hints can change after first show: a garden-records action's
+minimum was initially 110 px and its final text hint 170 px. Refresh that floor
+after show. Check actual styled text rectangles, not just window dimensions.
+Internal QLineEdit widgets of Qt spin boxes/editable combos have their own frame
+geometry; audit their public parent control, rather than imposing a second border
+on the private editor. Keep map layout tests free of Chromium/network side effects.
+
+Visual QA also caught a footer-ownership defect missed by green glyph tests:
+`QLayout.addItem` did not adopt the detached footer's widget subtree, so buttons
+painted over the introduction. Reinsert with `addWidget` or `addLayout`, which
+reparents children. Assert ancestry and final viewport position as well as text
+rectangles, and inspect top/bottom renders of the form.
+
+New containers built inside a visible parent's showEvent must be shown explicitly.
+Without that, synchronous visibility checks for real-bed amendments and AI manual
+snippets failed even though delayed screenshots looked correct. Show the form and
+action scroll areas, retain explicitly hidden descendants, and keep the existing
+immediate-visibility tests. An exact client width of 800 px is invalid on an 800 px
+desktop once native decoration is included; assert available frame bounds instead.
+
+### Catalog snapshots: conversion is not trust-boundary validation (2026-10-19)
+
+ADR-063 review supplied NaN in a valid catalog MIME snapshot: footprint sizing
+fell back safely, but the non-finite metadata made the resulting plan unsavable.
+PlantSpeciesData.from_dict converts enums/defaults; it does not validate all field
+types or finite nested data. The new catalog boundary checks annotated fields and
+uses validate_plan_data before creation/activation, preserving additive fields.
+Bad payload regressions assert unchanged scene and command history. Relevance
+also precedes presentation limits: exact names/aliases rank ahead of partial matches.
+
+### Centred gallery layouts need label minima, not only wider parents (2026-10-19)
+
+At 18 pt, Rundkronen-Laubbaum advanced 252 px. Its widened tile measured 264 px
+but the centred inner QLabel remained 139 px wide, with minimum width zero.
+Floor the label's own width from its actual font, then the tile; use wrapped text
+bounds/lineSpacing with rounding slack for height (one measured 52-vs-51-px case).
+The 13-point EN / 18-point DE full-label regression checks all plant illustrations.
+
+Containment is checked twice: text inside QLabel, and QLabel inside tile. One
+98-px label reached y=165 in a 150-px tile; flooring the complete layout minimum
+(image + label + spacing + margins) fixes the parent's clipping too. The audit
+covers all 11 categories, EN/DE typography and light/dark themes.

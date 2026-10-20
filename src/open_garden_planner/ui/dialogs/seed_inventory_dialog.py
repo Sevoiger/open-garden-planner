@@ -13,7 +13,6 @@ from PyQt6.QtGui import QBrush, QColor, QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -35,6 +34,7 @@ from open_garden_planner.models.seed_inventory import (
     ViabilityStatus,
 )
 from open_garden_planner.ui.icons import get_icon
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 # ── Viability colours — separate palettes for light and dark mode ───────────────
 
@@ -94,6 +94,7 @@ _NUM_COLS = 7
 
 
 # ── Table model ─────────────────────────────────────────────────────────────────
+
 
 class SeedTableModel(QAbstractTableModel):
     """Table model backed by a list of SeedPacket objects."""
@@ -230,7 +231,7 @@ class SeedTableModel(QAbstractTableModel):
 
 # ── Edit dialog ─────────────────────────────────────────────────────────────────
 
-class SeedPacketEditDialog(QDialog):
+class SeedPacketEditDialog(ResponsiveDialog):
     """Form dialog for creating or editing a single SeedPacket."""
 
     def __init__(
@@ -391,7 +392,7 @@ class SeedPacketEditDialog(QDialog):
         sb.setSuffix("°")
         sb.setSpecialValueText("—")
         sb.setValue(sb.minimum())
-        sb.setFixedWidth(70)
+        sb.setMinimumWidth(70)
         return sb
 
     @staticmethod
@@ -400,7 +401,7 @@ class SeedPacketEditDialog(QDialog):
         sb.setRange(0, 365)
         sb.setSpecialValueText("—")
         sb.setValue(0)
-        sb.setFixedWidth(60)
+        sb.setMinimumWidth(60)
         return sb
 
     def _populate(self, p: SeedPacket) -> None:

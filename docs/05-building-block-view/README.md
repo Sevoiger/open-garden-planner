@@ -491,3 +491,71 @@ ConstraintListItem looks up and renders a descriptor in the existing translation
 context; it retains theme refresh and delete signals. The module accepts display
 values and returns text, with no commands, scene mutation or solver callbacks.
 Constraint geometry and satisfaction remain in their existing components.
+
+## Personal macOS fork: status instruments
+
+`ui/widgets/garden_status_bar.py::GardenStatusBar` extends QStatusBar with
+optional icon/label pairs. Resize and layout requests schedule one idempotent
+fit pass. Core coordinates, coordinate entry and zoom keep their permanent
+positions; complete secondary segments are shown in priority order when space
+permits. `GardenPlannerApp` wires existing status values and icons into it.
+No project data or scene geometry changes. See ADR-058 and
+`tests/integration/test_macos_layout.py`.
+
+
+## Personal fork: perennial garden records (ADR-059)
+
+`models/garden_memory.py` owns Qt-free period, card, event and receipt validation.
+`core/garden_memory.py` adapts those contracts to scene UUIDs and the existing command
+manager; both `GardenMemoryDialog` and MCP write providers call this service on the Qt
+thread. `services/garden_queries.py` derives direct/zone views from detached snapshots;
+`services/garden_archive.py` handles media, JSON/CSV and portable ZIPs without widgets.
+ProjectManager owns journal persistence, pre-enrichment backups and perennial season
+copies. Existing object names and plant-instance notes/cultivars remain authoritative.
+
+
+### Personal fork popup placement (ADR-060)
+
+`ui/widgets/popup_geometry.py` owns available-screen placement for CategoryDropdown
+and global search. Both hold scrollable content with bounded outer windows.
+SidebarController defaults to click activation, keeping selection pinning and
+canonical order; the existing hover implementation requires explicit constructor
+opt-in. WelcomeDialog separates scrollable content from its fixed footer.
+
+
+### Personal fork: sidebar content growth and classic lists (ADR-060/061)
+
+CollapsiblePanel handles open layout requests so asynchronously changed content can
+raise/lower its minimum floor after animation. LayersPanel derives visible-list height
+from row hints; embedded LayerList rows reserve rename-editor height and own padding.
+`services/classic_plant_lists.py` resolves a bundled starter manifest and delegates
+writes to PlantListStore. `scripts/import_classic_plants.py` is an explicit CLI entry,
+with portable examples in examples/plant-lists; no second species database is added.
+
+Personal fork: `ui/widgets/combo_wheel_guard.py` is installed by GardenPlannerApp
+and routes wheel gestures over closed choices to their nearest scroll viewport.
+`services/local_plant_import.py` validates/private-imports JSON sheets and merges
+search/list stores; `french_plant_catalog.py` builds name-localized and unspecified
+starter snapshots from resource metadata. `scripts/import_local_plants.py` is an
+explicit closed-app operation, not a startup hook.
+
+Personal fork: `ui/widgets/responsive_dialog.py` supplies `ResponsiveDialog`, the
+base for the 38 custom dialog types and the ad hoc guild-membership form. At first
+show it moves the completed form layout into a minimum-constrained scroll body,
+retains a terminal pure action row in a separate horizontal scroll container, and
+bounds the native frame to the dialog screen. Constructors, fields, callbacks and
+QDialog acceptance codes remain those of each original dialog.
+
+## Personal catalog palette (ADR-063)
+
+`services/plant_palette` is the Qt-free presentation/illustration lookup over the
+existing offline catalog; `ui/widgets/catalog_palette` builds bounded botanical
+rows and MIME snapshots. CategoryDropdown owns pagination and refresh-on-open;
+GlobalSearchField owns a focus-scoped snapshot. Application wiring supplies the
+shared provider manager and hands selected snapshots to CircleTool. Existing
+`build_plant` and CreateItemCommand remain the creation/parenting/undo path.
+
+The personal fork's `core.personal_plant_visual` decodes bounded embedded owner PNGs
+for plan items and catalog/profile thumbnails. `services.personal_plant_visual`
+explicitly remembers only that art field in the private library with a backup and
+atomic write; the panel keeps document art changes on the command stack (ADR-064).

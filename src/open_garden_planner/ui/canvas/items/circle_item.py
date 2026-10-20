@@ -377,14 +377,18 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
             # Render at a larger size so organic shapes fill the circle
             render_diameter = diameter * self._PLANT_FILL_SCALE
 
-            pixmap = render_plant_pixmap(
-                object_type=self.object_type,
-                diameter=render_diameter,
-                item_id=str(self._item_id),
-                species=self._plant_species,
-                category=self._plant_category,
-                tint_color=self.fill_color,
-            )
+            from open_garden_planner.core.personal_plant_visual import personal_visual_pixmap
+
+            pixmap = personal_visual_pixmap(self.metadata.get("plant_species"), canvas=True)
+            if pixmap is None:
+                pixmap = render_plant_pixmap(
+                    object_type=self.object_type,
+                    diameter=render_diameter,
+                    item_id=str(self._item_id),
+                    species=self._plant_species,
+                    category=self._plant_category,
+                    tint_color=self.fill_color,
+                )
 
             if pixmap is not None:
                 painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)

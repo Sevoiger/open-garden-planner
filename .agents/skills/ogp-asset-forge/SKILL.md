@@ -1,7 +1,13 @@
 ---
 name: ogp-asset-forge
-description: "Dev-time discipline for adding or regenerating Open Garden Planner textures and 2D art (US-E9 #264, Package 3b #309). Load when: adding or changing a fill-pattern texture (all 24 come out of scripts/generate_asset_forge_textures.py); generating object/plant art or 3D-era materials; judging texture style, tint-readability or tileability; or answering how assets get provenance and license clearance. The skill prescribes the Lush house style, the mechanical gates (pixel-exact --check, tileability, tint band), and the provenance rules — assets without provenance don't merge."
+description: Generate or revise OGP textures and 2D art with provenance, tint and tileability checks.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Asset Forge — texture & art generation discipline
 

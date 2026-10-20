@@ -1,7 +1,7 @@
 """Verify that identifiers cited across the skill libraries still resolve.
 
-The skill files under ``.claude/skills/`` and ``.agents/skills/`` (plus
-``CLAUDE.md`` / ``AGENTS.md``) are dense with cross-references: numbered doc
+The skill files and references under ``.agents/skills/`` (plus
+``AGENTS.md``) are dense with cross-references: numbered doc
 sections (``§8.10``), ADRs (``ADR-033``), functional requirements
 (``FR-AGENT-03``), ``file.py:line`` citations, and GitHub issue/PR numbers
 (``#336``). Nothing previously verified that those references still point at
@@ -71,9 +71,8 @@ from check_agent_context import HOST_ONLY_SKILLS  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CORPUS_GLOBS: tuple[str, ...] = (
-    ".claude/skills/*/SKILL.md",
     ".agents/skills/*/SKILL.md",
-    "CLAUDE.md",
+    ".agents/skills/*/references/*.md",
     "AGENTS.md",
 )
 
@@ -94,11 +93,7 @@ ISSUE_REGISTRY_PATH = "tests/data/issue_registry.json"
 # test_no_exemption_is_dead fails if an entry stops being needed.
 KNOWN_EXCEPTIONS: dict[tuple[str, str], str] = {
     (
-        ".claude/skills/debug-verbose/SKILL.md",
-        "pytestqt/plugin.py:220",
-    ): "third-party library (pytest-qt runtime dependency), not part of this repo",
-    (
-        ".agents/skills/debug-verbose/SKILL.md",
+        ".agents/skills/debug-verbose/references/technical-history.md",
         "pytestqt/plugin.py:220",
     ): "third-party library (pytest-qt runtime dependency), not part of this repo",
 }

@@ -2749,3 +2749,241 @@ they work, well under the 0.4 threshold — every texture on the canvas would ha
 a solid colour. *Reachability is necessary, not sufficient: before promoting a dormant
 path, ask whether it earns the degradation it costs, and put the answer in front of the
 person who has to look at it.*
+
+## ADR-058: Editable macOS personal fork
+
+**Status**: Accepted for the personal fork (owner mandate, 2026-10-18).
+
+**Context**: The owner targets Apple Silicon and wants source changes to take
+ effect after closing and reopening the GUI. Native Aqua surfaces conflict with
+ the existing comprehensive QSS theme, and permanent status instruments exceed
+ a narrow window's width (diagnostic rendering at 800 logical pixels).
+
+**Decision**: Prepare native Python 3.11 with the manifest-pinned uv, preserve
+ `uv.lock`/`pylock.toml`, install editable in `.venv`, and launch using the local
+ interpreter. No app bundle is needed for development. On macOS use Qt Fusion
+ beneath the existing QSS; keep native OS file dialogs and the system font.
+ `GardenStatusBar` fits lower priority icon/label pairs around the permanent
+ coordinates, typed input and zoom. Application fonts are never reduced to
+ conceal layout problems. Existing status values remain available on wider windows.
+
+**Consequences**: The launcher does no installation and propagates normal process
+ termination. Its startup log lives at `.local/logs/launcher.log`. Tools, private
+ garden sources and diagnostics stay ignored. Windows/Linux delivery and frozen
+ build gates are outside this fork's acceptance scope. Business, data safety,
+ translation and independent review gates remain. First launch was observed by
+ the owner with problems; visual acceptance of the fixes is still pending. The
+ reported spontaneous clicks have no established cause.
+
+**Evidence**: `tests/integration/test_macos_launcher.py` exercises real subprocess
+ launch and failure paths including spaces/accents; `test_macos_layout.py` checks
+ 800/1200/1800 logical pixel layouts with 13-point fonts and native-style replacement.
+
+
+## ADR-059: Perennial garden memory in the personal fork
+
+**Status**: Accepted for the personal fork, 2026-10-18; native manual acceptance pending.
+
+**Context**: A perennial garden needs stable objects and a dated journal across years.
+A named bulb group can be a single footprint without being a Qt group; approximate
+planting dates must not become fabricated exact dates. Geometry and botanical data
+already have authoritative owners.
+
+**Decision**: Keep names and plant-instance notes/cultivars in their existing fields.
+Store additive `metadata.garden_tracking` cards and a versioned top-level
+`garden_memory` journal. Shapes retain their UUIDs and geometry; explicit zone
+membership is independent of graphical grouping and plant parenting. Periods retain
+precision, canonical value and original label. Unknown dates and quantities remain
+unknown. Historical event targets retain readable names and optional area/quantity
+snapshots; editing today's geometry cannot rewrite them.
+
+Route GUI and token-gated MCP writes through `GardenMemoryService` and the existing
+global command stack. One successful edit is one undo step. Event creation takes a
+persistent request key and content fingerprint; receipts survive undo and deletion,
+so a delayed retry cannot resurrect a deliberately removed intervention. Disk
+persistence remains an explicit Save operation and MCP reports `persisted: false`.
+
+Keep FILE_VERSION unchanged for additive compatibility, but warn that an upstream
+save can discard fork-only tracking. Validate before atomic writes, keep an exclusive
+pre-enrichment original, and preserve opaque top-level extension fields. An enriched
+New Season copies all objects and tracking, even when the legacy annual option would
+remove plants. Attachments are copied beside saved plans; JSON/CSV expose records,
+while a validated ZIP carries the full plan and referenced media for restoration
+into a new folder. Restoration rejects traversal, links, duplicates and size excess.
+
+**Consequences**: This is a personal-fork extension, not an upstream schema guarantee.
+There is no automatic weather/soil inference, full French localization, Home Assistant
+server or physical actuation. See `docs/fork/FORMAT_SUIVI.md`,
+`UTILISATION_JARDIN.md` and `HOME_ASSISTANT.md`. Evidence: unit period/validation tests,
+`test_perennial_garden.py` for UI/undo/reopen/backups/media and a real local MCP client
+in `test_garden_memory_mcp.py`. No dependency or version bump.
+
+
+## ADR-060: Explicit sidebar activation and screen-bounded popups (personal fork)
+
+**Status**: Accepted for the personal fork after owner feedback, 2026-10-18.
+
+**Context**: The owner rejects hover opening in the right sidebar. Their capture
+shows category content beyond the right screen edge, and welcome action text
+clipped out of its buttons. An offscreen Qt 6.11 probe reproduces a category frame
+at `(754,589,638,866)` on an 800×800 available screen and welcome button content
+heights of -5/-6 pixels against 14-pixel font metrics.
+
+**Decision**: SidebarController defaults to explicit header clicks; selection-driven
+context panels still open normally. The historical hover state machine remains
+available only to explicit `hover_peek=True` callers, with its existing tests.
+There is no new persisted setting. Category and global-search popups share
+`ui/widgets/popup_geometry.py`: use the anchor's available screen rectangle in
+logical pixels, prefer below/above, clamp both axes and bound the window size.
+Frameless custom windows retain the existing QSS border. Scroll containers preserve
+access to content larger than the screen instead of clipping thumbnails or filters.
+Category opening resets scroll position; global search retains typing focus.
+
+Welcome content scrolls while its footer remains accessible, and actions use the
+application's normal button sizing rather than local large padding. Do not shrink
+application fonts to conceal layout defects. Replacing the welcome content's height
+squeeze yields 17-pixel content space for a 17-pixel font in the measured setup.
+
+**Evidence/limits**: `test_macos_popups.py` covers screen origins (including negative
+coordinates), all categories/themes, last-item selection, search focus, welcome text
+space and real main-window click behavior. Owner captures remain local/ignored.
+The owner located the blank-filter report in the category panels. A second probe
+reproduced a ground-cover trait hiding all 23 tree thumbnails and surviving close,
+theme change and reopening. Reopening now clears both text and trait filters;
+zero matches show a translated message and a Clear filters action. The same probe
+returns all 23 thumbnails after reopening. Tests exercise these transitions on the
+same category instance across theme changes. These fixes still require native owner
+confirmation and do not explain every earlier apparent automatic click.
+
+
+### ADR-060 personal-fork follow-up: late sidebar content (2026-10-18)
+
+A panel's initial minimum-height floor was frozen after its open animation. Adding
+layers later increased the fixed list but not that floor; opening another panel then
+squeezed the controls into overlapping positions. CollapsiblePanel now synchronizes
+its open floor on layout requests outside its animation, without forcing growth in
+collapsed state. Embedded layer rows own their padding, reserve the hidden rename
+editor's natural height and size the list from real row hints (up to five visible).
+The old 36px row became a 26px item widget under 5px+5px QSS padding and an18px rename
+field against a31px hint. The measured replacement gives a39px row and31px editor.
+`test_layer_layout_growth.py` covers grow/shrink with another open panel and theme
+modes; existing undo/layer tests remain authoritative for mutation behavior.
+
+## ADR-061: Explicit starter collections from the existing catalog
+
+**Status**: Accepted for the personal macOS fork, 2026-10-18.
+
+**Context**: The owner requests automated import of common plants and asks about
+existing libraries. The app already contains118 offline species and11 object categories;
+duplicating them in the custom-species store would create competing identities.
+
+**Decision**: Define four nine-species collections in `classic_plant_lists.json`,
+resolve all names through the bundled catalog, and use standard PlantList snapshots
+and the existing atomic PlantListStore importer. `services/classic_plant_lists.py`
+prevalidates the existing store and keeps an exclusive byte-for-byte original before
+an actual change. Explicit CLI execution while OGP is closed avoids racing its cached
+store. Replays recognize the collection descriptions (independent of user rename),
+skip installed lists, and retain user notes/deleted entries. Interrupted batches are
+recoverable by retry. No startup reinstallation, network lookup, new plant facts,
+instance planting dates or automatic placement in a garden. Portable examples use
+the normal list import format. UI generic-plant guidance now mentions offline search.
+
+**Consequences/evidence**: No dependency or project-format change. Existing favorites,
+private lists and custom data remain in their current stores. The source file is the
+existing bundled catalog, not a horticultural suitability guarantee. Tests exercise
+real store/GUI reopening, byte-preserving backups, replay after user edits, malformed
+store refusal, failed-write retry and portable/CLI paths with accents. See
+`docs/fork/PLANTES_ET_DESSIN.md`; source drawing/calibration is conditional on owner input.
+
+### ADR-061 follow-up: private JSON sheets and French identities
+
+The extended explicit importer writes validated custom-library snapshots for offline
+search, plus standard Plant Lists snapshots for drag/drop. French copies retain the
+bundled scientific identity, so they replace its search presentation instead of
+creating duplicate species; their prior English name remains a search alias. Generic
+starter labels have explicit stable provider IDs, no asserted scientific species,
+and no inferred size/environment/calendar data. Supplied sheet URLs define stable
+source IDs; every source field and SHA-256 remains in raw provenance. The original
+private sheets/PDFs never become bundled resources. Two files cannot be atomically
+replaced together: backup both before the first write, replace each atomically, and
+recover a partial installation through idempotent replay. The existing custom-library
+writer silently swallows I/O errors, so this importer uses a checked atomic write;
+it does not change the existing interactive write behavior. Explicit collection keys
+are installation markers; a new batch uses a new key. No live cache is modified:
+the application must be closed. Localize only still-original names in the earlier
+Classiques lists, preserving identities and user edits.
+
+## ADR-062: Shared scroll containment for personal-fork dialogs (2026-10-19)
+
+**Status:** Implemented on the personal feature branch; native owner acceptance pending.
+
+**Context:** The owner's Preferences capture showed overlapping API groups. An
+isolated 550 × 780 dark-theme probe measured buttons at 0–12 px high for 17 px
+of glyphs, with an Agent API group at 82 px versus a 235 px minimum hint. Several
+other custom forms had the same unbounded vertical-layout pattern.
+
+**Decision:** Use an explicit `ResponsiveDialog` base for every custom dialog and
+the guild-membership form. Once constructed, transfer the existing layout into
+a scroll body at its natural minimum. Preserve final pure action rows separately,
+with horizontal scrolling for wide rows. Clamp the native frame to the available
+screen and retain each dialog's explicit maximum size. Refresh native/QSS button
+minima after show. Avoid application-wide font reductions or per-dialog fixed
+pixel heights; preserve the original field references, signals and save paths.
+
+**Consequences:** No dependency, settings key, project format or data-write path
+change. Existing inner list/tab/form scroll areas remain in place; an outer bar
+appears only when their minimum cannot fit. The 38-type inventory and an ad hoc
+constructor check prevent a future custom dialog from silently bypassing the
+policy. Automated evidence cannot replace the owner's native visual acceptance.
+
+## ADR-063: Bounded catalog palettes and explicit botanical snapshots (2026-10-19)
+
+**Status:** Accepted for the personal macOS fork; visual lot approved by owner.
+
+**Context:** Toolbar categories held a small fixed artwork list while the local
+plant library held thousands of botanical records. Adding every record as a
+thumbnail widget would make startup and menus expensive, and artwork strings alone
+cannot retain provider identity or distinguish species from cultivars.
+
+**Decision:** Keep illustration shortcuts distinct from botanical rows.
+`services/plant_palette.py` owns Qt-free presentation grouping and exact/name/genus
+art lookup; `resources/plants/illustrations.json` records 246 illustration aliases,
+French labels, groups and 138 added deterministic recipes. Generic illustrations
+are a visual convention, never evidence of plant traits. Unknown records remain
+available through All plants; do not infer growth form from height. The existing
+`species_catalog.offline_catalog` remains the catalog source. Category palettes
+refresh on opening and render at most 48 botanical rows; global search refreshes
+its snapshot on focus and presents at most 12 results.
+
+A `GalleryItem.species_data` snapshot crosses click placement and the existing
+`application/x-ogp-plant-data` MIME channel. CircleTool passes a defensive copy into
+`build_plant`; creation still goes through CreateItemCommand for undo and parenting.
+Catalog records place on one click, while illustration-only circle tools retain
+centre/rim drawing. A new helper in `core/plant_sizing.py` bounds initial drawn
+footprints to 5000 cm and uses existing type defaults for unusable dimensions;
+recorded spread and spacing semantics are unchanged. No file-format version bump.
+The category database shortcut reuses the existing search dialog and one settings
+credentials factory in the application, with explicit online requests unchanged.
+
+**Consequences:** Full plant data are available without a matching botanical drawing.
+No new dependency, online image ingestion or user-library write path is added.
+Full snapshots already persist in .ogp metadata. The two new modules are covered by
+`tests/integration/test_catalog_palette.py`; all added SVGs pass the original
+QtSvg allowlist, size, determinism and rendered visual-weight gates. Owner native
+workflow acceptance remains separate from approval of the illustration sheet.
+
+### ADR-064 — Personal PNG plant visuals (personal macOS fork, 2026-10-19)
+
+Store original PNG bytes as base64 in the additive species snapshot field
+`raw_data.personal_visual_png`. This keeps placed plants portable through existing
+plan serialization, copying and catalog MIME without a file-version change or
+external path. Only the owner's explicit library-save action patches this field
+in the matching canonical species record; provider identity, botanical fields,
+unknown keys and unrelated records are preserved. New provider records keep their
+source identity. Back up the original library and use same-directory atomic replace.
+Document import/default actions use the command stack and never resize the plant;
+library preferences are explicitly separate from document undo. Existing placements
+retain their embedded snapshot. PNG decoding has byte/pixel limits and bounded caches;
+invalid embedded images fall back to standard art. Preserve aspect and alpha, with
+Y-flip compensation only in the canvas painter, including scene-based exports.
+Owner artwork stays private, outside the shipped asset/provenance registry.

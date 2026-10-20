@@ -390,3 +390,4 @@ class AgentProviders:
     undo: Callable[[], dict[str, Any]]
     redo: Callable[[], dict[str, Any]]
     get_plant_lists: Callable[[], list[dict[str, Any]]] | None = None
+    garden_write: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None

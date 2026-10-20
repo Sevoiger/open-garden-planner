@@ -42,7 +42,7 @@ def gallery_matches(item: Any, text: str = "", *, layers: set[str] | None = None
         if not text and (layers or functions):
             return False
         return not text or text.casefold() in item.name.casefold()
-    record = lookup_species(item.species) or lookup_species(item.name) or {}
+    record = item.species_data or lookup_species(item.species) or lookup_species(item.name) or {}
     text_matches = not text or text.casefold() in item.name.casefold() or matches_traits(record, text)
     return text_matches and matches_traits(record, layers=layers, functions=functions)
 
@@ -59,6 +59,7 @@ class GalleryItem:
         species: str = "",
         plant_category: PlantCategory | None = None,
         icon_name: str = "",
+        species_data: dict[str, Any] | None = None,
     ) -> None:
         self.name = name
         self.tool_type = tool_type
@@ -69,6 +70,7 @@ class GalleryItem:
         # Non-empty when the thumbnail came from a themed UI icon — marks the
         # item for re-rendering on theme switch (refresh_icon_thumbnails).
         self.icon_name = icon_name
+        self.species_data = species_data
 
 
 class GalleryCategory:
@@ -517,7 +519,7 @@ def build_toolbar_categories() -> list[GalleryCategory]:
     toolbar button and a Sims-style dropdown palette. The icon_name is the
     basename of an SVG in resources/icons/ui/.
     """
-    return [
+    categories = [
         GalleryCategory(_tr("Beds & Surfaces"), _bed_and_surface_items(), "garden_bed"),
         GalleryCategory(_tr("Basic Shapes"), _shape_items(), "rectangle"),
         GalleryCategory(_tr("Trees"), _tree_items(), "tree"),
@@ -532,6 +534,21 @@ def build_toolbar_categories() -> list[GalleryCategory]:
             _tr("Vertical & Container"), _vertical_container_items(), "vertical_container"
         ),
     ]
+    from open_garden_planner.services.plant_palette import illustrations
+    from open_garden_planner.ui.widgets.catalog_palette import PALETTE_TYPES
+
+    for category, group in zip(categories[2:6], ("tree", "shrub", "flower", "vegetable"), strict=True):
+        existing = {item.species for item in category.items}
+        tool, object_type, plant_category = PALETTE_TYPES[group]
+        for art in illustrations():
+            species = art["id"].replace("_", " ")
+            if art["group"] == group and species not in existing:
+                category.items.append(GalleryItem(
+                    name=art["name_fr"], tool_type=tool, object_type=object_type,
+                    plant_category=plant_category, species=species,
+                    thumbnail=render_svg_thumbnail(_SPECIES_DIR / f"{art['id']}.svg"),
+                ))
+    return categories
 
 
 def refresh_icon_thumbnails(categories: list[GalleryCategory]) -> None:

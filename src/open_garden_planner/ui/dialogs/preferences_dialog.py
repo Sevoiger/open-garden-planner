@@ -7,7 +7,6 @@ from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
@@ -20,6 +19,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class _PasswordLineEdit(QWidget):
         layout.addWidget(self._line_edit)
 
         self._toggle_btn = QPushButton(self.tr("Show"))
-        self._toggle_btn.setFixedWidth(60)
+        self._toggle_btn.setMinimumWidth(60)
         self._toggle_btn.setCheckable(True)
         self._toggle_btn.toggled.connect(self._on_toggle)
         layout.addWidget(self._toggle_btn)
@@ -61,7 +62,7 @@ class _PasswordLineEdit(QWidget):
         self._line_edit.setPlaceholderText(text)
 
 
-class PreferencesDialog(QDialog):
+class PreferencesDialog(ResponsiveDialog):
     """Preferences dialog with API Keys configuration.
 
     Allows users to enter and persist their online-service API credentials

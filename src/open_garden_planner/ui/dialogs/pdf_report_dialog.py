@@ -3,7 +3,6 @@
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
@@ -14,8 +13,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class PdfReportDialog(QDialog):
+
+class PdfReportDialog(ResponsiveDialog):
     """Dialog for configuring the multi-page PDF report.
 
     Allows the user to choose paper size, orientation, which pages to include,

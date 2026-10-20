@@ -1,0 +1,567 @@
+{
+  "version": 1,
+  "translations": {
+    "Tomato": {
+      "name_fr": "Tomate",
+      "group": "Potager"
+    },
+    "Sweet Pepper": {
+      "name_fr": "Poivron",
+      "group": "Potager"
+    },
+    "Chili Pepper": {
+      "name_fr": "Piment",
+      "group": "Potager"
+    },
+    "Eggplant": {
+      "name_fr": "Aubergine",
+      "group": "Potager"
+    },
+    "Cucumber": {
+      "name_fr": "Concombre",
+      "group": "Potager"
+    },
+    "Zucchini": {
+      "name_fr": "Courgette",
+      "group": "Potager"
+    },
+    "Winter Squash": {
+      "name_fr": "Courge d'hiver",
+      "group": "Potager"
+    },
+    "Bean (Bush)": {
+      "name_fr": "Haricot nain",
+      "group": "Potager"
+    },
+    "Garden Pea": {
+      "name_fr": "Petit pois",
+      "group": "Potager"
+    },
+    "Carrot": {
+      "name_fr": "Carotte",
+      "group": "Potager"
+    },
+    "Beet": {
+      "name_fr": "Betterave",
+      "group": "Potager"
+    },
+    "Radish": {
+      "name_fr": "Radis",
+      "group": "Potager"
+    },
+    "Spinach": {
+      "name_fr": "Épinard",
+      "group": "Potager"
+    },
+    "Lettuce": {
+      "name_fr": "Laitue",
+      "group": "Potager"
+    },
+    "Cabbage": {
+      "name_fr": "Chou pommé",
+      "group": "Potager"
+    },
+    "Cauliflower": {
+      "name_fr": "Chou-fleur",
+      "group": "Potager"
+    },
+    "Broccoli": {
+      "name_fr": "Brocoli",
+      "group": "Potager"
+    },
+    "Brussels Sprouts": {
+      "name_fr": "Chou de Bruxelles",
+      "group": "Potager"
+    },
+    "Chinese Cabbage": {
+      "name_fr": "Chou chinois",
+      "group": "Potager"
+    },
+    "Onion": {
+      "name_fr": "Oignon",
+      "group": "Potager"
+    },
+    "Leek": {
+      "name_fr": "Poireau",
+      "group": "Potager"
+    },
+    "Garlic": {
+      "name_fr": "Ail",
+      "group": "Potager"
+    },
+    "Chives": {
+      "name_fr": "Ciboulette",
+      "group": "Potager"
+    },
+    "Potato": {
+      "name_fr": "Pomme de terre",
+      "group": "Potager"
+    },
+    "Sweet Potato": {
+      "name_fr": "Patate douce",
+      "group": "Potager"
+    },
+    "Parsley": {
+      "name_fr": "Persil",
+      "group": "Aromatiques"
+    },
+    "Basil": {
+      "name_fr": "Basilic",
+      "group": "Aromatiques"
+    },
+    "Coriander": {
+      "name_fr": "Coriandre",
+      "group": "Aromatiques"
+    },
+    "Dill": {
+      "name_fr": "Aneth",
+      "group": "Aromatiques"
+    },
+    "Fennel": {
+      "name_fr": "Fenouil",
+      "group": "Aromatiques"
+    },
+    "Spearmint": {
+      "name_fr": "Menthe verte",
+      "group": "Aromatiques"
+    },
+    "Thyme": {
+      "name_fr": "Thym",
+      "group": "Aromatiques"
+    },
+    "Rosemary": {
+      "name_fr": "Romarin",
+      "group": "Aromatiques"
+    },
+    "Sage": {
+      "name_fr": "Sauge officinale",
+      "group": "Aromatiques"
+    },
+    "Oregano": {
+      "name_fr": "Origan",
+      "group": "Aromatiques"
+    },
+    "Lavender": {
+      "name_fr": "Lavande",
+      "group": "Aromatiques"
+    },
+    "Chamomile": {
+      "name_fr": "Camomille",
+      "group": "Aromatiques"
+    },
+    "Valerian": {
+      "name_fr": "Valériane",
+      "group": "Aromatiques"
+    },
+    "Echinacea": {
+      "name_fr": "Échinacée",
+      "group": "Fleurs et bulbes"
+    },
+    "Parsnip": {
+      "name_fr": "Panais",
+      "group": "Potager"
+    },
+    "Celery": {
+      "name_fr": "Céleri",
+      "group": "Potager"
+    },
+    "Asparagus": {
+      "name_fr": "Asperge",
+      "group": "Potager"
+    },
+    "Rhubarb": {
+      "name_fr": "Rhubarbe",
+      "group": "Potager"
+    },
+    "Strawberry": {
+      "name_fr": "Fraisier",
+      "group": "Potager"
+    },
+    "Sweet Corn": {
+      "name_fr": "Maïs doux",
+      "group": "Potager"
+    },
+    "Chicory": {
+      "name_fr": "Chicorée",
+      "group": "Potager"
+    },
+    "Endive": {
+      "name_fr": "Chicorée frisée",
+      "group": "Potager"
+    },
+    "Rocket (Arugula)": {
+      "name_fr": "Roquette",
+      "group": "Potager"
+    },
+    "Kohlrabi": {
+      "name_fr": "Chou-rave",
+      "group": "Potager"
+    },
+    "Artichoke": {
+      "name_fr": "Artichaut",
+      "group": "Potager"
+    },
+    "Melon": {
+      "name_fr": "Melon",
+      "group": "Potager"
+    },
+    "Watermelon": {
+      "name_fr": "Pastèque",
+      "group": "Potager"
+    },
+    "Runner Bean": {
+      "name_fr": "Haricot d'Espagne",
+      "group": "Potager"
+    },
+    "Broad Bean": {
+      "name_fr": "Fève",
+      "group": "Potager"
+    },
+    "Sweet Pea": {
+      "name_fr": "Pois de senteur",
+      "group": "Fleurs et bulbes"
+    },
+    "Sunflower": {
+      "name_fr": "Tournesol",
+      "group": "Fleurs et bulbes"
+    },
+    "Nasturtium": {
+      "name_fr": "Capucine",
+      "group": "Fleurs et bulbes"
+    },
+    "Marigold": {
+      "name_fr": "Rose d'Inde",
+      "group": "Fleurs et bulbes"
+    },
+    "Borage": {
+      "name_fr": "Bourrache",
+      "group": "Fleurs et bulbes"
+    },
+    "Lemon Balm": {
+      "name_fr": "Mélisse",
+      "group": "Aromatiques"
+    },
+    "Hyssop": {
+      "name_fr": "Hysope",
+      "group": "Aromatiques"
+    },
+    "Flax": {
+      "name_fr": "Lin",
+      "group": "Fleurs et bulbes"
+    },
+    "Pot Marigold": {
+      "name_fr": "Souci",
+      "group": "Fleurs et bulbes"
+    },
+    "Kale": {
+      "name_fr": "Chou kale",
+      "group": "Potager"
+    },
+    "Apple Tree": {
+      "name_fr": "Pommier",
+      "group": "Arbres et fruitiers"
+    },
+    "Cherry Tree": {
+      "name_fr": "Cerisier",
+      "group": "Arbres et fruitiers"
+    },
+    "Pear Tree": {
+      "name_fr": "Poirier",
+      "group": "Arbres et fruitiers"
+    },
+    "Plum Tree": {
+      "name_fr": "Prunier",
+      "group": "Arbres et fruitiers"
+    },
+    "Peach Tree": {
+      "name_fr": "Pêcher",
+      "group": "Arbres et fruitiers"
+    },
+    "Fig Tree": {
+      "name_fr": "Figuier",
+      "group": "Arbres et fruitiers"
+    },
+    "Olive Tree": {
+      "name_fr": "Olivier",
+      "group": "Arbres et fruitiers"
+    },
+    "Lemon Tree": {
+      "name_fr": "Citronnier",
+      "group": "Arbres et fruitiers"
+    },
+    "Orange Tree": {
+      "name_fr": "Oranger",
+      "group": "Arbres et fruitiers"
+    },
+    "Walnut Tree": {
+      "name_fr": "Noyer",
+      "group": "Arbres et fruitiers"
+    },
+    "Oak": {
+      "name_fr": "Chêne",
+      "group": "Arbres et fruitiers"
+    },
+    "Maple": {
+      "name_fr": "Érable",
+      "group": "Arbres et fruitiers"
+    },
+    "Birch": {
+      "name_fr": "Bouleau",
+      "group": "Arbres et fruitiers"
+    },
+    "Willow": {
+      "name_fr": "Saule",
+      "group": "Arbres et fruitiers"
+    },
+    "Magnolia": {
+      "name_fr": "Magnolia",
+      "group": "Arbres et fruitiers"
+    },
+    "Pine": {
+      "name_fr": "Pin",
+      "group": "Arbres et fruitiers"
+    },
+    "Spruce": {
+      "name_fr": "Épicéa",
+      "group": "Arbres et fruitiers"
+    },
+    "Boxwood": {
+      "name_fr": "Buis",
+      "group": "Arbustes et petits fruits"
+    },
+    "Rhododendron": {
+      "name_fr": "Rhododendron",
+      "group": "Arbustes et petits fruits"
+    },
+    "Blueberry": {
+      "name_fr": "Myrtillier",
+      "group": "Arbustes et petits fruits"
+    },
+    "Raspberry": {
+      "name_fr": "Framboisier",
+      "group": "Arbustes et petits fruits"
+    },
+    "Blackberry": {
+      "name_fr": "Ronce à mûres",
+      "group": "Arbustes et petits fruits"
+    },
+    "Gooseberry": {
+      "name_fr": "Groseillier à maquereau",
+      "group": "Arbustes et petits fruits"
+    },
+    "Currant": {
+      "name_fr": "Groseillier",
+      "group": "Arbustes et petits fruits"
+    },
+    "Holly": {
+      "name_fr": "Houx",
+      "group": "Arbustes et petits fruits"
+    },
+    "Juniper": {
+      "name_fr": "Genévrier",
+      "group": "Arbustes et petits fruits"
+    },
+    "Forsythia": {
+      "name_fr": "Forsythia",
+      "group": "Arbustes et petits fruits"
+    },
+    "Lilac": {
+      "name_fr": "Lilas",
+      "group": "Arbustes et petits fruits"
+    },
+    "Elderberry": {
+      "name_fr": "Sureau",
+      "group": "Arbustes et petits fruits"
+    },
+    "Privet": {
+      "name_fr": "Troène",
+      "group": "Arbustes et petits fruits"
+    },
+    "Viburnum": {
+      "name_fr": "Viorne",
+      "group": "Arbustes et petits fruits"
+    },
+    "Barberry": {
+      "name_fr": "Épine-vinette",
+      "group": "Arbustes et petits fruits"
+    },
+    "Camellia": {
+      "name_fr": "Camélia",
+      "group": "Arbustes et petits fruits"
+    },
+    "Spirea": {
+      "name_fr": "Spirée",
+      "group": "Arbustes et petits fruits"
+    },
+    "Rose": {
+      "name_fr": "Rosier rugueux",
+      "group": "Arbustes et petits fruits"
+    },
+    "Tulip": {
+      "name_fr": "Tulipe",
+      "group": "Fleurs et bulbes"
+    },
+    "Daffodil": {
+      "name_fr": "Narcisse",
+      "group": "Fleurs et bulbes"
+    },
+    "Dahlia": {
+      "name_fr": "Dahlia",
+      "group": "Fleurs et bulbes"
+    },
+    "Peony": {
+      "name_fr": "Pivoine",
+      "group": "Fleurs et bulbes"
+    },
+    "Iris": {
+      "name_fr": "Iris",
+      "group": "Fleurs et bulbes"
+    },
+    "Lily": {
+      "name_fr": "Lis",
+      "group": "Fleurs et bulbes"
+    },
+    "Zinnia": {
+      "name_fr": "Zinnia",
+      "group": "Fleurs et bulbes"
+    },
+    "Cosmos": {
+      "name_fr": "Cosmos",
+      "group": "Fleurs et bulbes"
+    },
+    "Aster": {
+      "name_fr": "Aster",
+      "group": "Fleurs et bulbes"
+    },
+    "Chrysanthemum": {
+      "name_fr": "Chrysanthème",
+      "group": "Fleurs et bulbes"
+    },
+    "Geranium": {
+      "name_fr": "Géranium des balcons",
+      "group": "Fleurs et bulbes"
+    },
+    "Petunia": {
+      "name_fr": "Pétunia",
+      "group": "Fleurs et bulbes"
+    },
+    "Pansy": {
+      "name_fr": "Pensée",
+      "group": "Fleurs et bulbes"
+    },
+    "Hydrangea": {
+      "name_fr": "Hortensia",
+      "group": "Fleurs et bulbes"
+    },
+    "Clematis": {
+      "name_fr": "Clématite",
+      "group": "Grimpantes"
+    },
+    "Wisteria": {
+      "name_fr": "Glycine",
+      "group": "Grimpantes"
+    },
+    "Jasmine": {
+      "name_fr": "Jasmin",
+      "group": "Grimpantes"
+    },
+    "Hibiscus": {
+      "name_fr": "Hibiscus",
+      "group": "Arbustes et petits fruits"
+    },
+    "Crocus": {
+      "name_fr": "Crocus",
+      "group": "Fleurs et bulbes"
+    }
+  },
+  "generic_groups": {
+    "Vivaces et fleurs": [
+      "Sauge",
+      "Lavande",
+      "Géranium vivace",
+      "Hosta",
+      "Heuchère",
+      "Astilbe",
+      "Agapanthe",
+      "Alchémille",
+      "Anémone",
+      "Ancolie",
+      "Achillée",
+      "Aconit",
+      "Bergenia",
+      "Campanule",
+      "Cœur-de-Marie",
+      "Digitale",
+      "Gaura",
+      "Hémérocalle",
+      "Hellébore",
+      "Lupin",
+      "Monarde",
+      "Népéta",
+      "Phlox",
+      "Rudbeckia",
+      "Sedum",
+      "Véronique",
+      "Verveine",
+      "Épimédium",
+      "Fougère",
+      "Pavot"
+    ],
+    "Arbustes et grimpantes": [
+      "Rosier",
+      "Hortensia",
+      "Clématite",
+      "Glycine",
+      "Jasmin",
+      "Chèvrefeuille",
+      "Bignone",
+      "Passiflore",
+      "Abélia",
+      "Aucuba",
+      "Bambou",
+      "Buddleia",
+      "Céanothe",
+      "Callicarpa",
+      "Ciste",
+      "Cornouiller",
+      "Cotinus",
+      "Deutzia",
+      "Escallonia",
+      "Fusain",
+      "Laurier",
+      "Mahonia",
+      "Nandina",
+      "Oranger du Mexique",
+      "Osmanthe",
+      "Photinia",
+      "Pittosporum",
+      "Potentille",
+      "Seringat",
+      "Weigelia"
+    ],
+    "Graminées et couvre-sols": [
+      "Carex",
+      "Fétuque",
+      "Miscanthus",
+      "Pennisetum",
+      "Stipa",
+      "Liriope",
+      "Ophiopogon",
+      "Pervenche",
+      "Pachysandra",
+      "Bugle"
+    ],
+    "Arbres à préciser": [
+      "Érable",
+      "Magnolia",
+      "Cerisiers à fleurs",
+      "Liquidambar",
+      "Arbre de Judée",
+      "Paulownia",
+      "Catalpa",
+      "Albizia",
+      "Amélanchier",
+      "Ginkgo"
+    ]
+  }
+}

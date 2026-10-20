@@ -1,6 +1,6 @@
 # Plant sprites — style contract (binding)
 
-All SVGs in `species/` (108) and `categories/` (15) are **generated** by
+All SVGs in `species/` (246) and `categories/` (15) are **generated** by
 `scripts/generate_plant_sprites.py`. **Do not hand-edit** — edit the recipe
 table in the script and regenerate; `--check` (and the unit gate
 `tests/unit/test_plant_sprite_conformance.py`) fails on any drift.
@@ -59,3 +59,8 @@ table in the script and regenerate; `--check` (and the unit gate
    judge by XML or a browser).
 4. `pytest tests/unit/test_plant_sprite_conformance.py tests/integration/test_plant_sprite_rendering.py`
 5. Owner sign-off on a contact sheet for style changes (style is sovereign).
+
+Personal fork additions use the recipe register `illustrations.json` alongside the
+original 108 generator recipes. The register also exposes all artwork in toolbar
+categories; botanical data remain independent. The owner approved 138 added
+illustrations on 2026-10-19. All original mechanical gates remain unchanged.

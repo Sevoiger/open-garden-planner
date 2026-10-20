@@ -216,3 +216,15 @@
 A downloaded installer whose permitted release origin, matching manifest entry,
 byte count and SHA-256 digest were checked before finalizing its file. This denotes
 download integrity; it is not an Authenticode signature or provenance attestation.
+
+
+## Personal-fork garden records
+
+- **Garden group**: one named footprint representing several plants, independent of a
+  Qt graphics group; quantity and species may be unknown.
+- **Occurrence period**: entered date with day/month/season/year/unknown precision,
+  separate from an intervention's UTC creation timestamp.
+- **Creation receipt**: persistent request-key/content fingerprint resolving retries to
+  one event, retained after undo/deletion so a retry does not recreate removed history.
+- **Zone history**: events targeting an explicitly linked zone, shown separately from
+  the plant's direct events; this does not infer physical containment.

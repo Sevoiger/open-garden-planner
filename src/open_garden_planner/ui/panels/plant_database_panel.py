@@ -1,8 +1,10 @@
 """Plant database panel for displaying plant species metadata."""
 
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import date
-from typing import cast
+from pathlib import Path
+from typing import Any, cast
 
 from PyQt6.QtCore import QDate, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -12,6 +14,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGraphicsItem,
     QHBoxLayout,
@@ -339,6 +342,23 @@ class PlantDatabasePanel(QWidget):
         self.info_layout = QVBoxLayout(self.info_widget)
         self.info_layout.setContentsMargins(2, 4, 2, 4)
         self.info_layout.setSpacing(4)
+
+        self._visual_controls = QWidget()
+        visual_layout = QVBoxLayout(self._visual_controls)
+        visual_layout.setContentsMargins(0, 0, 0, 0)
+        self.import_visual_button = QPushButton(self.tr("Import personal PNG…"))
+        self.import_visual_button.clicked.connect(self._import_personal_visual)
+        visual_layout.addWidget(self.import_visual_button)
+        self.remove_visual_button = QPushButton(self.tr("Use default illustration"))
+        self.remove_visual_button.clicked.connect(lambda: self._set_personal_visual(None))
+        visual_layout.addWidget(self.remove_visual_button)
+        self.remember_visual_button = QPushButton(self.tr("Remember visual in library"))
+        self.remember_visual_button.setToolTip(self.tr(
+            "Use this visual for future placements of this plant. Existing plants keep their own visual."
+        ))
+        self.remember_visual_button.clicked.connect(self._remember_personal_visual)
+        visual_layout.addWidget(self.remember_visual_button)
+        self.info_layout.addWidget(self._visual_controls)
 
         # Info labels
         self.no_selection_label = QLabel(self.tr("Select a plant to view details"))
@@ -690,6 +710,7 @@ class PlantDatabasePanel(QWidget):
 
         self.planting_date_edit = ClickableDateEdit()
         self.planting_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.planting_date_edit.setSpecialValueText(self.tr("Unknown date"))
         self.planting_date_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         # Date is already initialized to minimum date in __init__, shows as empty
         self.planting_date_edit.dateChanged.connect(self._on_planting_date_changed)
@@ -903,10 +924,11 @@ class PlantDatabasePanel(QWidget):
             return
         d = self.planting_date_edit.date()
         # Save the selected date
-        value = d.toPyDate().isoformat()
+        known = d != self.planting_date_edit.minimumDate()
+        value = d.toPyDate().isoformat() if known else None
         self._update_instance_metadata("planting_date", value)
-        # Update age display
-        self._update_age_label(d.toPyDate())
+        # Update age display without inventing a sentinel planting date.
+        self._update_age_label(d.toPyDate() if known else None)
 
     def _update_age_label(self, planting_date: date | None) -> None:
         """Update the age label based on planting date.
@@ -1310,6 +1332,7 @@ class PlantDatabasePanel(QWidget):
         """Hide plant details and show 'no selection' message."""
         self._current_plant_data = None
         self._current_plant_item = None
+        self._visual_controls.hide()
         self._update_favorite_button()
         self.no_selection_label.setText(self.tr("Select a plant to view details"))
         self.no_selection_label.setVisible(True)
@@ -1345,11 +1368,12 @@ class PlantDatabasePanel(QWidget):
         # Keep the plant item reference so Create Custom can use it
         # self._current_plant_item is set by set_selected_items
         self._current_plant_data = None
+        self._visual_controls.hide()
         self._update_favorite_button()
         self.no_selection_label.setText(
             self.tr(
                 "No species data.\n\n"
-                "Click 'Search' to find species online,\n"
+                "Click 'Search' to choose an offline species or search online,\n"
                 "or 'Create Custom' to define your own."
             )
         )
@@ -1384,6 +1408,7 @@ class PlantDatabasePanel(QWidget):
         """
         self._current_plant_data = plant_data
         self._current_plant_item = plant_item
+        self._visual_controls.show()
         self._refresh_traits(plant_data)
         self.no_selection_label.setVisible(False)
 
@@ -1531,6 +1556,11 @@ class PlantDatabasePanel(QWidget):
         self.variety_edit.setText(instance_data.get("variety_cultivar") or "")
 
         # Planting date
+        tracked = bool(getattr(self._current_plant_item, "metadata", {}).get("garden_tracking"))
+        self.planting_date_edit.setEnabled(not tracked)
+        self.planting_date_edit.setToolTip(
+            self.tr("Edit exact or partial dates in Garden records.") if tracked else ""
+        )
         planting_date_str = instance_data.get("planting_date")
         planting_date_val = None
         self.planting_date_edit.blockSignals(True)
@@ -1540,10 +1570,10 @@ class PlantDatabasePanel(QWidget):
                 self.planting_date_edit.setDate(QDate(planting_date_val))
             except (ValueError, TypeError):
                 # If invalid date, default to today
-                self.planting_date_edit.setDate(QDate.currentDate())
+                self.planting_date_edit.setDate(self.planting_date_edit.minimumDate())
         else:
-            # No date saved - default to today
-            self.planting_date_edit.setDate(QDate.currentDate())
+            # Preserve unknown dates rather than displaying an invented day.
+            self.planting_date_edit.setDate(self.planting_date_edit.minimumDate())
         self.planting_date_edit.blockSignals(False)
 
         # Update age label
@@ -1698,8 +1728,16 @@ class PlantDatabasePanel(QWidget):
         self._profile_links.setVisible(bool(links))
 
         # Thumbnail
+        from open_garden_planner.core.personal_plant_visual import personal_visual_pixmap
+
+        personal = personal_visual_pixmap(plant_data.to_dict())
         thumb_url = plant_data.thumbnail_url or plant_data.image_url
-        if thumb_url:
+        if personal is not None:
+            self._profile_thumbnail.setPixmap(personal.scaled(
+                96, 96, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        elif thumb_url:
             cached = get_cached_thumbnail(thumb_url)
             if cached:
                 from PyQt6.QtGui import QPixmap
@@ -1731,6 +1769,62 @@ class PlantDatabasePanel(QWidget):
         # Update favorite button
         self._current_plant_data = plant_data
         self._update_favorite_button()
+
+    def _import_personal_visual(self) -> None:
+        from open_garden_planner.core.personal_plant_visual import import_png
+
+        path, _ = QFileDialog.getOpenFileName(self, self.tr("Import personal PNG…"), "", "PNG (*.png)")
+        if not path:
+            return
+        try:
+            self._set_personal_visual(import_png(Path(path)))
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self.tr("Personal visual"), self.tr(
+                "Choose a valid PNG up to 4 MiB and 16 megapixels.\n{error}"
+            ).format(error=error))
+
+    def _set_personal_visual(self, encoded: str | None) -> None:
+        from open_garden_planner.core.commands import ChangePropertyCommand
+        from open_garden_planner.core.personal_plant_visual import VISUAL_KEY
+
+        item = cast(Any, self._current_plant_item)
+        if item is None or self._current_plant_data is None:
+            return
+        old = deepcopy(item.metadata["plant_species"])
+        new = deepcopy(old)
+        raw = new.setdefault("raw_data", {})
+        if encoded is None:
+            raw.pop(VISUAL_KEY, None)
+        else:
+            raw[VISUAL_KEY] = encoded
+        if new == old:
+            return
+
+        def apply(target: Any, value: dict[str, Any]) -> None:
+            target.metadata["plant_species"] = deepcopy(value)
+            target.update()
+            if self._current_plant_item is target:
+                self._update_profile_header(PlantSpeciesData.from_dict(value))
+
+        command = ChangePropertyCommand(item, "personal visual", old, new, apply)
+        scene = item.scene()
+        manager = scene.get_command_manager() if scene and hasattr(scene, "get_command_manager") else None
+        if manager:
+            manager.execute(command)
+        else:
+            command.execute()
+
+    def _remember_personal_visual(self) -> None:
+        from open_garden_planner.services.personal_plant_visual import remember_visual
+
+        if self._current_plant_data is None:
+            return
+        try:
+            remember_visual(get_plant_library(), self._current_plant_data.to_dict())
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self.tr("Personal visual"), str(error))
+            return
+        QMessageBox.information(self, self.tr("Personal visual"), self.tr("Visual saved for future placements."))
 
     def _on_toggle_favorite(self) -> None:
         """Toggle favorite status for currently displayed plant."""

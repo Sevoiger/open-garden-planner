@@ -4,7 +4,6 @@ from typing import Any
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -18,6 +17,7 @@ from PyQt6.QtWidgets import (
 
 from open_garden_planner.core.frost_dates import is_valid_frost_date
 from open_garden_planner.ui.theme import theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
 class _FrostLookupWorker(QThread):
@@ -43,7 +43,7 @@ class _FrostLookupWorker(QThread):
             self.error.emit(str(exc))
 
 
-class LocationDialog(QDialog):
+class LocationDialog(ResponsiveDialog):
     """Dialog for setting the garden's GPS location and frost dates.
 
     Allows entering latitude/longitude (decimal degrees) and optionally

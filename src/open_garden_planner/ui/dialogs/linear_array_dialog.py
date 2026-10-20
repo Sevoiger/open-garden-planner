@@ -2,7 +2,6 @@
 
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -13,8 +12,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
-class LinearArrayDialog(QDialog):
+
+class LinearArrayDialog(ResponsiveDialog):
     """Dialog for creating a linear array of an object.
 
     Allows specifying count, spacing, and direction to place N copies

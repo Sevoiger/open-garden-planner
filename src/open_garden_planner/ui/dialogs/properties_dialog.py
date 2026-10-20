@@ -4,7 +4,6 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -25,6 +24,7 @@ from open_garden_planner.ui.canvas.items import (
     RectangleItem,
 )
 from open_garden_planner.ui.theme import theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
 class ColorButton(QPushButton):
@@ -87,7 +87,7 @@ class ColorButton(QPushButton):
                 self.set_color(color)
 
 
-class PropertiesDialog(QDialog):
+class PropertiesDialog(ResponsiveDialog):
     """Dialog for editing object properties."""
 
     def __init__(self, item: QGraphicsItem, parent: QWidget | None = None) -> None:

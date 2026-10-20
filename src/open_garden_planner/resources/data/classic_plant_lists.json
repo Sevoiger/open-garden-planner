@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "source": "OGP bundled plant_species.json; starter selection, not a site suitability recommendation",
+  "lists": [
+    {"key":"trees","name":"Classiques — arbres et fruitiers","plants":["Apple Tree","Cherry Tree","Pear Tree","Plum Tree","Fig Tree","Olive Tree","Oak","Birch","Magnolia"]},
+    {"key":"shrubs","name":"Classiques — arbustes et grimpantes","plants":["Rose","Hydrangea","Lilac","Forsythia","Boxwood","Raspberry","Blueberry","Clematis","Wisteria"]},
+    {"key":"flowers","name":"Classiques — fleurs et bulbes","plants":["Lavender","Peony","Iris","Tulip","Daffodil","Crocus","Echinacea","Dahlia","Lily"]},
+    {"key":"kitchen","name":"Classiques — potager et aromatiques","plants":["Tomato","Lettuce","Carrot","Radish","Strawberry","Thyme","Rosemary","Basil","Chives"]}
+  ]
+}

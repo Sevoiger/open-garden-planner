@@ -16,7 +16,6 @@ from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import (
     QComboBox,
     QDateEdit,
-    QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGraphicsScene,
@@ -31,9 +30,10 @@ from open_garden_planner.core.object_types import (
     is_bed_type,
 )
 from open_garden_planner.models.task import ManualTask
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
-class TaskDialog(QDialog):
+class TaskDialog(ResponsiveDialog):
     """Modal dialog for adding or editing a single manual to-do task."""
 
     def __init__(

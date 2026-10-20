@@ -1,15 +1,13 @@
 ---
 name: ogp-external-positioning
-description: >
-  Load when doing anything outward-facing for Open Garden Planner: writing or editing the
-  README, release notes, announcements, wiki pages, or any public claim about capabilities;
-  adding or upgrading a dependency (license-compatibility check); integrating or documenting
-  an external service (Google Maps, plant APIs, weather); answering licensing questions
-  (GPLv3, PyQt6, asset/texture licensing); positioning the project against other tools;
-  or publishing benchmarks / accuracy claims. This skill is the anti-oversell guardian —
-  it defines what may be claimed today, what must not be, and the trust obligations
-  (checksums, unsigned installer, CI-owned releases) that come with every release.
+description: Check OGP public capability, licensing and external-service claims when preparing outward-facing material.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP External Positioning — licensing, claims, ecosystem, release trust
 

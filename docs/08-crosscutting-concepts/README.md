@@ -2579,3 +2579,86 @@ The map's calibration, crop/mosaic math and existing cancellation outcomes are u
 The load seam is the second half. `ProjectManager._deserialize_item_core` refuses a polygon above `MAX_POLYGON_VERTICES = 16_384` and skips it with a logged warning (counted for the app's existing skipped-item notice), so a hostile `.ogp` cannot stall the loader or exhaust memory; the rest of the plan loads normally. At this ceiling the degraded outline is ~69 ms, and no legible garden outline comes near it. Both constants live in `ui/canvas/items/polygon_item.py` and are the only place to retune the bound. The measured cost table, the pen-width finding and the rejected alternatives (convex-hull / bounding-box fill, a hairline-but-wide pen, reflex counting, a low load ceiling) are in ADR-057; the regression is pinned by `tests/integration/test_polygon_paint_bound.py`.
 
 An "item made from an item" copies a shape's **look** through one seam that the **offset tool and mirror** share, `core/item_look.py::copy_visual_style`. It copies both the serialized attributes (`fill_pattern`, `fill_color`, `stroke_color`, `stroke_width`, `stroke_style`) and the live `QPen`/`QBrush`, because a copy that writes only one of the two looks right until the next save (#470). Chamfer, fillet and trim are the same shape of bug and are **not** routed here: they are owned by the in-flight L1 branch's #441, so routing them now would collide.
+
+## Personal macOS fork: appearance and status sizing
+
+On macOS, apply the existing QSS over Fusion (ADR-058), preserving the OS font
+and native dialogs. `GardenStatusBar` prioritises complete icon/label pairs and
+recomputes visibility after both resizing and content-driven layout requests.
+Hidden secondary status details reappear when the window has enough space;
+coordinates, typed input and zoom stay permanent. Run layout regression tests
+with realistic 13-point fonts as well as the offscreen platform's smaller default.
+
+
+## Personal fork: garden memory safety and chronology (ADR-059)
+
+Partial dates store day/month/season/year/unknown precision and their entered label.
+Search uses inclusive conventional northern calendar ranges; bounds are never persisted
+as invented planting days. Empty numeric fields are unknown; explicit zero survives.
+French decimal commas and French/English/German season names are accepted. Event
+creation timestamps are independent UTC audit timestamps, not occurrence dates.
+Direct object events and zone events are displayed separately. Historical areas and
+names are snapshots, never recalculated from current shapes. Existing names/notes are
+shared rather than duplicated. Unknown top-level extension fields survive fork writes;
+unknown future object types retain the upstream loader's limitations. Upstream save
+compatibility is explicitly limited: keep the pre-enrichment backup and use this fork
+for enriched files. ZIP restoration is bounded and destination-contained; JSON/CSV
+exports alone do not embed external media. See `docs/fork/FORMAT_SUIVI.md`.
+
+
+### Personal fork override: sidebar and custom popup sizing (ADR-060)
+
+The personal fork's default sidebar is click-operated; the ADR-030 hover-peek behavior
+requires explicit constructor opt-in. Canonical layout order and selection-driven
+pinning are unchanged. Custom category/search windows use their anchor screen's
+available logical geometry, including negative origins, with bounded size and
+scrollable overflow. Welcome content must scroll before action text is squeezed
+below font metrics. See `tests/integration/test_macos_popups.py`.
+
+
+### Personal fork: changing content and catalog reuse (ADR-060/061)
+
+An accordion's open floor must follow layout changes after animation, with an equality
+guard to avoid self-triggered layout churn. Layer list item widgets provide their own
+padding and size hints; do not subtract generic item padding from a rename editor.
+Starter collections reuse canonical bundled species keys and existing list snapshots,
+preserve unknown traits and require a closed app for external import. No garden
+positions or confirmed planting dates are inferred. See `PLANTES_ET_DESSIN.md` for
+radius/angle input and the dimension evidence needed before tracing a real sketch.
+
+Personal-fork form scrolling: closed QComboBox controls never consume the wheel as
+an edit. An application event filter forwards to the nearest QAbstractScrollArea
+viewport, retaining device, pixel/angle deltas and phase. On backends where that
+viewport ignores pixel-only gestures, its scrollbars receive the pixel displacement.
+An open choice view and explicit keyboard/click editing remain normal. No global
+font, input-focus policy, spin-box behavior or canvas-wheel behavior changes.
+
+Tests isolate file-backed app data as well as QSettings: conftest overrides the
+plant-library path resolver before collection (protecting captured function aliases),
+then redirects each test and resets plant/list/seed stores. Production path resolution
+and directory creation retain their platform behavior; there is no new setting or flag.
+
+Personal-fork dialog sizing (FR-FORK-UI-03): use `ResponsiveDialog` for custom
+forms. The first show transfers the existing layout to a scroll body and preserves
+its natural minimum, with automatic scrollbars on both axes. Final pure button
+rows stay outside form scrolling; wide action rows scroll horizontally. Respect
+explicit maximum sizes and clamp minimums/frame dimensions to available logical
+screen geometry. Resolve stylesheet hints after show as well as before reparenting:
+native button hints can change when shown. Do not reduce fonts to fit. The garden
+records splitter explicitly preserves its right pane's layout minimum. Fixed text
+button/spin/shortcut widths are minimum widths, allowing longer locale strings.
+The audit instantiates all 38 types, walks their tabs, checks styled button text
+rectangles and field/group minima on a 600 × 440 desktop (13 pt dark English and
+18 pt light German), then verifies a real Preferences save/reopen. Map layout uses
+a QWidget stand-in for WebEngine, with no browser or network request.
+
+### Personal catalog palettes: bounded rows and separate artwork (ADR-063)
+
+Text and trait filters apply to the entire catalog before a 48-row category page
+or 12-row global-search limit. Only displayed botanical rows get pixmaps; the
+small shared illustration cache is capped at 256 paths. Category reopening
+refreshes library data; global-search focus invalidates its snapshot. Unknown
+growth forms are accessible through All plants, not guessed from height.
+Illustration shortcuts remain available separately and retain centre/rim drawing.
+Long row labels wrap instead of eliding; all content remains in the screen-bounded
+scroll area. A catalog snapshot gives click/drag creation full provider identity.

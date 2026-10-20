@@ -156,6 +156,22 @@ def validate_plan_data(data: dict[str, Any]) -> None:
     """Validate a complete raw payload without changing it or the scene."""
     if not isinstance(data, dict):
         raise TypeError("Project must be a JSON object")
+    from open_garden_planner.models.garden_memory import validate_card, validate_memory
+
+    validate_memory(data.get("garden_memory", {}))
+
+    def check_cards(records: Any) -> None:
+        if not isinstance(records, list):
+            return
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            metadata = record.get("metadata", {})
+            if isinstance(metadata, dict) and "garden_tracking" in metadata:
+                validate_card(metadata["garden_tracking"])
+            check_cards(record.get("children", []))
+
+    check_cards(data.get("objects", []))
     _walk(data, "plan")
     canvas = data.get("canvas", {})
     for dimension in ("width", "height"):

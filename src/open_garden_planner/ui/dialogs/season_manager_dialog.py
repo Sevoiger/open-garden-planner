@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QButtonGroup,
-    QDialog,
     QDialogButtonBox,
     QFileDialog,
     QGroupBox,
@@ -27,6 +26,7 @@ from PyQt6.QtWidgets import (
 from open_garden_planner.app.paths import get_projects_dir
 from open_garden_planner.ui.icons import get_icon
 from open_garden_planner.ui.theme import theme_color
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 _EXISTS_ROLE = Qt.ItemDataRole.UserRole + 1  # bool: linked file exists (check vs cross)
 
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from open_garden_planner.core.project import ProjectManager
 
 
-class SeasonManagerDialog(QDialog):
+class SeasonManagerDialog(ResponsiveDialog):
     """Dialog for managing garden plan seasons.
 
     Allows the user to:

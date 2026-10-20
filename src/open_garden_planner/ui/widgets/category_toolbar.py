@@ -26,6 +26,7 @@ class CategoryToolbar(QToolBar):
 
     tool_selected = pyqtSignal(ToolType)
     item_selected = pyqtSignal(object)
+    database_search_requested = pyqtSignal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(self.tr("Categories"), parent)
@@ -89,6 +90,7 @@ class CategoryToolbar(QToolBar):
         dropdown = CategoryDropdown(category)
         dropdown.tool_selected.connect(self.tool_selected)
         dropdown.item_selected.connect(self.item_selected)
+        dropdown.database_search_requested.connect(self.database_search_requested)
 
         button.clicked.connect(lambda _checked, b=button, d=dropdown: d.show_below(b))
 

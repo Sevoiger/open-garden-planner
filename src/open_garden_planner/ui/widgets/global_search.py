@@ -10,13 +10,17 @@ keystroke after the first would land on the popup and be lost.
 """
 
 
+from typing import Any
+
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QFocusEvent, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -27,6 +31,7 @@ from open_garden_planner.ui.widgets.gallery_data import (
     GalleryItem,
     all_items,
 )
+from open_garden_planner.ui.widgets.popup_geometry import show_popup_below
 
 MAX_RESULTS = 12
 
@@ -41,7 +46,7 @@ class _ResultsPopup(QWidget):
     item_chosen = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent, Qt.WindowType.ToolTip)
+        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setObjectName("GlobalSearchResults")
@@ -51,18 +56,27 @@ class _ResultsPopup(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
+        self._scroll = QScrollArea()
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        self._scroll.setWidget(content)
+        layout.addWidget(self._scroll)
         from open_garden_planner.ui.widgets.trait_filters import TraitFilters
 
         self.trait_filters = TraitFilters(self)
-        layout.addWidget(self.trait_filters)
+        content_layout.addWidget(self.trait_filters)
 
         self._list = QListWidget()
         self._list.setIconSize(QSize(32, 32))
         self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._list.itemClicked.connect(self._on_item_activated)
-        layout.addWidget(self._list)
+        content_layout.addWidget(self._list)
 
-        self.setFixedWidth(max(500, self.trait_filters.minimumSizeHint().width() + 16))
+        self._preferred_width = max(500, self.trait_filters.minimumSizeHint().width() + 16)
+        self._preferred_size = QSize(self._preferred_width, 300)
 
     def populate(self, items: list[GalleryItem]) -> None:
         self._list.clear()
@@ -74,7 +88,11 @@ class _ResultsPopup(QWidget):
             self._list.addItem(list_item)
         if self._list.count() > 0:
             self._list.setCurrentRow(0)
-        self.setFixedHeight(min(280, max(40, self._list.count() * 40 + 16)) + self.trait_filters.sizeHint().height())
+        list_height = min(280, max(40, self._list.count() * 40 + 16))
+        self._list.setMinimumHeight(list_height)
+        self._preferred_size = QSize(
+            self._preferred_width, list_height + self.trait_filters.sizeHint().height() + 16,
+        )
 
     def _on_item_activated(self, list_item: QListWidgetItem) -> None:
         item = list_item.data(Qt.ItemDataRole.UserRole)
@@ -106,6 +124,7 @@ class GlobalSearchField(QLineEdit):
     ) -> None:
         super().__init__(parent)
         self._all_items = all_items(categories)
+        self._catalog_records: dict[str, dict[str, Any]] | None = None
         self._popup = _ResultsPopup(self)
         self._popup.item_chosen.connect(self._on_item_chosen)
 
@@ -134,13 +153,27 @@ class GlobalSearchField(QLineEdit):
 
         hits = [it for it in self._all_items if gallery_matches(
             it, needle, layers=filters.layers, functions=filters.functions)][:MAX_RESULTS]
+        from open_garden_planner.services.species_catalog import offline_catalog
+        from open_garden_planner.ui.widgets.catalog_palette import catalog_item, matching_records
+
+        if self._catalog_records is None:
+            self._catalog_records = offline_catalog()
+        records = matching_records(self._catalog_records, needle,
+                                   layers=filters.layers, functions=filters.functions)
+        # Botanical records precede illustration-only hits for the same query.
+        exact_tools = [item for item in hits if not item.species and not item.plant_category
+                       and item.name.casefold() == needle]
+        hits = (exact_tools + [catalog_item(r) for r in records[:MAX_RESULTS]]
+                + [item for item in hits if item not in exact_tools])[:MAX_RESULTS]
         if not hits and not (filters.layers or filters.functions):
             self._popup.hide()
             return
         self._popup.populate(hits)
-        bottom_left = self.mapToGlobal(self.rect().bottomLeft())
-        self._popup.move(bottom_left)
-        self._popup.show()
+        show_popup_below(self._popup, self, self._popup._preferred_size)
+
+    def focusInEvent(self, event: QFocusEvent | None) -> None:  # noqa: N802
+        self._catalog_records = None
+        super().focusInEvent(event)
 
     def _on_focus_changed(self, _old: QWidget | None, new: QWidget | None) -> None:
         # This is connected to the *application*-wide focusChanged, which

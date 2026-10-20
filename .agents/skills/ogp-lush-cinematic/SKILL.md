@@ -1,7 +1,13 @@
 ---
 name: ogp-lush-cinematic
-description: "The art-direction contract for Open Garden Planner's 3D mode ('Lush Cinematic', Phase 17 / ADR-048) and the shared knowledge base of the ogp-3d-creator and ogp-3d-reviewer agents. Load when: building or reviewing anything that shows up in the 3D view (plants, buildings, ground, sky, light, shadows, materials, post-processing, camera shots); producing or judging a Beauty Board; choosing colours, roughness, light colour or exposure; deciding whether a 3D look is 'done'; or recording owner feedback on a render. Contains the truth-before-beauty gates, the style table, measured light rigs per mood, material value ranges, foliage rules, the Beauty Board procedure, the review rubric with severities, the spike's artifact→fix log and the owner taste log."
+description: Art direction and measured review criteria for visible OGP 3D changes and Beauty Boards.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # Lush Cinematic — the 3D art-direction contract
 
@@ -87,6 +93,11 @@ less golden than the 6° anchor, which `sunset` shows.
 | Aluminium frames | 0.30–0.50 | |
 
 ## 5. Beauty Board procedure
+
+For this fork, select shots and measurements affected by the change. Use the full
+board for global renderer/lighting changes or an explicit visual audit. The command
+below documents the upstream Linux host; use the native macOS renderer runbook here.
+Independent review follows AGENTS.md; no automatic chain of two reviews.
 
 Fixture: `tests/fixtures/plans/bench_small.ogp` (24×16 m showcase garden, every object class;
 regenerate with `scripts/make_bench_plans.py`, never hand-edit). Until the production harness

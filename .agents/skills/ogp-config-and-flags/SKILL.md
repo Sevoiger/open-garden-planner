@@ -1,17 +1,13 @@
 ---
 name: ogp-config-and-flags
-description: >
-  Catalog of every configuration axis in Open Garden Planner: QSettings keys
-  (AppSettings), UI-state persistence (UiStateStore), environment variables
-  (.env / OGP_GOOGLE_MAPS_KEY / QT_QPA_PLATFORM / PYTHONUTF8), project-file
-  version + per-plan settings, hidden-feature toggles in code, tooling config
-  (pyproject/ruff/mypy/pytest/pins/ogp.spec), and CI knobs. Load this when:
-  adding or changing a setting or flag; wondering what a settings key does or
-  what its default is; configuring environment variables or .env; touching the
-  Preferences dialog; deciding whether a change needs a FILE_VERSION bump; or
-  a feature seems mysteriously disabled (hidden panel, missing API key,
-  default-off snap mode). Includes the "how to add a setting" checklist.
+description: Reference for OGP settings, environment variables and feature flags when changing or diagnosing configuration.
 ---
+
+## Personal fork scope
+
+Use the root AGENTS.md policy for test scope and delivery. The upstream procedures
+below are historical references: they do not require full suites, new tests,
+Windows builds or release actions for every personal macOS change.
 
 # OGP Configuration & Flags Catalog
 
@@ -229,9 +225,9 @@ visibility calls.
 
 | Toggle | Where | Status |
 |---|---|---|
-| **Smart Symbols sidebar panel hidden** | `application.py:5299` `set_panel_visible("smart_symbols", False)` | **experimental / deferred UI** (US-C4). Engine, persistence, DXF export, and properties editing all ship and are tested; symbols in existing `.ogp` files still regenerate. Re-enable by deleting that one line (the comment says exactly this). |
+| **Smart Symbols sidebar panel hidden** | `application.py:5343` `set_panel_visible("smart_symbols", False)` | **experimental / deferred UI** (US-C4). Engine, persistence, DXF export, and properties editing all ship and are tested; symbols in existing `.ogp` files still regenerate. Re-enable by deleting that one line (the comment says exactly this). |
 | Contextual panels hidden until relevant selection | `set_panel_visible(key, relevant)` for `plant_details` / `companion` / `crop_rotation` in the selection updaters (ADR-030) | production behavior — not a bug when they're absent with nothing selected |
-| Satellite menu action disabled | `application.py:7941` `_update_satellite_menu_state` when both the Preferences key and `OGP_GOOGLE_MAPS_KEY` are unset (§3) | production guard |
+| Satellite menu action disabled | `application.py:8006` `_update_satellite_menu_state` when both the Preferences key and `OGP_GOOGLE_MAPS_KEY` are unset (§3) | production guard |
 | Nearest / perpendicular / tangent snap default-OFF | §1 snap table | production, opt-in |
 
 If "a feature seems disabled", check this table before debugging.

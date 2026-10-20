@@ -12,7 +12,13 @@ def offline_catalog() -> dict[str, dict[str, Any]]:
     """Return bundled and custom snapshots; custom keys remain provider identities."""
     records = dict(get_species_db())
     for _, species in plant_library.get_plant_library().get_all_plants():
-        records[species_key(species.to_dict())] = species.to_dict()
+        snapshot = species.to_dict()
+        # A French display name must not hide the previous English search name.
+        english_name = species.raw_data.get("name_en")
+        if isinstance(english_name, str) and english_name:
+            aliases = species.raw_data.get("aliases", [])
+            snapshot["aliases"] = [english_name, *(aliases if isinstance(aliases, list) else [])]
+        records[species_key(snapshot)] = snapshot
     return records
 
 

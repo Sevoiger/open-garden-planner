@@ -1,0 +1,4614 @@
+{
+  "version": 1,
+  "notice": "Stylized plan symbols; neither botanical identification nor cultivar-accurate depictions.",
+  "illustrations": [
+    {
+      "id": "apple_tree",
+      "name_en": "Apple Tree",
+      "name_fr": "Pommier",
+      "group": "tree",
+      "aliases": [
+        "apple tree",
+        "Apple Tree",
+        "Pommier",
+        "apple",
+        "malus",
+        "Malus domestica"
+      ]
+    },
+    {
+      "id": "pear_tree",
+      "name_en": "Pear Tree",
+      "name_fr": "Poirier",
+      "group": "tree",
+      "aliases": [
+        "pear tree",
+        "Pear Tree",
+        "Poirier",
+        "pear",
+        "pyrus",
+        "Pyrus communis"
+      ]
+    },
+    {
+      "id": "plum_tree",
+      "name_en": "Plum Tree",
+      "name_fr": "Prunier",
+      "group": "tree",
+      "aliases": [
+        "plum tree",
+        "Plum Tree",
+        "Prunier",
+        "plum",
+        "Prunus domestica"
+      ]
+    },
+    {
+      "id": "peach_tree",
+      "name_en": "Peach Tree",
+      "name_fr": "Pêcher",
+      "group": "tree",
+      "aliases": [
+        "peach tree",
+        "Peach Tree",
+        "Pêcher",
+        "peach",
+        "prunus persica",
+        "Prunus persica"
+      ]
+    },
+    {
+      "id": "cherry_tree",
+      "name_en": "Cherry Tree",
+      "name_fr": "Cerisier",
+      "group": "tree",
+      "aliases": [
+        "cherry tree",
+        "Cherry Tree",
+        "Cerisier",
+        "cherry",
+        "prunus",
+        "Prunus avium"
+      ]
+    },
+    {
+      "id": "fig_tree",
+      "name_en": "Fig Tree",
+      "name_fr": "Figuier",
+      "group": "tree",
+      "aliases": [
+        "fig tree",
+        "Fig Tree",
+        "Figuier",
+        "fig",
+        "ficus carica",
+        "Ficus carica"
+      ]
+    },
+    {
+      "id": "olive_tree",
+      "name_en": "Olive Tree",
+      "name_fr": "Olivier",
+      "group": "tree",
+      "aliases": [
+        "olive tree",
+        "Olive Tree",
+        "Olivier",
+        "olive",
+        "olea europaea",
+        "Olea europaea"
+      ]
+    },
+    {
+      "id": "lemon_tree",
+      "name_en": "Lemon Tree",
+      "name_fr": "Citronnier",
+      "group": "tree",
+      "aliases": [
+        "lemon tree",
+        "Lemon Tree",
+        "Citronnier",
+        "lemon",
+        "citrus limon",
+        "Citrus limon"
+      ]
+    },
+    {
+      "id": "orange_tree",
+      "name_en": "Orange Tree",
+      "name_fr": "Oranger",
+      "group": "tree",
+      "aliases": [
+        "orange tree",
+        "Orange Tree",
+        "Oranger",
+        "orange",
+        "citrus sinensis",
+        "Citrus sinensis"
+      ]
+    },
+    {
+      "id": "walnut_tree",
+      "name_en": "Walnut Tree",
+      "name_fr": "Noyer",
+      "group": "tree",
+      "aliases": [
+        "walnut tree",
+        "Walnut Tree",
+        "Noyer",
+        "walnut",
+        "juglans",
+        "Juglans regia"
+      ]
+    },
+    {
+      "id": "oak",
+      "name_en": "Oak",
+      "name_fr": "Chêne",
+      "group": "tree",
+      "aliases": [
+        "oak",
+        "Oak",
+        "Chêne",
+        "quercus",
+        "Quercus robur"
+      ]
+    },
+    {
+      "id": "maple",
+      "name_en": "Maple",
+      "name_fr": "Érable",
+      "group": "tree",
+      "aliases": [
+        "maple",
+        "Maple",
+        "Érable",
+        "acer",
+        "Acer platanoides"
+      ]
+    },
+    {
+      "id": "birch",
+      "name_en": "Birch",
+      "name_fr": "Bouleau",
+      "group": "tree",
+      "aliases": [
+        "birch",
+        "Birch",
+        "Bouleau",
+        "betula",
+        "Betula pendula"
+      ]
+    },
+    {
+      "id": "willow",
+      "name_en": "Willow",
+      "name_fr": "Saule",
+      "group": "tree",
+      "aliases": [
+        "willow",
+        "Willow",
+        "Saule",
+        "salix",
+        "Salix alba"
+      ]
+    },
+    {
+      "id": "magnolia",
+      "name_en": "Magnolia",
+      "name_fr": "Magnolia",
+      "group": "tree",
+      "aliases": [
+        "magnolia",
+        "Magnolia",
+        "Magnolia x soulangeana"
+      ]
+    },
+    {
+      "id": "pine",
+      "name_en": "Pine",
+      "name_fr": "Pin",
+      "group": "tree",
+      "aliases": [
+        "pine",
+        "Pine",
+        "Pin",
+        "pinus",
+        "Pinus sylvestris"
+      ]
+    },
+    {
+      "id": "spruce",
+      "name_en": "Spruce",
+      "name_fr": "Épicéa",
+      "group": "tree",
+      "aliases": [
+        "spruce",
+        "Spruce",
+        "Épicéa",
+        "picea",
+        "Picea abies"
+      ]
+    },
+    {
+      "id": "boxwood",
+      "name_en": "Boxwood",
+      "name_fr": "Buis",
+      "group": "shrub",
+      "aliases": [
+        "boxwood",
+        "Boxwood",
+        "Buis",
+        "buxus",
+        "box",
+        "Buxus sempervirens"
+      ]
+    },
+    {
+      "id": "rhododendron",
+      "name_en": "Rhododendron",
+      "name_fr": "Rhododendron",
+      "group": "shrub",
+      "aliases": [
+        "rhododendron",
+        "Rhododendron",
+        "azalea",
+        "Rhododendron ponticum"
+      ]
+    },
+    {
+      "id": "holly",
+      "name_en": "Holly",
+      "name_fr": "Houx",
+      "group": "shrub",
+      "aliases": [
+        "holly",
+        "Holly",
+        "Houx",
+        "ilex",
+        "Ilex aquifolium"
+      ]
+    },
+    {
+      "id": "privet",
+      "name_en": "Privet",
+      "name_fr": "Troène",
+      "group": "shrub",
+      "aliases": [
+        "privet",
+        "Privet",
+        "Troène",
+        "ligustrum",
+        "Ligustrum vulgare"
+      ]
+    },
+    {
+      "id": "juniper",
+      "name_en": "Juniper",
+      "name_fr": "Genévrier",
+      "group": "shrub",
+      "aliases": [
+        "juniper",
+        "Juniper",
+        "Genévrier",
+        "juniperus",
+        "Juniperus communis"
+      ]
+    },
+    {
+      "id": "forsythia",
+      "name_en": "Forsythia",
+      "name_fr": "Forsythia",
+      "group": "shrub",
+      "aliases": [
+        "forsythia",
+        "Forsythia",
+        "Forsythia x intermedia"
+      ]
+    },
+    {
+      "id": "lilac",
+      "name_en": "Lilac",
+      "name_fr": "Lilas",
+      "group": "shrub",
+      "aliases": [
+        "lilac",
+        "Lilac",
+        "Lilas",
+        "syringa",
+        "Syringa vulgaris"
+      ]
+    },
+    {
+      "id": "viburnum",
+      "name_en": "Viburnum",
+      "name_fr": "Viorne",
+      "group": "shrub",
+      "aliases": [
+        "viburnum",
+        "Viburnum",
+        "Viorne",
+        "Viburnum opulus"
+      ]
+    },
+    {
+      "id": "barberry",
+      "name_en": "Barberry",
+      "name_fr": "Épine-vinette",
+      "group": "shrub",
+      "aliases": [
+        "barberry",
+        "Barberry",
+        "Épine-vinette",
+        "berberis",
+        "Berberis vulgaris"
+      ]
+    },
+    {
+      "id": "camellia",
+      "name_en": "Camellia",
+      "name_fr": "Camélia",
+      "group": "shrub",
+      "aliases": [
+        "camellia",
+        "Camellia",
+        "Camélia",
+        "Camellia japonica"
+      ]
+    },
+    {
+      "id": "spirea",
+      "name_en": "Spirea",
+      "name_fr": "Spirée",
+      "group": "shrub",
+      "aliases": [
+        "spirea",
+        "Spirea",
+        "Spirée",
+        "spiraea",
+        "Spiraea japonica"
+      ]
+    },
+    {
+      "id": "elderberry",
+      "name_en": "Elderberry",
+      "name_fr": "Sureau",
+      "group": "shrub",
+      "aliases": [
+        "elderberry",
+        "Elderberry",
+        "Sureau",
+        "sambucus",
+        "elder",
+        "Sambucus nigra"
+      ]
+    },
+    {
+      "id": "blueberry",
+      "name_en": "Blueberry",
+      "name_fr": "Myrtillier",
+      "group": "shrub",
+      "aliases": [
+        "blueberry",
+        "Blueberry",
+        "Myrtillier",
+        "vaccinium",
+        "Vaccinium corymbosum"
+      ]
+    },
+    {
+      "id": "raspberry",
+      "name_en": "Raspberry",
+      "name_fr": "Framboisier",
+      "group": "shrub",
+      "aliases": [
+        "raspberry",
+        "Raspberry",
+        "Framboisier",
+        "rubus idaeus",
+        "Rubus idaeus"
+      ]
+    },
+    {
+      "id": "blackberry",
+      "name_en": "Blackberry",
+      "name_fr": "Ronce à mûres",
+      "group": "shrub",
+      "aliases": [
+        "blackberry",
+        "Blackberry",
+        "Ronce à mûres",
+        "rubus fruticosus",
+        "Rubus fruticosus"
+      ]
+    },
+    {
+      "id": "gooseberry",
+      "name_en": "Gooseberry",
+      "name_fr": "Groseillier à maquereau",
+      "group": "shrub",
+      "aliases": [
+        "gooseberry",
+        "Gooseberry",
+        "Groseillier à maquereau",
+        "ribes uva-crispa",
+        "Ribes uva-crispa"
+      ]
+    },
+    {
+      "id": "currant",
+      "name_en": "Currant",
+      "name_fr": "Groseillier",
+      "group": "shrub",
+      "aliases": [
+        "currant",
+        "Currant",
+        "Groseillier",
+        "ribes",
+        "redcurrant",
+        "blackcurrant",
+        "Ribes rubrum"
+      ]
+    },
+    {
+      "id": "rose",
+      "name_en": "Rose",
+      "name_fr": "Rosier rugueux",
+      "group": "shrub",
+      "aliases": [
+        "rose",
+        "Rose",
+        "Rosier rugueux",
+        "rosa",
+        "Rosa rugosa"
+      ]
+    },
+    {
+      "id": "hydrangea",
+      "name_en": "Hydrangea",
+      "name_fr": "Hortensia",
+      "group": "shrub",
+      "aliases": [
+        "hydrangea",
+        "Hydrangea",
+        "Hortensia",
+        "Hydrangea macrophylla"
+      ]
+    },
+    {
+      "id": "hibiscus",
+      "name_en": "Hibiscus",
+      "name_fr": "Hibiscus",
+      "group": "shrub",
+      "aliases": [
+        "hibiscus",
+        "Hibiscus",
+        "Hibiscus syriacus"
+      ]
+    },
+    {
+      "id": "jasmine",
+      "name_en": "Jasmine",
+      "name_fr": "Jasmin",
+      "group": "flower",
+      "aliases": [
+        "jasmine",
+        "Jasmine",
+        "Jasmin",
+        "jasminum",
+        "Jasminum officinale"
+      ]
+    },
+    {
+      "id": "clematis",
+      "name_en": "Clematis",
+      "name_fr": "Clématite",
+      "group": "flower",
+      "aliases": [
+        "clematis",
+        "Clematis",
+        "Clématite",
+        "Clematis vitalba"
+      ]
+    },
+    {
+      "id": "wisteria",
+      "name_en": "Wisteria",
+      "name_fr": "Glycine",
+      "group": "flower",
+      "aliases": [
+        "wisteria",
+        "Wisteria",
+        "Glycine",
+        "Wisteria sinensis"
+      ]
+    },
+    {
+      "id": "tomato",
+      "name_en": "Tomato",
+      "name_fr": "Tomate",
+      "group": "vegetable",
+      "aliases": [
+        "tomato",
+        "Tomato",
+        "Tomate",
+        "solanum lycopersicum",
+        "Solanum lycopersicum"
+      ]
+    },
+    {
+      "id": "pepper",
+      "name_en": "Sweet Pepper",
+      "name_fr": "Poivron",
+      "group": "vegetable",
+      "aliases": [
+        "pepper",
+        "Sweet Pepper",
+        "Poivron",
+        "bell pepper",
+        "capsicum",
+        "Capsicum annuum"
+      ]
+    },
+    {
+      "id": "eggplant",
+      "name_en": "Eggplant",
+      "name_fr": "Aubergine",
+      "group": "vegetable",
+      "aliases": [
+        "eggplant",
+        "Eggplant",
+        "Aubergine",
+        "aubergine",
+        "solanum melongena",
+        "Solanum melongena"
+      ]
+    },
+    {
+      "id": "zucchini",
+      "name_en": "Zucchini",
+      "name_fr": "Courgette",
+      "group": "vegetable",
+      "aliases": [
+        "zucchini",
+        "Zucchini",
+        "Courgette",
+        "courgette",
+        "cucurbita pepo",
+        "Cucurbita pepo"
+      ]
+    },
+    {
+      "id": "cucumber",
+      "name_en": "Cucumber",
+      "name_fr": "Concombre",
+      "group": "vegetable",
+      "aliases": [
+        "cucumber",
+        "Cucumber",
+        "Concombre",
+        "cucumis sativus",
+        "Cucumis sativus"
+      ]
+    },
+    {
+      "id": "pumpkin",
+      "name_en": "Winter Squash",
+      "name_fr": "Courge d'hiver",
+      "group": "vegetable",
+      "aliases": [
+        "pumpkin",
+        "Winter Squash",
+        "Courge d'hiver",
+        "cucurbita maxima",
+        "Cucurbita maxima"
+      ]
+    },
+    {
+      "id": "squash",
+      "name_en": "Squash",
+      "name_fr": "Squash",
+      "group": "vegetable",
+      "aliases": [
+        "squash",
+        "Squash",
+        "butternut"
+      ]
+    },
+    {
+      "id": "bean",
+      "name_en": "Bean (Bush)",
+      "name_fr": "Haricot nain",
+      "group": "vegetable",
+      "aliases": [
+        "bean",
+        "Bean (Bush)",
+        "Haricot nain",
+        "green bean",
+        "phaseolus",
+        "Phaseolus vulgaris"
+      ]
+    },
+    {
+      "id": "pea",
+      "name_en": "Garden Pea",
+      "name_fr": "Petit pois",
+      "group": "vegetable",
+      "aliases": [
+        "pea",
+        "Garden Pea",
+        "Petit pois",
+        "pisum sativum",
+        "Pisum sativum"
+      ]
+    },
+    {
+      "id": "corn",
+      "name_en": "Sweet Corn",
+      "name_fr": "Maïs doux",
+      "group": "vegetable",
+      "aliases": [
+        "corn",
+        "Sweet Corn",
+        "Maïs doux",
+        "maize",
+        "zea mays",
+        "Zea mays"
+      ]
+    },
+    {
+      "id": "carrot",
+      "name_en": "Carrot",
+      "name_fr": "Carotte",
+      "group": "vegetable",
+      "aliases": [
+        "carrot",
+        "Carrot",
+        "Carotte",
+        "daucus carota",
+        "Daucus carota"
+      ]
+    },
+    {
+      "id": "radish",
+      "name_en": "Radish",
+      "name_fr": "Radis",
+      "group": "vegetable",
+      "aliases": [
+        "radish",
+        "Radish",
+        "Radis",
+        "raphanus",
+        "Raphanus sativus"
+      ]
+    },
+    {
+      "id": "beet",
+      "name_en": "Beet",
+      "name_fr": "Betterave",
+      "group": "vegetable",
+      "aliases": [
+        "beet",
+        "Beet",
+        "Betterave",
+        "beetroot",
+        "beta vulgaris",
+        "Beta vulgaris"
+      ]
+    },
+    {
+      "id": "turnip",
+      "name_en": "Turnip",
+      "name_fr": "Turnip",
+      "group": "vegetable",
+      "aliases": [
+        "turnip",
+        "Turnip",
+        "brassica rapa"
+      ]
+    },
+    {
+      "id": "potato",
+      "name_en": "Potato",
+      "name_fr": "Pomme de terre",
+      "group": "vegetable",
+      "aliases": [
+        "potato",
+        "Potato",
+        "Pomme de terre",
+        "solanum tuberosum",
+        "Solanum tuberosum"
+      ]
+    },
+    {
+      "id": "onion",
+      "name_en": "Onion",
+      "name_fr": "Oignon",
+      "group": "vegetable",
+      "aliases": [
+        "onion",
+        "Onion",
+        "Oignon",
+        "allium cepa",
+        "Allium cepa"
+      ]
+    },
+    {
+      "id": "garlic",
+      "name_en": "Garlic",
+      "name_fr": "Ail",
+      "group": "vegetable",
+      "aliases": [
+        "garlic",
+        "Garlic",
+        "Ail",
+        "allium sativum",
+        "Allium sativum"
+      ]
+    },
+    {
+      "id": "leek",
+      "name_en": "Leek",
+      "name_fr": "Poireau",
+      "group": "vegetable",
+      "aliases": [
+        "leek",
+        "Leek",
+        "Poireau",
+        "allium ampeloprasum",
+        "Allium porrum"
+      ]
+    },
+    {
+      "id": "celery",
+      "name_en": "Celery",
+      "name_fr": "Céleri",
+      "group": "vegetable",
+      "aliases": [
+        "celery",
+        "Celery",
+        "Céleri",
+        "apium graveolens",
+        "Apium graveolens"
+      ]
+    },
+    {
+      "id": "broccoli",
+      "name_en": "Broccoli",
+      "name_fr": "Brocoli",
+      "group": "vegetable",
+      "aliases": [
+        "broccoli",
+        "Broccoli",
+        "Brocoli",
+        "brassica oleracea",
+        "Brassica oleracea var. italica"
+      ]
+    },
+    {
+      "id": "cauliflower",
+      "name_en": "Cauliflower",
+      "name_fr": "Chou-fleur",
+      "group": "vegetable",
+      "aliases": [
+        "cauliflower",
+        "Cauliflower",
+        "Chou-fleur",
+        "Brassica oleracea var. botrytis"
+      ]
+    },
+    {
+      "id": "cabbage",
+      "name_en": "Cabbage",
+      "name_fr": "Chou pommé",
+      "group": "vegetable",
+      "aliases": [
+        "cabbage",
+        "Cabbage",
+        "Chou pommé",
+        "Brassica oleracea var. capitata"
+      ]
+    },
+    {
+      "id": "kale",
+      "name_en": "Kale",
+      "name_fr": "Chou kale",
+      "group": "vegetable",
+      "aliases": [
+        "kale",
+        "Kale",
+        "Chou kale",
+        "Brassica oleracea var. acephala"
+      ]
+    },
+    {
+      "id": "spinach",
+      "name_en": "Spinach",
+      "name_fr": "Épinard",
+      "group": "vegetable",
+      "aliases": [
+        "spinach",
+        "Spinach",
+        "Épinard",
+        "spinacia oleracea",
+        "Spinacia oleracea"
+      ]
+    },
+    {
+      "id": "lettuce",
+      "name_en": "Lettuce",
+      "name_fr": "Laitue",
+      "group": "vegetable",
+      "aliases": [
+        "lettuce",
+        "Lettuce",
+        "Laitue",
+        "lactuca sativa",
+        "Lactuca sativa"
+      ]
+    },
+    {
+      "id": "arugula",
+      "name_en": "Rocket (Arugula)",
+      "name_fr": "Roquette",
+      "group": "vegetable",
+      "aliases": [
+        "arugula",
+        "Rocket (Arugula)",
+        "Roquette",
+        "rocket",
+        "eruca vesicaria",
+        "Eruca vesicaria"
+      ]
+    },
+    {
+      "id": "chard",
+      "name_en": "Chard",
+      "name_fr": "Chard",
+      "group": "vegetable",
+      "aliases": [
+        "chard",
+        "Chard",
+        "swiss chard"
+      ]
+    },
+    {
+      "id": "artichoke",
+      "name_en": "Artichoke",
+      "name_fr": "Artichaut",
+      "group": "vegetable",
+      "aliases": [
+        "artichoke",
+        "Artichoke",
+        "Artichaut",
+        "cynara",
+        "Cynara scolymus"
+      ]
+    },
+    {
+      "id": "asparagus",
+      "name_en": "Asparagus",
+      "name_fr": "Asperge",
+      "group": "vegetable",
+      "aliases": [
+        "asparagus",
+        "Asparagus",
+        "Asperge",
+        "Asparagus officinalis"
+      ]
+    },
+    {
+      "id": "rhubarb",
+      "name_en": "Rhubarb",
+      "name_fr": "Rhubarbe",
+      "group": "vegetable",
+      "aliases": [
+        "rhubarb",
+        "Rhubarb",
+        "Rhubarbe",
+        "rheum",
+        "Rheum rhabarbarum"
+      ]
+    },
+    {
+      "id": "okra",
+      "name_en": "Okra",
+      "name_fr": "Okra",
+      "group": "vegetable",
+      "aliases": [
+        "okra",
+        "Okra",
+        "abelmoschus"
+      ]
+    },
+    {
+      "id": "basil",
+      "name_en": "Basil",
+      "name_fr": "Basilic",
+      "group": "vegetable",
+      "aliases": [
+        "basil",
+        "Basil",
+        "Basilic",
+        "ocimum basilicum",
+        "Ocimum basilicum"
+      ]
+    },
+    {
+      "id": "rosemary",
+      "name_en": "Rosemary",
+      "name_fr": "Romarin",
+      "group": "vegetable",
+      "aliases": [
+        "rosemary",
+        "Rosemary",
+        "Romarin",
+        "salvia rosmarinus",
+        "rosmarinus",
+        "Rosmarinus officinalis"
+      ]
+    },
+    {
+      "id": "thyme",
+      "name_en": "Thyme",
+      "name_fr": "Thym",
+      "group": "vegetable",
+      "aliases": [
+        "thyme",
+        "Thyme",
+        "Thym",
+        "thymus",
+        "Thymus vulgaris"
+      ]
+    },
+    {
+      "id": "sage",
+      "name_en": "Sage",
+      "name_fr": "Sauge officinale",
+      "group": "vegetable",
+      "aliases": [
+        "sage",
+        "Sage",
+        "Sauge officinale",
+        "salvia officinalis",
+        "Salvia officinalis"
+      ]
+    },
+    {
+      "id": "mint",
+      "name_en": "Spearmint",
+      "name_fr": "Menthe verte",
+      "group": "vegetable",
+      "aliases": [
+        "mint",
+        "Spearmint",
+        "Menthe verte",
+        "mentha",
+        "peppermint",
+        "spearmint",
+        "Mentha spicata"
+      ]
+    },
+    {
+      "id": "parsley",
+      "name_en": "Parsley",
+      "name_fr": "Persil",
+      "group": "vegetable",
+      "aliases": [
+        "parsley",
+        "Parsley",
+        "Persil",
+        "petroselinum",
+        "Petroselinum crispum"
+      ]
+    },
+    {
+      "id": "cilantro",
+      "name_en": "Coriander",
+      "name_fr": "Coriandre",
+      "group": "vegetable",
+      "aliases": [
+        "cilantro",
+        "Coriander",
+        "Coriandre",
+        "coriander",
+        "coriandrum sativum",
+        "Coriandrum sativum"
+      ]
+    },
+    {
+      "id": "dill",
+      "name_en": "Dill",
+      "name_fr": "Aneth",
+      "group": "vegetable",
+      "aliases": [
+        "dill",
+        "Dill",
+        "Aneth",
+        "anethum graveolens",
+        "Anethum graveolens"
+      ]
+    },
+    {
+      "id": "chives",
+      "name_en": "Chives",
+      "name_fr": "Ciboulette",
+      "group": "vegetable",
+      "aliases": [
+        "chives",
+        "Chives",
+        "Ciboulette",
+        "allium schoenoprasum",
+        "Allium schoenoprasum"
+      ]
+    },
+    {
+      "id": "oregano",
+      "name_en": "Oregano",
+      "name_fr": "Origan",
+      "group": "vegetable",
+      "aliases": [
+        "oregano",
+        "Oregano",
+        "Origan",
+        "origanum vulgare",
+        "Origanum vulgare"
+      ]
+    },
+    {
+      "id": "tarragon",
+      "name_en": "Tarragon",
+      "name_fr": "Tarragon",
+      "group": "vegetable",
+      "aliases": [
+        "tarragon",
+        "Tarragon",
+        "artemisia dracunculus"
+      ]
+    },
+    {
+      "id": "lemongrass",
+      "name_en": "Lemongrass",
+      "name_fr": "Lemongrass",
+      "group": "vegetable",
+      "aliases": [
+        "lemongrass",
+        "Lemongrass",
+        "cymbopogon"
+      ]
+    },
+    {
+      "id": "chamomile",
+      "name_en": "Chamomile",
+      "name_fr": "Camomille",
+      "group": "vegetable",
+      "aliases": [
+        "chamomile",
+        "Chamomile",
+        "Camomille",
+        "matricaria chamomilla",
+        "Chamaemelum nobile"
+      ]
+    },
+    {
+      "id": "fennel",
+      "name_en": "Fennel",
+      "name_fr": "Fenouil",
+      "group": "vegetable",
+      "aliases": [
+        "fennel",
+        "Fennel",
+        "Fenouil",
+        "foeniculum vulgare",
+        "Foeniculum vulgare"
+      ]
+    },
+    {
+      "id": "marjoram",
+      "name_en": "Marjoram",
+      "name_fr": "Marjoram",
+      "group": "vegetable",
+      "aliases": [
+        "marjoram",
+        "Marjoram",
+        "origanum majorana"
+      ]
+    },
+    {
+      "id": "bay_laurel",
+      "name_en": "Bay Laurel",
+      "name_fr": "Bay Laurel",
+      "group": "shrub",
+      "aliases": [
+        "bay laurel",
+        "Bay Laurel",
+        "bay",
+        "laurus nobilis"
+      ]
+    },
+    {
+      "id": "stevia",
+      "name_en": "Stevia",
+      "name_fr": "Stevia",
+      "group": "vegetable",
+      "aliases": [
+        "stevia",
+        "Stevia",
+        "stevia rebaudiana"
+      ]
+    },
+    {
+      "id": "sorrel",
+      "name_en": "Sorrel",
+      "name_fr": "Sorrel",
+      "group": "vegetable",
+      "aliases": [
+        "sorrel",
+        "Sorrel",
+        "rumex acetosa"
+      ]
+    },
+    {
+      "id": "borage",
+      "name_en": "Borage",
+      "name_fr": "Bourrache",
+      "group": "vegetable",
+      "aliases": [
+        "borage",
+        "Borage",
+        "Bourrache",
+        "borago officinalis",
+        "Borago officinalis"
+      ]
+    },
+    {
+      "id": "lovage",
+      "name_en": "Lovage",
+      "name_fr": "Lovage",
+      "group": "vegetable",
+      "aliases": [
+        "lovage",
+        "Lovage",
+        "levisticum officinale"
+      ]
+    },
+    {
+      "id": "lavender",
+      "name_en": "Lavender",
+      "name_fr": "Lavande",
+      "group": "flower",
+      "aliases": [
+        "lavender",
+        "Lavender",
+        "Lavande",
+        "lavandula",
+        "Lavandula angustifolia"
+      ]
+    },
+    {
+      "id": "tulip",
+      "name_en": "Tulip",
+      "name_fr": "Tulipe",
+      "group": "flower",
+      "aliases": [
+        "tulip",
+        "Tulip",
+        "Tulipe",
+        "tulipa",
+        "Tulipa gesneriana"
+      ]
+    },
+    {
+      "id": "daffodil",
+      "name_en": "Daffodil",
+      "name_fr": "Narcisse",
+      "group": "flower",
+      "aliases": [
+        "daffodil",
+        "Daffodil",
+        "Narcisse",
+        "narcissus",
+        "Narcissus pseudonarcissus"
+      ]
+    },
+    {
+      "id": "dahlia",
+      "name_en": "Dahlia",
+      "name_fr": "Dahlia",
+      "group": "flower",
+      "aliases": [
+        "dahlia",
+        "Dahlia",
+        "Dahlia pinnata"
+      ]
+    },
+    {
+      "id": "peony",
+      "name_en": "Peony",
+      "name_fr": "Pivoine",
+      "group": "flower",
+      "aliases": [
+        "peony",
+        "Peony",
+        "Pivoine",
+        "paeonia",
+        "Paeonia lactiflora"
+      ]
+    },
+    {
+      "id": "iris",
+      "name_en": "Iris",
+      "name_fr": "Iris",
+      "group": "flower",
+      "aliases": [
+        "iris",
+        "Iris",
+        "Iris germanica"
+      ]
+    },
+    {
+      "id": "lily",
+      "name_en": "Lily",
+      "name_fr": "Lis",
+      "group": "flower",
+      "aliases": [
+        "lily",
+        "Lily",
+        "Lis",
+        "lilium",
+        "Lilium candidum"
+      ]
+    },
+    {
+      "id": "marigold",
+      "name_en": "Marigold",
+      "name_fr": "Rose d'Inde",
+      "group": "flower",
+      "aliases": [
+        "marigold",
+        "Marigold",
+        "Rose d'Inde",
+        "tagetes",
+        "Tagetes erecta"
+      ]
+    },
+    {
+      "id": "zinnia",
+      "name_en": "Zinnia",
+      "name_fr": "Zinnia",
+      "group": "flower",
+      "aliases": [
+        "zinnia",
+        "Zinnia",
+        "Zinnia elegans"
+      ]
+    },
+    {
+      "id": "cosmos",
+      "name_en": "Cosmos",
+      "name_fr": "Cosmos",
+      "group": "flower",
+      "aliases": [
+        "cosmos",
+        "Cosmos",
+        "Cosmos bipinnatus"
+      ]
+    },
+    {
+      "id": "aster",
+      "name_en": "Aster",
+      "name_fr": "Aster",
+      "group": "flower",
+      "aliases": [
+        "aster",
+        "Aster",
+        "Symphyotrichum novi-belgii"
+      ]
+    },
+    {
+      "id": "chrysanthemum",
+      "name_en": "Chrysanthemum",
+      "name_fr": "Chrysanthème",
+      "group": "flower",
+      "aliases": [
+        "chrysanthemum",
+        "Chrysanthemum",
+        "Chrysanthème",
+        "mum",
+        "Chrysanthemum x morifolium"
+      ]
+    },
+    {
+      "id": "geranium",
+      "name_en": "Geranium",
+      "name_fr": "Géranium des balcons",
+      "group": "flower",
+      "aliases": [
+        "geranium",
+        "Geranium",
+        "Géranium des balcons",
+        "pelargonium",
+        "Pelargonium x hortorum"
+      ]
+    },
+    {
+      "id": "petunia",
+      "name_en": "Petunia",
+      "name_fr": "Pétunia",
+      "group": "flower",
+      "aliases": [
+        "petunia",
+        "Petunia",
+        "Pétunia",
+        "Petunia x atkinsiana"
+      ]
+    },
+    {
+      "id": "pansy",
+      "name_en": "Pansy",
+      "name_fr": "Pensée",
+      "group": "flower",
+      "aliases": [
+        "pansy",
+        "Pansy",
+        "Pensée",
+        "viola",
+        "Viola x wittrockiana"
+      ]
+    },
+    {
+      "id": "crocus",
+      "name_en": "Crocus",
+      "name_fr": "Crocus",
+      "group": "flower",
+      "aliases": [
+        "crocus",
+        "Crocus",
+        "Crocus vernus"
+      ]
+    },
+    {
+      "id": "sunflower",
+      "name_en": "Sunflower",
+      "name_fr": "Tournesol",
+      "group": "flower",
+      "aliases": [
+        "sunflower",
+        "Sunflower",
+        "Tournesol",
+        "helianthus",
+        "Helianthus annuus"
+      ]
+    },
+    {
+      "id": "ginkgo",
+      "name_en": "Ginkgo biloba",
+      "name_fr": "Ginkgo",
+      "group": "tree",
+      "aliases": [
+        "Ginkgo biloba",
+        "Ginkgo",
+        "ginkgo"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "yellow",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 41,
+        "frilly": true
+      }
+    },
+    {
+      "id": "beech",
+      "name_en": "Fagus sylvatica",
+      "name_fr": "Hêtre",
+      "group": "tree",
+      "aliases": [
+        "Fagus sylvatica",
+        "Hêtre",
+        "beech"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 43
+      }
+    },
+    {
+      "id": "hornbeam",
+      "name_en": "Carpinus betulus",
+      "name_fr": "Charme",
+      "group": "tree",
+      "aliases": [
+        "Carpinus betulus",
+        "Charme",
+        "hornbeam"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 44
+      }
+    },
+    {
+      "id": "linden",
+      "name_en": "Tilia",
+      "name_fr": "Tilleul",
+      "group": "tree",
+      "aliases": [
+        "Tilia",
+        "Tilleul",
+        "linden"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "yellow",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 41
+      }
+    },
+    {
+      "id": "ash",
+      "name_en": "Fraxinus",
+      "name_fr": "Frêne",
+      "group": "tree",
+      "aliases": [
+        "Fraxinus",
+        "Frêne",
+        "ash"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 43
+      }
+    },
+    {
+      "id": "elm",
+      "name_en": "Ulmus",
+      "name_fr": "Orme",
+      "group": "tree",
+      "aliases": [
+        "Ulmus",
+        "Orme",
+        "elm"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 44
+      }
+    },
+    {
+      "id": "chestnut",
+      "name_en": "Castanea sativa",
+      "name_fr": "Châtaignier",
+      "group": "tree",
+      "aliases": [
+        "Castanea sativa",
+        "Châtaignier",
+        "chestnut"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "olive",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 41
+      }
+    },
+    {
+      "id": "horse_chestnut",
+      "name_en": "Aesculus hippocastanum",
+      "name_fr": "Marronnier",
+      "group": "tree",
+      "aliases": [
+        "Aesculus hippocastanum",
+        "Marronnier",
+        "horse chestnut"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 43
+      }
+    },
+    {
+      "id": "hazel",
+      "name_en": "Corylus avellana",
+      "name_fr": "Noisetier",
+      "group": "tree",
+      "aliases": [
+        "Corylus avellana",
+        "Noisetier",
+        "hazel"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "olive",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 44
+      }
+    },
+    {
+      "id": "alder",
+      "name_en": "Alnus",
+      "name_fr": "Aulne",
+      "group": "tree",
+      "aliases": [
+        "Alnus",
+        "Aulne",
+        "alder"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 41
+      }
+    },
+    {
+      "id": "poplar",
+      "name_en": "Populus",
+      "name_fr": "Peuplier",
+      "group": "tree",
+      "aliases": [
+        "Populus",
+        "Peuplier",
+        "poplar"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "silver",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 43
+      }
+    },
+    {
+      "id": "plane",
+      "name_en": "Platanus",
+      "name_fr": "Platane",
+      "group": "tree",
+      "aliases": [
+        "Platanus",
+        "Platane",
+        "plane"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 14,
+        "r": 44,
+        "frilly": true
+      }
+    },
+    {
+      "id": "catalpa",
+      "name_en": "Catalpa",
+      "name_fr": "Catalpa",
+      "group": "tree",
+      "aliases": [
+        "Catalpa",
+        "Catalpa",
+        "catalpa"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "yellow",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 41
+      }
+    },
+    {
+      "id": "paulownia",
+      "name_en": "Paulownia",
+      "name_fr": "Paulownia",
+      "group": "tree",
+      "aliases": [
+        "Paulownia",
+        "Paulownia",
+        "paulownia"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 43
+      }
+    },
+    {
+      "id": "juda_tree",
+      "name_en": "Cercis siliquastrum",
+      "name_fr": "Arbre de Judée",
+      "group": "tree",
+      "aliases": [
+        "Cercis siliquastrum",
+        "Arbre de Judée",
+        "juda tree"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 44,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "liquidambar",
+      "name_en": "Liquidambar styraciflua",
+      "name_fr": "Liquidambar",
+      "group": "tree",
+      "aliases": [
+        "Liquidambar styraciflua",
+        "Liquidambar",
+        "liquidambar"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "redleaf",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 41
+      }
+    },
+    {
+      "id": "tulip_tree",
+      "name_en": "Liriodendron tulipifera",
+      "name_fr": "Tulipier",
+      "group": "tree",
+      "aliases": [
+        "Liriodendron tulipifera",
+        "Tulipier",
+        "tulip tree"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "yellow",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 43
+      }
+    },
+    {
+      "id": "service_tree",
+      "name_en": "Sorbus",
+      "name_fr": "Sorbier",
+      "group": "tree",
+      "aliases": [
+        "Sorbus",
+        "Sorbier",
+        "service tree"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "olive",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 44
+      }
+    },
+    {
+      "id": "medlar",
+      "name_en": "Mespilus germanica",
+      "name_fr": "Néflier commun",
+      "group": "tree",
+      "aliases": [
+        "Mespilus germanica",
+        "Néflier commun",
+        "medlar"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 41,
+        "flowers": {
+          "spec": "white",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "quince",
+      "name_en": "Cydonia oblonga",
+      "name_fr": "Cognassier",
+      "group": "tree",
+      "aliases": [
+        "Cydonia oblonga",
+        "Cognassier",
+        "quince"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "silver",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 43,
+        "flowers": {
+          "spec": "pink",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "apricot",
+      "name_en": "Prunus armeniaca",
+      "name_fr": "Abricotier",
+      "group": "tree",
+      "aliases": [
+        "Prunus armeniaca",
+        "Abricotier",
+        "apricot"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 44,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "almond",
+      "name_en": "Prunus dulcis",
+      "name_fr": "Amandier",
+      "group": "tree",
+      "aliases": [
+        "Prunus dulcis",
+        "Amandier",
+        "almond"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "silver",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 41,
+        "flowers": {
+          "spec": "pink",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "persimmon",
+      "name_en": "Diospyros kaki",
+      "name_fr": "Plaqueminier",
+      "group": "tree",
+      "aliases": [
+        "Diospyros kaki",
+        "Plaqueminier",
+        "persimmon"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 43
+      }
+    },
+    {
+      "id": "mulberry",
+      "name_en": "Morus",
+      "name_fr": "Mûrier arbre",
+      "group": "tree",
+      "aliases": [
+        "Morus",
+        "Mûrier arbre",
+        "mulberry"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 44
+      }
+    },
+    {
+      "id": "loquat",
+      "name_en": "Eriobotrya japonica",
+      "name_fr": "Néflier du Japon",
+      "group": "tree",
+      "aliases": [
+        "Eriobotrya japonica",
+        "Néflier du Japon",
+        "loquat"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "dark",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 41
+      }
+    },
+    {
+      "id": "cedar",
+      "name_en": "Cedrus",
+      "name_fr": "Cèdre",
+      "group": "tree",
+      "aliases": [
+        "Cedrus",
+        "Cèdre",
+        "cedar"
+      ],
+      "recipe": {
+        "a": "conifer",
+        "pal": "teal",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "cypress",
+      "name_en": "Cupressus",
+      "name_fr": "Cyprès",
+      "group": "tree",
+      "aliases": [
+        "Cupressus",
+        "Cyprès",
+        "cypress"
+      ],
+      "recipe": {
+        "a": "conifer",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20
+      }
+    },
+    {
+      "id": "fir",
+      "name_en": "Abies",
+      "name_fr": "Sapin",
+      "group": "tree",
+      "aliases": [
+        "Abies",
+        "Sapin",
+        "fir"
+      ],
+      "recipe": {
+        "a": "conifer",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24
+      }
+    },
+    {
+      "id": "larch",
+      "name_en": "Larix",
+      "name_fr": "Mélèze",
+      "group": "tree",
+      "aliases": [
+        "Larix",
+        "Mélèze",
+        "larch"
+      ],
+      "recipe": {
+        "a": "conifer",
+        "pal": "yellow",
+        "leaf_scale": 0.8,
+        "n_out": 12
+      }
+    },
+    {
+      "id": "sequoia",
+      "name_en": "Sequoia",
+      "name_fr": "Séquoia",
+      "group": "tree",
+      "aliases": [
+        "Sequoia",
+        "Séquoia",
+        "sequoia"
+      ],
+      "recipe": {
+        "a": "conifer",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "araucaria",
+      "name_en": "Araucaria",
+      "name_fr": "Araucaria",
+      "group": "tree",
+      "aliases": [
+        "Araucaria",
+        "Araucaria",
+        "araucaria"
+      ],
+      "recipe": {
+        "a": "conifer",
+        "pal": "teal",
+        "leaf_scale": 1.1,
+        "n_out": 20
+      }
+    },
+    {
+      "id": "eucalyptus",
+      "name_en": "Eucalyptus",
+      "name_fr": "Eucalyptus",
+      "group": "tree",
+      "aliases": [
+        "Eucalyptus",
+        "Eucalyptus",
+        "eucalyptus"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "silver",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 43
+      }
+    },
+    {
+      "id": "mimosa",
+      "name_en": "Acacia dealbata",
+      "name_fr": "Mimosa",
+      "group": "tree",
+      "aliases": [
+        "Acacia dealbata",
+        "Mimosa",
+        "mimosa"
+      ],
+      "recipe": {
+        "a": "canopy",
+        "pal": "silver",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 44,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "sophora_prostrata",
+      "name_en": "Sophora prostrata",
+      "name_fr": "Sophora prostrata",
+      "group": "shrub",
+      "aliases": [
+        "Sophora prostrata",
+        "Sophora prostrata",
+        "sophora prostrata"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "olive",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 36,
+        "narrow": true
+      }
+    },
+    {
+      "id": "abelia",
+      "name_en": "Abelia",
+      "name_fr": "Abélia",
+      "group": "shrub",
+      "aliases": [
+        "Abelia",
+        "Abélia",
+        "abelia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 38,
+        "flowers": {
+          "spec": "pink",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "aucuba",
+      "name_en": "Aucuba japonica",
+      "name_fr": "Aucuba",
+      "group": "shrub",
+      "aliases": [
+        "Aucuba japonica",
+        "Aucuba",
+        "aucuba"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "yellow",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 40
+      }
+    },
+    {
+      "id": "buddleja",
+      "name_en": "Buddleja",
+      "name_fr": "Buddleia",
+      "group": "shrub",
+      "aliases": [
+        "Buddleja",
+        "Buddleia",
+        "buddleja"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 36,
+        "flowers": {
+          "spec": "purple",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "ceanothus",
+      "name_en": "Ceanothus",
+      "name_fr": "Céanothe",
+      "group": "shrub",
+      "aliases": [
+        "Ceanothus",
+        "Céanothe",
+        "ceanothus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 38,
+        "flowers": {
+          "spec": "blue",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "choisya",
+      "name_en": "Choisya",
+      "name_fr": "Oranger du Mexique",
+      "group": "shrub",
+      "aliases": [
+        "Choisya",
+        "Oranger du Mexique",
+        "choisya"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "yellow",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 40,
+        "flowers": {
+          "spec": "white",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "cistus",
+      "name_en": "Cistus",
+      "name_fr": "Ciste",
+      "group": "shrub",
+      "aliases": [
+        "Cistus",
+        "Ciste",
+        "cistus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 36,
+        "flowers": {
+          "spec": "pink",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "cornus",
+      "name_en": "Cornus",
+      "name_fr": "Cornouiller",
+      "group": "shrub",
+      "aliases": [
+        "Cornus",
+        "Cornouiller",
+        "cornus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 38,
+        "flowers": {
+          "spec": "white",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "cotinus",
+      "name_en": "Cotinus coggygria",
+      "name_fr": "Arbre à perruques",
+      "group": "shrub",
+      "aliases": [
+        "Cotinus coggygria",
+        "Arbre à perruques",
+        "cotinus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "redleaf",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 40,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "daphne",
+      "name_en": "Daphne",
+      "name_fr": "Daphné",
+      "group": "shrub",
+      "aliases": [
+        "Daphne",
+        "Daphné",
+        "daphne"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 36,
+        "flowers": {
+          "spec": "pink",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "deutzia",
+      "name_en": "Deutzia",
+      "name_fr": "Deutzia",
+      "group": "shrub",
+      "aliases": [
+        "Deutzia",
+        "Deutzia",
+        "deutzia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 38,
+        "flowers": {
+          "spec": "white",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "elaeagnus",
+      "name_en": "Elaeagnus",
+      "name_fr": "Éléagnus",
+      "group": "shrub",
+      "aliases": [
+        "Elaeagnus",
+        "Éléagnus",
+        "elaeagnus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 40
+      }
+    },
+    {
+      "id": "euonymus",
+      "name_en": "Euonymus",
+      "name_fr": "Fusain",
+      "group": "shrub",
+      "aliases": [
+        "Euonymus",
+        "Fusain",
+        "euonymus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "yellow",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 36
+      }
+    },
+    {
+      "id": "escallonia",
+      "name_en": "Escallonia",
+      "name_fr": "Escallonia",
+      "group": "shrub",
+      "aliases": [
+        "Escallonia",
+        "Escallonia",
+        "escallonia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 38,
+        "flowers": {
+          "spec": "pink",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "fatsia",
+      "name_en": "Fatsia japonica",
+      "name_fr": "Fatsia",
+      "group": "shrub",
+      "aliases": [
+        "Fatsia japonica",
+        "Fatsia",
+        "fatsia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 40,
+        "frilly": true
+      }
+    },
+    {
+      "id": "hebe",
+      "name_en": "Hebe",
+      "name_fr": "Véronique arbustive",
+      "group": "shrub",
+      "aliases": [
+        "Hebe",
+        "Véronique arbustive",
+        "hebe"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 36,
+        "flowers": {
+          "spec": "purple",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        },
+        "narrow": true
+      }
+    },
+    {
+      "id": "laurustinus",
+      "name_en": "Viburnum tinus",
+      "name_fr": "Laurier tin",
+      "group": "shrub",
+      "aliases": [
+        "Viburnum tinus",
+        "Laurier tin",
+        "laurustinus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 38,
+        "flowers": {
+          "spec": "white",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "mahonia",
+      "name_en": "Mahonia",
+      "name_fr": "Mahonia",
+      "group": "shrub",
+      "aliases": [
+        "Mahonia",
+        "Mahonia",
+        "mahonia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 40,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "nandina",
+      "name_en": "Nandina domestica",
+      "name_fr": "Bambou sacré",
+      "group": "shrub",
+      "aliases": [
+        "Nandina domestica",
+        "Bambou sacré",
+        "nandina"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "redleaf",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 36
+      }
+    },
+    {
+      "id": "oleander",
+      "name_en": "Nerium oleander",
+      "name_fr": "Laurier rose",
+      "group": "shrub",
+      "aliases": [
+        "Nerium oleander",
+        "Laurier rose",
+        "oleander"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 38,
+        "flowers": {
+          "spec": "pink",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        },
+        "narrow": true
+      }
+    },
+    {
+      "id": "osmanthus",
+      "name_en": "Osmanthus",
+      "name_fr": "Osmanthus",
+      "group": "shrub",
+      "aliases": [
+        "Osmanthus",
+        "Osmanthus",
+        "osmanthus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 40,
+        "flowers": {
+          "spec": "white",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "philadelphus",
+      "name_en": "Philadelphus",
+      "name_fr": "Seringat",
+      "group": "shrub",
+      "aliases": [
+        "Philadelphus",
+        "Seringat",
+        "philadelphus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 36,
+        "flowers": {
+          "spec": "white",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "photinia",
+      "name_en": "Photinia",
+      "name_fr": "Photinia",
+      "group": "shrub",
+      "aliases": [
+        "Photinia",
+        "Photinia",
+        "photinia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "redleaf",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 38
+      }
+    },
+    {
+      "id": "pieris",
+      "name_en": "Pieris japonica",
+      "name_fr": "Piéris",
+      "group": "shrub",
+      "aliases": [
+        "Pieris japonica",
+        "Piéris",
+        "pieris"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "redleaf",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 40,
+        "flowers": {
+          "spec": "white",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "pittosporum",
+      "name_en": "Pittosporum",
+      "name_fr": "Pittosporum",
+      "group": "shrub",
+      "aliases": [
+        "Pittosporum",
+        "Pittosporum",
+        "pittosporum"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "olive",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 36
+      }
+    },
+    {
+      "id": "potentilla",
+      "name_en": "Dasiphora fruticosa",
+      "name_fr": "Potentille arbustive",
+      "group": "shrub",
+      "aliases": [
+        "Dasiphora fruticosa",
+        "Potentille arbustive",
+        "potentilla"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 38,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "pyracantha",
+      "name_en": "Pyracantha",
+      "name_fr": "Pyracantha",
+      "group": "shrub",
+      "aliases": [
+        "Pyracantha",
+        "Pyracantha",
+        "pyracantha"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 40
+      }
+    },
+    {
+      "id": "flowering_currant",
+      "name_en": "Ribes sanguineum",
+      "name_fr": "Groseillier à fleurs",
+      "group": "shrub",
+      "aliases": [
+        "Ribes sanguineum",
+        "Groseillier à fleurs",
+        "flowering currant"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 36,
+        "flowers": {
+          "spec": "pink",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "skimmia",
+      "name_en": "Skimmia japonica",
+      "name_fr": "Skimmia",
+      "group": "shrub",
+      "aliases": [
+        "Skimmia japonica",
+        "Skimmia",
+        "skimmia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 38
+      }
+    },
+    {
+      "id": "weigela",
+      "name_en": "Weigela",
+      "name_fr": "Weigélia",
+      "group": "shrub",
+      "aliases": [
+        "Weigela",
+        "Weigélia",
+        "weigela"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 40,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "agapanthus",
+      "name_en": "Agapanthus",
+      "name_fr": "Agapanthe",
+      "group": "flower",
+      "aliases": [
+        "Agapanthus",
+        "Agapanthe",
+        "agapanthus"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "flowers": {
+          "spec": "blue",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "ornamental_allium",
+      "name_en": "Allium giganteum",
+      "name_fr": "Ail d'ornement",
+      "group": "flower",
+      "aliases": [
+        "Allium giganteum",
+        "Ail d'ornement",
+        "ornamental allium"
+      ],
+      "recipe": {
+        "a": "allium",
+        "pal": "teal",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "flowers": {
+          "spec": "purple",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "anemone",
+      "name_en": "Anemone",
+      "name_fr": "Anémone",
+      "group": "flower",
+      "aliases": [
+        "Anemone",
+        "Anémone",
+        "anemone"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 40,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "aquilegia",
+      "name_en": "Aquilegia",
+      "name_fr": "Ancolie",
+      "group": "flower",
+      "aliases": [
+        "Aquilegia",
+        "Ancolie",
+        "aquilegia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 36,
+        "flowers": {
+          "spec": "purple",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "astilbe",
+      "name_en": "Astilbe",
+      "name_fr": "Astilbe",
+      "group": "flower",
+      "aliases": [
+        "Astilbe",
+        "Astilbe",
+        "astilbe"
+      ],
+      "recipe": {
+        "a": "feathery",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "flowers": {
+          "spec": "pink",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "bergenia",
+      "name_en": "Bergenia",
+      "name_fr": "Bergénia",
+      "group": "flower",
+      "aliases": [
+        "Bergenia",
+        "Bergénia",
+        "bergenia"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "brunnera",
+      "name_en": "Brunnera",
+      "name_fr": "Brunnera",
+      "group": "flower",
+      "aliases": [
+        "Brunnera",
+        "Brunnera",
+        "brunnera"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "silver",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "blue",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "campanula",
+      "name_en": "Campanula",
+      "name_fr": "Campanule",
+      "group": "flower",
+      "aliases": [
+        "Campanula",
+        "Campanule",
+        "campanula"
+      ],
+      "recipe": {
+        "a": "ground",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "flowers": {
+          "spec": "blue",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "centaurea",
+      "name_en": "Centaurea",
+      "name_fr": "Centaurée",
+      "group": "flower",
+      "aliases": [
+        "Centaurea",
+        "Centaurée",
+        "centaurea"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 40,
+        "flowers": {
+          "spec": "purple",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "coreopsis",
+      "name_en": "Coreopsis",
+      "name_fr": "Coréopsis",
+      "group": "flower",
+      "aliases": [
+        "Coreopsis",
+        "Coréopsis",
+        "coreopsis"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 36,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "crocosmia",
+      "name_en": "Crocosmia",
+      "name_fr": "Crocosmia",
+      "group": "flower",
+      "aliases": [
+        "Crocosmia",
+        "Crocosmia",
+        "crocosmia"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "orange",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "cyclamen",
+      "name_en": "Cyclamen",
+      "name_fr": "Cyclamen",
+      "group": "flower",
+      "aliases": [
+        "Cyclamen",
+        "Cyclamen",
+        "cyclamen"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "silver",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "delphinium",
+      "name_en": "Delphinium",
+      "name_fr": "Pied d'alouette",
+      "group": "flower",
+      "aliases": [
+        "Delphinium",
+        "Pied d'alouette",
+        "delphinium"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 36,
+        "flowers": {
+          "spec": "blue",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "dicentra",
+      "name_en": "Lamprocapnos spectabilis",
+      "name_fr": "Cœur de Marie",
+      "group": "flower",
+      "aliases": [
+        "Lamprocapnos spectabilis",
+        "Cœur de Marie",
+        "dicentra"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 38,
+        "flowers": {
+          "spec": "pink",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "digitalis",
+      "name_en": "Digitalis",
+      "name_fr": "Digitale",
+      "group": "flower",
+      "aliases": [
+        "Digitalis",
+        "Digitale",
+        "digitalis"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "echinacea",
+      "name_en": "Echinacea",
+      "name_fr": "Échinacée",
+      "group": "flower",
+      "aliases": [
+        "Echinacea",
+        "Échinacée",
+        "echinacea"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 36,
+        "flowers": {
+          "spec": "pink",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "echinops",
+      "name_en": "Echinops",
+      "name_fr": "Boule azurée",
+      "group": "flower",
+      "aliases": [
+        "Echinops",
+        "Boule azurée",
+        "echinops"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 38,
+        "flowers": {
+          "spec": "blue",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "epimedium",
+      "name_en": "Epimedium",
+      "name_fr": "Épimédium",
+      "group": "flower",
+      "aliases": [
+        "Epimedium",
+        "Épimédium",
+        "epimedium"
+      ],
+      "recipe": {
+        "a": "ground",
+        "pal": "olive",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "erigeron",
+      "name_en": "Erigeron",
+      "name_fr": "Érigéron",
+      "group": "flower",
+      "aliases": [
+        "Erigeron",
+        "Érigéron",
+        "erigeron"
+      ],
+      "recipe": {
+        "a": "ground",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "white",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "euphorbia",
+      "name_en": "Euphorbia",
+      "name_fr": "Euphorbe",
+      "group": "flower",
+      "aliases": [
+        "Euphorbia",
+        "Euphorbe",
+        "euphorbia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "teal",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 38,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "gaillardia",
+      "name_en": "Gaillardia",
+      "name_fr": "Gaillarde",
+      "group": "flower",
+      "aliases": [
+        "Gaillardia",
+        "Gaillarde",
+        "gaillardia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 40,
+        "flowers": {
+          "spec": "orange",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "gaura",
+      "name_en": "Oenothera lindheimeri",
+      "name_fr": "Gaura",
+      "group": "flower",
+      "aliases": [
+        "Oenothera lindheimeri",
+        "Gaura",
+        "gaura"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "olive",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 36,
+        "flowers": {
+          "spec": "white",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "geum",
+      "name_en": "Geum",
+      "name_fr": "Benoîte",
+      "group": "flower",
+      "aliases": [
+        "Geum",
+        "Benoîte",
+        "geum"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "orange",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "helenium",
+      "name_en": "Helenium",
+      "name_fr": "Hélénie",
+      "group": "flower",
+      "aliases": [
+        "Helenium",
+        "Hélénie",
+        "helenium"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 40,
+        "flowers": {
+          "spec": "gold",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "helleborus",
+      "name_en": "Helleborus",
+      "name_fr": "Hellébore",
+      "group": "flower",
+      "aliases": [
+        "Helleborus",
+        "Hellébore",
+        "helleborus"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 36,
+        "flowers": {
+          "spec": "cream",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "hemerocallis",
+      "name_en": "Hemerocallis",
+      "name_fr": "Hémérocalle",
+      "group": "flower",
+      "aliases": [
+        "Hemerocallis",
+        "Hémérocalle",
+        "hemerocallis"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "flowers": {
+          "spec": "orange",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "heuchera",
+      "name_en": "Heuchera",
+      "name_fr": "Heuchère",
+      "group": "flower",
+      "aliases": [
+        "Heuchera",
+        "Heuchère",
+        "heuchera"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "redleaf",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "hosta",
+      "name_en": "Hosta",
+      "name_fr": "Hosta",
+      "group": "flower",
+      "aliases": [
+        "Hosta",
+        "Hosta",
+        "hosta"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "teal",
+        "leaf_scale": 1.2,
+        "n_out": 24
+      }
+    },
+    {
+      "id": "kniphofia",
+      "name_en": "Kniphofia",
+      "name_fr": "Tritoma",
+      "group": "flower",
+      "aliases": [
+        "Kniphofia",
+        "Tritoma",
+        "kniphofia"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "olive",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "flowers": {
+          "spec": "orange",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "leucanthemum",
+      "name_en": "Leucanthemum",
+      "name_fr": "Marguerite",
+      "group": "flower",
+      "aliases": [
+        "Leucanthemum",
+        "Marguerite",
+        "leucanthemum"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 40,
+        "flowers": {
+          "spec": "white",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "liriope",
+      "name_en": "Liriope",
+      "name_fr": "Liriope",
+      "group": "flower",
+      "aliases": [
+        "Liriope",
+        "Liriope",
+        "liriope"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "purple",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "lupin",
+      "name_en": "Lupinus",
+      "name_fr": "Lupin",
+      "group": "flower",
+      "aliases": [
+        "Lupinus",
+        "Lupin",
+        "lupin"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 38,
+        "flowers": {
+          "spec": "purple",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "lychnis",
+      "name_en": "Silene coronaria",
+      "name_fr": "Coquelourde",
+      "group": "flower",
+      "aliases": [
+        "Silene coronaria",
+        "Coquelourde",
+        "lychnis"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 40,
+        "flowers": {
+          "spec": "magenta",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "monarda",
+      "name_en": "Monarda",
+      "name_fr": "Monarde",
+      "group": "flower",
+      "aliases": [
+        "Monarda",
+        "Monarde",
+        "monarda"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 36,
+        "flowers": {
+          "spec": "red",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "muscari",
+      "name_en": "Muscari",
+      "name_fr": "Muscari",
+      "group": "flower",
+      "aliases": [
+        "Muscari",
+        "Muscari",
+        "muscari"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "blue",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "nepeta",
+      "name_en": "Nepeta",
+      "name_fr": "Népéta",
+      "group": "flower",
+      "aliases": [
+        "Nepeta",
+        "Népéta",
+        "nepeta"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 40,
+        "flowers": {
+          "spec": "lilac",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        },
+        "narrow": true
+      }
+    },
+    {
+      "id": "papaver",
+      "name_en": "Papaver",
+      "name_fr": "Pavot",
+      "group": "flower",
+      "aliases": [
+        "Papaver",
+        "Pavot",
+        "papaver"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "teal",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "flowers": {
+          "spec": "red",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "penstemon",
+      "name_en": "Penstemon",
+      "name_fr": "Penstémon",
+      "group": "flower",
+      "aliases": [
+        "Penstemon",
+        "Penstémon",
+        "penstemon"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 38,
+        "flowers": {
+          "spec": "pink",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "phlox",
+      "name_en": "Phlox",
+      "name_fr": "Phlox",
+      "group": "flower",
+      "aliases": [
+        "Phlox",
+        "Phlox",
+        "phlox"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 40,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "primula",
+      "name_en": "Primula",
+      "name_fr": "Primevère",
+      "group": "flower",
+      "aliases": [
+        "Primula",
+        "Primevère",
+        "primula"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "crisp",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "pulmonaria",
+      "name_en": "Pulmonaria",
+      "name_fr": "Pulmonaire",
+      "group": "flower",
+      "aliases": [
+        "Pulmonaria",
+        "Pulmonaire",
+        "pulmonaria"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "silver",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "flowers": {
+          "spec": "blue",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "rudbeckia",
+      "name_en": "Rudbeckia",
+      "name_fr": "Rudbeckia",
+      "group": "flower",
+      "aliases": [
+        "Rudbeckia",
+        "Rudbeckia",
+        "rudbeckia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "r": 40,
+        "flowers": {
+          "spec": "gold",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "salvia",
+      "name_en": "Salvia nemorosa",
+      "name_fr": "Sauge d'ornement",
+      "group": "flower",
+      "aliases": [
+        "Salvia nemorosa",
+        "Sauge d'ornement",
+        "salvia"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 36,
+        "flowers": {
+          "spec": "purple",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        },
+        "narrow": true
+      }
+    },
+    {
+      "id": "scabiosa",
+      "name_en": "Scabiosa",
+      "name_fr": "Scabieuse",
+      "group": "flower",
+      "aliases": [
+        "Scabiosa",
+        "Scabieuse",
+        "scabiosa"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 38,
+        "flowers": {
+          "spec": "lilac",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "sedum",
+      "name_en": "Hylotelephium",
+      "name_fr": "Orpin",
+      "group": "flower",
+      "aliases": [
+        "Hylotelephium",
+        "Orpin",
+        "sedum"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "teal",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "flowers": {
+          "spec": "pink",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "stachys",
+      "name_en": "Stachys byzantina",
+      "name_fr": "Épiaire laineuse",
+      "group": "flower",
+      "aliases": [
+        "Stachys byzantina",
+        "Épiaire laineuse",
+        "stachys"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "silver",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "verbena",
+      "name_en": "Verbena bonariensis",
+      "name_fr": "Verveine de Buenos Aires",
+      "group": "flower",
+      "aliases": [
+        "Verbena bonariensis",
+        "Verveine de Buenos Aires",
+        "verbena"
+      ],
+      "recipe": {
+        "a": "feathery",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "purple",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "veronica",
+      "name_en": "Veronica",
+      "name_fr": "Véronique",
+      "group": "flower",
+      "aliases": [
+        "Veronica",
+        "Véronique",
+        "veronica"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 40,
+        "flowers": {
+          "spec": "blue",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "achillea",
+      "name_en": "Achillea",
+      "name_fr": "Achillée",
+      "group": "flower",
+      "aliases": [
+        "Achillea",
+        "Achillée",
+        "achillea"
+      ],
+      "recipe": {
+        "a": "feathery",
+        "pal": "silver",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "flowers": {
+          "spec": "cream",
+          "petals": 5,
+          "radius": 4.0,
+          "n": 5,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "acanthus",
+      "name_en": "Acanthus",
+      "name_fr": "Acanthe",
+      "group": "flower",
+      "aliases": [
+        "Acanthus",
+        "Acanthe",
+        "acanthus"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16,
+        "flowers": {
+          "spec": "white",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        },
+        "frilly": true
+      }
+    },
+    {
+      "id": "fern",
+      "name_en": "Dryopteris",
+      "name_fr": "Fougère",
+      "group": "flower",
+      "aliases": [
+        "Dryopteris",
+        "Fougère",
+        "fern"
+      ],
+      "recipe": {
+        "a": "feathery",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20
+      }
+    },
+    {
+      "id": "bamboo",
+      "name_en": "Phyllostachys",
+      "name_fr": "Bambou",
+      "group": "flower",
+      "aliases": [
+        "Phyllostachys",
+        "Bambou",
+        "bamboo"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24
+      }
+    },
+    {
+      "id": "carex",
+      "name_en": "Carex",
+      "name_fr": "Carex",
+      "group": "flower",
+      "aliases": [
+        "Carex",
+        "Carex",
+        "carex"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "olive",
+        "leaf_scale": 0.8,
+        "n_out": 12
+      }
+    },
+    {
+      "id": "festuca",
+      "name_en": "Festuca glauca",
+      "name_fr": "Fétuque bleue",
+      "group": "flower",
+      "aliases": [
+        "Festuca glauca",
+        "Fétuque bleue",
+        "festuca"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "teal",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "miscanthus",
+      "name_en": "Miscanthus",
+      "name_fr": "Miscanthus",
+      "group": "flower",
+      "aliases": [
+        "Miscanthus",
+        "Miscanthus",
+        "miscanthus"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "olive",
+        "leaf_scale": 1.1,
+        "n_out": 20
+      }
+    },
+    {
+      "id": "pennisetum",
+      "name_en": "Cenchrus alopecuroides",
+      "name_fr": "Pennisetum",
+      "group": "flower",
+      "aliases": [
+        "Cenchrus alopecuroides",
+        "Pennisetum",
+        "pennisetum"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "yellow",
+        "leaf_scale": 1.2,
+        "n_out": 24
+      }
+    },
+    {
+      "id": "stipa",
+      "name_en": "Nassella tenuissima",
+      "name_fr": "Stipa",
+      "group": "flower",
+      "aliases": [
+        "Nassella tenuissima",
+        "Stipa",
+        "stipa"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "silver",
+        "leaf_scale": 0.8,
+        "n_out": 12
+      }
+    },
+    {
+      "id": "ivy",
+      "name_en": "Hedera",
+      "name_fr": "Lierre",
+      "group": "flower",
+      "aliases": [
+        "Hedera",
+        "Lierre",
+        "ivy"
+      ],
+      "recipe": {
+        "a": "climber",
+        "pal": "dark",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "honeysuckle",
+      "name_en": "Lonicera",
+      "name_fr": "Chèvrefeuille",
+      "group": "flower",
+      "aliases": [
+        "Lonicera",
+        "Chèvrefeuille",
+        "honeysuckle"
+      ],
+      "recipe": {
+        "a": "climber",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "cream",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "passiflora",
+      "name_en": "Passiflora",
+      "name_fr": "Passiflore",
+      "group": "flower",
+      "aliases": [
+        "Passiflora",
+        "Passiflore",
+        "passiflora"
+      ],
+      "recipe": {
+        "a": "climber",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "flowers": {
+          "spec": "purple",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "grape",
+      "name_en": "Vitis vinifera",
+      "name_fr": "Vigne",
+      "group": "flower",
+      "aliases": [
+        "Vitis vinifera",
+        "Vigne",
+        "grape"
+      ],
+      "recipe": {
+        "a": "climber",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12
+      }
+    },
+    {
+      "id": "kiwi",
+      "name_en": "Actinidia",
+      "name_fr": "Kiwi",
+      "group": "flower",
+      "aliases": [
+        "Actinidia",
+        "Kiwi",
+        "kiwi"
+      ],
+      "recipe": {
+        "a": "climber",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "strawberry",
+      "name_en": "Fragaria",
+      "name_fr": "Fraisier",
+      "group": "flower",
+      "aliases": [
+        "Fragaria",
+        "Fraisier",
+        "strawberry"
+      ],
+      "recipe": {
+        "a": "ground",
+        "pal": "fresh",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "flowers": {
+          "spec": "white",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "endive",
+      "name_en": "Cichorium intybus",
+      "name_fr": "Endive",
+      "group": "vegetable",
+      "aliases": [
+        "Cichorium intybus",
+        "Endive",
+        "endive"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "crisp",
+        "leaf_scale": 0.8,
+        "n_out": 12
+      }
+    },
+    {
+      "id": "lambs_lettuce",
+      "name_en": "Valerianella locusta",
+      "name_fr": "Mâche",
+      "group": "vegetable",
+      "aliases": [
+        "Valerianella locusta",
+        "Mâche",
+        "lambs lettuce"
+      ],
+      "recipe": {
+        "a": "rosette",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "parsnip",
+      "name_en": "Pastinaca sativa",
+      "name_fr": "Panais",
+      "group": "vegetable",
+      "aliases": [
+        "Pastinaca sativa",
+        "Panais",
+        "parsnip"
+      ],
+      "recipe": {
+        "a": "feathery",
+        "pal": "yellow",
+        "leaf_scale": 1.1,
+        "n_out": 20
+      }
+    },
+    {
+      "id": "salsify",
+      "name_en": "Tragopogon porrifolius",
+      "name_fr": "Salsifis",
+      "group": "vegetable",
+      "aliases": [
+        "Tragopogon porrifolius",
+        "Salsifis",
+        "salsify"
+      ],
+      "recipe": {
+        "a": "grass",
+        "pal": "teal",
+        "leaf_scale": 1.2,
+        "n_out": 24
+      }
+    },
+    {
+      "id": "jerusalem_artichoke",
+      "name_en": "Helianthus tuberosus",
+      "name_fr": "Topinambour",
+      "group": "vegetable",
+      "aliases": [
+        "Helianthus tuberosus",
+        "Topinambour",
+        "jerusalem artichoke"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 38,
+        "flowers": {
+          "spec": "yellow",
+          "petals": 6,
+          "radius": 5.5,
+          "n": 7,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    },
+    {
+      "id": "sweet_potato",
+      "name_en": "Ipomoea batatas",
+      "name_fr": "Patate douce",
+      "group": "vegetable",
+      "aliases": [
+        "Ipomoea batatas",
+        "Patate douce",
+        "sweet potato"
+      ],
+      "recipe": {
+        "a": "climber",
+        "pal": "fresh",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "watercress",
+      "name_en": "Nasturtium officinale",
+      "name_fr": "Cresson",
+      "group": "vegetable",
+      "aliases": [
+        "Nasturtium officinale",
+        "Cresson",
+        "watercress"
+      ],
+      "recipe": {
+        "a": "ground",
+        "pal": "dark",
+        "leaf_scale": 1.1,
+        "n_out": 20
+      }
+    },
+    {
+      "id": "shallot",
+      "name_en": "Allium cepa Aggregatum",
+      "name_fr": "Échalote",
+      "group": "vegetable",
+      "aliases": [
+        "Allium cepa Aggregatum",
+        "Échalote",
+        "shallot"
+      ],
+      "recipe": {
+        "a": "allium",
+        "pal": "olive",
+        "leaf_scale": 1.2,
+        "n_out": 24
+      }
+    },
+    {
+      "id": "peanut",
+      "name_en": "Arachis hypogaea",
+      "name_fr": "Arachide",
+      "group": "vegetable",
+      "aliases": [
+        "Arachis hypogaea",
+        "Arachide",
+        "peanut"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 0.8,
+        "n_out": 12,
+        "r": 40
+      }
+    },
+    {
+      "id": "lentil",
+      "name_en": "Lens culinaris",
+      "name_fr": "Lentille",
+      "group": "vegetable",
+      "aliases": [
+        "Lens culinaris",
+        "Lentille",
+        "lentil"
+      ],
+      "recipe": {
+        "a": "feathery",
+        "pal": "olive",
+        "leaf_scale": 0.95,
+        "n_out": 16
+      }
+    },
+    {
+      "id": "chickpea",
+      "name_en": "Cicer arietinum",
+      "name_fr": "Pois chiche",
+      "group": "vegetable",
+      "aliases": [
+        "Cicer arietinum",
+        "Pois chiche",
+        "chickpea"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "silver",
+        "leaf_scale": 1.1,
+        "n_out": 20,
+        "r": 38
+      }
+    },
+    {
+      "id": "broad_bean",
+      "name_en": "Vicia faba",
+      "name_fr": "Fève",
+      "group": "vegetable",
+      "aliases": [
+        "Vicia faba",
+        "Fève",
+        "broad bean"
+      ],
+      "recipe": {
+        "a": "mound",
+        "pal": "fresh",
+        "leaf_scale": 1.2,
+        "n_out": 24,
+        "r": 40,
+        "flowers": {
+          "spec": "white",
+          "petals": 8,
+          "radius": 6.5,
+          "n": 9,
+          "zone": [
+            8,
+            27
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -24,7 +24,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QDialog,
     QDialogButtonBox,
     QGridLayout,
     QGroupBox,
@@ -47,6 +46,7 @@ from open_garden_planner.services.shopping_list_service import (
 from open_garden_planner.services.soil_service import SoilService
 from open_garden_planner.ui.dialogs.soil_test_dialog import _amendment_display_lang
 from open_garden_planner.ui.widgets import CollapsiblePanel
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 if TYPE_CHECKING:
     from open_garden_planner.core.project import ProjectManager
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 
 
-class AmendmentPlanDialog(QDialog):
+class AmendmentPlanDialog(ResponsiveDialog):
     """Modal dialog showing the cross-bed amendment plan."""
 
     def __init__(
