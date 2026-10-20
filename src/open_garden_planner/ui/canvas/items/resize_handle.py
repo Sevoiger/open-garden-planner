@@ -1705,6 +1705,13 @@ def _edge_length(p1: QPointF, p2: QPointF) -> float:
     return math.sqrt(dx * dx + dy * dy)
 
 
+# Generated curved outlines have hundreds of tessellation points. Keep the
+# editing overlay bounded independently of the saved geometry.
+MAX_ANNOTATED_VERTICES = 24
+MAX_DENSE_VERTEX_HANDLES = 128
+DENSE_HANDLE_SPACING_PX = 24.0
+
+
 class VertexEditMixin:
     """Mixin that adds vertex editing functionality to polygon items.
 
@@ -1788,10 +1795,57 @@ class VertexEditMixin:
             return
 
         polygon = self.polygon()
-        for i in range(polygon.count()):
+        for i in self._editable_vertex_indices():
             handle = VertexHandle(i, self)  # type: ignore[arg-type]
             handle.update_position(polygon.at(i))
+            if polygon.count() > MAX_ANNOTATED_VERTICES:
+                point = self.mapToScene(polygon.at(i))
+                handle.setToolTip(_format_coordinate(point.x(), point.y()))
             self._vertex_handles.append(handle)
+
+    def _editable_vertex_indices(self) -> list[int]:
+        """Visible, separated handles for dense paths; original indices survive."""
+        polygon = self.polygon()
+        count = polygon.count()
+        if count <= MAX_ANNOTATED_VERTICES:
+            return list(range(count))
+        return self._dense_overlay_indices([(i, polygon.at(i)) for i in range(count)])
+
+    def _dense_overlay_indices(self, points: list[tuple[int, QPointF]]) -> list[int]:
+        """Filter vertex or midpoint candidates in device pixels."""
+        scene = self.scene()
+        views = scene.views() if scene is not None else []
+        if not views:
+            step = max(1, math.ceil(len(points) / MAX_DENSE_VERTEX_HANDLES))
+            return [index for index, _point in points[::step]]
+        view = views[0]
+        transform = self.deviceTransform(view.viewportTransform())
+        visible = QRectF(view.viewport().rect()).adjusted(-24, -24, 24, 24)
+        spacing = DENSE_HANDLE_SPACING_PX
+        cells: dict[tuple[int, int], list[QPointF]] = {}
+        indices = []
+        for index, local_point in points:
+            point = transform.map(local_point)
+            if not visible.contains(point):
+                continue
+            cell = (math.floor(point.x() / spacing), math.floor(point.y() / spacing))
+            if any(_edge_length(point, previous) < spacing
+                   for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                   for previous in cells.get((cell[0] + dx, cell[1] + dy), [])):
+                continue
+            cells.setdefault(cell, []).append(point)
+            indices.append(index)
+            if len(indices) >= MAX_DENSE_VERTEX_HANDLES:
+                break
+        return indices
+
+    def refresh_vertex_edit_overlay(self) -> None:
+        """Refresh visible dense handles after zoom/pan, never during a drag."""
+        if (not self._is_vertex_edit_mode or self.polygon().count() <= MAX_ANNOTATED_VERTICES
+                or any(handle._is_dragging for handle in self._vertex_handles)):
+            return
+        self._create_vertex_handles()
+        self._create_midpoint_handles()
 
     def _remove_vertex_handles(self) -> None:
         """Remove all vertex handles."""
@@ -1810,16 +1864,28 @@ class VertexEditMixin:
         polygon = self.polygon()
         count = polygon.count()
 
+        candidates = []
+        scene = self.scene()
+        views = scene.views() if scene is not None else []
+        transform = self.deviceTransform(views[0].viewportTransform()) if views else None
         for i in range(count):
-            # Get edge start and end points
             p1 = polygon.at(i)
             p2 = polygon.at((i + 1) % count)
-
-            # Calculate midpoint
-            midpoint = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
+            if (count > MAX_ANNOTATED_VERTICES and transform is not None
+                    and _edge_length(transform.map(p1), transform.map(p2)) < 2 * DENSE_HANDLE_SPACING_PX):
+                continue
+            candidates.append((i, (p1 + p2) / 2))
+        indices = (self._dense_overlay_indices(candidates) if count > MAX_ANNOTATED_VERTICES
+                   else list(range(count)))
+        for i in indices:
+            p1 = polygon.at(i)
+            p2 = polygon.at((i + 1) % count)
+            midpoint = (p1 + p2) / 2
 
             handle = MidpointHandle(i, self)  # type: ignore[arg-type]
             handle.update_position(midpoint)
+            if count > MAX_ANNOTATED_VERTICES:
+                handle.setToolTip(_format_edge_length(_edge_length(self.mapToScene(p1), self.mapToScene(p2))))
             self._midpoint_handles.append(handle)
 
     def _remove_midpoint_handles(self) -> None:
@@ -1838,17 +1904,24 @@ class VertexEditMixin:
         count = polygon.count()
 
         # Update vertex handles
-        for i, handle in enumerate(self._vertex_handles):
+        for handle in self._vertex_handles:
+            i = handle.vertex_index
             if i < count:
                 handle.update_position(polygon.at(i))
+                if count > MAX_ANNOTATED_VERTICES:
+                    point = self.mapToScene(polygon.at(i))
+                    handle.setToolTip(_format_coordinate(point.x(), point.y()))
 
         # Update midpoint handles
-        for i, handle in enumerate(self._midpoint_handles):
+        for handle in self._midpoint_handles:
+            i = handle.edge_index
             if i < count:
                 p1 = polygon.at(i)
                 p2 = polygon.at((i + 1) % count)
                 midpoint = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
                 handle.update_position(midpoint)
+                if count > MAX_ANNOTATED_VERTICES:
+                    handle.setToolTip(_format_edge_length(_edge_length(self.mapToScene(p1), self.mapToScene(p2))))
 
         # Update annotations
         self._update_annotations()
@@ -1862,6 +1935,8 @@ class VertexEditMixin:
 
         polygon = self.polygon()
         count = polygon.count()
+        if count > MAX_ANNOTATED_VERTICES:
+            return  # Dense outlines use handle tooltips instead of overlapping labels.
 
         # Create coordinate labels at each vertex
         for i in range(count):

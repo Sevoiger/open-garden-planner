@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QApplication
 SUPPORTED_LANGUAGES: dict[str, str] = {
     "en": "English",
     "de": "Deutsch",
+    "fr": "Français",
 }
 
 _TRANSLATIONS_DIR = Path(__file__).parent.parent / "resources" / "translations"
@@ -32,7 +33,7 @@ def load_translator(app: QApplication, lang_code: str) -> bool:
 
     Args:
         app: The QApplication instance.
-        lang_code: Language code (e.g. 'en', 'de').
+        lang_code: Language code (e.g. 'en', 'de', 'fr').
 
     Returns:
         True if the translator was loaded (or not needed for English),

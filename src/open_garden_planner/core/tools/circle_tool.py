@@ -51,6 +51,7 @@ class CircleTool(BaseTool):
         self._plant_category: object | None = None
         self._plant_species: str = ""
         self._species_data: dict[str, Any] | None = None
+        self._interactive_size = False
 
     def activate(self) -> None:
         """Called when this tool becomes the active tool.
@@ -62,9 +63,11 @@ class CircleTool(BaseTool):
         self._plant_category = None
         self._plant_species = ""
         self._species_data = None
+        self._interactive_size = False
 
     def set_plant_info(
         self, category: object | None = None, species: str = "", species_data: dict[str, Any] | None = None,
+        *, interactive_size: bool = False,
     ) -> None:
         """Set plant category/species for the next item created.
 
@@ -75,6 +78,7 @@ class CircleTool(BaseTool):
         self._plant_category = category
         self._plant_species = species
         self._species_data = deepcopy(species_data)
+        self._interactive_size = interactive_size
 
     def mouse_press(self, event: QMouseEvent, scene_pos: QPointF) -> bool:
         """Handle click for center or rim point."""
@@ -84,7 +88,7 @@ class CircleTool(BaseTool):
         # Snap the position to grid if enabled
         snapped_pos = self._view.snap_point(scene_pos)
 
-        if self._species_data is not None:
+        if self._species_data is not None and not self._interactive_size:
             from open_garden_planner.core.plant_sizing import catalog_footprint_diameter_cm
 
             self._center_point = snapped_pos
@@ -221,7 +225,7 @@ class CircleTool(BaseTool):
 
     def commit_typed_coordinate(self, point: QPointF) -> bool:
         """Set the center on the first call, finalize the radius on the second."""
-        if self._species_data is not None:
+        if self._species_data is not None and not self._interactive_size:
             from open_garden_planner.core.plant_sizing import catalog_footprint_diameter_cm
 
             self._center_point = QPointF(point)

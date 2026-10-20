@@ -34,12 +34,15 @@ class ToolManager(QObject):
         self._tools: dict[ToolType, BaseTool] = {}
         self._active_tool: BaseTool | None = None
 
-    def register_tool(self, tool: BaseTool) -> None:
+    def register_tool(self, tool: BaseTool, *, display_name: str | None = None) -> None:
         """Register a tool with the manager.
 
         Args:
             tool: The tool to register.
+            display_name: Localized label resolved when the view is constructed.
         """
+        if display_name is not None:
+            tool.display_name = display_name
         self._tools[tool.tool_type] = tool
 
     def set_active_tool(self, tool_type: ToolType) -> None:

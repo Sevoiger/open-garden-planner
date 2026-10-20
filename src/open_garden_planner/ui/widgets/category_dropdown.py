@@ -4,6 +4,7 @@ Opens directly under a toolbar category button. Supports click-to-activate
 and drag-to-canvas, plus an in-popup search field that filters thumbnails.
 """
 
+from copy import copy
 from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, QRect, QSize, Qt, pyqtSignal
@@ -333,7 +334,12 @@ class CategoryDropdown(QWidget):
 
         self._catalog_group = ICON_GROUPS.get(self._category.icon_name)
         self._catalog_list = None
+        self._illustrations_toggle = None
+        self._choose_size = None
         if self._catalog_group:
+            self._choose_size = QCheckBox(self.tr("Choose size on plan (center, then edge)"))
+            self._choose_size.setChecked(True)
+            content_layout.addWidget(self._choose_size)
             self._all_plants = QCheckBox(self.tr("All plants (including unclassified)"))
             self._all_plants.toggled.connect(lambda: self._apply_filter(self._search_box.text()))
             content_layout.addWidget(self._all_plants)
@@ -354,7 +360,9 @@ class CategoryDropdown(QWidget):
             self._database_button = QPushButton(self.tr("Search plant databases…"))
             self._database_button.clicked.connect(self._search_databases)
             content_layout.addWidget(self._database_button)
-            content_layout.addWidget(QLabel(self.tr("Illustrations and generic shapes")))
+            self._illustrations_toggle = QCheckBox(self.tr("Illustrations and generic shapes"))
+            self._illustrations_toggle.setChecked(True)
+            content_layout.addWidget(self._illustrations_toggle)
 
         grid_widget = QWidget()
         grid_layout = QGridLayout(grid_widget)
@@ -372,6 +380,10 @@ class CategoryDropdown(QWidget):
             self._buttons.append(btn)
 
         content_layout.addWidget(grid_widget)
+        self._grid_widget = grid_widget
+        if self._illustrations_toggle is not None:
+            self._illustrations_toggle.toggled.connect(grid_widget.setVisible)
+            self._illustrations_toggle.toggled.connect(lambda: self._apply_filter(self._search_box.text()))
         self._empty_label = QLabel(self.tr("No matching objects"))
         self._empty_label.setWordWrap(True)
         content_layout.addWidget(self._empty_label)
@@ -385,6 +397,9 @@ class CategoryDropdown(QWidget):
         self._header = header
 
     def _on_item_clicked(self, item: GalleryItem) -> None:
+        item = copy(item)
+        if self._choose_size is not None:
+            item.interactive_size = self._choose_size.isChecked()
         self.tool_selected.emit(item.tool_type)
         self.item_selected.emit(item)
         self.close()
@@ -418,6 +433,8 @@ class CategoryDropdown(QWidget):
         self.trait_filters.clear()
         if self._catalog_list is not None:
             self._all_plants.setChecked(False)
+            if self._illustrations_toggle is not None:
+                self._illustrations_toggle.setChecked(True)
         self._apply_filter("")
 
     def _change_page(self, direction: int) -> None:
@@ -443,7 +460,8 @@ class CategoryDropdown(QWidget):
         ))
         self._previous_page.setEnabled(self._catalog_offset > 0)
         self._next_page.setEnabled(self._catalog_offset + PAGE_SIZE < len(matches))
-        self._empty_label.setVisible(not matches and all(btn.isHidden() for btn in self._buttons))
+        no_drawings = self._grid_widget.isHidden() or all(btn.isHidden() for btn in self._buttons)
+        self._empty_label.setVisible(not matches and no_drawings)
 
     def refresh_thumbnails(self) -> None:
         """Re-pull each button's pixmap after a theme switch (see §8.21)."""

@@ -5,6 +5,10 @@ inventory. Adding a language requires all existing keys; adding a wrapped UI str
 requires translations in every registered target language in the same PR. Compare
 Qt context/source/disambiguation keys, never word counts or catalog counts.
 
+The personal fork registers English, Deutsch and Français. Select a language in
+View > Language (Affichage > Langue in French), then restart the application.
+On macOS, use `.venv/bin/python` for the commands below.
+
 Use the locked Python environment from the development setup. From the repository root:
 
 ```powershell

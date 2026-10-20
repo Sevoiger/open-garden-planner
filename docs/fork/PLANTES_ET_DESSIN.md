@@ -8,8 +8,11 @@ avec recherche, filtres et pages de 48 plantes. **Previous plants / Next plants*
 changent de page. **All plants (including unclassified)** donne accès à toutes
 les fiches, y compris celles dont le type n'est pas renseigné.
 
-Choisir une fiche, puis cliquer une fois sur le plan pour la placer ; le
-glisser-déposer fonctionne aussi. La fiche botanique complète, sa provenance et
+Par défaut, choisir une fiche, cliquer sur le plan pour fixer son centre, puis
+cliquer sur le bord pour choisir sa taille. La case **Choose size on plan
+(center, then edge)** permet de revenir au placement en un clic avec la taille
+du catalogue. Le glisser-déposer utilise aussi la taille connue ou générique.
+La fiche botanique complète, sa provenance et
 son identité sont conservées. L'emprise initiale utilise l'envergure connue
 (plafonnée à 50 m pour le dessin) ou la taille générique habituelle. Annuler puis
 rétablir conserve le même sujet. **Search plant databases…** ouvre la recherche
@@ -19,10 +22,76 @@ fenêtre pour interroger les API. La confirmation prépare un nouveau placement.
 La section **Illustrations and generic shapes** propose séparément les dessins :
 246 illustrations de plantes et 15 formes génériques, dont 138 nouveaux dessins
 validés le 19 octobre. Ces raccourcis gardent le dessin centre puis bord du cercle.
+Les dessins sont visibles par défaut ; décocher l'intitulé permet de les masquer
+temporairement. Ils réapparaissent à la prochaine ouverture du menu. Les fiches
+botaniques restent visibles en premier. Choisir une fiche
+prépare un placement ; **Plant Details** décrit la sélection du plan. Une plante
+sans fiche affiche le message d'absence de données, sans conserver le profil de
+la plante précédente.
 Les dessins sont conventionnels : ils ne prouvent ni une espèce ni une variété,
 et leurs couleurs ne décrivent pas nécessairement votre cultivar. Une fiche sans
 dessin spécifique utilise une silhouette générique. La recherche globale de la
 barre trouve aussi les fiches locales et privilégie les résultats botaniques.
+
+Les variétés utilisent désormais le dessin de leur espèce ou genre lorsque
+l'association existe. Un dessin approchant peut aussi être associé explicitement
+à une fiche personnelle. Ces associations ne changent ni son identité, ni ses
+dimensions, ni ses traits botaniques. Un PNG personnel reste prioritaire.
+
+### Dessiner une plante type puis l'identifier
+
+Dans les illustrations, **Round Deciduous**, **Spreading Shrub** ou **Flowering
+Perennial** sont des silhouettes sans espèce supposée. Choisir une silhouette,
+dessiner centre puis bord, revenir à la sélection avec Échap, puis sélectionner
+la plante. **Plant Details > Search** associe une fiche ; **Create Custom** permet
+de la définir soi-même. Le diamètre dessiné reste distinct de l'envergure à
+maturité de l'espèce : choisir un rayon ne crée pas une mesure botanique supposée.
+
+### Régler les panneaux de droite
+
+Chaque panneau se replie avec son titre. Une fois ouvert, faire glisser sa
+bordure inférieure pour régler sa hauteur ; un double-clic sur cette bordure
+rétablit sa hauteur initiale. La hauteur choisie est conservée pendant la session,
+y compris après fermeture/réouverture du panneau ou changement de sélection.
+**Properties** démarre plus haut pour laisser lire ses champs.
+
+Faire glisser le séparateur entre le plan et la colonne pour régler sa largeur.
+Les boutons des détails de plante deviennent **Rechercher / Charger / Créer** ;
+ils s'empilent quand la colonne est étroite. Si un autre contenu reste plus large,
+un défilement horizontal permet de l'atteindre sans imposer sa largeur à la colonne.
+
+Le contenu de chaque panneau peut défiler indépendamment. La colonne complète
+défile également lorsque plusieurs panneaux ouverts dépassent la fenêtre ; leur
+ordre reste fixe. Les hauteurs reviennent à leurs valeurs initiales au prochain
+lancement de l'application.
+
+Le fond des en-têtes reste identique au survol ; la bordure et le dépliage
+continuent d'indiquer le panneau actif. La molette fait défiler les panneaux et
+les formulaires, mais ne modifie plus les nombres, dates, listes de choix et
+curseurs. Les menus et listes déroulantes ouverts ignorent aussi la molette ;
+leurs choix restent accessibles au clic et au clavier.
+
+### Associations de plantes et verrouillage
+
+L'interface française utilise **association** à la place du terme spécialisé
+« guilde » : un ensemble de plantes aux rôles complémentaires, souvent autour
+d'un arbre. **Jardin > Insérer une association…** crée l'ensemble depuis un
+modèle ; **clic droit sur une plante > Ajouter à une association…** rattache une
+plante à un ensemble existant. Les rôles indiquent l'intention du jardinier et
+ne garantissent pas une compatibilité biologique. Les noms et descriptions des
+modèles conservent les traductions disponibles dans leurs fichiers.
+
+Les dialogues de choix, d'insertion et d'édition s'ouvrent avec davantage de
+place et restent bornés à l'écran. Les colonnes de rôles et les boutons
+Modifier, Supprimer et Dissocier s'adaptent au texte français.
+
+Le clic droit sur un objet propose **Verrouiller la position** puis
+**Déverrouiller la position**. Ce sont les contraintes de position existantes :
+le verrou est sauvegardé dans le plan, visible par un cadenas orienté vers le
+haut lorsque les contraintes sont affichées, et annulable/rétablissable. Les
+coordonnées X/Y dans Propriétés respectent aussi ce verrou. Le verrou porte sur
+la position ; les autres propriétés restent modifiables. Un calque verrouillé
+doit d'abord être déverrouillé dans Calques.
 
 ## Bibliothèques disponibles
 
@@ -134,13 +203,14 @@ pack Classiques passent aussi en français, à l’exception des noms déjà per
 Fermer l’application après avoir enregistré, puis lancer :
 
 ```bash
-.venv/bin/python scripts/import_local_plants.py plants/import01 --french-catalog
+.venv/bin/python scripts/import_local_plants.py plants/import01
 ```
 
 Le dossier import01 fourni contient 37 fiches JSON et leurs PDF. Les fiches sont
-ajoutées à la recherche hors ligne et à **Mes plantes — import01**. Avec les 118
-fiches françaises et les 80 fiches génériques, cela représente 235 fiches dans le
-pack, dont des groupes non identifiés. Les fiches personnelles déjà présentes
+ajoutées à la recherche et à **Mes plantes — import01**. Avec les 118 fiches
+d'origine, cela représente 155 fiches. L'option facultative `--french-catalog`
+installe aussi les anciennes collections françaises et les 80 fiches génériques ;
+elle n'a pas été utilisée pour cette réinstallation ciblée. Les fiches personnelles déjà présentes
 s’ajoutent à ce nombre. Les collections peuvent présenter une
 même fiche à plusieurs endroits ; ce ne sont pas autant de plantes sur le plan.
 
@@ -210,3 +280,132 @@ Le gros catalogue local est utile hors ligne, mais la recherche en ligne suffit
 pour découvrir des plantes au fil du projet. Pour un usage simple, partir de ses
 propres fiches et favoris ; il n'est pas nécessaire de parcourir les milliers de
 fiches importées. Les fiches existantes restent conservées.
+
+## Retour au catalogue d'origine
+
+À la demande du propriétaire, le 20 octobre 2026, les fiches ajoutées et les
+collections personnelles ont été retirées de la bibliothèque active, application
+fermée. Les deux fichiers `custom_plants.json` et `plant_lists.json` ont d'abord
+été copiés et vérifiés octet par octet dans un dossier
+`catalog-before-factory-<date>` du stockage utilisateur. Un manifeste contient
+leurs tailles et empreintes SHA-256. Les sauvegardes antérieures sont conservées.
+
+Le catalogue actif revient aux **118 fiches embarquées** ; les chiffres d'import
+plus haut décrivent donc l'historique, pas l'état actif. Les collections ajoutées
+ne sont pas réinstallées au démarrage. Les plans `.ogp`, leurs fiches et leurs
+images intégrées, les clés API et les réglages de l'application restent conservés.
+Ce retour concerne la bibliothèque de plantes, pas tous les réglages du logiciel.
+
+À la demande suivante, les **37 fiches d'import01** ont été réinstallées seules
+dans **Plant Lists > Mes plantes — import01** : le catalogue local contient donc
+118 fiches d'origine et 37 fiches personnelles. Le gros import Permapeople reste
+retiré. Chaque fiche dispose d'une illustration : espèce/genre pour 26, symbole
+approchant explicite pour 10 et un PNG personnel. Le rosier Ketchup & Mustard retrouve son PNG
+personnel. Les noms de cultivars sont visibles dans les intitulés.
+
+La planche privée `output/import01/illustrations.html` montre les 37 associations,
+leurs limites et les générations utiles pour une apparence plus fidèle. Aucun
+dessin nouveau n'a été généré automatiquement. Les données source et leurs
+ambiguïtés sont conservées ; le dessin ne constitue pas une identification.
+
+Pour restaurer l'ancienne bibliothèque, fermer OGP, sauvegarder les deux fichiers
+actifs s'ils ont été recréés, puis recopier les fichiers archivés à leur emplacement
+d'origine. Ne pas relancer les scripts d'import si l'on souhaite garder le catalogue
+d'origine. **Plant Lists** et **Create Custom** permettent de reconstruire une petite
+bibliothèque personnelle au fil des besoins.
+
+## Fusionner des formes : rectangle à bouts arrondis
+
+Dessiner le rectangle puis deux cercles, dont les centres sont sur les petits
+côtés et le diamètre correspond à la largeur du rectangle. Sélectionner les trois
+objets avec Maj, puis **clic droit > Combiner les formes > Fusionner** et confirmer
+l'aperçu. On obtient un seul polygone éditable et sauvegardable, avec une seule
+étape d'annulation qui restitue tous les objets d'origine.
+
+La fusion accepte plusieurs rectangles, cercles, ellipses ou polygones reliés
+par contact ou chevauchement. Les arrondis deviennent une approximation polygonale ;
+ombres et épaisseur du trait ne modifient pas le contour. Le résultat reprend
+l'apparence d'un objet source. Les plantes, objets liés ou contraints et formes
+portant des données incompatibles sont refusés pour préserver leurs informations.
+Intersection et soustraction restent limitées à deux formes.
+
+Un double-clic ouvre l'édition des sommets. Pour les contours denses (plus de
+24 points), les poignées sont espacées à l'écran et renouvelées au zoom ou au
+déplacement de la vue ; les coordonnées et longueurs des grandes arêtes sont
+consultables au survol. Zoomer pour atteindre un point plus précis. Les petits
+segments des arrondis n'affichent plus chacun une cote et une poignée d'insertion.
+La géométrie enregistrée reste complète ; Échap ou désélection ferme l'édition.
+
+Pour un contour libre, les outils polygone et courbe de Bézier permettent aussi
+de dessiner directement une forme personnalisée.
+
+## Importer un remplissage personnel
+
+Sélectionner une surface (rectangle, polygone, cercle géométrique ou ellipse),
+puis **Properties > Import fill PNG…**. Le PNG doit faire au plus 4 Mio et
+16 mégapixels. **Tile width** règle la largeur réelle de chaque répétition en
+centimètres ; la hauteur suit les proportions de l'image. La valeur initiale est
+256 cm. Les couleurs et la transparence d'origine sont conservées : la couleur
+du remplissage standard ne recolore pas l'image personnelle.
+
+Choisir une image déjà répétable sans raccord (*seamless/tileable*) : l'import
+répète le PNG mais ne répare pas ses bords. Le PNG est intégré aux métadonnées du
+`.ogp` ; le fichier source peut ensuite être déplacé. L'import, la taille et le
+retour au remplissage standard sont annulables. **Use built-in fill**, ou choisir
+un motif standard dans **Fill Pattern**, retire le remplacement personnel ; annuler
+le restaure. Un PNG intégré invalide utilise le remplissage standard.
+
+Cette fonction vise les surfaces 2D. Les plantes et objets illustrés conservent
+leurs dessins, et les chemins linéaires leurs styles dédiés. Les anciennes versions
+de l'application peuvent afficher le motif standard à la place de l'image personnelle.
+La mini-vue doit rester dans le coin inférieur droit de la zone de dessin, y compris
+lorsque la disposition ou les barres de défilement changent. On peut la masquer via
+**View > Overlays > Show Minimap**.
+
+## Interface française
+
+Choisir **View > Language > Français**, puis redémarrer l'application. Le choix
+est mémorisé ; le menu devient **Affichage > Langue** et permet aussi de revenir
+à English ou Deutsch. Le catalogue Qt français couvre les 2 751 textes actifs de
+l'inventaire actuel : menus, panneaux, dialogues, outils de dessin, messages et
+noms usuels intégrés. Les noms scientifiques, données personnelles et textes
+libres provenant de services en ligne conservent leur contenu d'origine.
+
+Les fichiers source `.ts` et compilé `.qm` sont livrés ensemble. Pour maintenir
+la traduction lors d'un ajout de texte, suivre `docs/TRANSLATING.md`.
+
+### Recherche préalable d'une traduction existante
+
+Vérification du 20 octobre 2026 : aucun catalogue français trouvé dans les 24
+branches publiques du dépôt amont, ni dans les branches par défaut des cinq autres
+forks publics recensés. Les recherches d'issues/PR amont sur « French » et
+« français » n'ont pas trouvé de demande correspondante. La recherche web n'a pas
+identifié d'extension française associée. Cela ne couvre pas les dépôts privés ni
+les travaux non publiés.
+
+Le [dossier des traductions amont](https://github.com/cofade/open-garden-planner/tree/master/src/open_garden_planner/resources/translations)
+contient anglais, allemand et espagnol au moment de cette vérification ; ce fork
+enregistrait alors anglais et allemand. Aucun changement amont sans rapport n'a
+été importé. Les [forks publics](https://github.com/cofade/open-garden-planner/forks)
+et les [branches amont](https://github.com/cofade/open-garden-planner/branches)
+permettent de reprendre la recherche ultérieurement. Les traductions de noms de
+plantes ne constituent pas une traduction de l'interface. Un catalogue Qt complet
+a ensuite été ajouté à ce fork selon `docs/TRANSLATING.md`.
+
+## Extensions et bibliothèques d'illustrations
+
+Recherche du 20 octobre 2026 : aucun pack d'illustrations installable ni marketplace
+d'extensions utilisable n'a été trouvé pour ce dépôt dans les sources publiques
+examinées. Le [dépôt amont](https://github.com/cofade/open-garden-planner) fournit
+ses ressources et générateurs SVG ; l'[issue de périmètre historique](https://github.com/cofade/open-garden-planner/issues/188)
+place un système de plugins et une marketplace dans une phase ultérieure.
+Les autres projets nommés « Garden Planner » ne sont pas pour autant des extensions
+compatibles avec OGP.
+
+Dans ce fork, les 246 illustrations et 15 silhouettes génériques sont intégrées
+aux sources. Le retour usine de la bibliothèque de fiches ne supprime pas ces
+dessins. Les points d'extension utiles sont les collections JSON et fiches locales,
+les PNG personnels, les remplissages importés et l'API agent. Les dessins intégrés
+utilisent un registre partagé pour les catégories, le rendu du plan et les
+associations par défaut ; aucune dépendance extérieure n'est nécessaire pour les
+retrouver.

@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from PyQt6.QtCore import QCoreApplication, QTimer
-from PyQt6.QtWidgets import QComboBox, QDialogButtonBox, QFormLayout, QVBoxLayout
+from PyQt6.QtWidgets import QComboBox, QDialogButtonBox, QFormLayout, QLabel, QVBoxLayout
 
 from open_garden_planner.core.guild_commands import (
     GuildMembershipCommand,
@@ -27,7 +27,13 @@ def add_to_guild(item: Any, view: Any) -> None:
                and plant.metadata["guild"].get("role") == "centre" and plant is not item]
     dialog = ResponsiveDialog(view)
     dialog.setWindowTitle(QCoreApplication.translate("GuildActions", "Add to guild…"))
+    dialog.resize(620, 320)
     layout = QVBoxLayout(dialog)
+    hint = QLabel(QCoreApplication.translate(
+        "GuildActions", "Choose an existing plant association and the role of this plant. "
+        "To create an association first, use Garden > Insert guild…"))
+    hint.setWordWrap(True)
+    layout.addWidget(hint)
     form = QFormLayout()
     guild_combo, role_combo = QComboBox(), QComboBox()
     for centre in centres:

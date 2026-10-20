@@ -2279,7 +2279,7 @@ class ProjectManager(QObject):
             if "fill_color" in obj:
                 # If we have a pattern, recreate the brush with both color and pattern
                 if fill_pattern:
-                    brush = create_pattern_brush(fill_pattern, QColor(obj["fill_color"]))
+                    brush = create_pattern_brush(fill_pattern, QColor(obj["fill_color"]), metadata.get("personal_fill_pattern"))
                 else:
                     brush = item.brush()
                     brush.setColor(QColor(obj["fill_color"]))
@@ -2323,7 +2323,7 @@ class ProjectManager(QObject):
                 # Store the base color in the item
                 # If we have a pattern, recreate the brush with both color and pattern
                 if fill_pattern:
-                    brush = create_pattern_brush(fill_pattern, color)
+                    brush = create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern"))
                 else:
                     brush = item.brush()
                     brush.setColor(color)
@@ -2382,7 +2382,7 @@ class ProjectManager(QObject):
             if "fill_color" in obj:
                 color = QColor(obj["fill_color"])
                 if fill_pattern:
-                    item.setBrush(create_pattern_brush(fill_pattern, color))
+                    item.setBrush(create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern")))
                 else:
                     brush = item.brush()
                     brush.setColor(color)
@@ -2474,7 +2474,7 @@ class ProjectManager(QObject):
                     color = QColor(obj["fill_color"])
                     # If we have a pattern, recreate the brush with both color and pattern
                     if fill_pattern:
-                        brush = create_pattern_brush(fill_pattern, color)
+                        brush = create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern"))
                     else:
                         brush = item.brush()
                         brush.setColor(color)

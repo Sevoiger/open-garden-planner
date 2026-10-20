@@ -60,6 +60,7 @@ class GalleryItem:
         plant_category: PlantCategory | None = None,
         icon_name: str = "",
         species_data: dict[str, Any] | None = None,
+        interactive_size: bool = True,
     ) -> None:
         self.name = name
         self.tool_type = tool_type
@@ -71,6 +72,7 @@ class GalleryItem:
         # item for re-rendering on theme switch (refresh_icon_thumbnails).
         self.icon_name = icon_name
         self.species_data = species_data
+        self.interactive_size = interactive_size
 
 
 class GalleryCategory:

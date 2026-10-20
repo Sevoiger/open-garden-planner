@@ -1,5 +1,166 @@
 # Progression — fork personnel macOS
 
+## Édition des contours denses — 20 octobre 2026
+
+La capture du propriétaire a été reproduite sur une capsule fusionnée de
+255 sommets : l'édition créait 510 poignées et 510 annotations superposées.
+Au-delà de 24 sommets, les annotations passent en infobulles et les poignées
+conservent leurs indices d'origine, filtrées selon visibilité et espacement en
+pixels, avec un plafond de 128 sommets et 128 milieux d'arête. Seules les arêtes
+assez longues à l'écran proposent une insertion. Zoom et déplacement de vue
+renouvellent les poignées sans supprimer celle en cours de glissement.
+Aucun sommet du modèle n'est supprimé ni simplifié.
+
+Validation : 63 tests ciblés (polygone, fusion, poignées, polylignes, courbes et
+rendu) réussis ; les cinq régressions passent aussi en Qt Cocoa natif, dont
+le double-clic et le drag dans le viewport, l'undo/redo et l'insertion sur un
+bord visible aux extrémités hors écran. Rendu natif inspecté ; gate de traduction,
+Ruff et diff check réussis. Revue senior indépendante : défaut de visibilité
+initial des milieux corrigé puis revu sans nouveau finding. Le plan personnel
+modifié dans examples/jardin-demo.ogp reste hors du commit.
+
+## Colonne étroite et fusion multiple — 20 octobre 2026
+
+La colonne de droite accepte une largeur réduite sans être bloquée par le contenu.
+Le séparateur est plus facile à saisir ; les détails de plante proposent
+Rechercher / Charger / Créer, empilés si nécessaire. Le contenu plus large reste
+accessible par défilement horizontal.
+
+Une sélection de formes fermées reliées par contact ou chevauchement se fusionne
+via clic droit > Combiner les formes > Fusionner. Rectangles, cercles, ellipses
+et polygones sont acceptés ; un seul undo restitue les originaux. La géométrie,
+les métadonnées compatibles et le style sont conservés par les mécanismes existants.
+Les sujets botaniques, objets liés/contraints et métadonnées incompatibles sont
+refusés avant confirmation. Les courbes deviennent des contours polygonaux.
+
+Validation : 82 tests ciblés réussis, 9 tests Qt Cocoa natifs et inspection native
+à 240 px et du contour rectangle + deux cercles. Undo/redo et sauvegarde–réouverture
+couverts. Une attente de scrollbar dépendant d'un layout périmé a été remplacée
+par un débordement réel après redimensionnement. Les 2 759 clés EN/DE/FR sont
+complètes et recompilées ; Ruff et diff check passent. Revue senior indépendante,
+remarque de couverture corrigée, aucun défaut source restant identifié.
+Données de test isolées ; aucun plan personnel utilisé.
+
+## Confort des contrôles et français — 20 octobre 2026
+
+Survol des panneaux sans changement de fond. La molette ne change plus les
+valeurs numériques, dates, listes et curseurs, ni la navigation des menus ouverts ;
+le défilement des panneaux/formulaires et le zoom du plan sont conservés.
+La FR emploie « association » pour les guildes de plantes, avec explication dans
+les dialogues agrandis. Les colonnes de rôles et boutons à texte long ne sont
+plus contraints à des largeurs trop petites.
+
+Ajout du verrouillage/déverrouillage de position au clic droit via les commandes
+de contrainte FIXED existantes, sans nouveau champ de stockage. Cadenas corrigé
+pour le repère Y-up, y compris pour les objets sans ancre de dessin. La revue a
+révélé un contournement par X/Y dans Propriétés ; il est corrigé et sa régression
+vérifie aussi le déplacement après déverrouillage et son annulation.
+
+Validation : 195 tests ciblés réussis avant les deux régressions supplémentaires
+(coordonnées verrouillées, largeur des boutons FR), elles-mêmes réussies ;
+39 tests de menus contextuels existants réussis. Les 18 tests verrouillage et
+molette passent également en Qt Cocoa natif. Inspection native des dialogues
+860×700 et 620×320 et du cadenas ; audit des 38 dialogues en FR avec police
+agrandie et petit écran. Catalogues EN/DE/FR complets et recompilés, Ruff et
+diff check réussis. Revue senior indépendante : P1/P2 corrigés puis corrections
+revues sans nouveau finding. Aucun plan ni réglage personnel utilisé pour les tests.
+
+## Français sélectionnable — 20 octobre 2026
+
+Le registre Qt propose désormais **Français** dans **View > Language**. Le choix
+est mémorisé et chargé au redémarrage ; le menu devient **Affichage > Langue**.
+Le catalogue source et son binaire compilé couvrent les 2 751 clés actives de
+l'inventaire : menus, dialogues, outils, suivi du jardin et noms usuels intégrés.
+Les noms scientifiques, saisies personnelles et contenus externes restent intacts.
+
+Le rendu natif a révélé des noms d'outils laissés en anglais : ils sont maintenant
+traduits à la création de la vue, sans modifier les identifiants des outils. Trois
+libellés de construction/rognage ont aussi été ajoutés aux catalogues EN/DE.
+Les lettres d'accès des menus français sont distinctes dans chaque menu.
+
+Validation : contrôle complet inventaire/variables/catalogues/binaires réussi,
+38 tests ciblés menus, langue mémorisée et outils réussis après correction ;
+sélection du français au redémarrage et raccourcis de menus également vérifiés
+par deux tests Qt Cocoa natifs. Fenêtre et préférences inspectées dans les thèmes
+clair et sombre sur des réglages et bibliothèques de test isolés. Ruff et
+`git diff --check` passent. Auto-relecture du diff ; acceptation sur le plan
+personnel distincte des contrôles techniques.
+
+## Illustrations retrouvées, import01 et panneaux réglables — 20 octobre 2026
+
+Les 246 illustrations et 15 silhouettes n'avaient pas été supprimées par le
+retour usine des fiches ; leur section est de nouveau visible par défaut. Les
+fiches de cultivar utilisent un symbole d'espèce/genre ou une association
+explicite validée dans le registre ; le rendu conserve l'identité botanique et
+les symboles délibérément choisis. Les PNG personnels restent prioritaires.
+
+Le placement par choix dans le catalogue ou la recherche demande par défaut
+centre puis bord. Une case dans les catégories permet de retrouver le placement
+automatique en un clic ; le glisser-déposer conserve sa taille initiale connue
+ou générique. Choisir une emprise ne modifie pas l'envergure botanique à maturité.
+
+Les panneaux de droite peuvent défiler indépendamment, se replier et être
+redimensionnés par leur bord inférieur. Les hauteurs sont conservées en session,
+avec double-clic pour rétablir la hauteur initiale ; Properties dispose de plus
+de place au départ. Le contrôleur conserve l'ordre, les états et le mode
+historique pour ses autres appelants.
+
+Réinstallation locale, application fermée, des seules 37 fiches d'import01 via le
+service existant : 26 dessins d'espèce/genre, 10 rapprochements signalés et le PNG
+personnel du rosier. Le catalogue actif comporte 118 + 37 fiches, sans réinstaller
+le gros lot Permapeople. Staging isolé, vérification des 37 associations et rejeu
+sans doublons effectués. Planche et rapport dans `output/import01/`, ignorés par Git.
+Le guide porte aussi la recherche d'extensions : aucun pack ou marketplace
+utilisable trouvé dans les sources publiques examinées.
+
+Validation : 129 tests placement/catalogue/import/panneaux et 532 tests de rendu,
+listes et PNG réussis (660 tests distincts). Trois contrôles ciblés réussissent
+également en Qt Cocoa natif : drag de poignée, maintien de hauteur, placement
+centre/bord. Ruff, inventaire/catalogues/binaires de traduction et comparaison
+mypy locale avec les budgets Linux passent sans assouplissement des seuils.
+Revue indépendante du nouveau lot et revue complémentaire du chemin PNG/persistance
+antérieur réalisées : aucun finding P0/P1/P2. Les données personnelles sont restées
+hors du périmètre de la revue et du dépôt.
+
+## Prise en main, formes et textures — 20 octobre 2026
+
+Branche `feature/garden-usability-shapes-textures`, basée sur le travail personnel
+déjà présent. Les menus de plantes affichent d'abord les fiches botaniques et
+replient les illustrations génériques. Le profil précédent est effacé lorsqu'une
+plante sans fiche est sélectionnée. La mini-vue suit aussi les changements de
+taille du viewport, sans attendre un redimensionnement de toute la vue.
+
+Import de remplissages PNG personnels dans les surfaces 2D : image intégrée au
+`.ogp`, répétition à largeur réglable en cm, proportions/couleurs/alpha conservés,
+annulation et retour aux motifs intégrés. Le décodeur borné est partagé avec les
+visuels personnels de plantes. La fusion existante **Boolean > Union** a été
+vérifiée sur un rectangle à deux bouts arrondis ; les cercles utilisent leur vraie
+géométrie, sans agrandissement dû au trait ou à l'ombre.
+
+Retour local au catalogue d'origine effectué à la demande du propriétaire,
+application fermée, après archivage vérifié des deux stockages de plantes.
+Aucune donnée personnelle n'est ajoutée au dépôt. Le guide
+`PLANTES_ET_DESSIN.md` porte l'usage, la restauration et la recherche d'une
+traduction française existante : aucun catalogue FR trouvé dans les 24 branches
+amont et les cinq autres forks publics examinés.
+
+Validation : 264 tests formes/remplissages/persistance/panneaux/catalogue et
+40 tests profil botanique/mini-vue/visuels personnels réussis ; trois contrôles
+de positionnement et profil réussis également avec Qt Cocoa natif, hors sandbox.
+La tentative Cocoa confinée s'interrompait avant création de la fenêtre ; aucune
+modification de l'application n'a été nécessaire pour le lancement natif.
+Ruff et contrôle source/catalogues/binaires des traductions réussis.
+Après les diagnostics CI, les nouvelles surfaces Qt ont reçu leurs annotations
+explicites et l'import PNG son export typé. Les trois modules PNG passent mypy
+sans erreur ; l'analyse locale avec cible de typage Linux ne dépasse aucun budget
+existant. Aucun seuil ni baseline n'a été assoupli. Les 93 tests affectés par ces
+dernières corrections et le contrôle des traductions ont de nouveau réussi.
+La revue indépendante `senior-reviewer` a été demandée sur le diff indexé mais
+n'a pas pu démarrer, quota du service atteint. Auto-relecture effectuée ; le
+chemin PNG/persistance a ensuite reçu la revue complémentaire décrite plus haut.
+L'acceptation visuelle sur le plan
+habituel du propriétaire reste distincte de ces vérifications techniques.
+
 Base: `603e3035cfdf345fa5f190d25cb95b5f325376e5` (1.30.10).
 Branche: `feature/personal-macos-garden`. Mission: `/MISSION_AGENT_JARDIN.md`.
 Aucun changement préexistant hormis la mission. Dépôt remonté à la racine

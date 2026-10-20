@@ -92,7 +92,7 @@ def _show_properties_dialog(item: QGraphicsEllipseItem) -> None:
             # Apply pattern brush and store pattern
             if hasattr(item, 'fill_pattern'):
                 item.fill_pattern = style.fill_pattern
-            brush = create_pattern_brush(style.fill_pattern, style.fill_color)
+            brush = create_pattern_brush(style.fill_pattern, style.fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"))
             item.setBrush(brush)
 
         # Apply custom fill color and pattern (overrides type default)
@@ -103,7 +103,7 @@ def _show_properties_dialog(item: QGraphicsEllipseItem) -> None:
             item.fill_pattern = fill_pattern
         if hasattr(item, 'fill_color'):
             item.fill_color = fill_color
-        brush = create_pattern_brush(fill_pattern, fill_color)
+        brush = create_pattern_brush(fill_pattern, fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"))
         item.setBrush(brush)
 
         # Apply custom stroke properties (overrides type default)
@@ -215,7 +215,7 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         # Use stored fill_pattern and color if available, otherwise use style defaults
         pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
         color = self.fill_color if self.fill_color is not None else style.fill_color
-        brush = create_pattern_brush(pattern, color)
+        brush = create_pattern_brush(pattern, color, self.metadata.get("personal_fill_pattern"))
         self.setBrush(brush)
 
     def _setup_flags(self) -> None:
@@ -381,11 +381,24 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
 
             pixmap = personal_visual_pixmap(self.metadata.get("plant_species"), canvas=True)
             if pixmap is None:
+                symbol_species = self._plant_species
+                snapshot = self.metadata.get("plant_species")
+                if isinstance(snapshot, dict):
+                    raw = snapshot.get("raw_data")
+                    explicit_art = isinstance(raw, dict) and bool(raw.get("plan_illustration_id"))
+                    if explicit_art or not symbol_species or symbol_species in (
+                        snapshot.get("common_name"), snapshot.get("scientific_name"),
+                    ):
+                        from open_garden_planner.services.plant_palette import illustration_for
+
+                        art = illustration_for(snapshot)
+                        if art is not None:
+                            symbol_species = art["id"].replace("_", " ")
                 pixmap = render_plant_pixmap(
                     object_type=self.object_type,
                     diameter=render_diameter,
                     item_id=str(self._item_id),
-                    species=self._plant_species,
+                    species=symbol_species,
                     category=self._plant_category,
                     tint_color=self.fill_color,
                 )
@@ -924,29 +937,32 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         # Circular array action
         circular_array_action = menu.addAction(_("CircleItem", "Create Circular Array..."))
 
-        # Boolean operations (requires exactly 2 selected closed shapes)
+        # Boolean operations (union supports two or more selected closed shapes)
         boolean_union_action = None
         boolean_intersect_action = None
         boolean_subtract_action = None
         array_along_path_action = None
         selected = self.scene().selectedItems()
-        if len(selected) == 2:
+        if len(selected) >= 2:
+            from open_garden_planner.ui.canvas.items.ellipse_item import EllipseItem
             from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
             from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
             from open_garden_planner.ui.canvas.items.rectangle_item import RectangleItem
 
-            shape_types = (PolygonItem, RectangleItem, CircleItem)
+            shape_types = (PolygonItem, RectangleItem, CircleItem, EllipseItem)
             if all(isinstance(s, shape_types) for s in selected):
                 menu.addSeparator()
                 _ = QCoreApplication.translate
                 bool_menu = menu.addMenu(_("CircleItem", "Boolean"))
                 boolean_union_action = bool_menu.addAction(_("CircleItem", "Union"))
-                boolean_intersect_action = bool_menu.addAction(_("CircleItem", "Intersect"))
-                boolean_subtract_action = bool_menu.addAction(_("CircleItem", "Subtract"))
-            if any(isinstance(s, PolylineItem) for s in selected):
+                if len(selected) == 2:
+                    boolean_intersect_action = bool_menu.addAction(_("CircleItem", "Intersect"))
+                    boolean_subtract_action = bool_menu.addAction(_("CircleItem", "Subtract"))
+            if len(selected) == 2 and any(isinstance(s, PolylineItem) for s in selected):
                 array_along_path_action = menu.addAction(
                     QCoreApplication.translate("CircleItem", "Array Along Path...")
                 )
+
 
         # Execute menu and handle result
         action = menu.exec(event.screenPos())

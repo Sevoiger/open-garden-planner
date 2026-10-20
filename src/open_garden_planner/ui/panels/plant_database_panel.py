@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from PyQt6.QtCore import QDate, Qt, pyqtSignal
+from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -224,6 +226,7 @@ class PlantDatabasePanel(QWidget):
         """
         super().__init__(parent)
         self._current_plant_data: PlantSpeciesData | None = None
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._current_plant_item: QGraphicsItem | None = None
 
         from open_garden_planner.models.plant_lists import get_plant_list_store  # noqa: PLC0415
@@ -308,6 +311,7 @@ class PlantDatabasePanel(QWidget):
 
         # Button row at top
         button_layout = QHBoxLayout()
+        self._action_buttons_layout = button_layout
         button_layout.setSpacing(4)
 
         # Search button
@@ -316,23 +320,23 @@ class PlantDatabasePanel(QWidget):
         button_layout.addWidget(self.search_button)
 
         # Create custom plant button
-        self.create_custom_button = QPushButton(self.tr("Create Custom"))
+        self.create_custom_button = QPushButton(self.tr("Create"))
         self.create_custom_button.setToolTip(self.tr("Create a custom plant species entry"))
         self.create_custom_button.clicked.connect(self._on_create_custom_plant)
-        button_layout.addWidget(self.create_custom_button)
 
         # Load from custom library button
-        self.load_custom_button = QPushButton(self.tr("Load Custom"))
+        self.load_custom_button = QPushButton(self.tr("Load"))
         self.load_custom_button.setToolTip(self.tr("Load a plant from your custom library"))
         self.load_custom_button.clicked.connect(self._on_load_custom_plant)
         button_layout.addWidget(self.load_custom_button)
+        button_layout.addWidget(self.create_custom_button)
 
         layout.addLayout(button_layout)
 
         # Scrollable area for plant info
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         # Container for plant info
         self.info_widget = QWidget()
@@ -388,6 +392,18 @@ class PlantDatabasePanel(QWidget):
 
         # Initially hide details
         self._hide_details()
+
+    def resizeEvent(self, event: QResizeEvent | None) -> None:
+        super().resizeEvent(event)
+        if not hasattr(self, "_action_buttons_layout"):
+            return
+        buttons = (self.search_button, self.load_custom_button, self.create_custom_button)
+        required = sum(button.minimumSizeHint().width() for button in buttons)
+        required += self._action_buttons_layout.spacing() * 2 + 4
+        direction = (QBoxLayout.Direction.LeftToRight if self.width() >= required
+                     else QBoxLayout.Direction.TopToBottom)
+        if self._action_buttons_layout.direction() != direction:
+            self._action_buttons_layout.setDirection(direction)
 
     def _create_editable_fields(self) -> None:
         """Create editable fields for displaying plant information.
@@ -1332,6 +1348,7 @@ class PlantDatabasePanel(QWidget):
         """Hide plant details and show 'no selection' message."""
         self._current_plant_data = None
         self._current_plant_item = None
+        self._clear_profile_header()
         self._visual_controls.hide()
         self._update_favorite_button()
         self.no_selection_label.setText(self.tr("Select a plant to view details"))
@@ -1368,6 +1385,7 @@ class PlantDatabasePanel(QWidget):
         # Keep the plant item reference so Create Custom can use it
         # self._current_plant_item is set by set_selected_items
         self._current_plant_data = None
+        self._clear_profile_header()
         self._visual_controls.hide()
         self._update_favorite_button()
         self.no_selection_label.setText(
@@ -1396,6 +1414,23 @@ class PlantDatabasePanel(QWidget):
                         widget = layout.itemAt(j).widget()
                         if widget:
                             widget.setVisible(False)
+
+    def _clear_profile_header(self) -> None:
+        """Discard identity, art and attribution belonging to the previous selection."""
+        self._profile_header.hide()
+        for label in (
+            self._profile_name, self._profile_scientific, self._profile_description,
+            self._profile_source, self._profile_links, self._profile_thumbnail,
+        ):
+            label.clear()
+        if hasattr(self, "_license_label"):
+            self._license_label.hide()
+        parent = self.parent()
+        while parent:
+            if hasattr(parent, "set_info_tooltip"):
+                parent.set_info_tooltip("")
+                break
+            parent = parent.parent()
 
     def _show_plant_data(
         self, plant_data: PlantSpeciesData, plant_item: QGraphicsItem

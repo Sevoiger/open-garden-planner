@@ -57,6 +57,29 @@ class TestUnknownEnumRendersDash:
         assert panel.cycle_combo.currentText() != "—"
 
 
+def test_selecting_unidentified_plant_clears_previous_profile(qtbot):
+    panel = PlantDatabasePanel()
+    qtbot.addWidget(panel)
+    panel.set_selected_items([_plant(PlantSpeciesData(
+        scientific_name="Ginkgo biloba", common_name="Ginkgo", data_source="permapeople",
+    ))])
+    assert "Ginkgo" in panel._profile_name.text()
+    unidentified = CircleItem(200, 200, 20, object_type=ObjectType.SHRUB, name="Glycine")
+    panel.set_selected_items([unidentified])
+    assert panel._profile_header.isHidden()
+    assert panel._profile_name.text() == ""
+    assert panel._profile_links.text() == ""
+    assert panel._license_label.isHidden()
+    assert panel._current_plant_item is unidentified
+    assert panel._current_plant_data is None
+    panel.set_selected_items([_plant(PlantSpeciesData(scientific_name="Rosa", common_name="Rose"))])
+    assert not panel._profile_header.isHidden()
+    assert panel._profile_scientific.text() == "Rosa"
+    panel.set_selected_items([])
+    assert panel._profile_header.isHidden()
+
+
+
 class TestMissingDimensionsShowDash:
     """Missing dimension/pH/hardiness traits render as "—", not "0 cm"/"0"/"0.0" (#231).
 

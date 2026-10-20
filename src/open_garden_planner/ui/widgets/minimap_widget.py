@@ -90,6 +90,9 @@ class MinimapWidget(QWidget):
 
         # Install event filter on the *view* (not viewport) to catch resize
         canvas_view.installEventFilter(self)
+        self._viewport = canvas_view.viewport()
+        assert self._viewport is not None
+        self._viewport.installEventFilter(self)
 
         # Defer initial position until after the window is fully laid out
         QTimer.singleShot(0, self._reposition)
@@ -136,7 +139,9 @@ class MinimapWidget(QWidget):
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:  # noqa: N802
         """Reposition minimap when the view is resized."""
-        if obj is self._canvas_view and event.type() == QEvent.Type.Resize:
+        if obj in (self._canvas_view, self._viewport) and event.type() in (
+            QEvent.Type.Resize, QEvent.Type.Show,
+        ):
             self._reposition()
             self._schedule_update()
         return False

@@ -77,6 +77,19 @@ class TestMinimapVisibility:
 class TestMinimapPosition:
     """Tests for minimap positioning."""
 
+    def test_stays_in_corner_when_viewport_changes_without_view_resize(self, canvas_pair, qtbot):
+        view, scene = canvas_pair
+        minimap = MinimapWidget(view, scene)
+        QApplication.processEvents()
+        size = view.size()
+        view.setViewportMargins(0, 0, 170, 80)
+        QApplication.processEvents()
+        assert view.size() == size
+        vp = view.viewport().geometry()
+        sb = CanvasView.SCALE_BAR_RESERVED_PX if view.scale_bar_visible else 0
+        assert minimap.x() == max(vp.left(), vp.right() - minimap.width() - MARGIN)
+        assert minimap.y() == max(vp.top(), vp.bottom() - minimap.height() - MARGIN - sb)
+
     def test_minimap_initial_position(
         self, canvas_pair: tuple[CanvasView, CanvasScene],
     ) -> None:

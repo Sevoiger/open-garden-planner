@@ -53,6 +53,16 @@ class TestItemToPainterPath:
         assert path is not None
         assert not path.isEmpty()
 
+    def test_rotated_circle_uses_geometry_without_stroke_or_shadow(self, scene, qtbot):
+        item = CircleItem(150, 200, 100)
+        scene.addItem(item)
+        item.rotation_angle = 37
+        path = item_to_painter_path(item)
+        expected = QPainterPath()
+        expected.addEllipse(item.rect())
+        expected = item.mapToScene(expected)
+        assert path.boundingRect() == expected.boundingRect()
+
     def test_unsupported_item_returns_none(self, scene, qtbot) -> None:  # noqa: ARG002
         from PyQt6.QtWidgets import QGraphicsRectItem
 

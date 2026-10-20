@@ -1,9 +1,12 @@
 """Properties panel for live editing of selected objects."""
 
 from collections.abc import Callable
+from copy import deepcopy
+from pathlib import Path
+from typing import Any, TypeAlias
 
-from PyQt6.QtCore import QCoreApplication, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFocusEvent, QIcon, QPen
+from PyQt6.QtCore import QCoreApplication, QSignalBlocker, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFocusEvent, QIcon, QPen, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -11,12 +14,14 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFontComboBox,
     QFormLayout,
     QGraphicsItem,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -51,6 +56,8 @@ from open_garden_planner.ui.canvas.items import (
     TextItem,
 )
 from open_garden_planner.ui.theme import set_text_role, theme_color
+
+FillSurface: TypeAlias = RectangleItem | PolygonItem | CircleItem | EllipseItem
 
 # Clean, translatable description fragments for TextItem font properties.
 # The raw attribute names (font_family, font_size) make ugly undo labels
@@ -812,7 +819,7 @@ class PropertiesPanel(QWidget):
         row.addWidget(QLabel(bed_name))
 
         unlink_btn = QPushButton(self.tr("Unlink"))
-        unlink_btn.setFixedWidth(60)
+        unlink_btn.setMinimumWidth(60)
 
         def _do_unlink() -> None:
             from open_garden_planner.core.commands import SetParentBedCommand
@@ -1869,6 +1876,13 @@ class PropertiesPanel(QWidget):
             self._register_refresh(fill_btn, lambda b=fill_btn: b.set_color(_read_fill()))
 
             # Fill pattern
+            from open_garden_planner.core.furniture_renderer import is_furniture_type
+            from open_garden_planner.core.object_types import is_plant_type
+
+            supports_personal = (
+                isinstance(item, (RectangleItem, PolygonItem, CircleItem, EllipseItem))
+                and not is_plant_type(item.object_type) and not is_furniture_type(item.object_type)
+            )
             pattern_combo = QComboBox()
             _pattern_names = {
                 FillPattern.SOLID: self.tr("Solid"),
@@ -1899,24 +1913,40 @@ class PropertiesPanel(QWidget):
             }
             for pattern in FillPattern:
                 pattern_combo.addItem(_pattern_names.get(pattern, pattern.name), pattern)
+            if supports_personal:
+                pattern_combo.addItem(self.tr("Personal PNG"), None)
+                model = pattern_combo.model()
+                if isinstance(model, QStandardItemModel):
+                    row = model.item(pattern_combo.count() - 1)
+                    if row is not None:
+                        row.setEnabled(False)
 
             current_pattern = item.fill_pattern if hasattr(item, 'fill_pattern') else FillPattern.SOLID
             for i in range(pattern_combo.count()):
                 if pattern_combo.itemData(i) == current_pattern:
                     pattern_combo.setCurrentIndex(i)
                     break
+            if item.metadata.get('personal_fill_pattern'):
+                pattern_combo.setCurrentIndex(pattern_combo.findData(None))
 
             pattern_combo.currentIndexChanged.connect(
                 lambda: self._on_property_changed(item, 'fill_pattern', pattern_combo.currentData())
+                if pattern_combo.currentData() is not None else None
             )
             self._form_layout.addRow(self.tr("Fill Pattern:"), pattern_combo)
             self._register_refresh(
                 pattern_combo,
                 lambda c=pattern_combo, it=item: c.setCurrentIndex(
-                    idx if (idx := c.findData(getattr(it, 'fill_pattern', FillPattern.SOLID))) >= 0
+                    idx if (idx := c.findData(
+                        None if it.metadata.get('personal_fill_pattern') else
+                        getattr(it, 'fill_pattern', FillPattern.SOLID)
+                    )) >= 0
                     else c.currentIndex()
                 ),
             )
+            if supports_personal:
+                assert isinstance(item, (RectangleItem, PolygonItem, CircleItem, EllipseItem))
+                self._add_personal_pattern_controls(item)
 
         # Stroke color
         def _read_stroke(it=item) -> QColor:
@@ -1978,6 +2008,89 @@ class PropertiesPanel(QWidget):
             ),
         )
 
+    def _add_personal_pattern_controls(self, item: FillSurface) -> None:
+        from open_garden_planner.core.personal_fill_pattern import (
+            DEFAULT_TILE_WIDTH_CM,
+            PATTERN_KEY,
+        )
+
+        import_button = QPushButton(self.tr("Import fill PNG…"))
+        import_button.setObjectName("import_fill_png")
+        import_button.setToolTip(self.tr(
+            "Use a seamless PNG. Original colors are preserved; the image is embedded in the plan."
+        ))
+        import_button.clicked.connect(lambda: self._import_fill_pattern(item))
+        self._form_layout.addRow(import_button)
+        width = QDoubleSpinBox()
+        width.setObjectName("fill_tile_width")
+        width.setRange(1, 10000)
+        width.setKeyboardTracking(False)
+        width.setSuffix(" cm")
+
+        def refresh_width() -> None:
+            record = item.metadata.get(PATTERN_KEY)
+            width.setEnabled(isinstance(record, dict))
+            value = record.get("width_cm") if isinstance(record, dict) else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and 1 <= value <= 10000:
+                width.setValue(value)
+            else:
+                width.setValue(DEFAULT_TILE_WIDTH_CM)
+
+        refresh_width()
+        self._register_refresh(width, refresh_width)
+        width.valueChanged.connect(lambda value: self._resize_fill_tile(item, value))
+        self._form_layout.addRow(self.tr("Tile width:"), width)
+        remove = QPushButton(self.tr("Use built-in fill"))
+        remove.setObjectName("remove_fill_png")
+        remove.setEnabled(PATTERN_KEY in item.metadata)
+        remove.clicked.connect(lambda: self._set_personal_fill_pattern(item, None))
+        self._form_layout.addRow(remove)
+        self._register_refresh(remove, lambda: remove.setEnabled(PATTERN_KEY in item.metadata))
+
+    def _import_fill_pattern(self, item: FillSurface) -> None:
+        from open_garden_planner.core.personal_fill_pattern import DEFAULT_TILE_WIDTH_CM
+        from open_garden_planner.core.png_asset import import_png
+
+        filename, _ = QFileDialog.getOpenFileName(self, self.tr("Import fill PNG…"), "", "PNG (*.png)")
+        if not filename:
+            return
+        try:
+            encoded = import_png(Path(filename))
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self.tr("Personal fill pattern"), self.tr(
+                "Choose a valid PNG up to 4 MiB and 16 megapixels.\n{error}"
+            ).format(error=error))
+            return
+        self._set_personal_fill_pattern(item, {"png": encoded, "width_cm": DEFAULT_TILE_WIDTH_CM})
+
+    def _resize_fill_tile(self, item: FillSurface, width: float) -> None:
+        record = deepcopy(item.metadata.get("personal_fill_pattern"))
+        if isinstance(record, dict):
+            record["width_cm"] = width
+            self._set_personal_fill_pattern(item, record)
+
+    def _set_personal_fill_pattern(self, item: FillSurface, record: dict[str, Any] | None) -> None:
+        from open_garden_planner.core.personal_fill_pattern import PATTERN_KEY
+
+        before = deepcopy(item.metadata.get(PATTERN_KEY))
+        if before == record:
+            return
+
+        def apply(itm: FillSurface, value: dict[str, Any] | None) -> None:
+            if value is None:
+                itm.metadata.pop(PATTERN_KEY, None)
+            else:
+                itm.metadata[PATTERN_KEY] = deepcopy(value)
+            itm._setup_styling()
+            itm.update()
+
+        command = ChangePropertyCommand(item, "fill pattern", before, deepcopy(record), apply)
+        if self._command_manager:
+            self._command_manager.execute(command)
+        else:
+            command.execute()
+        self._refresh_field_values()
+
     def _capture_item_state(self, item: QGraphicsItem) -> dict:
         """Capture the current state of an item for undo purposes.
 
@@ -1998,6 +2111,8 @@ class PropertiesPanel(QWidget):
             state['fill_color'] = QColor(item.fill_color) if item.fill_color else None
         if hasattr(item, 'fill_pattern'):
             state['fill_pattern'] = item.fill_pattern
+        if hasattr(item, 'metadata'):
+            state['personal_fill_pattern'] = deepcopy(item.metadata.get('personal_fill_pattern'))
         if hasattr(item, 'stroke_color'):
             state['stroke_color'] = QColor(item.stroke_color) if item.stroke_color else None
         if hasattr(item, 'stroke_width'):
@@ -2049,6 +2164,12 @@ class PropertiesPanel(QWidget):
             item.fill_color = state['fill_color']
         if 'fill_pattern' in state and hasattr(item, 'fill_pattern'):
             item.fill_pattern = state['fill_pattern']
+        if 'personal_fill_pattern' in state and hasattr(item, 'metadata'):
+            record = state['personal_fill_pattern']
+            if record is None:
+                item.metadata.pop('personal_fill_pattern', None)
+            else:
+                item.metadata['personal_fill_pattern'] = deepcopy(record)
         if 'stroke_color' in state and hasattr(item, 'stroke_color'):
             item.stroke_color = state['stroke_color']
         if 'stroke_width' in state and hasattr(item, 'stroke_width'):
@@ -2064,7 +2185,7 @@ class PropertiesPanel(QWidget):
         if not isinstance(item, PolylineItem):
             pattern = state.get('fill_pattern', FillPattern.SOLID)
             color = state.get('fill_color') or item.brush().color()
-            brush = create_pattern_brush(pattern, color)
+            brush = create_pattern_brush(pattern, color, getattr(item, 'metadata', {}).get('personal_fill_pattern'))
             item.setBrush(brush)
 
         stroke_color = state.get('stroke_color') or item.pen().color()
@@ -2109,6 +2230,20 @@ class PropertiesPanel(QWidget):
 
         scene = item.scene()
         if not scene:
+            return
+
+        from open_garden_planner.core.constraints import ConstraintType
+
+        if hasattr(scene, "constraint_graph") and any(
+            c.constraint_type == ConstraintType.FIXED
+            and c.anchor_a.item_id == getattr(item, "item_id", None)
+            for c in scene.constraint_graph.constraints.values()
+        ):
+            # An isolated FIXED item has no neighbour to propagate to. Reject
+            # the edit here rather than falling through to an ordinary move.
+            with QSignalBlocker(x_spin), QSignalBlocker(y_spin):
+                x_spin.setValue(old_top_left_scene.x())
+                y_spin.setValue(old_top_left_scene.y())
             return
 
         # Calculate delta in scene coordinates
@@ -2399,19 +2534,23 @@ class PropertiesPanel(QWidget):
 
         elif property_name == 'fill_pattern':
             old_pattern = item.fill_pattern if hasattr(item, 'fill_pattern') else FillPattern.SOLID
-            if hasattr(item, 'fill_pattern'):
-                item.fill_pattern = value
-            color = item.fill_color if hasattr(item, 'fill_color') and item.fill_color else item.brush().color()
-            brush = create_pattern_brush(value, color)
-            item.setBrush(brush)
+            before = (old_pattern, deepcopy(getattr(item, 'metadata', {}).get('personal_fill_pattern')))
+
+            def apply_pattern(itm: Any, state: tuple[FillPattern | None, dict[str, Any] | None]) -> None:
+                pattern, record = state
+                itm.fill_pattern = pattern
+                if record is None:
+                    itm.metadata.pop('personal_fill_pattern', None)
+                else:
+                    itm.metadata['personal_fill_pattern'] = deepcopy(record)
+                color = itm.fill_color if getattr(itm, 'fill_color', None) else itm.brush().color()
+                itm.setBrush(create_pattern_brush(pattern or FillPattern.SOLID, color, record))
+                itm.update()
+
+            apply_pattern(item, (value, None))
 
             if self._command_manager:
-                def apply_pattern(itm, val):
-                    if hasattr(itm, 'fill_pattern'):
-                        itm.fill_pattern = val
-                    c = itm.fill_color if hasattr(itm, 'fill_color') and itm.fill_color else itm.brush().color()
-                    itm.setBrush(create_pattern_brush(val, c))
-                cmd = ChangePropertyCommand(item, "fill pattern", old_pattern, value, apply_pattern)
+                cmd = ChangePropertyCommand(item, "fill pattern", before, (value, None), apply_pattern)
                 self._command_manager.register_applied(cmd)
 
         elif property_name == 'stroke_width':
@@ -2495,7 +2634,7 @@ class PropertiesPanel(QWidget):
                 item.fill_color = color
             # Apply to brush
             pattern = item.fill_pattern if hasattr(item, 'fill_pattern') else FillPattern.SOLID
-            brush = create_pattern_brush(pattern, color)
+            brush = create_pattern_brush(pattern, color, getattr(item, 'metadata', {}).get('personal_fill_pattern'))
             item.setBrush(brush)
 
             # Create undo command
@@ -2504,7 +2643,7 @@ class PropertiesPanel(QWidget):
                     if hasattr(itm, 'fill_color'):
                         itm.fill_color = val
                     p = itm.fill_pattern if hasattr(itm, 'fill_pattern') else FillPattern.SOLID
-                    itm.setBrush(create_pattern_brush(p, val))
+                    itm.setBrush(create_pattern_brush(p, val, itm.metadata.get('personal_fill_pattern')))
                 cmd = ChangePropertyCommand(item, "fill color", old_color, color, apply_fill_color)
                 self._command_manager.register_applied(cmd)
 

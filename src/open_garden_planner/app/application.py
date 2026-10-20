@@ -4723,7 +4723,7 @@ class GardenPlannerApp(QMainWindow):
         self._main_splitter.addWidget(self.sidebar)
         self._main_splitter.setStretchFactor(0, 1)  # Canvas takes most space
         self._main_splitter.setStretchFactor(1, 0)  # Sidebar fixed width
-        self._main_splitter.setHandleWidth(1)  # Minimal splitter handle
+        self._main_splitter.setHandleWidth(6)  # Usable grab target for sidebar width
         # Set initial sizes: give sidebar 450px, canvas gets the rest
         self._main_splitter.setSizes([1000, 450])
         splitter = self._main_splitter
@@ -5098,7 +5098,7 @@ class GardenPlannerApp(QMainWindow):
         self.update_zoom(self.canvas_view.zoom_percent)
 
         # Initial tool display
-        self.update_tool("Select")
+        self.update_tool(self.tr("Select"))
 
         # Initial selection display
         self.update_selection(0, [])
@@ -5338,7 +5338,7 @@ class GardenPlannerApp(QMainWindow):
         for _key, panel in canonical_panels:
             sidebar_layout.removeWidget(panel)
 
-        self._sidebar_controller = SidebarController()
+        self._sidebar_controller = SidebarController(resizable_panels=True)
         for key, panel in canonical_panels:
             self._sidebar_controller.add_panel(key, panel)  # registers COLLAPSED
         # The selection-driven panels have nothing to show until a matching item
@@ -7709,7 +7709,8 @@ class GardenPlannerApp(QMainWindow):
                         status.showMessage(self.tr("Invalid plant data; placement cancelled."), 5000)
                     return
             active_tool.set_plant_info(category=category, species=species,
-                                       species_data=snapshot)
+                                       species_data=snapshot,
+                                       interactive_size=getattr(item, "interactive_size", True))
 
     def _sync_toolbar_state_by_type(self, tool_type: ToolType) -> None:
         """Sync toolbar button states when the active tool changes.

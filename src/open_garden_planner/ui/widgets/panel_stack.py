@@ -75,9 +75,11 @@ class SidebarController(QWidget):
     # (key, PanelState) — emitted after every committed transition.
     panel_state_changed = pyqtSignal(str, object)
 
-    def __init__(self, parent: QWidget | None = None, *, hover_peek: bool = False) -> None:
+    def __init__(self, parent: QWidget | None = None, *, hover_peek: bool = False,
+                 resizable_panels: bool = False) -> None:
         super().__init__(parent)
         self._hover_peek = hover_peek
+        self._resizable_panels = resizable_panels
 
         # Canonical registry. Insertion order == canonical order.
         self._entries: dict[str, _PanelEntry] = {}
@@ -129,6 +131,8 @@ class SidebarController(QWidget):
         """
         if key in self._entries:
             raise ValueError(f"panel key already registered: {key!r}")
+        if self._resizable_panels:
+            panel.enable_resizing(360 if key == "properties" else 300)
         entry = _PanelEntry(key, panel)
         self._entries[key] = entry
         self._order.append(key)
@@ -392,6 +396,9 @@ class SidebarController(QWidget):
         panel's own content height (a taller panel just overflows into the
         sidebar scroll).
         """
+        preferred = entry.panel.preferred_height()
+        if preferred is not None:
+            return preferred
         available = self._scroll.viewport().height()
         content = entry.panel.sizeHint().height()
         if available <= 0:

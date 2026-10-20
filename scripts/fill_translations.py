@@ -761,6 +761,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
     # ── CategoryDropdown (popup under each toolbar category button) ──
     "CategoryDropdown": {
+        "Choose size on plan (center, then edge)": "Größe im Plan wählen (Mitte, dann Rand)",
         "Filter…": "Filtern…",
         "Add to Favorites": "Zu Favoriten hinzufügen",
         "Remove from Favorites": "Aus Favoriten entfernen",
@@ -1273,6 +1274,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "Click to keep open": "Zum Offenhalten klicken",
         "Click to collapse": "Zum Einklappen klicken",
     },
+    "_PanelResizeGrip": {
+        "Drag to resize this panel. Double-click to restore its default height.":
+            "Ziehen, um die Panelhöhe zu ändern. Doppelklicken, um die Standardhöhe wiederherzustellen.",
+    },
+    "CatalogPalette": {
+        "{name}\nStylized plan symbol; cultivar appearance may differ.\n"
+        "Choose, then set center and edge on the plan. Uncheck size choice for one-click placement.":
+            "{name}\nStilisiertes Plansymbol; das Aussehen der Sorte kann abweichen.\n"
+            "Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mit einem Klick deaktivieren.",
+    },
 
     # ── NewProjectDialog ──
     "NewProjectDialog": {
@@ -1639,6 +1650,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
     # ── PropertiesPanel ──
     "PropertiesPanel": {
+        "Import fill PNG…": "Füllmuster-PNG importieren…",
+        "Personal PNG": "Eigenes PNG",
+        "Personal fill pattern": "Eigenes Füllmuster",
+        "Tile width:": "Kachelbreite:",
+        "Use built-in fill": "Integriertes Füllmuster verwenden",
+        "Use a seamless PNG. Original colors are preserved; the image is embedded in the plan.":
+            "Verwenden Sie ein nahtloses PNG. Originalfarben bleiben erhalten; das Bild wird im Plan eingebettet.",
+        "Choose a valid PNG up to 4 MiB and 16 megapixels.\n{error}":
+            "Wählen Sie ein gültiges PNG mit höchstens 4 MiB und 16 Megapixeln.\n{error}",
         # US-E9 asset-forge pilot fill patterns (#264)
         "Decking": "Terrassendielen",
         "Corten steel": "Cortenstahl",

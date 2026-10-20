@@ -76,7 +76,7 @@ class EllipseItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGra
 
         pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
         color = self.fill_color if self.fill_color is not None else style.fill_color
-        self.setBrush(create_pattern_brush(pattern, color))
+        self.setBrush(create_pattern_brush(pattern, color, self.metadata.get("personal_fill_pattern")))
 
     def _setup_flags(self) -> None:
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -287,7 +287,7 @@ class EllipseItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGra
         boolean_subtract_action = None
         array_along_path_action = None
         selected = self.scene().selectedItems()
-        if len(selected) == 2:
+        if len(selected) >= 2:
             from open_garden_planner.ui.canvas.items.circle_item import CircleItem
             from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
             from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
@@ -298,9 +298,10 @@ class EllipseItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGra
                 menu.addSeparator()
                 bool_menu = menu.addMenu(_("EllipseItem", "Boolean"))
                 boolean_union_action = bool_menu.addAction(_("EllipseItem", "Union"))
-                boolean_intersect_action = bool_menu.addAction(_("EllipseItem", "Intersect"))
-                boolean_subtract_action = bool_menu.addAction(_("EllipseItem", "Subtract"))
-            if any(isinstance(s, PolylineItem) for s in selected):
+                if len(selected) == 2:
+                    boolean_intersect_action = bool_menu.addAction(_("EllipseItem", "Intersect"))
+                    boolean_subtract_action = bool_menu.addAction(_("EllipseItem", "Subtract"))
+            if len(selected) == 2 and any(isinstance(s, PolylineItem) for s in selected):
                 array_along_path_action = menu.addAction(
                     _("EllipseItem", "Array Along Path...")
                 )

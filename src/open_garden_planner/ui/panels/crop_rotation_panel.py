@@ -256,13 +256,13 @@ class CropRotationPanel(QWidget):
 
         self._edit_record_btn = QPushButton(self.tr("Edit"))
         self._edit_record_btn.setEnabled(False)
-        self._edit_record_btn.setFixedWidth(50)
+        self._edit_record_btn.setMinimumWidth(50)
         self._edit_record_btn.clicked.connect(self._on_edit_record)
         btn_layout.addWidget(self._edit_record_btn)
 
         self._delete_record_btn = QPushButton(self.tr("Delete"))
         self._delete_record_btn.setEnabled(False)
-        self._delete_record_btn.setFixedWidth(50)
+        self._delete_record_btn.setMinimumWidth(50)
         self._delete_record_btn.clicked.connect(self._on_delete_record)
         btn_layout.addWidget(self._delete_record_btn)
 

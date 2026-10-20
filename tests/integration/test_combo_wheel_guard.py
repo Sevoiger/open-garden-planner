@@ -60,7 +60,7 @@ def test_plant_trait_wheel_scrolls_form_without_editing(qtbot, qapp, focused, pi
         qapp.removeEventFilter(guard)
 
 
-def test_open_choice_list_keeps_wheel_scrolling(qtbot, qapp):
+def test_open_choice_list_blocks_wheel_scrolling(qtbot, qapp):
     host = QWidget()
     qtbot.addWidget(host)
     layout = QVBoxLayout(host)
@@ -78,7 +78,7 @@ def test_open_choice_list_keeps_wheel_scrolling(qtbot, qapp):
         assert view.isVisible()
         before = view.verticalScrollBar().value()
         _wheel(view.viewport())
-        assert view.verticalScrollBar().value() > before
+        assert view.verticalScrollBar().value() == before
         combo.hidePopup()
         assert combo.currentIndex() == 0
     finally:
@@ -99,3 +99,29 @@ def test_real_main_window_installs_policy(qtbot, qapp, monkeypatch):
     _wheel(combo)
     assert combo.currentIndex() == 1
     qapp.removeEventFilter(window._combo_wheel_guard)
+
+
+@pytest.mark.parametrize('focused', [False, True])
+@pytest.mark.parametrize('pixels', [False, True])
+def test_numeric_and_slider_wheel_never_changes_value(qtbot, qapp, focused, pixels):
+    from PyQt6.QtWidgets import QDoubleSpinBox, QSlider, QSpinBox
+
+    guard = ComboWheelGuard()
+    qapp.installEventFilter(guard)
+    try:
+        for field in (QSpinBox(), QDoubleSpinBox(), QSlider(Qt.Orientation.Horizontal)):
+            qtbot.addWidget(field)
+            field.setRange(0, 100)
+            field.setValue(50)
+            field.show()
+            if focused:
+                field.setFocus()
+            else:
+                field.clearFocus()
+            qapp.processEvents()
+            changed = QSignalSpy(field.valueChanged)
+            _wheel(field, pixels=pixels)
+            assert field.value() == 50
+            assert not changed
+    finally:
+        qapp.removeEventFilter(guard)

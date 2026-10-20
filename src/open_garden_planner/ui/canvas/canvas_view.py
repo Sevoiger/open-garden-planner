@@ -383,7 +383,10 @@ class CanvasView(QGraphicsView):
     def _setup_tools(self) -> None:
         """Register and initialize drawing tools."""
         # Register basic tools
-        self._tool_manager.register_tool(SelectTool(self))
+        self._tool_manager.register_tool(
+            SelectTool(self),
+            display_name=QCoreApplication.translate("SelectTool", 'Select'),
+        )
         self._tool_manager.register_tool(MeasureTool(self))
         self._tool_manager.register_tool(ConstraintTool(self))
         self._tool_manager.register_tool(EdgeLengthConstraintTool(self))
@@ -400,51 +403,99 @@ class CanvasView(QGraphicsView):
         self._tool_manager.register_tool(SymmetryConstraintTool(self))
 
         # Register construction geometry tools
-        self._tool_manager.register_tool(ConstructionLineTool(self))
-        self._tool_manager.register_tool(ConstructionCircleTool(self))
+        self._tool_manager.register_tool(
+            ConstructionLineTool(self),
+            display_name=QCoreApplication.translate("ConstructionLineTool", 'Construction Line'),
+        )
+        self._tool_manager.register_tool(
+            ConstructionCircleTool(self),
+            display_name=QCoreApplication.translate("ConstructionCircleTool", 'Construction Circle'),
+        )
 
         # Register CAD editing tools
-        self._tool_manager.register_tool(TrimExtendTool(self))
-        self._tool_manager.register_tool(OffsetTool(self))
+        self._tool_manager.register_tool(
+            TrimExtendTool(self),
+            display_name=QCoreApplication.translate("TrimExtendTool", 'Trim/Extend'),
+        )
+        self._tool_manager.register_tool(
+            OffsetTool(self),
+            display_name=QCoreApplication.translate("OffsetTool", 'Offset'),
+        )
         # Phase 13 Package B (US-B3): fillet & chamfer corner editors.
-        self._tool_manager.register_tool(FilletTool(self))
-        self._tool_manager.register_tool(ChamferTool(self))
+        self._tool_manager.register_tool(
+            FilletTool(self),
+            display_name=QCoreApplication.translate("FilletTool", 'Fillet'),
+        )
+        self._tool_manager.register_tool(
+            ChamferTool(self),
+            display_name=QCoreApplication.translate("ChamferTool", 'Chamfer'),
+        )
         # Phase 13 Package B (US-B4): mirror selection across an axis.
-        self._tool_manager.register_tool(MirrorTool(self))
+        self._tool_manager.register_tool(
+            MirrorTool(self),
+            display_name=QCoreApplication.translate("MirrorTool", 'Mirror'),
+        )
 
         # Register generic shape tools
         rect_tool = RectangleTool(self, object_type=ObjectType.GENERIC_RECTANGLE)
         rect_tool.shortcut = "R"
-        self._tool_manager.register_tool(rect_tool)
+        self._tool_manager.register_tool(
+            rect_tool,
+            display_name=QCoreApplication.translate("RectangleTool", 'Rectangle'),
+        )
 
         poly_tool = PolygonTool(self, object_type=ObjectType.GENERIC_POLYGON)
         poly_tool.shortcut = "P"
-        self._tool_manager.register_tool(poly_tool)
+        self._tool_manager.register_tool(
+            poly_tool,
+            display_name=QCoreApplication.translate("PolygonTool", 'Polygon'),
+        )
 
         circle_tool = CircleTool(self, object_type=ObjectType.GENERIC_CIRCLE)
         circle_tool.shortcut = "C"
-        self._tool_manager.register_tool(circle_tool)
+        self._tool_manager.register_tool(
+            circle_tool,
+            display_name=QCoreApplication.translate("CircleTool", 'Circle'),
+        )
 
         ellipse_tool = EllipseTool(self, object_type=ObjectType.GENERIC_ELLIPSE)
         ellipse_tool.shortcut = "E"
-        self._tool_manager.register_tool(ellipse_tool)
+        self._tool_manager.register_tool(
+            ellipse_tool,
+            display_name=QCoreApplication.translate("EllipseTool", 'Ellipse'),
+        )
 
         # Phase 13 Package B (US-B2): 3-point arc tool.
         arc_tool = ArcTool(self)
-        self._tool_manager.register_tool(arc_tool)
+        self._tool_manager.register_tool(
+            arc_tool,
+            display_name=QCoreApplication.translate("ArcTool", 'Arc (3-point)'),
+        )
 
         # Phase 13 Package B (US-B1): cubic Bezier pen tool.
         bezier_tool = BezierTool(self)
-        self._tool_manager.register_tool(bezier_tool)
+        self._tool_manager.register_tool(
+            bezier_tool,
+            display_name=QCoreApplication.translate("BezierTool", 'Bezier'),
+        )
 
         text_tool = TextTool(self)
-        self._tool_manager.register_tool(text_tool)
+        self._tool_manager.register_tool(
+            text_tool,
+            display_name=QCoreApplication.translate("TextTool", 'Text'),
+        )
 
         callout_tool = CalloutTool(self)
-        self._tool_manager.register_tool(callout_tool)
+        self._tool_manager.register_tool(
+            callout_tool,
+            display_name=QCoreApplication.translate("CalloutTool", 'Callout'),
+        )
 
         journal_pin_tool = JournalPinTool(self)
-        self._tool_manager.register_tool(journal_pin_tool)
+        self._tool_manager.register_tool(
+            journal_pin_tool,
+            display_name=QCoreApplication.translate("JournalPinTool", 'Journal Pin'),
+        )
 
         # Register property object tools (polygon-based)
         house_tool = PolygonTool(self, object_type=ObjectType.HOUSE)
@@ -695,6 +746,19 @@ class CanvasView(QGraphicsView):
         # Translate to put origin at bottom-left after flip
         transform.translate(0, -self._canvas_scene.height_cm)
         self.setTransform(transform)
+        self._refresh_dense_vertex_overlays()
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        self._refresh_dense_vertex_overlays()
+
+    def _refresh_dense_vertex_overlays(self) -> None:
+        scene = self.scene()
+        if scene is not None:
+            for item in scene.selectedItems():
+                refresh = getattr(item, "refresh_vertex_edit_overlay", None)
+                if refresh is not None:
+                    refresh()
 
     # Properties
 
@@ -5239,54 +5303,75 @@ class CanvasView(QGraphicsView):
         )
 
     def boolean_operation(self, operation: str) -> None:
-        """Apply a boolean operation (union/intersect/subtract) on two selected shapes."""
+        """Apply a boolean operation (union/intersect/subtract) on selected closed shapes (union supports any count)."""
         from PyQt6.QtGui import QColor, QPen
         from PyQt6.QtWidgets import QMessageBox
 
         from open_garden_planner.core.shape_boolean import (
             boolean_intersect,
             boolean_subtract,
-            boolean_union,
+            boolean_union_many,
             item_to_painter_path,
         )
         from open_garden_planner.ui.canvas.items import GardenItemMixin
         from open_garden_planner.ui.canvas.items.polygon_item import PolygonItem
 
         selected = self.scene().selectedItems()
-        if len(selected) != 2:
-            self.set_status_message(
-                self.tr("Select exactly two shapes for boolean operation")
-            )
+        if len(selected) < 2 or (operation != "union" and len(selected) != 2):
+            self.set_status_message(self.tr("Select at least two shapes to merge; intersection and subtraction require exactly two."))
             return
 
-        item_a, item_b = selected[0], selected[1]
+        from open_garden_planner.core.object_types import is_plant_type
 
-        path_a = item_to_painter_path(item_a)
-        path_b = item_to_painter_path(item_b)
-        if path_a is None or path_b is None:
-            self.set_status_message(
-                self.tr(
-                    "Boolean operations require closed shapes (polygon, rectangle, or circle)"
-                )
-            )
+        # Replacing linked subjects would discard their botanical identity or
+        # invalidate references. Keep this operation on independent geometry.
+        for item in selected:
+            if isinstance(item, GardenItemMixin):
+                layer = self._canvas_scene.get_layer_by_id(item.layer_id)
+                if (is_plant_type(item.object_type) or item.parent_bed_id is not None
+                        or item.has_children or item.parentItem() is not None
+                        or self._canvas_scene.constraint_graph.get_item_constraints(item.item_id)
+                        or (layer is not None and layer.locked)
+                        or any(key in item.metadata for key in ("plant_species", "guild", "ridge_item_id"))):
+                    self.set_status_message(self.tr("Use independent shapes without plants, linked objects or constraints to combine outlines."))
+                    return
+
+        payloads = [item.metadata for item in selected
+                    if isinstance(item, GardenItemMixin) and item.metadata]
+        if payloads and any(payload != payloads[0] for payload in payloads[1:]):
+            self.set_status_message(self.tr("The shapes contain different data; keep them separate or make their data consistent before merging."))
             return
 
-        if not path_a.intersects(path_b):
-            self.set_status_message(
-                self.tr("Shapes must overlap for boolean operations")
-            )
+        paths = [item_to_painter_path(item) for item in selected]
+        if any(path is None for path in paths):
+            self.set_status_message(self.tr("Boolean operations require closed shapes (polygon, rectangle, circle, or ellipse)"))
+            return
+        paths = [path for path in paths if path is not None]
+        # Connectivity is checked across the whole selection, not only against
+        # the first shape: a middle rectangle may connect two distant circles.
+        connected = {0}
+        pending = [0]
+        while pending:
+            index = pending.pop()
+            for other in range(len(paths)):
+                if other not in connected and paths[index].intersects(paths[other]):
+                    connected.add(other)
+                    pending.append(other)
+        if len(connected) != len(paths):
+            self.set_status_message(self.tr("The selected shapes must touch or overlap."))
             return
 
-        ops = {
-            "union": boolean_union,
-            "intersect": boolean_intersect,
-            "subtract": boolean_subtract,
-        }
-        result_poly = ops[operation](path_a, path_b)
+        item_a, item_b = selected[:2]
+        if operation == "union":
+            result_poly = boolean_union_many(paths)
+        elif operation == "intersect":
+            result_poly = boolean_intersect(paths[0], paths[1])
+        elif operation == "subtract":
+            result_poly = boolean_subtract(paths[0], paths[1])
+        else:
+            return
         if result_poly is None:
-            self.set_status_message(
-                self.tr("Boolean {op} produced an empty result").format(op=operation)
-            )
+            self.set_status_message(self.tr("Boolean {op} produced an empty result").format(op=operation))
             return
 
         # Preview
@@ -5300,8 +5385,8 @@ class CanvasView(QGraphicsView):
 
         answer = QMessageBox.question(
             self,
-            self.tr("Boolean {op}").format(op=operation.capitalize()),
-            self.tr("Apply boolean {op}?").format(op=operation),
+            self.tr("Merge shapes") if operation == "union" else self.tr("Boolean {op}").format(op=operation.capitalize()),
+            self.tr("Merge selected shapes?") if operation == "union" else self.tr("Apply boolean {op}?").format(op=operation),
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
         )
 
@@ -5310,17 +5395,34 @@ class CanvasView(QGraphicsView):
         if answer != QMessageBox.StandardButton.Ok:
             return
 
-        # Create result PolygonItem
-        result_item = PolygonItem.from_polygon(result_poly)
+        # Carry the source's appearance and opaque metadata into the outline.
+        # Prefer a metadata-bearing source, otherwise the first selected shape.
+        from copy import deepcopy
 
-        # Inherit layer from item_a
-        if isinstance(item_a, GardenItemMixin) and item_a.layer_id:
-            result_item.layer_id = item_a.layer_id
+        from open_garden_planner.core.object_types import get_valid_types_for_shape
+
+        result_item = PolygonItem.from_polygon(result_poly)
+        source = next((item for item in selected if isinstance(item, GardenItemMixin)
+                       and item.metadata), item_a)
+        if isinstance(source, GardenItemMixin):
+            if source.object_type in get_valid_types_for_shape("polygon"):
+                result_item.object_type = source.object_type
+            result_item.name = source.name
+            result_item.layer_id = source.layer_id
+            result_item.metadata.update(deepcopy(source.metadata))
+            result_item.fill_pattern = source.fill_pattern
+            result_item.fill_color = source.fill_color
+            result_item.stroke_color = source.stroke_color
+            if source.stroke_width is not None:
+                result_item.stroke_width = source.stroke_width
+            result_item.stroke_style = source.stroke_style
+            result_item._setup_styling()
 
         from open_garden_planner.core import BooleanShapeCommand
 
         command = BooleanShapeCommand(
-            self.scene(), item_a, item_b, result_item, operation
+            self.scene(), item_a, item_b, result_item, operation,
+            additional_items=selected[2:],
         )
         self._command_manager.execute(command)
 

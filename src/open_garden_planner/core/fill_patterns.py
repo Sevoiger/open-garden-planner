@@ -181,7 +181,7 @@ def _tint_texture(texture: QPixmap, color: QColor) -> QPixmap:
     )
 
 
-def create_pattern_brush(pattern: FillPattern, color: QColor) -> QBrush:
+def create_pattern_brush(pattern: FillPattern, color: QColor, personal_pattern: object = None) -> QBrush:
     """Create a QBrush with the specified pattern and base color.
 
     For non-SOLID patterns, loads a tileable PNG texture from
@@ -195,6 +195,13 @@ def create_pattern_brush(pattern: FillPattern, color: QColor) -> QBrush:
     Returns:
         A QBrush configured with the pattern
     """
+    if personal_pattern is not None:
+        from open_garden_planner.core.personal_fill_pattern import personal_pattern_brush
+
+        brush = personal_pattern_brush(personal_pattern)
+        if brush is not None:
+            return brush
+
     if pattern == FillPattern.SOLID:
         return QBrush(color)
 
