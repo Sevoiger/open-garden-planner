@@ -26,6 +26,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from .north_orientation import drawing_azimuth
 from .shadow_geometry import (
     MIN_SUN_ELEVATION_DEG,
     Polygon,
@@ -215,6 +216,7 @@ def compute_heatmap(
     grid: HeatmapGrid,
     rasterize: Rasterizer,
     *,
+    north_angle_deg: float = 0.0,
     step_minutes: int = SAMPLE_STEP_MINUTES,
     progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
@@ -234,7 +236,7 @@ def compute_heatmap(
     oracle's 540).
     """
     result = _aggregate_day(casters, lat_deg, lon_deg, day, grid, rasterize,
-                            step_minutes=step_minutes, progress=progress, should_cancel=should_cancel)
+                            north_angle_deg=north_angle_deg, step_minutes=step_minutes, progress=progress, should_cancel=should_cancel)
     return result.minutes if result is not None else None
 
 
@@ -247,6 +249,7 @@ def compute_sun_exposure(
     grid: HeatmapGrid,
     rasterize: Rasterizer,
     *,
+    north_angle_deg: float = 0.0,
     step_minutes: int = SAMPLE_STEP_MINUTES,
     progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
@@ -258,7 +261,7 @@ def compute_sun_exposure(
     """
     anonymous = [(footprint, caster.height_cm) for caster in casters for footprint in caster.footprints]
     return _aggregate_day(anonymous, lat_deg, lon_deg, day, grid, rasterize,
-                          identified=casters, receivers=receivers, step_minutes=step_minutes,
+                          identified=casters, receivers=receivers, north_angle_deg=north_angle_deg, step_minutes=step_minutes,
                           progress=progress, should_cancel=should_cancel)
 
 
@@ -266,6 +269,7 @@ def _aggregate_day(
     casters: Sequence[tuple[Sequence[tuple[float, float]], float | None]],
     lat_deg: float, lon_deg: float, day: date, grid: HeatmapGrid, rasterize: Rasterizer,
     *, identified: Sequence[IdentifiedCaster] = (), receivers: Sequence[SunReceiver] = (),
+    north_angle_deg: float = 0.0,
     step_minutes: int = SAMPLE_STEP_MINUTES,
     progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
@@ -286,17 +290,18 @@ def _aggregate_day(
     for index, sample in enumerate(samples):
         if should_cancel is not None and should_cancel():
             return None
+        azimuth = drawing_azimuth(sample.azimuth_deg, north_angle_deg)
         owned_polygons: list[list[Polygon]] = []
         if identified:
             shadows = compute_grouped_shadows(
                 [(caster.footprints, caster.height_cm) for caster in identified],
-                max(sample.elevation_deg, MIN_SUN_ELEVATION_DEG), sample.azimuth_deg, should_cancel)
+                max(sample.elevation_deg, MIN_SUN_ELEVATION_DEG), azimuth, should_cancel)
             if shadows is None:
                 return None
             polygons, owned_polygons = shadows
         else:
             polygons = compute_scene_shadows(
-                casters, max(sample.elevation_deg, MIN_SUN_ELEVATION_DEG), sample.azimuth_deg)
+                casters, max(sample.elevation_deg, MIN_SUN_ELEVATION_DEG), azimuth)
         if polygons:
             shaded = rasterize(polygons, grid)
             minutes += np.where(shaded, 0.0, float(step_minutes))

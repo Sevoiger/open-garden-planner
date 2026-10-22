@@ -164,6 +164,31 @@ Qt est déjà désactivée. Cela vaut aussi pour la réouverture du fond intégr
 `.ogp` ; la limite Qt précédente est rétablie après chaque chargement. Calibrer
 ensuite le fond sur une cote connue.
 
+### Orienter le nord sans tourner le dessin
+
+Après l’étalonnage, ouvrir **Fichier > Définir l’orientation du nord…**.
+Garder le terrain dans l’alignement le plus pratique pour tracer. Dans la boîte
+de dialogue, cliquer sur la boussole ou saisir l’angle du nord géographique
+indiqué sur le plan importé : **0° vers le haut, 90° vers la droite, 135° vers
+le bas à droite, 180° vers le bas**. L’angle augmente dans le sens horaire.
+Le terme « bas à droite » décrit l’écran : c’est la direction du nord du terrain,
+pas son sud-est géographique.
+
+La flèche **N** en haut à droite du canevas suit ce réglage. Le fond, les objets,
+les coordonnées et les axes de tracé restent en place. Valider crée une seule
+étape annulable ; annuler la boîte de dialogue ne change rien. L’orientation est
+propre au projet, sauvegardée dans le `.ogp`, conservée lors de la création d’une
+saison et rétablie à la réouverture. Un ancien plan sans orientation reste à 0°.
+Le champ additionnel `north_angle_deg` ne change pas la version du format ; les
+anciennes versions de l’application ne l’utilisent pas pour leurs calculs.
+
+Les ombres 2D, la carte d’ensoleillement, l’exposition des plantes et le soleil
+3D utilisent cette orientation ; le rapport PDF oriente aussi sa flèche nord.
+Après un changement d’angle, relancer la carte d’ensoleillement : l’ancien résultat
+est effacé, y compris si son calcul était en cours. Les coordonnées GPS restent
+à renseigner séparément pour la simulation solaire. La boussole du canevas est
+un repère d’affichage et n’est pas ajoutée aux exports simples PNG/SVG.
+
 Les contours approximatifs et positions non vérifiées doivent rester signalés.
 Les noms illisibles restent « à identifier », les dates inconnues restent inconnues,
 et un projet de plantation reste prévu. Le premier jet ne constitue pas un relevé

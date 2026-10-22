@@ -144,30 +144,11 @@ def _draw_title_block(
     )
 
 
-def _draw_north_arrow(painter: QPainter, cx: float, cy: float, size: float) -> None:
+def _draw_north_arrow(painter: QPainter, cx: float, cy: float, size: float, angle_deg: float = 0.0) -> None:
     """Draw a simple north arrow centred at (cx, cy)."""
-    painter.save()
-    painter.translate(cx, cy)
+    from open_garden_planner.services.north_arrow import draw_north_arrow
 
-    pen = QPen(QColor("#333333"))
-    pen.setWidthF(1.0)
-    painter.setPen(pen)
-
-    half = size / 2.0
-    # Arrow body
-    painter.drawLine(QPointF(0, half), QPointF(0, -half))
-    # Arrowhead
-    painter.drawLine(QPointF(0, -half), QPointF(-size * 0.2, -half + size * 0.35))
-    painter.drawLine(QPointF(0, -half), QPointF(size * 0.2, -half + size * 0.35))
-
-    font = QFont("Arial", max(4, int(size * 0.4)))
-    painter.setFont(font)
-    painter.drawText(
-        QRectF(-size / 2, -half - _pt(5), size, _pt(5)),
-        Qt.AlignmentFlag.AlignCenter,
-        _tr("N"),
-    )
-    painter.restore()
+    draw_north_arrow(painter, QPointF(cx, cy), size * 0.7, angle_deg, QColor("#333333"))
 
 
 def _draw_scale_bar(
@@ -285,6 +266,7 @@ def _render_overview(
         content_rect.right() - north_size,
         content_rect.top() + north_size,
         north_size,
+        getattr(scene, "north_angle_deg", 0.0),
     )
 
     # Scale bar

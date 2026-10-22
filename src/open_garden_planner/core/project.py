@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene
 from open_garden_planner.app.settings import get_settings
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
 from open_garden_planner.core.item_look import restore_stored_look
+from open_garden_planner.core.north_orientation import normalize_north_angle
 from open_garden_planner.core.object_types import PathFenceStyle, StrokeStyle
 from open_garden_planner.core.plan_io import (
     PlanValidationError,
@@ -78,6 +79,7 @@ class ProjectData:
     layers: list[dict[str, Any]] = field(default_factory=list)
     constraints: list[dict[str, Any]] = field(default_factory=list)
     guides: list[dict[str, Any]] = field(default_factory=list)
+    north_angle_deg: float = 0.0
     location: dict[str, Any] | None = None
     task_completions: list[str] = field(default_factory=list)
     seed_inventory: list[dict[str, Any]] = field(default_factory=list)
@@ -150,6 +152,7 @@ class ProjectData:
                 "width": self.canvas_width,
                 "height": self.canvas_height,
             },
+            "north_angle_deg": normalize_north_angle(self.north_angle_deg),
             "layers": self.layers,
             "objects": self.objects,
         }
@@ -215,6 +218,7 @@ class ProjectData:
             objects=data.get("objects", []),
             constraints=data.get("constraints", []),
             guides=data.get("guides", []),
+            north_angle_deg=normalize_north_angle(data.get("north_angle_deg", 0.0)),
             location=data.get("location") or None,
             task_completions=data.get("task_completions", []),
             seed_inventory=data.get("seed_inventory", []),
@@ -253,6 +257,7 @@ class ProjectManager(QObject):
 
     project_changed = pyqtSignal(object)  # str path or None
     dirty_changed = pyqtSignal(bool)
+    north_angle_changed = pyqtSignal(float)
     location_changed = pyqtSignal(object)  # dict or None
     task_completions_changed = pyqtSignal(object)  # set[str]
     seed_inventory_changed = pyqtSignal(object)    # list[SeedPacket]
@@ -279,6 +284,7 @@ class ProjectManager(QObject):
         super().__init__(parent)
         self._current_file: Path | None = None
         self._dirty = False
+        self._north_angle_deg = 0.0
         self._location: dict[str, Any] | None = None
         self._task_completions: set[str] = set()
         self._seed_inventory: list[dict[str, Any]] = []
@@ -325,6 +331,20 @@ class ProjectManager(QObject):
         if self._current_file:
             return self._current_file.stem
         return "Untitled"
+
+    @property
+    def north_angle_deg(self) -> float:
+        """Clockwise bearing of true north from the top of the drawing."""
+        return self._north_angle_deg
+
+    def set_north_angle(self, value: float) -> None:
+        """Apply a validated bearing; interactive edits use SetNorthAngleCommand."""
+        angle = normalize_north_angle(value)
+        if angle == self._north_angle_deg:
+            return
+        self._north_angle_deg = angle
+        self.north_angle_changed.emit(angle)
+        self.mark_dirty()
 
     @property
     def location(self) -> dict[str, Any] | None:
@@ -845,6 +865,7 @@ class ProjectManager(QObject):
         """Start a new untitled project."""
         self._current_file = None
         self._dirty = False
+        self._north_angle_deg = 0.0
         self._location = None
         self._task_completions = set()
         self._seed_inventory = []
@@ -871,6 +892,7 @@ class ProjectManager(QObject):
         self._harvest_logs = {}
         self.project_changed.emit(None)
         self.dirty_changed.emit(False)
+        self.north_angle_changed.emit(0.0)
         self.location_changed.emit(None)
         self.task_completions_changed.emit(set())
         self.seed_inventory_changed.emit([])
@@ -942,6 +964,7 @@ class ProjectManager(QObject):
                 pass ``False`` so the snapshot never mutates project state.
         """
         data = self._serialize_scene(scene)
+        data.north_angle_deg = self._north_angle_deg
         data.location = self._location
         data.task_completions = sorted(self._task_completions)
         data.seed_inventory = list(self._seed_inventory)
@@ -1129,6 +1152,8 @@ class ProjectManager(QObject):
 
     def _restore_project_metadata(self, data: ProjectData) -> None:
         """Restore non-scene project metadata and emit change signals."""
+        self._north_angle_deg = data.north_angle_deg
+        self.north_angle_changed.emit(self._north_angle_deg)
         self._location = data.location
         self.location_changed.emit(self._location)
         self._task_completions = set(data.task_completions)
@@ -1215,6 +1240,7 @@ class ProjectManager(QObject):
         # Serialize the current scene
         current_data = self._serialize_scene(scene)
         current_data.auto_assign_permaculture_layers = self.auto_assign_permaculture_layers
+        current_data.north_angle_deg = self._north_angle_deg
         current_data.location = self._location
         current_data.task_completions = []
         current_data.seed_inventory = list(self._seed_inventory)
@@ -2019,6 +2045,7 @@ class ProjectManager(QObject):
         prep: tuple[list[QGraphicsItem], list[Layer] | None, Any, list[Any] | None],
     ) -> None:
         """Phase 2: Apply in-memory validated items and layers to the scene."""
+        scene.north_angle_deg = data.north_angle_deg
         deserialized_items, parsed_layers, parsed_constraints, parsed_guides = prep
         if hasattr(scene, "reset_document_diagnostics"):
             scene.reset_document_diagnostics()

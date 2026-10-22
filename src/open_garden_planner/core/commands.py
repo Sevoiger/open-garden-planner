@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         ConstraintGraph,
         ConstraintType,
     )
+    from open_garden_planner.core.project import ProjectManager
     from open_garden_planner.models.layer import Layer
 
 
@@ -539,6 +540,27 @@ class MoveItemsCommand(Command):
         """Move items back by negative delta."""
         for item in self._items:
             item.moveBy(-self._delta.x(), -self._delta.y())
+
+
+class SetNorthAngleCommand(Command):
+    """Change project orientation without rotating any scene object."""
+
+    def __init__(self, project: "ProjectManager", angle: float) -> None:
+        from open_garden_planner.core.north_orientation import normalize_north_angle
+
+        self._project = project
+        self._old = project.north_angle_deg
+        self._new = normalize_north_angle(angle)
+
+    @property
+    def description(self) -> str:
+        return QCoreApplication.translate("Commands", "Change north orientation")
+
+    def execute(self) -> None:
+        self._project.set_north_angle(self._new)
+
+    def undo(self) -> None:
+        self._project.set_north_angle(self._old)
 
 
 class ChangePropertyCommand(Command):

@@ -83,6 +83,7 @@ class CanvasScene(QGraphicsScene):
         """
         super().__init__(parent)
 
+        self.north_angle_deg = 0.0
         self._width_cm = width_cm
         self._height_cm = height_cm
 
