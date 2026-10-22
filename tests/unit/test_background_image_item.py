@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QImageReader, QPixmap
 from PyQt6.QtWidgets import QGraphicsItem
 
 from open_garden_planner.ui.canvas.items import BackgroundImageItem
@@ -46,6 +46,47 @@ class TestBackgroundImageItem:
         """Test that invalid image path raises ValueError."""
         with pytest.raises(ValueError, match="Failed to load image"):
             BackgroundImageItem("/nonexistent/path/to/image.png")
+
+    def test_image_above_default_budget_remains_portable(self, qtbot, tmp_path: Path) -> None:
+        """A plan exceeding Qt's usual budget imports and reopens at full resolution."""
+        # Lower the usual budget to reproduce the HD failure without a 280 MB fixture.
+        pixmap = QPixmap(600, 600)
+        pixmap.fill()
+        path = tmp_path / "hd_plan.png"
+        assert pixmap.save(str(path))
+        previous_limit = QImageReader.allocationLimit()
+        QImageReader.setAllocationLimit(1)
+        try:
+            reader = QImageReader(str(path))
+            assert reader.read().isNull(), "Fixture must exceed the normal decoder budget"
+
+            item = BackgroundImageItem(str(path))
+            assert item.image_size_pixels() == (600, 600)
+            assert QImageReader.allocationLimit() == 1
+            item.calibrate(600, 1200)
+            data = item.to_dict()
+            path.unlink()
+
+            restored = BackgroundImageItem.from_dict(data)
+            assert not restored.is_placeholder
+            assert restored.image_size_pixels() == (600, 600)
+            assert restored.image_size_cm() == pytest.approx((1200, 1200))
+            assert QImageReader.allocationLimit() == 1
+        finally:
+            QImageReader.setAllocationLimit(previous_limit)
+
+    def test_failed_import_restores_decoder_budget(self, qtbot, tmp_path: Path) -> None:
+        """A failed decode must not leave other image imports with a higher limit."""
+        path = tmp_path / "broken.png"
+        path.write_bytes(b"not an image")
+        previous_limit = QImageReader.allocationLimit()
+        QImageReader.setAllocationLimit(1)
+        try:
+            with pytest.raises(ValueError, match="Failed to load image"):
+                BackgroundImageItem(str(path))
+            assert QImageReader.allocationLimit() == 1
+        finally:
+            QImageReader.setAllocationLimit(previous_limit)
 
     def test_default_properties(self, qtbot, test_image_path: Path) -> None:
         """Test default property values."""
