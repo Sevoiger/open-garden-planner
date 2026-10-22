@@ -40,7 +40,7 @@ class TestResolveExportPathDefaults:
             project_manager=project_manager,
         )
 
-        assert path == tmp_path / "Open Garden Planner" / "Untitled.pdf"
+        assert path == tmp_path / "Untitled.pdf"
 
     def test_default_path_next_to_open_project(
         self, project_manager: ProjectManager, tmp_path: Path

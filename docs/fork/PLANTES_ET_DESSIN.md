@@ -158,6 +158,31 @@ Les quatre fichiers `examples/plant-lists/classiques-*.json` utilisent le format
 standard de **Plant Lists > menu > Import**. Cet import manuel attribue de nouveaux
 identifiants et peut créer une autre copie ; la commande automatisée évite cela.
 
+## Dossier des plans et réouverture
+
+Les boîtes de dialogue réutilisent le dossier du plan courant, puis celui du
+dernier plan sauvegardé. Un plan enregistré dans **projects/** garde donc ce
+dossier comme point de départ, y compris après redémarrage. Aucun dossier
+**Open Garden Planner** supplémentaire n’est créé dans Documents. Sans dossier
+mémorisé utilisable, le choix initial est Documents, puis le dossier utilisateur
+si Documents n’existe pas. Les dossiers déjà présents ne sont pas supprimés.
+
+Au démarrage, le dernier plan sauvegardé est rouvert automatiquement ; l’écran
+d’accueil n’est affiché que si aucun plan ne peut être repris. Ouvrir un autre
+fichier ne change pas ce choix : seule une sauvegarde réussie mémorise le chemin
+absolu dans le réglage `startup/last_saved_project`. Pour la première ouverture
+après cette mise à jour, la liste des fichiers récents sert de reprise. Effacer
+les fichiers récents efface aussi le choix de réouverture.
+
+Un fichier fourni explicitement au lancement ou un travail commencé pendant le
+démarrage reste prioritaire. Les propositions de récupération passent avant la
+réouverture automatique ; une seule récupération est chargée par démarrage. Si
+la récupération du dernier plan est refusée mais conservée, l’accueil reste
+accessible et sa copie n’est pas effacée par une ouverture automatique. Un plan
+introuvable revient à l’accueil ; un plan illisible signale l’erreur puis revient
+à l’accueil. Les sauvegardes automatiques ne remplacent pas le dernier plan
+sauvegardé comme choix de démarrage.
+
 ## Premier jet depuis un dessin
 
 Un croquis, une photo de plan ou un scan permet de préparer un `.ogp` éditable :

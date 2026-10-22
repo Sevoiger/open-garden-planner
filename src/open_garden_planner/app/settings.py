@@ -96,6 +96,7 @@ class AppSettings:
     KEY_AUTOSAVE_ENABLED = "autosave/enabled"
     KEY_AUTOSAVE_INTERVAL_MINUTES = "autosave/interval_minutes"
     KEY_RECENT_FILES = "recent_files"
+    KEY_LAST_SAVED_PROJECT = "startup/last_saved_project"
     KEY_SHOW_WELCOME = "startup/show_welcome"
     KEY_THEME_MODE = "appearance/theme_mode"
     KEY_SHOW_SHADOWS = "appearance/show_shadows"
@@ -248,6 +249,16 @@ class AppSettings:
         """Set the list of recent files."""
         self._settings.setValue(self.KEY_RECENT_FILES, files)
 
+    @property
+    def last_saved_project(self) -> str | None:
+        """Last successful explicit save, independent of later file opens."""
+        value = self._settings.value(self.KEY_LAST_SAVED_PROJECT, "", type=str)
+        return str(value) if value else None
+
+    @last_saved_project.setter
+    def last_saved_project(self, path: str | None) -> None:
+        self._settings.setValue(self.KEY_LAST_SAVED_PROJECT, path or "")
+
     def add_recent_file(self, file_path: str, max_files: int = 10) -> None:
         """Add a file to the recent files list.
 
@@ -267,6 +278,7 @@ class AppSettings:
     def clear_recent_files(self) -> None:
         """Clear the recent files list."""
         self.recent_files = []
+        self.last_saved_project = None
 
     @property
     def show_welcome_on_startup(self) -> bool:

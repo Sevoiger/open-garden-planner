@@ -948,6 +948,7 @@ class ProjectManager(QObject):
 
         # Track in recent files
         get_settings().add_recent_file(str(file_path))
+        get_settings().last_saved_project = str(file_path.resolve())
 
     def _build_project_data(
         self, scene: QGraphicsScene, *, sync_journal: bool = True
