@@ -209,3 +209,36 @@ def test_project_references_block_split_even_after_first_pick(canvas, mouse_even
     assert source.scene() is scene
     assert canvas.command_manager.undo_depth == 0
     assert getattr(pm, collection) == payload(str(source.item_id))
+
+
+def test_properties_exposes_split_and_real_context_menu(canvas, qtbot, monkeypatch):
+    from PyQt6.QtGui import QContextMenuEvent
+    from PyQt6.QtWidgets import QApplication, QPushButton
+
+    from open_garden_planner.ui.panels.properties_panel import PropertiesPanel
+
+    source = RectangleItem(100, 100, 200, 100)
+    canvas.scene().addItem(source)
+    canvas.resize(900, 650)
+    canvas.show()
+    canvas.centerOn(200, 150)
+    panel = PropertiesPanel()
+    qtbot.addWidget(panel)
+    panel.set_selected_items([source])
+    button = panel.findChild(QPushButton, 'split_shape_button')
+    assert button is not None and button.isEnabled()
+    button.click()
+    assert canvas._split_tool.source_id == source.item_id
+    canvas.set_active_tool(ToolType.SELECT)
+    captured = []
+
+    def capture(menu, *_args):
+        captured.extend((action.objectName(), action.isEnabled()) for action in menu.actions())
+        return None
+
+    monkeypatch.setattr(QMenu, 'exec', capture)
+    position = canvas.mapFromScene(QPointF(200, 150))
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, position,
+                              canvas.viewport().mapToGlobal(position))
+    QApplication.sendEvent(canvas.viewport(), event)
+    assert ('split_shape', True) in captured

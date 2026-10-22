@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -326,7 +327,26 @@ class GardenMemoryDialog(ResponsiveDialog):
         self._reload_targets()
 
     def _snapshot(self) -> dict[str, Any]:
-        return self.service.project.snapshot_dict(self.service.scene)
+        # Browsing needs identities and tracking fields, never PNGs or geometry.
+        # A full plan export compresses every background again on each keystroke.
+        from open_garden_planner.ui.canvas.items import (
+            CircleItem,
+            EllipseItem,
+            PolygonItem,
+            PolylineItem,
+            RectangleItem,
+        )
+
+        objects = []
+        for item in reversed(self.service.scene.items()):
+            if isinstance(item, (RectangleItem, EllipseItem, CircleItem, PolygonItem, PolylineItem)) and item.object_type is not None:
+                objects.append({
+                    "item_id": str(item.item_id), "object_type": item.object_type.name,
+                    "name": item.name,
+                    "metadata": {key: deepcopy(item.metadata[key])
+                                 for key in ("garden_tracking", "plant_instance") if key in item.metadata},
+                })
+        return {"objects": objects, "garden_memory": self.service.project.garden_memory}
 
     def _reload_targets(self) -> None:
         self.targets.blockSignals(True)
@@ -457,11 +477,11 @@ class GardenMemoryDialog(ResponsiveDialog):
                 if project and path.resolve() == project.resolve():
                     raise ValueError(self.tr("Choose an export file different from the open project."))
                 if kind == "zip" and project:
-                    portable_backup(self._snapshot(), project, path)
+                    portable_backup(self.service.project.snapshot_dict(self.service.scene), project, path)
                 elif kind == "csv":
-                    export_csv(self._snapshot(), path)
+                    export_csv(self.service.project.snapshot_dict(self.service.scene), path)
                 else:
-                    export_json(self._snapshot(), path)
+                    export_json(self.service.project.snapshot_dict(self.service.scene), path)
             except Exception as exc:
                 self._error(exc)
 

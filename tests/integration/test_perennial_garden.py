@@ -382,3 +382,75 @@ def test_locked_intervention_delete_shows_error_and_keeps_history(garden, qtbot,
     dialog._delete_event()
     assert errors and "locked" in errors[0]
     assert pm.garden_memory == before and commands.undo_depth == depth
+
+
+def test_records_browsing_does_not_encode_background(garden, qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtGui import QColor, QImage
+
+    from open_garden_planner.ui.canvas.items import BackgroundImageItem
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+
+    scene, pm, commands, service, bed, plant = garden
+    image = QImage(100, 100, QImage.Format.Format_RGB32)
+    image.fill(QColor('white'))
+    source = tmp_path / 'background.png'
+    image.save(str(source))
+    background = BackgroundImageItem(str(source))
+    scene.addItem(background)
+    calls = []
+    original = background.to_dict
+
+    def counted():
+        calls.append(True)
+        return original()
+
+    service.set_card(str(plant.item_id), {'kind': 'group', 'zone_id': str(bed.item_id),
+                                           'period': 'Automne 2023'})
+    monkeypatch.setattr(background, 'to_dict', counted)
+    dialog = GardenMemoryDialog(service, str(plant.item_id))
+    qtbot.addWidget(dialog)
+    dialog.search_edit.setText('test')
+    dialog.targets.setCurrentRow(1)
+    assert len(calls) == 0, f'Background PNG encoded {len(calls)} times during browsing'
+
+    from open_garden_planner.services.garden_queries import garden_record
+
+    lightweight = dialog._snapshot()
+    full = pm.snapshot_dict(scene)
+    assert garden_record(lightweight, str(bed.item_id)) == garden_record(full, str(bed.item_id))
+    assert garden_record(lightweight, str(plant.item_id)) == garden_record(full, str(plant.item_id))
+    # Export/backup must still carry the full portable plan with its PNG.
+    import json
+
+    from PyQt6.QtWidgets import QFileDialog
+
+    destination = tmp_path / 'export.json'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *_a: (str(destination), 'JSON'))
+    dialog._export('json')
+    exported = json.loads(destination.read_text())
+    assert any(o.get('image_data') for o in exported['objects'] if o['type'] == 'background_image')
+
+
+
+def test_tracking_projection_excludes_decorations_and_includes_group_children(garden, qtbot):
+    from PyQt6.QtCore import QPointF
+
+    from open_garden_planner.services.garden_queries import garden_objects
+    from open_garden_planner.ui.canvas.items.callout_item import CalloutItem
+    from open_garden_planner.ui.canvas.items.group_item import GroupItem
+    from open_garden_planner.ui.canvas.items.journal_pin_item import JournalPinItem
+    from open_garden_planner.ui.canvas.items.text_item import TextItem
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+
+    scene, pm, commands, service, bed, plant = garden
+    for item in (TextItem(20, 20, content='annotation'), JournalPinItem(50, 50, 'note'),
+                 CalloutItem(QPointF(20, 20), QPointF(80, 80), content='label')):
+        scene.addItem(item)
+    group = GroupItem()
+    scene.addItem(group)
+    group.addToGroup(plant)
+    dialog = GardenMemoryDialog(service)
+    qtbot.addWidget(dialog)
+    full = garden_objects(pm.snapshot_dict(scene))
+    light = garden_objects(dialog._snapshot())
+    assert {o['item_id'] for o in light} == {o['item_id'] for o in full} == {str(bed.item_id), str(plant.item_id)}
