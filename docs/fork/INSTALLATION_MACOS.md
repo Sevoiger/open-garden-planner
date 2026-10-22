@@ -15,6 +15,13 @@ rien. Pour modifier l’application : fermer la fenêtre, modifier les fichiers 
 `src/open_garden_planner/`, puis rouvrir le lanceur. `Jardin.app` est un simple
 lanceur vers les sources, à conserver dans le dossier du projet ; aucune
 reconstruction n'est nécessaire.
+L'entrée du bundle est un petit exécutable natif signé localement (signature
+ad hoc, sans certificat Developer ID ni notarisation). Il évite le blocage
+d'accès au dossier Documents rencontré avec une entrée Bash. Ses sources sont
+dans `scripts/macos_launcher.m`. Après modification de ce lanceur natif seulement,
+exécuter `bash scripts/build_macos_launcher.sh` pour le recompiler et le signer ;
+la préparation macOS le fait également. Les modifications Python ne nécessitent
+pas de nouvelle signature.
 Après un changement de dépendances seulement, relancer le script de préparation.
 Si le dossier complet est déplacé, relancer également la préparation (les chemins
 des environnements Python ne sont pas portables).
