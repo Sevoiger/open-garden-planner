@@ -414,6 +414,22 @@ La géométrie enregistrée reste complète ; Échap ou désélection ferme l'é
 Pour un contour libre, les outils polygone et courbe de Bézier permettent aussi
 de dessiner directement une forme personnalisée.
 
+## Découper une forme selon un axe
+
+Clic droit sur une forme, puis **Découper selon un axe…**. Deux clics définissent
+une droite de coupe prolongée de part et d’autre de la forme. Les deux points et
+la prévisualisation utilisent le magnétisme activé (sommets, milieux, bords).
+**Maj** contraint l’angle par pas de 45° ; **Échap** abandonne. Si la droite ne
+traverse pas la surface, choisir un autre second point.
+
+Les morceaux deviennent des polygones indépendants, avec le calque et l’apparence
+d’origine. Un seul **Cmd+Z** restaure exactement l’objet initial. Une forme concave
+peut donner plus de deux morceaux ; les arrondis sont approximés en polygones.
+La découpe accepte les surfaces fermées indépendantes : déverrouiller la position
+et retirer les contraintes avant de couper. Les plantes, objets liés et formes
+portant des données de suivi (sol, cultures, récoltes, tâches ou notes liées) sont
+protégés contre cette transformation.
+
 ## Importer un remplissage personnel
 
 Sélectionner une surface (rectangle, polygone, cercle géométrique ou ellipse),
@@ -429,6 +445,21 @@ répète le PNG mais ne répare pas ses bords. Le PNG est intégré aux métadon
 retour au remplissage standard sont annulables. **Use built-in fill**, ou choisir
 un motif standard dans **Fill Pattern**, retire le remplacement personnel ; annuler
 le restaure. Un PNG intégré invalide utilise le remplissage standard.
+
+**Angle du motif** fait tourner le remplissage indépendamment du contour.
+**Échelle du motif** règle la répétition : 100 % conserve la taille de référence,
+200 % donne des motifs deux fois plus grands, 50 % deux fois plus petits.
+Ces réglages s’appliquent aux motifs standards comme aux PNG et sont enregistrés
+avec la forme ; ils sont annulables. Pour un PNG, l’échelle multiplie la largeur
+réelle indiquée dans **Tile width**.
+
+Le sélecteur **Matériaux** propose les PNG présents dans `visuals/materials/`
+(par exemple ardoise, bois ou paillage). Choisir un matériau l’intègre au plan.
+Les imports de dessins de plantes s’ouvrent dans `visuals/plants/` ; les imports
+de remplissages dans `visuals/materials/`. En l’absence du sous-dossier,
+l’ancien dossier `visuals/` reste utilisé. Les images déjà intégrées aux plans
+et à la bibliothèque restent valables après déplacement du PNG source : aucun
+chemin de fichier externe n’est nécessaire à leur affichage.
 
 Cette fonction vise les surfaces 2D. Les plantes et objets illustrés conservent
 leurs dessins, et les chemins linéaires leurs styles dédiés. Les anciennes versions

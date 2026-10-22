@@ -1355,6 +1355,7 @@ class GardenItemMixin:
 
         # All object context menus pass through this shared builder.
         self._build_position_lock_action(parent_menu)
+        self._build_split_action(parent_menu)
         label = QCoreApplication.translate("ArrangeActions", "Arrange")
         arrange_menu: QMenu = parent_menu.addMenu(label)
         submenu_icon = get_icon("arrange")
@@ -1390,6 +1391,20 @@ class GardenItemMixin:
             if icon is not None:
                 action.setIcon(icon)
         return arrange_menu
+
+    def _build_split_action(self, menu: "QMenu") -> None:
+        from open_garden_planner.core.shape_boolean import item_to_painter_path
+        from open_garden_planner.core.shape_split import can_split_shape
+
+        scene = self.scene()
+        if scene is None or item_to_painter_path(self) is None:
+            return
+        action = menu.addAction(QCoreApplication.translate("GardenItemMixin", "Split along an axis…"))
+        action.setObjectName("split_shape")
+        action.setEnabled(can_split_shape(self, scene))
+        action.setToolTip(QCoreApplication.translate("GardenItemMixin",
+            "Choose two snapped points for the cutting axis. Unlock position and remove linked constraints first."))
+        action.triggered.connect(lambda: scene.views()[0].start_split_shape(self) if scene.views() else None)
 
     def _build_position_lock_action(self, menu: "QMenu") -> None:
         """Expose the existing FIXED constraint, without a second lock state."""

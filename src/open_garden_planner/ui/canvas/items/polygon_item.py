@@ -211,7 +211,7 @@ def _show_properties_dialog(item: QGraphicsPolygonItem) -> None:
             # Apply pattern brush and store pattern
             if hasattr(item, 'fill_pattern'):
                 item.fill_pattern = style.fill_pattern
-            brush = create_pattern_brush(style.fill_pattern, style.fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"))
+            brush = create_pattern_brush(style.fill_pattern, style.fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"), getattr(item, "metadata", {}).get("fill_transform"))
             item.setBrush(brush)
 
         # Apply custom fill color and pattern (overrides type default)
@@ -222,7 +222,7 @@ def _show_properties_dialog(item: QGraphicsPolygonItem) -> None:
             item.fill_pattern = fill_pattern
         if hasattr(item, 'fill_color'):
             item.fill_color = fill_color
-        brush = create_pattern_brush(fill_pattern, fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"))
+        brush = create_pattern_brush(fill_pattern, fill_color, getattr(item, "metadata", {}).get("personal_fill_pattern"), getattr(item, "metadata", {}).get("fill_transform"))
         item.setBrush(brush)
 
         # Apply custom stroke properties (overrides type default)
@@ -348,7 +348,7 @@ class PolygonItem(VertexEditMixin, RotationHandleMixin, ResizeHandlesMixin, Gard
         # Use stored fill_pattern and color if available, otherwise use style defaults
         pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
         color = self.fill_color if self.fill_color is not None else style.fill_color
-        brush = create_pattern_brush(pattern, color, self.metadata.get("personal_fill_pattern"))
+        brush = create_pattern_brush(pattern, color, self.metadata.get("personal_fill_pattern"), self.metadata.get("fill_transform"))
         self.setBrush(brush)
 
     def _setup_flags(self) -> None:
@@ -488,7 +488,7 @@ class PolygonItem(VertexEditMixin, RotationHandleMixin, ResizeHandlesMixin, Gard
         normal_tx.translate(mid_x, mid_y)
         normal_tx.rotate(angle_deg)
         normal_brush = QBrush(brush)
-        normal_brush.setTransform(normal_tx)
+        normal_brush.setTransform(brush.transform() * normal_tx)
 
         # Mirrored brush: reflects the down-slope across the ridge, for the
         # half that faces the other way (issue #372).
@@ -497,7 +497,7 @@ class PolygonItem(VertexEditMixin, RotationHandleMixin, ResizeHandlesMixin, Gard
         mirrored_tx.rotate(angle_deg)
         mirrored_tx.scale(1.0, -1.0)
         mirrored_brush = QBrush(brush)
-        mirrored_brush.setTransform(mirrored_tx)
+        mirrored_brush.setTransform(brush.transform() * mirrored_tx)
 
         # Bounding rect for fill (clip handles actual shape)
         bounds = poly_path.boundingRect()

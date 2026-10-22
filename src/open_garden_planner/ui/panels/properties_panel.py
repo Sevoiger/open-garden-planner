@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from PyQt6.QtCore import QCoreApplication, QSignalBlocker, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QSignalBlocker, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFocusEvent, QIcon, QPen, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
@@ -2014,6 +2014,8 @@ class PropertiesPanel(QWidget):
             PATTERN_KEY,
         )
 
+        self._add_fill_transform_controls(item)
+        self._add_material_choices(item)
         import_button = QPushButton(self.tr("Import fill PNG…"))
         import_button.setObjectName("import_fill_png")
         import_button.setToolTip(self.tr(
@@ -2047,11 +2049,94 @@ class PropertiesPanel(QWidget):
         self._form_layout.addRow(remove)
         self._register_refresh(remove, lambda: remove.setEnabled(PATTERN_KEY in item.metadata))
 
+    def _add_fill_transform_controls(self, item: FillSurface) -> None:
+        from open_garden_planner.core.fill_transform import fill_transform_values
+
+        angle = QDoubleSpinBox()
+        angle.setObjectName("fill_pattern_angle")
+        angle.setRange(0, 359.99)
+        angle.setDecimals(2)
+        angle.setSuffix("°")
+        angle.setWrapping(True)
+        angle.setKeyboardTracking(False)
+        scale = QDoubleSpinBox()
+        scale.setObjectName("fill_pattern_scale")
+        scale.setRange(1, 10000)
+        scale.setSuffix(" %")
+        scale.setKeyboardTracking(False)
+
+        def refresh() -> None:
+            degrees, factor = fill_transform_values(item.metadata.get("fill_transform"))
+            angle.setValue(degrees)
+            scale.setValue(factor * 100)
+
+        refresh()
+        self._register_refresh(angle, refresh)
+        angle.valueChanged.connect(lambda value: self._set_fill_transform(item, "angle_deg", value))
+        scale.valueChanged.connect(lambda value: self._set_fill_transform(item, "scale", value / 100))
+        self._form_layout.addRow(self.tr("Pattern angle:"), angle)
+        self._form_layout.addRow(self.tr("Pattern scale:"), scale)
+
+    def _set_fill_transform(self, item: FillSurface, key: str, value: float) -> None:
+        if self._updating:
+            return
+        before = deepcopy(item.metadata.get("fill_transform"))
+        after = deepcopy(before) if isinstance(before, dict) else {}
+        after[key] = value
+        if before == after:
+            return
+
+        def apply(itm: FillSurface, record: dict[str, Any] | None) -> None:
+            if record is None:
+                itm.metadata.pop("fill_transform", None)
+            else:
+                itm.metadata["fill_transform"] = deepcopy(record)
+            itm._setup_styling()
+            itm.update()
+
+        command = ChangePropertyCommand(item, "fill pattern", before, after, apply)
+        if self._command_manager:
+            self._command_manager.execute(command)
+        else:
+            command.execute()
+        self._refresh_field_values()
+
+    def _add_material_choices(self, item: FillSurface) -> None:
+        from open_garden_planner.app.visual_paths import material_files
+        from open_garden_planner.core.png_asset import import_png
+
+        materials = QComboBox()
+        materials.setObjectName("personal_materials")
+        materials.setIconSize(QSize(36, 36))
+        materials.addItem(self.tr("Choose a material…"), None)
+        for path in material_files():
+            materials.addItem(QIcon(str(path)), path.stem.replace("_", " "), path)
+
+        def choose(index: int) -> None:
+            path = materials.itemData(index)
+            if not isinstance(path, Path):
+                return
+            try:
+                encoded = import_png(path)
+            except (OSError, ValueError) as error:
+                QMessageBox.warning(self, self.tr("Personal fill pattern"), str(error))
+                return
+            from open_garden_planner.core.personal_fill_pattern import DEFAULT_TILE_WIDTH_CM
+
+            self._set_personal_fill_pattern(item, {"png": encoded, "width_cm": DEFAULT_TILE_WIDTH_CM,
+                                                   "source_name": path.name})
+            with QSignalBlocker(materials):
+                materials.setCurrentIndex(0)
+
+        materials.activated.connect(choose)
+        self._form_layout.addRow(self.tr("Materials:"), materials)
+
     def _import_fill_pattern(self, item: FillSurface) -> None:
+        from open_garden_planner.app.visual_paths import visuals_dir
         from open_garden_planner.core.personal_fill_pattern import DEFAULT_TILE_WIDTH_CM
         from open_garden_planner.core.png_asset import import_png
 
-        filename, _ = QFileDialog.getOpenFileName(self, self.tr("Import fill PNG…"), "", "PNG (*.png)")
+        filename, _ = QFileDialog.getOpenFileName(self, self.tr("Import fill PNG…"), str(visuals_dir("materials")), "PNG (*.png)")
         if not filename:
             return
         try:
@@ -2185,7 +2270,7 @@ class PropertiesPanel(QWidget):
         if not isinstance(item, PolylineItem):
             pattern = state.get('fill_pattern', FillPattern.SOLID)
             color = state.get('fill_color') or item.brush().color()
-            brush = create_pattern_brush(pattern, color, getattr(item, 'metadata', {}).get('personal_fill_pattern'))
+            brush = create_pattern_brush(pattern, color, getattr(item, 'metadata', {}).get('personal_fill_pattern'), getattr(item, 'metadata', {}).get('fill_transform'))
             item.setBrush(brush)
 
         stroke_color = state.get('stroke_color') or item.pen().color()
@@ -2544,7 +2629,7 @@ class PropertiesPanel(QWidget):
                 else:
                     itm.metadata['personal_fill_pattern'] = deepcopy(record)
                 color = itm.fill_color if getattr(itm, 'fill_color', None) else itm.brush().color()
-                itm.setBrush(create_pattern_brush(pattern or FillPattern.SOLID, color, record))
+                itm.setBrush(create_pattern_brush(pattern or FillPattern.SOLID, color, record, itm.metadata.get("fill_transform")))
                 itm.update()
 
             apply_pattern(item, (value, None))
@@ -2634,7 +2719,7 @@ class PropertiesPanel(QWidget):
                 item.fill_color = color
             # Apply to brush
             pattern = item.fill_pattern if hasattr(item, 'fill_pattern') else FillPattern.SOLID
-            brush = create_pattern_brush(pattern, color, getattr(item, 'metadata', {}).get('personal_fill_pattern'))
+            brush = create_pattern_brush(pattern, color, getattr(item, 'metadata', {}).get('personal_fill_pattern'), getattr(item, 'metadata', {}).get('fill_transform'))
             item.setBrush(brush)
 
             # Create undo command
@@ -2643,7 +2728,7 @@ class PropertiesPanel(QWidget):
                     if hasattr(itm, 'fill_color'):
                         itm.fill_color = val
                     p = itm.fill_pattern if hasattr(itm, 'fill_pattern') else FillPattern.SOLID
-                    itm.setBrush(create_pattern_brush(p, val, itm.metadata.get('personal_fill_pattern')))
+                    itm.setBrush(create_pattern_brush(p, val, itm.metadata.get('personal_fill_pattern'), itm.metadata.get('fill_transform')))
                 cmd = ChangePropertyCommand(item, "fill color", old_color, color, apply_fill_color)
                 self._command_manager.register_applied(cmd)
 

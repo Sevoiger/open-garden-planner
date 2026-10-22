@@ -310,6 +310,27 @@ class ProjectManager(QObject):
         self._harvest_logs: dict[str, Any] = {}
         self._last_load_skipped_items_count: int = 0
 
+    def has_item_references(self, item_id: UUID) -> bool:
+        """Protect project-side records when geometry replacement changes an UUID."""
+        identifier = str(item_id)
+
+        def references(value: Any) -> bool:
+            if isinstance(value, str):
+                # Generated task keys can contain the UUID inside a composite id.
+                return identifier in value
+            if isinstance(value, dict):
+                return any(references(key) or references(child) for key, child in value.items())
+            if isinstance(value, (list, tuple, set)):
+                return any(references(child) for child in value)
+            return False
+
+        return any(references(records) for records in (
+            self._soil_tests, self._pest_logs, self._crop_rotation,
+            self._succession_plans, self._harvest_logs, self._garden_journal_notes,
+            self._manual_tasks, self._task_states, self._task_completions,
+            self._garden_memory, self._extra_fields, self._source_metadata,
+        ))
+
     @property
     def last_load_skipped_items_count(self) -> int:
         """Count of undecodable objects skipped during the last project load."""
@@ -2307,7 +2328,7 @@ class ProjectManager(QObject):
             if "fill_color" in obj:
                 # If we have a pattern, recreate the brush with both color and pattern
                 if fill_pattern:
-                    brush = create_pattern_brush(fill_pattern, QColor(obj["fill_color"]), metadata.get("personal_fill_pattern"))
+                    brush = create_pattern_brush(fill_pattern, QColor(obj["fill_color"]), metadata.get("personal_fill_pattern"), metadata.get("fill_transform"))
                 else:
                     brush = item.brush()
                     brush.setColor(QColor(obj["fill_color"]))
@@ -2351,7 +2372,7 @@ class ProjectManager(QObject):
                 # Store the base color in the item
                 # If we have a pattern, recreate the brush with both color and pattern
                 if fill_pattern:
-                    brush = create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern"))
+                    brush = create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern"), metadata.get("fill_transform"))
                 else:
                     brush = item.brush()
                     brush.setColor(color)
@@ -2410,7 +2431,7 @@ class ProjectManager(QObject):
             if "fill_color" in obj:
                 color = QColor(obj["fill_color"])
                 if fill_pattern:
-                    item.setBrush(create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern")))
+                    item.setBrush(create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern"), metadata.get("fill_transform")))
                 else:
                     brush = item.brush()
                     brush.setColor(color)
@@ -2502,7 +2523,7 @@ class ProjectManager(QObject):
                     color = QColor(obj["fill_color"])
                     # If we have a pattern, recreate the brush with both color and pattern
                     if fill_pattern:
-                        brush = create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern"))
+                        brush = create_pattern_brush(fill_pattern, color, metadata.get("personal_fill_pattern"), metadata.get("fill_transform"))
                     else:
                         brush = item.brush()
                         brush.setColor(color)

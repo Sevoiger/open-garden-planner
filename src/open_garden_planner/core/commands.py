@@ -1529,6 +1529,37 @@ class UngroupCommand(Command):
         self._group.setSelected(True)
 
 
+class SplitShapeCommand(Command):
+    """Replace one independent shape by its pieces; retain source for exact undo."""
+
+    def __init__(self, scene: QGraphicsScene, source: QGraphicsItem,
+                 pieces: list[QGraphicsItem]) -> None:
+        self._scene = scene
+        self._source = source
+        self._pieces = list(pieces)
+
+    @property
+    def description(self) -> str:
+        return QCoreApplication.translate("Commands", "Split shape")
+
+    def execute(self) -> None:
+        if self._source.scene() is self._scene:
+            self._scene.removeItem(self._source)
+        with _bulk_add_scope(self._scene):
+            for item in self._pieces:
+                if item.scene() is None:
+                    self._scene.addItem(item)
+                item.setSelected(True)
+
+    def undo(self) -> None:
+        for item in self._pieces:
+            if item.scene() is self._scene:
+                self._scene.removeItem(item)
+        if self._source.scene() is None:
+            self._scene.addItem(self._source)
+        self._source.setSelected(True)
+
+
 class BooleanShapeCommand(Command):
     """Replace source shapes by one result in a single undo step."""
 
