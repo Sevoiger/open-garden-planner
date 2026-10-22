@@ -5672,7 +5672,6 @@ class GardenPlannerApp(QMainWindow):
         return ot in (
             ObjectType.GARDEN_BED,
             ObjectType.RAISED_BED,
-            ObjectType.GREENHOUSE,
             ObjectType.COLD_FRAME,
         )
 

@@ -100,6 +100,9 @@ d’un bord auquel il est contraint. Déplacer un objet ne remet pas à leur anc
 position cible d’autres objets verrouillés hors du glissement. Pour déplacer
 volontairement un objet fixe, utiliser d’abord **Déverrouiller la position**.
 
+La sélection d’une **serre** n’ouvre pas le panneau **Rotation des cultures**.
+Ce panneau reste disponible à la sélection des parcelles de culture.
+
 ## Bibliothèques disponibles
 
 OGP contient déjà 118 fiches botaniques hors ligne et 11 catégories d'objets dans

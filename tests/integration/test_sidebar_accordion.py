@@ -106,6 +106,16 @@ def test_bed_selection_autopins_crop_rotation(qtbot, monkeypatch):
     win.canvas_scene.clearSelection()
     assert ctrl.state_of("crop_rotation") is PanelState.COLLAPSED
 
+    greenhouse = RectangleItem(400, 300, 325, 600, object_type=ObjectType.GREENHOUSE)
+    win.canvas_scene.addItem(greenhouse)
+    greenhouse.setSelected(True)
+    assert ctrl.state_of("crop_rotation") is PanelState.COLLAPSED
+    assert win.crop_rotation_collapsible.isHidden()
+    win.canvas_scene.clearSelection()
+    bed.setSelected(True)
+    assert ctrl.state_of("crop_rotation") is PanelState.PINNED
+    assert not win.crop_rotation_collapsible.isHidden()
+
 
 def test_companion_closable_while_plant_selected(qtbot, monkeypatch):
     """The reported bug: with a plant selected, 'Companion' could not be closed."""
