@@ -4304,6 +4304,14 @@ class CanvasView(QGraphicsView):
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
             self._draw_rulers(painter)
 
+        from open_garden_planner.services.north_arrow import draw_north_arrow
+
+        center = QPointF(self.viewport().width() - 55, 65)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._scale_bar_outline)
+        painter.drawEllipse(center, 38, 38)
+        draw_north_arrow(painter, center, 32,
+                         getattr(self.scene(), "north_angle_deg", 0.0), self._scale_bar_fg)
         painter.end()
 
     # Ruler tick intervals (cm), used to pick a nice spacing based on zoom

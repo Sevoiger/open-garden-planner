@@ -19,6 +19,7 @@ class ExposureSnapshot:
     bounds: tuple[float, float, float, float]
     casters: tuple[IdentifiedCaster, ...]
     receivers: tuple[SunReceiver, ...]
+    north_angle_deg: float = 0.0
 
 
 def collect_exposure_snapshot(scene: Any, location: dict[str, Any] | None, day: date) -> ExposureSnapshot:
@@ -38,4 +39,5 @@ def collect_exposure_snapshot(scene: Any, location: dict[str, Any] | None, day: 
         (location or {}).get("latitude"), (location or {}).get("longitude"), bounds,
         tuple(sorted(collect_identified_casters(scene, day), key=lambda caster: caster.item_id)),
         tuple(sorted(receivers, key=lambda receiver: receiver.item_id)),
+        getattr(scene, "north_angle_deg", 0.0),
     )

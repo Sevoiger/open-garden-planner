@@ -158,6 +158,7 @@ def validate_plan_data(data: dict[str, Any]) -> None:
         raise TypeError("Project must be a JSON object")
     from open_garden_planner.models.garden_memory import validate_card, validate_memory
 
+    finite_number(data.get("north_angle_deg", 0.0), "north_angle_deg")
     validate_memory(data.get("garden_memory", {}))
 
     def check_cards(records: Any) -> None:

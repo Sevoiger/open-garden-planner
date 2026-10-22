@@ -3816,6 +3816,10 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(import_dxf_action, "file_import")
         menu.addAction(import_dxf_action)
 
+        north_action = QAction(self.tr("Set North Orientation..."), self)
+        north_action.triggered.connect(self._on_set_north_orientation)
+        menu.addAction(north_action)
+
         # Set Garden Location
         location_action = QAction(self.tr("Set Garden &Location..."), self)
         location_action.setStatusTip(self.tr("Set GPS coordinates and frost dates for planting calendar"))
@@ -4829,6 +4833,8 @@ class GardenPlannerApp(QMainWindow):
         # they hold bound methods weakly but do NOT disconnect a destroyed
         # QObject, so every subscriber lives as long as this window.
         self._sim_clock = SimClock()
+        self._project_manager.north_angle_changed.connect(self._on_north_angle_changed)
+        self.canvas_scene.north_angle_deg = self._project_manager.north_angle_deg
         self._sun_controller = SunShadowController(
             self.canvas_scene,
             lambda: self._project_manager.location,
@@ -6694,6 +6700,25 @@ class GardenPlannerApp(QMainWindow):
         self._sun_hint_label.setText(text)
         self._sun_hint_label.setVisible(bool(text))
 
+    def _on_set_north_orientation(self) -> None:
+        from open_garden_planner.core.commands import SetNorthAngleCommand
+        from open_garden_planner.ui.dialogs.north_orientation_dialog import NorthOrientationDialog
+
+        dialog = NorthOrientationDialog(self._project_manager.north_angle_deg, self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            angle = dialog.north_angle_deg
+            if angle != self._project_manager.north_angle_deg:
+                self.canvas_view.command_manager.execute(SetNorthAngleCommand(self._project_manager, angle))
+
+    def _on_north_angle_changed(self, angle: float) -> None:
+        self.canvas_scene.north_angle_deg = angle
+        self.canvas_view.viewport().update()
+        self._sun_heatmap.clear()
+        self._sun_toolbar.set_heatmap_active(False)
+        self.sun_exposure_coordinator.schedule()
+        self._sun_controller.recompute_now()
+        self._apply_sun_to_3d()
+
     def _on_location_changed_for_sun(self, _location: object) -> None:
         """Location edits re-solve the sun position immediately (no debounce)."""
         self._sun_controller.recompute_now()
@@ -6791,17 +6816,20 @@ class GardenPlannerApp(QMainWindow):
         usable; documented in FR-SUN-06."""
         if self._view3d_window is None:
             return
+        from open_garden_planner.core.north_orientation import drawing_azimuth
         from open_garden_planner.core.solar import solar_position
 
         location = self._project_manager.location
         latitude = location.get("latitude") if isinstance(location, dict) else None
         longitude = location.get("longitude") if isinstance(location, dict) else None
         if latitude is None or longitude is None:
-            self._view3d_window.set_sun(50.0, 180.0)
+            self._view3d_window.set_sun(
+                50.0, drawing_azimuth(180.0, self._project_manager.north_angle_deg)
+            )
             return
         position = solar_position(latitude, longitude, self._sim_clock.utc)
         self._view3d_window.set_sun(
-            position.elevation_deg, position.azimuth_deg
+            position.elevation_deg, drawing_azimuth(position.azimuth_deg, self._project_manager.north_angle_deg)
         )
 
     # 3D window lifecycle: see _on_open_3d_view / _on_3d_view_closed /

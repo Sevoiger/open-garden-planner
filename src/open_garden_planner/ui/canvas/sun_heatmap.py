@@ -178,9 +178,10 @@ class HeatmapWorker(QThread):
         day: date,
         grid: HeatmapGrid,
         parent: QObject | None = None,
-        *, receivers: tuple[SunReceiver, ...] = (),
+        *, receivers: tuple[SunReceiver, ...] = (), north_angle_deg: float = 0.0,
     ) -> None:
         super().__init__(parent)
+        self._north_angle_deg = north_angle_deg
         self._casters = casters
         self._receivers = receivers
         self._lat = lat_deg
@@ -201,6 +202,7 @@ class HeatmapWorker(QThread):
             self._day,
             self._grid,
             rasterize_polygons_qimage,
+            north_angle_deg=self._north_angle_deg,
             progress=lambda done, total: self.progress.emit(done, total),
             should_cancel=lambda: self._cancelled,
         )
@@ -320,7 +322,8 @@ class SunHeatmapController(QObject):
         x0, y0, w, h = snapshot.bounds
         receivers = tuple(receiver for receiver in snapshot.receivers
                           if x0 <= receiver.x_cm < x0 + w and y0 <= receiver.y_cm < y0 + h)
-        worker = HeatmapWorker(list(snapshot.casters), latitude, longitude, day, grid, self, receivers=receivers)
+        worker = HeatmapWorker(list(snapshot.casters), latitude, longitude, day, grid, self, receivers=receivers,
+                               north_angle_deg=snapshot.north_angle_deg)
         worker.progress.connect(self.progress)
         worker.success.connect(self._on_success)
         worker.finished.connect(self._on_worker_finished)

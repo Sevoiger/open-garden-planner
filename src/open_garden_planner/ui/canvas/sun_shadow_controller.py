@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.north_orientation import drawing_azimuth
 from open_garden_planner.core.object_height import effective_height_cm
 from open_garden_planner.core.shade_aggregation import IdentifiedCaster
 from open_garden_planner.core.shadow_geometry import (
@@ -434,6 +435,7 @@ class SunShadowController(QObject):
             self._set_state(STATE_NO_LOCATION)
             return
         position = solar_position(latitude, longitude, self._clock.utc)
+        azimuth = drawing_azimuth(position.azimuth_deg, getattr(self._scene, "north_angle_deg", 0.0))
         canvas_rect = self._canvas_rect()
         if position.elevation_deg < MIN_SUN_ELEVATION_DEG:
             # Night: the whole garden lies in shade — not "no shadow". Fill the
@@ -454,7 +456,7 @@ class SunShadowController(QObject):
         )
         key = (
             round(position.elevation_deg, 4),
-            round(position.azimuth_deg, 4),
+            round(azimuth, 4),
             canvas_key,
             tuple((tuple(fp), h) for fp, h in casters),
         )
@@ -463,7 +465,7 @@ class SunShadowController(QObject):
             self._set_state(STATE_ACTIVE)
             return
         polygons = compute_scene_shadows(
-            casters, position.elevation_deg, position.azimuth_deg
+            casters, position.elevation_deg, azimuth
         )
         path = QPainterPath()
         path.setFillRule(Qt.FillRule.OddEvenFill)
