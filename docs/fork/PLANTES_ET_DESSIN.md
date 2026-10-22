@@ -157,6 +157,13 @@ longueur permet de contrôler la calibration ; une photo en perspective peut
 nécessiter une rectification. Le nord est utile si des études d'ensoleillement
 sont souhaitées.
 
+L'import d'une image de fond conserve sa résolution, y compris pour les scans
+HD de permis de construire. Le décodage bénéficie d'au moins 512 Mio par image
+(la taille décompressée compte, pas le poids du PNG sur disque), sauf si la limite
+Qt est déjà désactivée. Cela vaut aussi pour la réouverture du fond intégré au
+`.ogp` ; la limite Qt précédente est rétablie après chaque chargement. Calibrer
+ensuite le fond sur une cote connue.
+
 Les contours approximatifs et positions non vérifiées doivent rester signalés.
 Les noms illisibles restent « à identifier », les dates inconnues restent inconnues,
 et un projet de plantation reste prévu. Le premier jet ne constitue pas un relevé

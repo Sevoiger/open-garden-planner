@@ -7,7 +7,7 @@ to real-world scale.
 import base64
 
 from PyQt6.QtCore import QBuffer, QByteArray, QCoreApplication, QIODevice, QPointF, Qt
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QTransform
+from PyQt6.QtGui import QColor, QFont, QImageReader, QPainter, QPen, QPixmap, QTransform
 from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
@@ -17,6 +17,22 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.core.plan_io import PlanValidationError, finite_number
+
+
+def _read_background_pixmap(reader: QImageReader) -> QPixmap:
+    """Allow HD plans up to 512 MiB without changing Qt's limit permanently.
+
+    Qt budgets at least 32 bits per pixel, even for RGB PNGs. A 9917 × 7009
+    building plan therefore exceeds its default 256 MiB allocation limit.
+    Decoding is synchronous on the GUI thread, with no event processing here.
+    """
+    previous_limit = QImageReader.allocationLimit()
+    if 0 < previous_limit < 512:
+        QImageReader.setAllocationLimit(512)
+    try:
+        return QPixmap.fromImage(reader.read())
+    finally:
+        QImageReader.setAllocationLimit(previous_limit)
 
 
 class BackgroundImageItem(QGraphicsPixmapItem):
@@ -84,12 +100,14 @@ class BackgroundImageItem(QGraphicsPixmapItem):
         else:
             # Load the image — either from embedded bytes or from disk path
             if _pixmap_data is not None:
-                self._original_pixmap = QPixmap()
-                self._original_pixmap.loadFromData(QByteArray(_pixmap_data))
+                buffer = QBuffer()
+                buffer.setData(QByteArray(_pixmap_data))
+                buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+                self._original_pixmap = _read_background_pixmap(QImageReader(buffer))
                 if self._original_pixmap.isNull():
                     raise ValueError("Failed to load image from embedded data")
             else:
-                self._original_pixmap = QPixmap(image_path)
+                self._original_pixmap = _read_background_pixmap(QImageReader(image_path))
                 if self._original_pixmap.isNull():
                     raise ValueError(f"Failed to load image: {image_path}")
 
