@@ -2135,6 +2135,14 @@ class CanvasView(QGraphicsView):
         # Grab keyboard focus so Delete/arrow keys work
         self.setFocus()
 
+        if event.button() == Qt.MouseButton.MiddleButton:
+            # Start panning
+            self._panning = True
+            self._pan_start = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+
         # ── Guide line handling ─────────────────────────────────────────────
         if self._guides_visible and event.button() == Qt.MouseButton.LeftButton:
             vp_pos = event.position()
@@ -2175,14 +2183,6 @@ class CanvasView(QGraphicsView):
         ):
             scene_pos = self.mapToScene(event.position().toPoint())
             self._canvas_scene.add_calibration_point(scene_pos)
-            event.accept()
-            return
-
-        if event.button() == Qt.MouseButton.MiddleButton:
-            # Start panning
-            self._panning = True
-            self._pan_start = event.position()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
 
@@ -2235,6 +2235,20 @@ class CanvasView(QGraphicsView):
         # Dynamic Input overlay (Package A US-A4): track the cursor.
         self._update_dynamic_overlay(event.position().toPoint())
 
+        if self._panning:
+            # Scrollbars use viewport pixels, independent of zoom and the Y flip.
+            # centerOn(mapToScene(rect.center())) adds a rounding bias per move.
+            delta = event.position() - self._pan_start
+            dx, dy = round(delta.x()), round(delta.y())
+            self._pan_start += QPointF(dx, dy)
+            horizontal, vertical = self.horizontalScrollBar(), self.verticalScrollBar()
+            if horizontal is not None:
+                horizontal.setValue(horizontal.value() - dx)
+            if vertical is not None:
+                vertical.setValue(vertical.value() - dy)
+            event.accept()
+            return
+
         # ── Guide drag ─────────────────────────────────────────────────────
         if self._dragging_guide is not None:
             guide = self._dragging_guide
@@ -2271,26 +2285,6 @@ class CanvasView(QGraphicsView):
             if self._hovered_guide is not prev_hovered:
                 self.viewport().update()
 
-        if self._panning:
-            # Pan the view by translating
-            delta = event.position() - self._pan_start
-            self._pan_start = event.position()
-
-            # Map two points to scene to get proper delta in scene coordinates
-            # This correctly handles any transform (zoom, Y-flip, etc.)
-            center = self.viewport().rect().center()
-            scene_before = self.mapToScene(center)
-            scene_after = self.mapToScene(
-                center.x() + int(delta.x()), center.y() + int(delta.y())
-            )
-
-            # Move in opposite direction of mouse drag
-            scene_delta = scene_before - scene_after
-            new_center = self.mapToScene(center) + scene_delta
-            self.centerOn(new_center)
-            event.accept()
-            return
-
         # Re-establish the mouse grab if Qt silently dropped it between events.
         # This happens with ItemIgnoresTransformations child items in PyQt6.
         if (
@@ -2317,12 +2311,11 @@ class CanvasView(QGraphicsView):
         # Revert any FIXED-constrained items to their pinned position
         self._enforce_fixed_positions()
 
-        # Clamp POINT_ON_EDGE-constrained items to their edge line during drag
-        self._enforce_point_on_edge_positions()
-
-        # Apply object snapping and canvas boundary clamping during drag
+        # Apply optional snapping before hard positional constraints: a visual
+        # snap or boundary clamp must not pull a constrained point off its edge.
         self._apply_object_snap_during_drag()
         self._clamp_dragged_items_to_canvas()
+        self._enforce_point_on_edge_positions()
 
         # Propagate constraints to connected items during drag.
         # Skip during rotation — constraint solving doesn't apply while rotating.
@@ -2449,7 +2442,7 @@ class CanvasView(QGraphicsView):
     def _enforce_point_on_edge_positions(self) -> None:
         """Project POINT_ON_EDGE-constrained anchors back onto their edge during drag.
 
-        Called immediately after _enforce_fixed_positions so that Qt's drag
+        Called after optional snapping and canvas clamping so these adjustments
         cannot pull an anchor off its constrained edge line.  The anchor slides
         freely along the edge but its perpendicular displacement is zeroed out.
         """
@@ -2746,8 +2739,9 @@ class CanvasView(QGraphicsView):
         # Items that are always pinned (construction geometry + FIXED items)
         pinned_reference_ids = scene_construction_ids | fixed_ids
 
-        # "Soft-dragged": dragged garden items whose ALL constraints are exclusively
-        # to pinned reference items (construction or FIXED). These are NOT pinned in
+        # "Soft-dragged": dragged garden items whose external constraints are
+        # exclusively to pinned references (construction or FIXED), with no
+        # absolute internal position restriction. These are NOT pinned in
         # the solver — the solver enforces the constraint by snapping them to the
         # correct position each frame (the cursor acts as a "desired" position, not a
         # hard pin). This makes constraints bidirectional and lets items orbit around
@@ -2756,18 +2750,22 @@ class CanvasView(QGraphicsView):
         for uid in dragged_ids:
             if uid in scene_construction_ids:
                 continue  # Construction items are always hard-pinned
-            item_constraints = graph.get_item_constraints(uid)
-            if not item_constraints:
-                continue
-            if all(
-                (
-                    c.anchor_a.item_id
-                    if c.anchor_b.item_id == uid
-                    else c.anchor_b.item_id
-                )
-                in pinned_reference_ids
-                for c in item_constraints
-            ):
+            partners = []
+            for constraint in graph.get_item_constraints(uid):
+                other_ids = {anchor.item_id for anchor in (
+                    constraint.anchor_a, constraint.anchor_b, constraint.anchor_c,
+                ) if anchor is not None} - {uid}
+                if not other_ids:
+                    # Internal lengths/angles travel with a shape. Global-axis
+                    # symmetry and FIXED are absolute position restrictions.
+                    if constraint.constraint_type not in (
+                        ConstraintType.FIXED, ConstraintType.SYMMETRY_HORIZONTAL,
+                        ConstraintType.SYMMETRY_VERTICAL,
+                    ):
+                        continue
+                    other_ids = {uid}
+                partners.append(other_ids)
+            if partners and all(ids <= pinned_reference_ids for ids in partners):
                 soft_dragged.add(uid)
 
         # truly_dragged: follow the cursor and pull their constraint partners
@@ -2848,6 +2846,12 @@ class CanvasView(QGraphicsView):
                 )
 
         deformable_items, deformable_vertices = self._gather_deformable_info(item_map)
+        if self._active_drag_handle is None:
+            # Moving a body is a rigid translation. Vertex changes belong to
+            # explicit handle edits and their separate geometry undo commands.
+            deformable_items.difference_update(dragged_ids)
+            for uid in dragged_ids:
+                deformable_vertices.pop(uid, None)
 
         # Run solver: truly_dragged and construction items are pinned.
         # soft_dragged items are FREE so the solver enforces construction constraints.

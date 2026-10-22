@@ -626,6 +626,8 @@ class PropertiesPanel(QWidget):
         # Arrange (stacking order within the item's layer) — issue #338
         self._add_arrange_section([item])
 
+        self._add_split_control(item)
+
         # Plant-bed relationship sections
         self._add_bed_children_section(item)
         self._add_parent_bed_section(item)
@@ -636,6 +638,34 @@ class PropertiesPanel(QWidget):
             self._form_layout.addRow(records)
 
         self._updating = False
+
+    def _add_split_control(self, item: QGraphicsItem) -> None:
+        from open_garden_planner.core.shape_boolean import item_to_painter_path
+        from open_garden_planner.core.shape_split import can_split_shape
+        from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
+
+        scene = item.scene()
+        if not isinstance(scene, CanvasScene) or item_to_painter_path(item) is None:
+            return
+        button = QPushButton(QCoreApplication.translate("GardenItemMixin", "Split along an axis…"))
+        button.setObjectName("split_shape_button")
+        button.setToolTip(QCoreApplication.translate("GardenItemMixin",
+            "Choose two snapped points for the cutting axis. Unlock position and remove linked constraints first."))
+
+        def refresh() -> None:
+            button.setEnabled(can_split_shape(item, scene))
+
+        def split() -> None:
+            for view in scene.views():
+                if hasattr(view, "start_split_shape"):
+                    view.start_split_shape(item)
+                    view.setFocus()
+                    return
+
+        refresh()
+        self._register_refresh(button, refresh)
+        button.clicked.connect(split)
+        self._form_layout.addRow(button)
 
     def _populate_object_type_combo(self, combo: QComboBox, item: QGraphicsItem) -> None:
         """Populate object type combobox with all valid types for the item shape.

@@ -416,7 +416,9 @@ de dessiner directement une forme personnalisée.
 
 ## Découper une forme selon un axe
 
-Clic droit sur une forme, puis **Découper selon un axe…**. Deux clics définissent
+Sélectionner une forme, puis **Propriétés > Découper selon un axe…**, ou utiliser
+l’entrée directe **Découper selon un axe…** du clic droit (ce n’est pas un sous-menu).
+Deux clics définissent
 une droite de coupe prolongée de part et d’autre de la forme. Les deux points et
 la prévisualisation utilisent le magnétisme activé (sommets, milieux, bords).
 **Maj** contraint l’angle par pas de 45° ; **Échap** abandonne. Si la droite ne
@@ -515,3 +517,18 @@ les PNG personnels, les remplissages importés et l'API agent. Les dessins inté
 utilisent un registre partagé pour les catégories, le rendu du plan et les
 associations par défaut ; aucune dépendance extérieure n'est nécessaire pour les
 retrouver.
+
+
+## Fluidité du dessin et des données
+
+Le déplacement avec le bouton central suit les pixels de la souris, y compris
+pour les petits mouvements et à différents zooms. Les arrondis du recentrage
+ne doivent pas créer de dérive ou annuler les mouvements en diagonale.
+
+La consultation et la recherche dans **Données du jardin** lisent uniquement les
+identités et les champs de suivi. Elles ne réencodent pas l’image de fond en PNG.
+Les exports JSON, CSV et sauvegardes portables utilisent toujours le plan complet.
+
+Une liaison **Sur le côté** reste prioritaire sur le magnétisme visuel et le
+recalage au bord du canevas. Les longueurs internes d’un rectangle ne désactivent
+pas son glissement le long d’une référence fixe ; ses dimensions restent identiques.
