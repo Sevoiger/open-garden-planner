@@ -5,6 +5,7 @@ to real-world scale.
 """
 
 import base64
+from pathlib import Path
 
 from PyQt6.QtCore import QBuffer, QByteArray, QCoreApplication, QIODevice, QPointF, Qt
 from PyQt6.QtGui import QColor, QFont, QImageReader, QPainter, QPen, QPixmap, QTransform
@@ -367,12 +368,7 @@ class BackgroundImageItem(QGraphicsPixmapItem):
 
         menu.addSeparator()
 
-        # Opacity action — embed the current value in the translated string at runtime
-        opacity_label = _("BackgroundImageItem", "Set Opacity ({pct}%)...").format(
-            pct=int(self._opacity * 100)
-        )
-        opacity_action = menu.addAction(opacity_label)
-        opacity_action.triggered.connect(self._show_opacity_dialog)
+        self.add_opacity_action(menu)
 
         # Lock/Unlock action
         lock_text = (
@@ -399,19 +395,38 @@ class BackgroundImageItem(QGraphicsPixmapItem):
             if isinstance(self.scene(), CanvasScene):
                 self.scene().start_image_calibration(self)
 
+    def add_opacity_action(self, menu: QMenu, *, include_name: bool = False) -> None:
+        """Share opacity editing with menus that do not require hitting the image."""
+        label = QCoreApplication.translate("BackgroundImageItem", "Set Opacity ({pct}%)...").format(
+            pct=round(self._opacity * 100)
+        )
+        if include_name:
+            label = f"{Path(self._image_path).name} — {label}"
+        action = menu.addAction(label)
+        action.setToolTip(self._image_path)
+        action.triggered.connect(self._show_opacity_dialog)
+
     def _show_opacity_dialog(self) -> None:
         """Show dialog to set opacity."""
         value, ok = QInputDialog.getInt(
             None,
-            "Set Image Opacity",
-            "Opacity (0-100%):",
+            QCoreApplication.translate("BackgroundImageItem", "Set Image Opacity"),
+            QCoreApplication.translate("BackgroundImageItem", "Opacity (0-100%):"),
             int(self._opacity * 100),
             0,
             100,
             5,
         )
-        if ok:
-            self.opacity = value / 100.0
+        if ok and value / 100.0 != self.opacity:
+            from open_garden_planner.core.commands import ChangePropertyCommand
+
+            scene = self.scene()
+            manager = scene.get_command_manager() if scene is not None and hasattr(scene, "get_command_manager") else None
+            if manager is not None:
+                manager.execute(ChangePropertyCommand(self, "image opacity", self.opacity, value / 100.0,
+                                                      lambda item, opacity: setattr(item, "opacity", opacity)))
+            else:
+                self.opacity = value / 100.0
 
     def _toggle_lock(self) -> None:
         """Toggle lock state."""

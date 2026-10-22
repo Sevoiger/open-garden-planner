@@ -2108,11 +2108,22 @@ class CanvasView(QGraphicsView):
         if items_at:
             super().contextMenuEvent(event)
             return
+        menu = self._build_empty_canvas_menu()
+        menu.exec(event.globalPos())
+
+    def _build_empty_canvas_menu(self) -> QMenu:
+        """Existing backgrounds remain reachable even when transparent or locked."""
+        from open_garden_planner.ui.canvas.items import BackgroundImageItem
+
         menu = QMenu(self)
         import_action = menu.addAction(self.tr("Import Background Image..."))
-        selected = menu.exec(event.globalPos())
-        if selected == import_action:
-            self.import_background_image_requested.emit()
+        import_action.triggered.connect(self.import_background_image_requested.emit)
+        backgrounds = [item for item in self.scene().items() if isinstance(item, BackgroundImageItem)]
+        if backgrounds:
+            submenu = menu.addMenu(self.tr("Background Images"))
+            for item in sorted(backgrounds, key=lambda image: image.image_path):
+                item.add_opacity_action(submenu, include_name=True)
+        return menu
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Handle mouse press for panning and tool operations."""
@@ -2317,6 +2328,13 @@ class CanvasView(QGraphicsView):
         if self._drag_start_positions:
             self._canvas_scene.update_dimension_lines()
 
+    def _movable_drag_selection(self) -> list[QGraphicsItem]:
+        """A FIXED selection is a reference, never a drag driver."""
+        from open_garden_planner.ui.canvas.items.resize_handle import _is_item_fixed
+
+        return [item for item in self.scene().selectedItems()
+                if item in self._drag_start_positions and not _is_item_fixed(item)]
+
     def _apply_object_snap_during_drag(self) -> None:
         """Apply object snapping to items being dragged.
 
@@ -2330,7 +2348,7 @@ class CanvasView(QGraphicsView):
             self._snap_guides = []
             return
 
-        selected = self.scene().selectedItems()
+        selected = self._movable_drag_selection()
         if not selected:
             self._snap_guides = []
             return
@@ -2413,7 +2431,7 @@ class CanvasView(QGraphicsView):
             if c.target_x is None or c.target_y is None:
                 continue
             item_id = c.anchor_a.item_id
-            for scene_item in self.scene().items():
+            for scene_item in self._drag_start_positions.keys() | self._child_drag_origins.keys():
                 if (
                     isinstance(scene_item, GardenItemMixin)
                     and scene_item.item_id == item_id
@@ -2438,10 +2456,14 @@ class CanvasView(QGraphicsView):
         from open_garden_planner.ui.canvas.items import GardenItemMixin
 
         graph = self._canvas_scene.constraint_graph
+        fixed_ids = {c.anchor_a.item_id for c in graph.constraints.values()
+                     if c.constraint_type == ConstraintType.FIXED}
 
         import math as _math
 
         for c in graph.constraints.values():
+            if c.anchor_a.item_id in fixed_ids:
+                continue
             if c.constraint_type not in (
                 ConstraintType.POINT_ON_EDGE,
                 ConstraintType.POINT_ON_CIRCLE,
@@ -2547,7 +2569,7 @@ class CanvasView(QGraphicsView):
         if not self._drag_start_positions:
             return
 
-        selected = self.scene().selectedItems()
+        selected = self._movable_drag_selection()
         if not selected:
             return
 
@@ -2682,7 +2704,7 @@ class CanvasView(QGraphicsView):
             ConstructionLineItem,
         )
 
-        selected = self.scene().selectedItems()
+        selected = self._movable_drag_selection()
         if not selected:
             return
 

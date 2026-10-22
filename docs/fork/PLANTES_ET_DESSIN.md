@@ -93,6 +93,13 @@ coordonnées X/Y dans Propriétés respectent aussi ce verrou. Le verrou porte s
 la position ; les autres propriétés restent modifiables. Un calque verrouillé
 doit d'abord être déverrouillé dans Calques.
 
+Pendant un glissement, une position verrouillée reste prioritaire sur les
+contraintes d’alignement et les accrochages. Un objet verrouillé sélectionné
+avec un objet mobile reste en place ; le partenaire mobile peut glisser le long
+d’un bord auquel il est contraint. Déplacer un objet ne remet pas à leur ancienne
+position cible d’autres objets verrouillés hors du glissement. Pour déplacer
+volontairement un objet fixe, utiliser d’abord **Déverrouiller la position**.
+
 ## Bibliothèques disponibles
 
 OGP contient déjà 118 fiches botaniques hors ligne et 11 catégories d'objets dans
@@ -163,6 +170,14 @@ HD de permis de construire. Le décodage bénéficie d'au moins 512 Mio par imag
 Qt est déjà désactivée. Cela vaut aussi pour la réouverture du fond intégré au
 `.ogp` ; la limite Qt précédente est rétablie après chaque chargement. Calibrer
 ensuite le fond sur une cote connue.
+
+Même à **0 % d’opacité**, le fond reste accessible : clic droit dans une zone
+vide du canevas → **Images de fond** → choisir le fichier et son action
+**Définir l’opacité…**. Le menu indique le pourcentage courant et distingue les
+images lorsqu’il y en a plusieurs. Ce réglage reste accessible si l’image est
+verrouillée ; il ne la réimporte pas et ne la déplace pas. Valider un changement
+d’opacité crée une étape annulable et marque le plan comme modifié. Annuler la
+boîte de dialogue ou conserver le même pourcentage ne crée aucune étape.
 
 ### Orienter le nord sans tourner le dessin
 
