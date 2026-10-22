@@ -337,27 +337,37 @@
     <context>
         <name>BackgroundImageItem</name>
         <message>
-            <location filename="../../ui/canvas/items/background_image_item.py" line="365" />
+            <location filename="../../ui/canvas/items/background_image_item.py" line="366" />
             <source>Calibrate Scale...</source>
             <translation>Étalonner l’échelle...</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/background_image_item.py" line="381" />
+            <location filename="../../ui/canvas/items/background_image_item.py" line="377" />
             <source>Lock Image</source>
             <translation>Verrouiller l’image</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/background_image_item.py" line="389" />
+            <location filename="../../ui/canvas/items/background_image_item.py" line="414" />
+            <source>Opacity (0-100%):</source>
+            <translation>Opacité (0–100 %) :</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/items/background_image_item.py" line="385" />
             <source>Remove Image</source>
             <translation>Supprimer l’image</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/background_image_item.py" line="371" />
+            <location filename="../../ui/canvas/items/background_image_item.py" line="413" />
+            <source>Set Image Opacity</source>
+            <translation>Définir l’opacité de l’image</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/items/background_image_item.py" line="400" />
             <source>Set Opacity ({pct}%)...</source>
             <translation>Définir l’opacité ({pct} %)...</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/background_image_item.py" line="379" />
+            <location filename="../../ui/canvas/items/background_image_item.py" line="375" />
             <source>Unlock Image</source>
             <translation>Déverrouiller l’image</translation>
         </message>
@@ -522,12 +532,12 @@
     <context>
         <name>CanvasView</name>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5755" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5777" />
             <source>Already at back</source>
             <translation>Déjà à l’arrière-plan</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5754" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5776" />
             <source>Already at front</source>
             <translation>Déjà au premier plan</translation>
         </message>
@@ -537,12 +547,12 @@
             <translation>Angle</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5438" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5460" />
             <source>Applied boolean {op}</source>
             <translation>Opération booléenne {op} appliquée</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5397" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5419" />
             <source>Apply boolean {op}?</source>
             <translation>Appliquer l’opération booléenne {op} ?</translation>
         </message>
@@ -550,6 +560,11 @@
             <location filename="../../ui/canvas/canvas_view.py" line="618" />
             <source>BBQ/Grill</source>
             <translation>Barbecue / Gril</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/canvas_view.py" line="2123" />
+            <source>Background Images</source>
+            <translation>Images de fond</translation>
         </message>
         <message>
             <location filename="../../ui/canvas/canvas_view.py" line="600" />
@@ -562,7 +577,7 @@
             <translation>Bain d’oiseaux</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5355" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5377" />
             <source>Boolean operations require closed shapes (polygon, rectangle, circle, or ellipse)</source>
             <translation>Les opérations nécessitent des formes fermées (polygone, rectangle, cercle ou ellipse)</translation>
         </message>
@@ -571,12 +586,12 @@
             <translation type="vanished">Les opérations booléennes nécessitent des formes fermées (polygone, rectangle ou cercle)</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5396" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5418" />
             <source>Boolean {op}</source>
             <translation>Opération booléenne {op}</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5382" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5404" />
             <source>Boolean {op} produced an empty result</source>
             <translation>L’opération booléenne {op} a produit un résultat vide</translation>
         </message>
@@ -606,27 +621,27 @@
             <translation>Bac</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4726" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4748" />
             <source>Copied {count} item(s)</source>
             <translation>{count} élément(s) copié(s)</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5570" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5592" />
             <source>Created array of {count} items along path</source>
             <translation>Répétition de {count} éléments créée le long du tracé</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5310" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5332" />
             <source>Created circular array of {count} items</source>
             <translation>Répétition circulaire de {count} éléments créée</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5190" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5212" />
             <source>Created grid array of {count} items ({rows}×{cols})</source>
             <translation>Répétition en grille de {count} éléments créée ({rows}×{cols})</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5034" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5056" />
             <source>Created linear array of {count} items</source>
             <translation>Répétition linéaire de {count} éléments créée</translation>
         </message>
@@ -636,17 +651,17 @@
             <translation>Décalage {dir} de {dist:.1f} cm créé</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4742" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4764" />
             <source>Cut {count} item(s)</source>
             <translation>{count} élément(s) coupé(s)</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="3653" />
+            <location filename="../../ui/canvas/canvas_view.py" line="3675" />
             <source>Delete Bed</source>
             <translation>Supprimer la planche de culture</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="3660" />
+            <location filename="../../ui/canvas/canvas_view.py" line="3682" />
             <source>Delete bed and plants</source>
             <translation>Supprimer la planche et les plantes</translation>
         </message>
@@ -661,7 +676,7 @@
             <translation>Distance en cm</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5670" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5692" />
             <source>Distance must be positive</source>
             <translation>La distance doit être positive</translation>
         </message>
@@ -671,7 +686,7 @@
             <translation>Allée carrossable</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4910" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4932" />
             <source>Duplicated {count} item(s)</source>
             <translation>{count} élément(s) dupliqué(s)</translation>
         </message>
@@ -716,12 +731,12 @@
             <translation>Serre</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4661" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4683" />
             <source>Grouped {n} items</source>
             <translation>{n} éléments groupés</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4472" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4494" />
             <source>Guide position</source>
             <translation>Position du guide</translation>
         </message>
@@ -761,17 +776,17 @@
             <translation>Maison</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="2112" />
+            <location filename="../../ui/canvas/canvas_view.py" line="2119" />
             <source>Import Background Image...</source>
             <translation>Importer une image de fond...</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5673" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5695" />
             <source>Invalid distance. Enter a number in centimeters.</source>
             <translation>Distance non valide. Saisir un nombre en centimètres.</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="3664" />
+            <location filename="../../ui/canvas/canvas_view.py" line="3686" />
             <source>Keep plants</source>
             <translation>Conserver les plantes</translation>
         </message>
@@ -786,37 +801,37 @@
             <translation>Chaise longue</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5397" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5419" />
             <source>Merge selected shapes?</source>
             <translation>Fusionner les formes sélectionnées ?</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5396" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5418" />
             <source>Merge shapes</source>
             <translation>Fusionner les formes</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4671" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4693" />
             <source>No group selected</source>
             <translation>Aucun groupe sélectionné</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5757" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5779" />
             <source>No overlapping object behind</source>
             <translation>Aucun objet superposé derrière</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5756" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5778" />
             <source>No overlapping object in front</source>
             <translation>Aucun objet superposé devant</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4821" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4843" />
             <source>Nothing to duplicate</source>
             <translation>Rien à dupliquer</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4750" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4772" />
             <source>Nothing to paste</source>
             <translation>Rien à coller</translation>
         </message>
@@ -836,7 +851,7 @@
             <translation>Parasol</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4812" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4834" />
             <source>Pasted {count} item(s)</source>
             <translation>{count} élément(s) collé(s)</translation>
         </message>
@@ -906,7 +921,7 @@
             <translation>Bac à sable</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4656" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4678" />
             <source>Select 2 or more items to group</source>
             <translation>Sélectionner au moins 2 éléments à grouper</translation>
         </message>
@@ -916,38 +931,38 @@
             <translation>Sélectionner une forme à décaler</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5753" />
-            <location filename="../../ui/canvas/canvas_view.py" line="5760" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5775" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5782" />
             <source>Select an object to arrange</source>
             <translation>Sélectionner un objet à organiser</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5715" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5737" />
             <source>Select at least 2 objects to align</source>
             <translation>Sélectionner au moins 2 objets à aligner</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5775" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5797" />
             <source>Select at least 3 objects to distribute</source>
             <translation>Sélectionner au moins 3 objets à répartir</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5329" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5351" />
             <source>Select at least two shapes to merge; intersection and subtraction require exactly two.</source>
             <translation>Sélectionner au moins deux formes à fusionner ; intersection et soustraction nécessitent exactement deux formes.</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5202" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5224" />
             <source>Select exactly one item to create a circular array</source>
             <translation>Sélectionner un seul élément pour une répétition circulaire</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5042" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5064" />
             <source>Select exactly one item to create a grid array</source>
             <translation>Sélectionner un seul élément pour une répétition en grille</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4922" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4944" />
             <source>Select exactly one item to create a linear array</source>
             <translation>Sélectionner un seul élément pour une répétition linéaire</translation>
         </message>
@@ -956,8 +971,8 @@
             <translation type="vanished">Sélectionner exactement deux formes pour une opération booléenne</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5453" />
-            <location filename="../../ui/canvas/canvas_view.py" line="5468" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5475" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5490" />
             <source>Select one item and one polyline path for array along path</source>
             <translation>Sélectionner un élément et une polyligne pour une répétition le long du tracé</translation>
         </message>
@@ -996,17 +1011,17 @@
             <translation>Terrasse / Patio</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="3655" />
+            <location filename="../../ui/canvas/canvas_view.py" line="3677" />
             <source>The selected bed(s) contain plants. What would you like to do?</source>
             <translation>Les planches sélectionnées contiennent des plantes. Que souhaitez-vous faire ?</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5369" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5391" />
             <source>The selected shapes must touch or overlap.</source>
             <translation>Les formes sélectionnées doivent se toucher ou se chevaucher.</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5350" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5372" />
             <source>The shapes contain different data; keep them separate or make their data consistent before merging.</source>
             <translation>Les formes contiennent des données différentes ; gardez-les séparées ou harmonisez leurs données avant de les fusionner.</translation>
         </message>
@@ -1031,12 +1046,12 @@
             <translation>Treillage</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4682" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4704" />
             <source>Ungrouped</source>
             <translation>Éléments dissociés</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5344" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5366" />
             <source>Use independent shapes without plants, linked objects or constraints to combine outlines.</source>
             <translation>Utiliser des formes indépendantes sans plantes, objets liés ni contraintes pour combiner les contours.</translation>
         </message>
@@ -1076,12 +1091,12 @@
             <translation>Brouette</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4468" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4490" />
             <source>X</source>
             <translation>X</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4468" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4490" />
             <source>Y</source>
             <translation>Y</translation>
         </message>
@@ -1096,7 +1111,7 @@
             <translation>vers l’extérieur</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="4469" />
+            <location filename="../../ui/canvas/canvas_view.py" line="4491" />
             <source>{axis} position (cm)</source>
             <translation>Position {axis} (cm)</translation>
         </message>
@@ -1444,38 +1459,38 @@ Choisir, puis placer le centre et le bord sur le plan. Décocher le choix de tai
             <translation>Ajouter un sommet</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5729" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5751" />
             <source>Align bottom</source>
             <translation>Aligner en bas</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5730" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5752" />
             <source>Align center horizontally</source>
             <translation>Centrer horizontalement</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5731" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5753" />
             <source>Align center vertically</source>
             <translation>Centrer verticalement</translation>
         </message>
         <message>
             <location filename="../../core/commands.py" line="929" />
-            <location filename="../../ui/canvas/canvas_view.py" line="5734" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5756" />
             <source>Align items</source>
             <translation>Aligner les éléments</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5726" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5748" />
             <source>Align left</source>
             <translation>Aligner à gauche</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5727" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5749" />
             <source>Align right</source>
             <translation>Aligner à droite</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5728" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5750" />
             <source>Align top</source>
             <translation>Aligner en haut</translation>
         </message>
@@ -1617,17 +1632,17 @@ Choisir, puis placer le centre et le bord sur le plan. Décocher le choix de tai
             <translation>Dissocier la plante de la planche</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5785" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5807" />
             <source>Distribute horizontally</source>
             <translation>Répartir horizontalement</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5789" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5811" />
             <source>Distribute items</source>
             <translation>Répartir les éléments</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="5786" />
+            <location filename="../../ui/canvas/canvas_view.py" line="5808" />
             <source>Distribute vertically</source>
             <translation>Répartir verticalement</translation>
         </message>
@@ -1709,7 +1724,7 @@ Choisir, puis placer le centre et le bord sur le plan. Décocher le choix de tai
         <message>
             <location filename="../../app/application.py" line="938" />
             <location filename="../../core/commands.py" line="529" />
-            <location filename="../../ui/canvas/canvas_view.py" line="3942" />
+            <location filename="../../ui/canvas/canvas_view.py" line="3964" />
             <source>Move item</source>
             <translation>Déplacer l’élément</translation>
         </message>
@@ -1719,8 +1734,8 @@ Choisir, puis placer le centre et le bord sur le plan. Décocher le choix de tai
             <translation>Déplacer l’élément (avec contraintes)</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/canvas_view.py" line="3847" />
-            <location filename="../../ui/canvas/canvas_view.py" line="3940" />
+            <location filename="../../ui/canvas/canvas_view.py" line="3869" />
+            <location filename="../../ui/canvas/canvas_view.py" line="3962" />
             <source>Move items (constrained)</source>
             <translation>Déplacer les éléments (avec contraintes)</translation>
         </message>
@@ -1855,6 +1870,11 @@ Choisir, puis placer le centre et le bord sur le plan. Décocher le choix de tai
             <location filename="../../ui/panels/plant_database_panel.py" line="1258" />
             <source>functions</source>
             <translation>fonctions</translation>
+        </message>
+        <message>
+            <location filename="../../ui/canvas/items/background_image_item.py" line="426" />
+            <source>image opacity</source>
+            <translation>opacité de l’image</translation>
         </message>
         <message>
             <location filename="../../ui/panels/properties_panel.py" line="70" />
