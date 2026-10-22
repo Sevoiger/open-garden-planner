@@ -4,7 +4,7 @@ Users lost data because Open/Save-As dialogs opened in the process working
 directory — the install folder for a packaged build — and the installer wipes
 that folder on upgrade. These tests assert the dialogs now start in a safe
 location: the open project's folder when one exists, else
-``<Documents>/Open Garden Planner``.
+the existing Documents folder.
 """
 
 from pathlib import Path
@@ -38,7 +38,7 @@ def _capture_dialog_dir(monkeypatch: object) -> dict[str, str]:
 
 
 def test_save_as_defaults_to_projects_dir(qtbot: object, monkeypatch: object, tmp_path: Path) -> None:
-    """With no project open, Save As starts in <Documents>/Open Garden Planner."""
+    """With no project open, Save As starts in Documents."""
     monkeypatch.setattr(paths, "get_documents_dir", lambda: tmp_path)  # type: ignore[attr-defined]
     captured = _capture_dialog_dir(monkeypatch)
 
@@ -48,12 +48,12 @@ def test_save_as_defaults_to_projects_dir(qtbot: object, monkeypatch: object, tm
     window._on_save_as()
 
     start_dir = Path(captured["dir"]).parent  # save dialog dir + filename
-    assert start_dir == tmp_path / "Open Garden Planner"
+    assert start_dir == tmp_path
     assert Path(captured["dir"]).name.endswith(".ogp")
 
 
 def test_open_defaults_to_projects_dir(qtbot: object, monkeypatch: object, tmp_path: Path) -> None:
-    """With no project open, Open starts in <Documents>/Open Garden Planner."""
+    """With no project open, Open starts in Documents."""
     monkeypatch.setattr(paths, "get_documents_dir", lambda: tmp_path)  # type: ignore[attr-defined]
     captured = _capture_dialog_dir(monkeypatch)
 
@@ -62,7 +62,7 @@ def test_open_defaults_to_projects_dir(qtbot: object, monkeypatch: object, tmp_p
 
     window._on_open_project()
 
-    assert Path(captured["dir"]) == tmp_path / "Open Garden Planner"
+    assert Path(captured["dir"]) == tmp_path
 
 
 def test_dialog_dir_follows_current_project(qtbot: object, monkeypatch: object, tmp_path: Path) -> None:
@@ -98,7 +98,7 @@ def test_simple_exports_default_to_projects_dir(
     window = GardenPlannerApp()
     qtbot.addWidget(window)  # type: ignore[attr-defined]
 
-    safe = tmp_path / "Open Garden Planner"
+    safe = tmp_path
     for handler in (window._on_export_svg, window._on_export_plant_csv, window._on_export_dxf):
         captured.clear()
         handler()
@@ -128,7 +128,7 @@ def test_gated_exports_default_to_projects_dir(
     window = GardenPlannerApp()
     qtbot.addWidget(window)  # type: ignore[attr-defined]
 
-    safe = tmp_path / "Open Garden Planner"
+    safe = tmp_path
     for handler in (window._on_export_png, window._on_export_pdf_report):
         captured.clear()
         handler()
@@ -154,4 +154,4 @@ def test_season_manager_new_ogp_defaults_to_projects_dir(
 
     dialog._on_create_season()
 
-    assert Path(captured["dir"]).parent == tmp_path / "Open Garden Planner"
+    assert Path(captured["dir"]).parent == tmp_path

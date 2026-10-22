@@ -24,7 +24,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from open_garden_planner.app.paths import default_dialog_dir, default_save_path
+from open_garden_planner.app.paths import (
+    default_dialog_dir,
+    default_save_path,
+    get_last_project_path,
+)
 from open_garden_planner.core import (
     ProjectManager,
     calculate_area_and_perimeter,
@@ -5361,16 +5365,27 @@ class GardenPlannerApp(QMainWindow):
         sidebar_layout.addWidget(self._sidebar_controller)
 
     def _startup_sequence(self) -> None:
-        """Handle startup sequence: recovery check, then welcome dialog."""
-        # First check for recovery files
-        recovery_handled = self._check_recovery_files()
-
-        # Then show welcome dialog if enabled and no recovery was handled
-        if not recovery_handled:
-            self._show_welcome_dialog()
-        # Deferred so it runs after the modal Welcome dialog is gone and the
-        # event queue has drained — a bar shown behind a modal dialog is unseen.
+        """Keep explicit opens/edits; otherwise recover first, then resume."""
+        if self._project_manager.current_file is None and not self._project_manager.is_dirty:
+            recovery_handled = self._check_recovery_files()
+            if not recovery_handled and not self._resume_last_project():
+                self._show_welcome_dialog()
         QTimer.singleShot(0, self._check_overdue_tasks)
+
+    def _resume_last_project(self) -> bool:
+        if self._project_manager.current_file is not None or self._project_manager.is_dirty:
+            return True
+        path = get_last_project_path()
+        if path is None or not path.is_file():
+            return False
+        from open_garden_planner.services import AutoSaveManager
+
+        # A declined recovery must stay on disk. The normal open path clears
+        # autosaves, so leave the Welcome screen available in this case.
+        if AutoSaveManager.find_recovery_for_project(path) is not None:
+            return False
+        self._open_project_file(str(path))
+        return self._project_manager.current_file is not None or self._project_manager.is_dirty
 
     def _check_overdue_tasks(self) -> None:
         """Show (or hide) the overdue-MANUAL-task reminder bar (US-C2).
@@ -5505,6 +5520,11 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.services import AutoSaveManager
 
         recovery_files = AutoSaveManager.find_recovery_files()
+        last_project = get_last_project_path()
+        if last_project is not None:
+            project_recovery = AutoSaveManager.find_recovery_for_project(last_project)
+            if project_recovery is not None and all(path != project_recovery[0] for path, _ in recovery_files):
+                recovery_files.append(project_recovery)
         if not recovery_files:
             return False
 
@@ -5538,8 +5558,11 @@ class GardenPlannerApp(QMainWindow):
 
             if result == QMessageBox.StandardButton.Yes:
                 # Load the recovery file
-                self._load_recovery_file(autosave_path)
-                recovered = True
+                if self._load_recovery_file(autosave_path):
+                    recovered = True
+                    # A second prompt must not replace restored unsaved work.
+                    # Failed recoveries leave the next copy available to try.
+                    break
             elif result == QMessageBox.StandardButton.Discard:
                 # Delete the recovery file
                 AutoSaveManager.delete_recovery_file(autosave_path)
@@ -5547,8 +5570,8 @@ class GardenPlannerApp(QMainWindow):
 
         return recovered
 
-    def _load_recovery_file(self, recovery_path: Path) -> None:
-        """Load a recovery file.
+    def _load_recovery_file(self, recovery_path: Path) -> bool:
+        """Load a recovery file and report whether restoration succeeded.
 
         Args:
             recovery_path: Path to the recovery file
@@ -5576,12 +5599,14 @@ class GardenPlannerApp(QMainWindow):
                     "Please save your project to a permanent location."
                 ),
             )
+            return True
         except Exception as e:
             QMessageBox.critical(
                 self,
                 self.tr("Recovery Failed"),
                 self.tr("Failed to recover from auto-save:\n{error}").format(error=e),
             )
+            return False
 
     def _update_properties_panel(self) -> None:
         """Update properties panel with current selection."""
