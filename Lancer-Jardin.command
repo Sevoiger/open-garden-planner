@@ -2,19 +2,42 @@
 set -uo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
+DEBUG=1
+if [[ "${1:-}" == "--no-console" ]]; then
+  DEBUG=0
+  shift
+fi
+report_error() {
+  if [[ "$DEBUG" == 1 ]]; then
+    printf '%s\n' "$1"
+    read -r -p "Appuyez sur Entrée pour fermer. "
+  else
+    /usr/bin/osascript - "$1" <<'APPLESCRIPT'
+on run argv
+  display alert "Jardin — lancement impossible" message (item 1 of argv) as critical
+end run
+APPLESCRIPT
+  fi
+}
 if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
-  echo "Environnement manquant. Dans le Terminal, exécutez :"
-  printf '  bash %q\n' "$ROOT/scripts/setup_macos.sh"
-  read -r -p "Appuyez sur Entrée pour fermer. "
+  printf -v SETUP_COMMAND 'bash %q' "$ROOT/scripts/setup_macos.sh"
+  report_error "Environnement manquant. Dans le Terminal, exécutez :
+$SETUP_COMMAND"
   exit 1
 fi
 mkdir -p "$ROOT/.local/logs"
-"$ROOT/.venv/bin/python" -m open_garden_planner "$@" >> "$ROOT/.local/logs/launcher.log" 2>&1
-STATUS=$?
+if [[ "$DEBUG" == 1 ]]; then
+  "$ROOT/.venv/bin/python" -m open_garden_planner "$@" 2>&1 | tee -a "$ROOT/.local/logs/launcher.log"
+  STATUS=${PIPESTATUS[0]}
+else
+  "$ROOT/.venv/bin/python" -m open_garden_planner "$@" >> "$ROOT/.local/logs/launcher.log" 2>&1
+  STATUS=$?
+fi
 if [[ "$STATUS" -ne 0 ]]; then
-  echo "L'application s'est arrêtée avec le code $STATUS."
-  echo "Journal : $ROOT/.local/logs/launcher.log"
-  tail -n 25 "$ROOT/.local/logs/launcher.log"
-  read -r -p "Appuyez sur Entrée pour fermer. "
+  if [[ "$DEBUG" == 1 ]]; then
+    tail -n 25 "$ROOT/.local/logs/launcher.log"
+  fi
+  report_error "L'application s'est arrêtée avec le code $STATUS.
+Journal : $ROOT/.local/logs/launcher.log"
 fi
 exit "$STATUS"

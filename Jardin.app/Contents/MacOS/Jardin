@@ -1,0 +1,4 @@
+#!/bin/bash
+# Source launcher: this bundle stays beside the editable checkout.
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)" || exit 1
+exec /bin/bash "$ROOT/Lancer-Jardin.command" --no-console "$@"

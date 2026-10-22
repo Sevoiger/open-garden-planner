@@ -29,4 +29,4 @@ fi
 "$UV" pip install --python .venv/bin/python --no-deps --no-build-isolation --editable .
 "$UV" pip check --python .venv/bin/python
 .venv/bin/python scripts/check_dependency_lock.py --uv "$UV"
-echo "Installation prête ($(uname -m)). Ouvrez Lancer-Jardin.command."
+echo "Installation prête ($(uname -m)). Ouvrez Jardin.app (ou Lancer-Jardin.command pour déboguer)."
