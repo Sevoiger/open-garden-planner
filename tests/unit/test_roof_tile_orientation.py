@@ -442,3 +442,20 @@ def test_probe_orientation_is_what_the_test_assumes(qtbot: object) -> None:
     bottom = QColor(image.pixel(32, 56)).name()
     assert top == UP_SLOPE, f"probe top should be up-slope, got {top}"
     assert bottom == DOWN_SLOPE, f"probe bottom should be down-slope, got {bottom}"
+
+
+def test_roof_pattern_scale_reaches_the_painter(qtbot: object) -> None:
+    """Ridge alignment must compose with, rather than discard, surface style."""
+    from PyQt6.QtGui import QBrush, QTransform
+
+    scene, house = _house_with_probe(0.0, 400.0, 250.0)
+    before = _render(scene, house)
+    brush = QBrush(house.brush())
+    brush.setTransform(QTransform().scale(2, 2))
+    house.setBrush(brush)
+    after = _render(scene, house)
+    assert after != before
+    axis = _ridge_axis(house)
+    plus = _outward_sequence(after, house, axis, True)
+    minus = _outward_sequence(after, house, axis, False)
+    assert plus == minus and _is_informative(plus)

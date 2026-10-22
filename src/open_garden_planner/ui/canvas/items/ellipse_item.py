@@ -76,7 +76,7 @@ class EllipseItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGra
 
         pattern = self.fill_pattern if self.fill_pattern is not None else style.fill_pattern
         color = self.fill_color if self.fill_color is not None else style.fill_color
-        self.setBrush(create_pattern_brush(pattern, color, self.metadata.get("personal_fill_pattern")))
+        self.setBrush(create_pattern_brush(pattern, color, self.metadata.get("personal_fill_pattern"), self.metadata.get("fill_transform")))
 
     def _setup_flags(self) -> None:
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, True)

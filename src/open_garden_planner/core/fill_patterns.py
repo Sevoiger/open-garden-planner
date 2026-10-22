@@ -181,7 +181,20 @@ def _tint_texture(texture: QPixmap, color: QColor) -> QPixmap:
     )
 
 
-def create_pattern_brush(pattern: FillPattern, color: QColor, personal_pattern: object = None) -> QBrush:
+def create_pattern_brush(pattern: FillPattern, color: QColor, personal_pattern: object = None,
+                         pattern_transform: object = None) -> QBrush:
+    """Apply the shape's independent angle/scale after the material's tile size."""
+    from PyQt6.QtGui import QTransform
+
+    from open_garden_planner.core.fill_transform import fill_transform_values
+
+    brush = _base_pattern_brush(pattern, color, personal_pattern)
+    angle, scale = fill_transform_values(pattern_transform)
+    brush.setTransform(brush.transform() * QTransform().rotate(angle).scale(scale, scale))
+    return brush
+
+
+def _base_pattern_brush(pattern: FillPattern, color: QColor, personal_pattern: object = None) -> QBrush:
     """Create a QBrush with the specified pattern and base color.
 
     For non-SOLID patterns, loads a tileable PNG texture from

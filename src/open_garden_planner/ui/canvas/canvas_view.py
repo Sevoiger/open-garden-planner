@@ -436,6 +436,11 @@ class CanvasView(QGraphicsView):
             display_name=QCoreApplication.translate("MirrorTool", 'Mirror'),
         )
 
+        from open_garden_planner.core.tools.split_tool import SplitTool
+
+        self._split_tool = SplitTool(self)
+        self._tool_manager.register_tool(self._split_tool)
+
         # Register generic shape tools
         rect_tool = RectangleTool(self, object_type=ObjectType.GENERIC_RECTANGLE)
         rect_tool.shortcut = "R"
@@ -5331,6 +5336,16 @@ class CanvasView(QGraphicsView):
         self.set_status_message(
             self.tr("Created circular array of {count} items").format(count=count)
         )
+
+    def start_split_shape(self, item: QGraphicsItem) -> None:
+        from open_garden_planner.core.shape_split import can_split_shape
+
+        if not can_split_shape(item, self._canvas_scene):
+            self.set_status_message(self.tr("Choose an independent closed shape without constraints or linked data to split."))
+            return
+        self.set_active_tool(ToolType.SPLIT)
+        self._split_tool.source_id = item.item_id
+        self.set_status_message(self.tr("Split: click the first axis point."))
 
     def boolean_operation(self, operation: str) -> None:
         """Apply a boolean operation (union/intersect/subtract) on selected closed shapes (union supports any count)."""

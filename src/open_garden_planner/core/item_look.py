@@ -29,6 +29,7 @@ arc/bezier mirror builders set ``stroke_color``/``stroke_width`` by hand instead
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 from PyQt6.QtGui import QBrush, QColor, QPen
@@ -60,6 +61,12 @@ def copy_visual_style(source: Any, dest: Any) -> None:
     for name in _LOOK_ATTRIBUTES:
         if hasattr(source, name) and hasattr(dest, name):
             setattr(dest, name, _copy_value(getattr(source, name)))
+
+    for key in ("personal_fill_pattern", "fill_transform"):
+        if key in getattr(source, "metadata", {}):
+            dest.metadata[key] = deepcopy(source.metadata[key])
+        elif hasattr(dest, "metadata"):
+            dest.metadata.pop(key, None)
 
     # Live appearance last: the source pen already carries the right colour,
     # width and dash style for the item as it is painted.

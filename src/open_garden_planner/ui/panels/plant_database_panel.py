@@ -1806,9 +1806,10 @@ class PlantDatabasePanel(QWidget):
         self._update_favorite_button()
 
     def _import_personal_visual(self) -> None:
+        from open_garden_planner.app.visual_paths import visuals_dir
         from open_garden_planner.core.personal_plant_visual import import_png
 
-        path, _ = QFileDialog.getOpenFileName(self, self.tr("Import personal PNG…"), "", "PNG (*.png)")
+        path, _ = QFileDialog.getOpenFileName(self, self.tr("Import personal PNG…"), str(visuals_dir("plants")), "PNG (*.png)")
         if not path:
             return
         try:
