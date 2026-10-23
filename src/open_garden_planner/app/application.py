@@ -4692,10 +4692,7 @@ class GardenPlannerApp(QMainWindow):
         status_bar.insertPermanentWidget(2, self._make_icon_label("status_input", tooltip=self.tr("Typed coordinate input")))
         status_bar.insertPermanentWidget(3, self.coordinate_input_field)
 
-        # Drawing and CAD tools share a row; object menus/search have their own.
-        #   MainToolbar (core tools)
-        #   ConstraintToolbar (CAD constraints)
-        #   CategoryToolbar (object categories + global search)
+        # Keep direct object palettes beside drawing tools; CAD overflow stays last.
         self.main_toolbar = MainToolbar(self)
         self.addToolBar(self.main_toolbar)
 
@@ -4703,8 +4700,7 @@ class GardenPlannerApp(QMainWindow):
         self.addToolBar(self.constraint_toolbar)
 
         self.category_toolbar = CategoryToolbar(self)
-        self.addToolBarBreak()
-        self.addToolBar(self.category_toolbar)
+        self.insertToolBar(self.constraint_toolbar, self.category_toolbar)
 
         # ── Companion planting service (shared by sidebar panel and highlights) ─
         self._companion_service = CompanionPlantingService()
@@ -6462,8 +6458,10 @@ class GardenPlannerApp(QMainWindow):
             self.category_toolbar,
         ):
             toolbar.setVisible(True)
-        if not self.toolBarBreak(self.category_toolbar):
-            self.insertToolBarBreak(self.category_toolbar)
+        # Heal the previous two-row layout without resetting unrelated UI state.
+        self.insertToolBar(self.constraint_toolbar, self.category_toolbar)
+        for toolbar in (self.main_toolbar, self.category_toolbar, self.constraint_toolbar):
+            self.removeToolBarBreak(toolbar)
         self._sun_toolbar.setVisible(False)
         self.soil_overlay_toolbar.setVisible(False)
 

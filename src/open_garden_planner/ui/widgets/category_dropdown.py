@@ -281,9 +281,11 @@ class CategoryDropdown(QWidget):
     item_selected = pyqtSignal(object)
     database_search_requested = pyqtSignal(str, str)
 
-    def __init__(self, category: GalleryCategory, parent: QWidget | None = None) -> None:
+    def __init__(self, category: GalleryCategory, parent: QWidget | None = None,
+                 *, unified_plants: bool = False) -> None:
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self._category = category
+        self._unified_plants = unified_plants
         self._buttons: list[_ThumbnailButton] = []
         self._catalog_records: dict[str, dict[str, Any]] | None = None
         self._catalog_offset = 0
@@ -342,6 +344,7 @@ class CategoryDropdown(QWidget):
             content_layout.addWidget(self._choose_size)
             self._all_plants = QCheckBox(self.tr("All plants (including unclassified)"))
             self._all_plants.toggled.connect(lambda: self._apply_filter(self._search_box.text()))
+            self._all_plants.setVisible(not self._unified_plants)
             content_layout.addWidget(self._all_plants)
             self._catalog_count = QLabel()
             self._catalog_count.setWordWrap(True)
@@ -407,7 +410,7 @@ class CategoryDropdown(QWidget):
     def _search_databases(self) -> None:
         query = self._search_box.text()
         self.close()
-        self.database_search_requested.emit(query, self._catalog_group or "flower")
+        self.database_search_requested.emit(query, "flower" if self._unified_plants else self._catalog_group or "flower")
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
@@ -449,11 +452,11 @@ class CategoryDropdown(QWidget):
         from open_garden_planner.ui.widgets.catalog_palette import PAGE_SIZE, matching_records
 
         matches = matching_records(
-            self._catalog_records, text, group=None if self._all_plants.isChecked() else self._catalog_group,
+            self._catalog_records, text, group=None if self._unified_plants or self._all_plants.isChecked() else self._catalog_group,
             layers=self.trait_filters.layers, functions=self.trait_filters.functions,
         )
         page = matches[self._catalog_offset:self._catalog_offset + PAGE_SIZE]
-        self._catalog_list.populate(page, self._catalog_group or "flower")
+        self._catalog_list.populate(page, "flower" if self._unified_plants else self._catalog_group or "flower")
         self._catalog_count.setText(self.tr("{count} plants — {first}–{last}").format(
             count=len(matches), first=self._catalog_offset + 1 if page else 0,
             last=self._catalog_offset + len(page),

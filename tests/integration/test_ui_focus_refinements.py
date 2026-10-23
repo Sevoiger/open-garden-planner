@@ -59,7 +59,7 @@ def test_french_standard_message_buttons_fit_their_text(qtbot, qapp, mode, font_
 
 
 @pytest.mark.parametrize("font_size", [13, 18])
-def test_french_object_groups_and_search_fit_after_restoring_old_toolbar_row(qtbot, qapp, monkeypatch, font_size):
+def test_french_palettes_share_one_row_after_restoring_two_rows(qtbot, qapp, monkeypatch, font_size):
     from open_garden_planner.app.application import GardenPlannerApp
 
     old_font = qapp.font()
@@ -72,15 +72,16 @@ def test_french_object_groups_and_search_fit_after_restoring_old_toolbar_row(qtb
         qtbot.addWidget(window)
         window.resize(800, 700)
         window.showNormal()
-        # Reproduce a layout persisted by the previous one-row toolbar.
-        window.removeToolBarBreak(window.category_toolbar)
+        # Reproduce the rejected two-row layout persisted by the previous patch.
+        window.insertToolBarBreak(window.category_toolbar)
         window._save_ui_state()
         window._restore_ui_state()
         qapp.processEvents()
         toolbar = window.category_toolbar
-        assert window.toolBarBreak(toolbar)
+        assert not window.toolBarBreak(toolbar)
+        assert toolbar.y() == window.main_toolbar.y() == window.constraint_toolbar.y()
         assert [b.text() for b in toolbar._category_buttons] == ["Formes", "Plantes", "Aménagements"]
-        for widget in [*toolbar._category_buttons, toolbar._search_field]:
+        for widget in toolbar._category_buttons:
             assert widget.isVisible()
             assert toolbar.rect().contains(widget.geometry()), (widget, widget.geometry(), toolbar.rect())
         window.close()

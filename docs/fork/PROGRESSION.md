@@ -2,9 +2,10 @@
 
 ## Lisibilité de l’interface — 23 octobre 2026
 
-Trois menus **Formes / Plantes / Aménagements** remplacent les onze boutons de
-catégories, avec les sous-catégories conservées et la recherche sur une ligne
-dédiée. Les filtres végétaux actifs restent contrastés dans les deux thèmes.
+Trois palettes **Formes / Plantes / Aménagements** réunissent les contenus des
+onze catégories, avec ouverture directe en un clic. Après retour utilisateur,
+les menus intermédiaires et la recherche du haut ont été retirés ; les palettes
+partagent une seule ligne avec les outils, y compris après restauration de l’ancienne disposition. Les filtres végétaux actifs restent contrastés dans les deux thèmes.
 Les boutons de confirmation et de formulaires mesurent leur texte traduit,
 notamment « Ne pas enregistrer », sans changer leurs réponses ni raccourcis.
 

@@ -2,21 +2,22 @@
 
 ## Catalogue dans les catégories du haut
 
-La barre présente trois entrées libellées, sur une ligne avec la recherche :
+La barre présente trois entrées libellées, sur la même ligne que les outils de dessin :
 
 - **Formes** : massifs et surfaces, formes géométriques.
 - **Plantes** : arbres, arbustes et haies, fleurs et vivaces, légumes et aromatiques.
 - **Aménagements** : constructions, mobilier, clôtures et murs, équipements,
   contenants et supports verticaux. C’est le groupe des éléments non organiques.
 
-Choisir une entrée, puis sa sous-catégorie. Toutes les catégories précédentes
-restent accessibles ; la recherche globale continue de les parcourir ensemble.
-La ligne dédiée reste visible après réouverture d’une ancienne disposition.
+Un clic ouvre directement la palette : les contenus des anciennes catégories
+sont réunis, sans menu intermédiaire. Le champ de recherche du haut a été retiré.
+Une disposition enregistrée avec deux lignes revient à une seule ligne au démarrage.
+Les contraintes CAD viennent après les palettes et utilisent le débordement Qt si nécessaire.
 
-Les sous-menus de **Plantes** proposent les fiches du catalogue local,
+La palette **Plantes** propose toutes les fiches du catalogue local,
 avec recherche, filtres et pages de 48 plantes. **Previous plants / Next plants**
-changent de page. **All plants (including unclassified)** donne accès à toutes
-les fiches, y compris celles dont le type n'est pas renseigné.
+changent de page. Les fiches dont le type n’est pas renseigné sont incluses
+dès l’ouverture ; les filtres restent disponibles à l’intérieur de la palette.
 Les filtres actifs prennent un fond vert contrasté dans les thèmes clair et
 sombre ; les valeurs choisies ne dépendent pas de la langue affichée.
 

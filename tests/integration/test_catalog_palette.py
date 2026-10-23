@@ -51,7 +51,7 @@ def test_catalog_default_requires_size_and_preserves_botanical_spread(qtbot, mon
     window = GardenPlannerApp()
     qtbot.addWidget(window)
     window.canvas_view.set_snap_enabled(False)
-    dropdown = next(d for d in window.category_toolbar._category_dropdowns if d._catalog_group == "shrub")
+    dropdown = next(d for d in window.category_toolbar._category_dropdowns if d._unified_plants)
     anchor = QWidget()
     qtbot.addWidget(anchor)
     anchor.show()
@@ -167,7 +167,7 @@ def test_catalog_selection_preserves_reference_and_places_once_with_undo_and_rel
     qtbot.addWidget(window)
     view = window.canvas_view
     view.set_snap_enabled(False)
-    dropdown = next(d for d in window.category_toolbar._category_dropdowns if d._category.icon_name == "shrub")
+    dropdown = next(d for d in window.category_toolbar._category_dropdowns if d._unified_plants)
     anchor = QWidget()
     qtbot.addWidget(anchor)
     anchor.show()
@@ -298,6 +298,32 @@ def test_unknown_growth_form_is_accessible_without_inventing_traits(qtbot):
     assert item.species == ""  # no accidental partial-name artwork match
 
 
+def test_merged_palette_includes_all_types_and_unclassified_on_open(qtbot, monkeypatch):
+    from open_garden_planner.ui.widgets.category_toolbar import CategoryToolbar
+
+    layers = [PermacultureLayer.CANOPY, PermacultureLayer.SHRUB,
+              PermacultureLayer.HERBACEOUS, PermacultureLayer.ROOT, PermacultureLayer.UNKNOWN]
+    records = {str(i): PlantSpeciesData(scientific_name=f"Example {i}", common_name=f"Plant {i}",
+                                      permaculture_layer=layer).to_dict()
+               for i, layer in enumerate(layers)}
+    monkeypatch.setattr("open_garden_planner.services.species_catalog.offline_catalog", lambda: records)
+    toolbar = CategoryToolbar()
+    qtbot.addWidget(toolbar)
+    toolbar.show()
+    qtbot.mouseClick(toolbar._category_buttons[1], Qt.MouseButton.LeftButton)
+    dropdown = toolbar._category_dropdowns[1]
+    assert dropdown.isVisible()
+    assert dropdown._all_plants.isHidden()
+    assert dropdown._catalog_list.count() == len(records)
+    items = {dropdown._catalog_list.item(i).data(Qt.ItemDataRole.UserRole).species_data["scientific_name"]:
+             dropdown._catalog_list.item(i).data(Qt.ItemDataRole.UserRole)
+             for i in range(dropdown._catalog_list.count())}
+    assert [items[f"Example {i}"].tool_type for i in range(5)] == [
+        ToolType.TREE, ToolType.SHRUB, ToolType.PERENNIAL, ToolType.PERENNIAL, ToolType.PERENNIAL,
+    ]
+    assert items["Example 4"].species_data == records["4"]
+
+
 def test_global_search_finds_new_local_reference_with_full_identity(qtbot):
     get_plant_library().add_plant(sophora())
     field = GlobalSearchField(build_toolbar_categories())
@@ -360,7 +386,7 @@ def test_database_shortcut_uses_query_and_activates_placement_without_editing_se
     window.canvas_scene.addItem(original)
     original.setSelected(True)
     before = deepcopy(original.metadata)
-    dropdown = next(d for d in window.category_toolbar._category_dropdowns if d._catalog_group == "shrub")
+    dropdown = next(d for d in window.category_toolbar._category_dropdowns if d._unified_plants)
     dropdown._search_box.setText("prostrata")
     dropdown._database_button.click()
     assert seen == ["prostrata"]
