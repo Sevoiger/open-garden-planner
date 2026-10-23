@@ -2,13 +2,16 @@
 
 The CategoryToolbar sits to the right of MainToolbar (core tools) and
 ConstraintToolbar (CAD constraints). It holds:
-  - 11 category icon-buttons, each opens a dropdown of placeable objects
+  - three labelled groups exposing the object subcategories
   - a global search field that searches across every gallery item
 """
 
 # ruff: noqa: ARG002
 
 import pytest
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QKeySequence
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from open_garden_planner.core.tools import ToolType
@@ -21,21 +24,30 @@ from open_garden_planner.ui.widgets.global_search import GlobalSearchField
 class TestCategoryToolbarStructure:
     """Static structure: categories, icons, and search field are all wired up."""
 
-    def test_toolbar_has_11_categories_and_search(self, qtbot: object) -> None:
+    def test_toolbar_has_three_groups_and_all_subcategories(self, qtbot: object) -> None:
         tb = CategoryToolbar()
         qtbot.addWidget(tb)  # type: ignore[attr-defined]
-        assert len(tb._category_buttons) == 11
-        assert len(tb._category_dropdowns) == 11
+        assert [button.text() for button in tb._category_buttons] == ["Shapes", "Plants", "Built elements"]
+        exposed = [action.data() for button in tb._category_buttons for action in button.menu().actions()]
+        assert len(exposed) == len(set(exposed))
+        assert set(exposed) == {category.icon_name for category in tb._categories}
+        for button in tb._category_buttons:
+            for action in button.menu().actions():
+                assert QKeySequence.mnemonic(action.text()).isEmpty()
+        assert [action.data() for action in tb._category_buttons[1].menu().actions()] == [
+            "tree", "shrub", "flower", "vegetable",
+        ]
         assert tb._search_field is not None
 
     def test_first_category_is_beds_and_surfaces(self, qtbot: object) -> None:
-        """Beds & Surfaces must be first — that's the whole point of the redesign."""
+        """Beds & Surfaces remain reachable within the Shapes group."""
         tb = CategoryToolbar()
         qtbot.addWidget(tb)  # type: ignore[attr-defined]
         first_dropdown = tb._category_dropdowns[0]
         assert first_dropdown._category.name == "Beds & Surfaces"
         item_names = [i.name for i in first_dropdown._category.items]
         assert "Garden Bed" in item_names
+        assert tb._category_buttons[0].menu().actions()[0].data() == "garden_bed"
 
     def test_every_category_button_has_icon(self, qtbot: object) -> None:
         """Regression for the bug where category buttons fell back to 2-letter
@@ -48,6 +60,27 @@ class TestCategoryToolbarStructure:
 
 class TestCategoryDropdownFlow:
     """Clicking a category item activates its tool and emits the toolbar signal."""
+
+    def test_plants_menu_opens_tree_palette_and_preserves_tool_selection(self, qtbot):
+        toolbar = CategoryToolbar()
+        qtbot.addWidget(toolbar)
+        toolbar.show()
+        button = toolbar._category_buttons[1]
+        menu = button.menu()
+
+        def choose_trees():
+            menu.setActiveAction(menu.actions()[0])
+            QTest.keyClick(menu, Qt.Key.Key_Return)
+
+        QTimer.singleShot(0, choose_trees)
+        qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+        trees = next(d for d in toolbar._category_dropdowns if d._category.icon_name == "tree")
+        qtbot.waitUntil(trees.isVisible)
+        received = []
+        toolbar.tool_selected.connect(received.append)
+        trees._buttons[0].click()
+        assert received == [ToolType.TREE]
+        assert not trees.isVisible()
 
     def test_dropdown_click_emits_tool_selected(self, qtbot: object) -> None:
         tb = CategoryToolbar()
@@ -169,8 +202,7 @@ class TestGalleryRemoved:
 
 
 class TestMainWindowToolbarLayout:
-    """Top toolbars must appear in this left-to-right order:
-    MainToolbar  →  ConstraintToolbar  →  CategoryToolbar.
+    """Drawing and constraints precede the separate object-menu/search row.
     """
 
     def test_three_toolbars_in_expected_order(self, qtbot: object) -> None:

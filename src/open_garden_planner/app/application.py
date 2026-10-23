@@ -4692,7 +4692,7 @@ class GardenPlannerApp(QMainWindow):
         status_bar.insertPermanentWidget(2, self._make_icon_label("status_input", tooltip=self.tr("Typed coordinate input")))
         status_bar.insertPermanentWidget(3, self.coordinate_input_field)
 
-        # Three top toolbars on the same row, left → right:
+        # Drawing and CAD tools share a row; object menus/search have their own.
         #   MainToolbar (core tools)
         #   ConstraintToolbar (CAD constraints)
         #   CategoryToolbar (object categories + global search)
@@ -4703,6 +4703,7 @@ class GardenPlannerApp(QMainWindow):
         self.addToolBar(self.constraint_toolbar)
 
         self.category_toolbar = CategoryToolbar(self)
+        self.addToolBarBreak()
         self.addToolBar(self.category_toolbar)
 
         # ── Companion planting service (shared by sidebar panel and highlights) ─
@@ -6461,6 +6462,8 @@ class GardenPlannerApp(QMainWindow):
             self.category_toolbar,
         ):
             toolbar.setVisible(True)
+        if not self.toolBarBreak(self.category_toolbar):
+            self.insertToolBarBreak(self.category_toolbar)
         self._sun_toolbar.setVisible(False)
         self.soil_overlay_toolbar.setVisible(False)
 

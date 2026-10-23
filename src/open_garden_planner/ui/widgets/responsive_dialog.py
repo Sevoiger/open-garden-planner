@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.ui.widgets.dialog_button_sizing import fit_button_text
+
 
 def _is_action_row(item: QLayoutItem | None) -> bool:
     """Recognize terminal button rows without pulling form fields into the footer."""
@@ -81,7 +83,7 @@ class ResponsiveDialog(QDialog):
         for widget in [self, *self.findChildren(QWidget)]:
             widget.ensurePolished()
             if isinstance(widget, QPushButton) and widget.text():
-                widget.setMinimumSize(widget.minimumSize().expandedTo(widget.minimumSizeHint()))
+                fit_button_text(widget)
             widget_layout = widget.layout()
             if widget_layout is not None:
                 widget_layout.invalidate()
@@ -142,7 +144,7 @@ class ResponsiveDialog(QDialog):
         # Qt can revise native/QSS button hints when children become visible.
         for button in self.findChildren(QPushButton):
             if button.text():
-                button.setMinimumSize(button.minimumSize().expandedTo(button.sizeHint()))
+                fit_button_text(button)
         for actions in self.findChildren(_ActionScrollArea):
             actions.update_height()
         screen = self.screen()

@@ -1,13 +1,12 @@
 """Toolbar with object-category dropdowns and the global search field.
 
-Sits to the right of the MainToolbar and ConstraintToolbar — gives one-click
-access to every placeable object, organised by category. Mirrors the click
-flow that used to live in the sidebar's `GalleryPanel`.
+Three labelled menus expose every object subcategory, with global search on
+the same row. The drawing and CAD tools occupy a separate row.
 """
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QSizePolicy, QToolBar, QToolButton, QWidget
+from PyQt6.QtWidgets import QMenu, QSizePolicy, QToolBar, QToolButton, QWidget
 
 from open_garden_planner.core.tools import ToolType
 from open_garden_planner.ui.icons import get_icon
@@ -33,6 +32,7 @@ class CategoryToolbar(QToolBar):
 
         self._categories: list[GalleryCategory] = build_toolbar_categories()
         self._category_buttons: list[QToolButton] = []
+        self._group_icons: list[str] = []
         self._category_dropdowns: list[CategoryDropdown] = []
         self._search_field: GlobalSearchField | None = None
         self._focus_shortcut: QShortcut | None = None
@@ -59,7 +59,18 @@ class CategoryToolbar(QToolBar):
         self.setIconSize(QSize(24, 24))
 
         for category in self._categories:
-            self._add_category_button(category)
+            dropdown = CategoryDropdown(category, self)
+            dropdown.tool_selected.connect(self.tool_selected)
+            dropdown.item_selected.connect(self.item_selected)
+            dropdown.database_search_requested.connect(self.database_search_requested)
+            self._category_dropdowns.append(dropdown)
+
+        for name, icon, categories in (
+            (self.tr("Shapes"), "rectangle", {"rectangle", "garden_bed"}),
+            (self.tr("Plants"), "tree", {"tree", "shrub", "flower", "vegetable"}),
+            (self.tr("Built elements"), "house", {"house", "furniture", "fence", "infrastructure", "vertical_container"}),
+        ):
+            self._add_group_button(name, icon, categories)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -73,30 +84,34 @@ class CategoryToolbar(QToolBar):
         self._focus_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self._focus_shortcut.activated.connect(self._focus_search)
 
-    def _add_category_button(self, category: GalleryCategory) -> None:
-        button = QToolButton()
+    def _add_group_button(self, name: str, icon_name: str, categories: set[str]) -> None:
+        button = QToolButton(self)
         button.setCheckable(False)
-        button.setToolTip(category.name)
-        button.setFixedSize(36, 36)
+        button.setText(name.replace("&", "&&"))
+        button.setToolTip(name)
+        button.setMinimumHeight(36)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
 
-        icon = self._load_icon(category.icon_name)
+        icon = self._load_icon(icon_name)
         if icon:
             button.setIcon(icon)
             button.setIconSize(QSize(24, 24))
-            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        else:
-            button.setText(category.name[:2])
-
-        dropdown = CategoryDropdown(category)
-        dropdown.tool_selected.connect(self.tool_selected)
-        dropdown.item_selected.connect(self.item_selected)
-        dropdown.database_search_requested.connect(self.database_search_requested)
-
-        button.clicked.connect(lambda _checked, b=button, d=dropdown: d.show_below(b))
+        menu = QMenu(button)
+        for category, dropdown in zip(self._categories, self._category_dropdowns, strict=True):
+            if category.icon_name not in categories:
+                continue
+            action = menu.addAction(self._load_icon(category.icon_name) or QIcon(), category.name.replace("&", "&&"))
+            assert action is not None
+            action.setData(category.icon_name)
+            # Let the menu close before opening another Qt popup.
+            action.triggered.connect(lambda _checked=False, d=dropdown, b=button:
+                                     QTimer.singleShot(0, lambda: d.show_below(b)))
+        button.setMenu(menu)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
 
         self.addWidget(button)
         self._category_buttons.append(button)
-        self._category_dropdowns.append(dropdown)
+        self._group_icons.append(icon_name)
 
     def _focus_search(self) -> None:
         if self._search_field is not None:
@@ -105,12 +120,18 @@ class CategoryToolbar(QToolBar):
 
     def refresh_theme_icons(self) -> None:
         """Re-tint category buttons + dropdown thumbnails after a theme switch."""
-        for button, category in zip(
-            self._category_buttons, self._categories, strict=True
+        for button, icon_name in zip(
+            self._category_buttons, self._group_icons, strict=True
         ):
-            icon = self._load_icon(category.icon_name)
+            icon = self._load_icon(icon_name)
             if icon is not None:
                 button.setIcon(icon)
+            menu = button.menu()
+            if menu is not None:
+                for action in menu.actions():
+                    icon = self._load_icon(action.data())
+                    if icon is not None:
+                        action.setIcon(icon)
         refresh_icon_thumbnails(self._categories)
         for dropdown in self._category_dropdowns:
             dropdown.refresh_thumbnails()

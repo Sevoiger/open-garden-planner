@@ -1,5 +1,18 @@
 # Progression — fork personnel macOS
 
+## Lisibilité de l’interface — 23 octobre 2026
+
+Trois menus **Formes / Plantes / Aménagements** remplacent les onze boutons de
+catégories, avec les sous-catégories conservées et la recherche sur une ligne
+dédiée. Les filtres végétaux actifs restent contrastés dans les deux thèmes.
+Les boutons de confirmation et de formulaires mesurent leur texte traduit,
+notamment « Ne pas enregistrer », sans changer leurs réponses ni raccourcis.
+
+Les parcours de menus/catalogue/icônes et les formulaires affectés passent,
+ainsi que les contrôles typographiques natifs Cocoa. Les propositions de mode
+simple, de sections de filtres et d’évolution de palette sont seulement décrites.
+Détails et preuves : [revue UI](REVUE_UI_2026-10-23.md).
+
 ## Audit technique des écarts du fork — 23 octobre 2026
 
 Les six points résiduels ont ensuite été traités : copies des points Qt dans le

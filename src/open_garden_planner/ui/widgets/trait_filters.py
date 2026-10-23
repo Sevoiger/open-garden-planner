@@ -26,6 +26,7 @@ class TraitFilters(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("TraitFilters")
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.layer_buttons: dict[str, QToolButton] = {}

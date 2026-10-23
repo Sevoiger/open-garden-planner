@@ -2,11 +2,23 @@
 
 ## Catalogue dans les catégories du haut
 
-Les menus **Trees**, **Shrubs & Hedges**, **Flowers & Perennials** et
-**Vegetables & Herbs** proposent maintenant les fiches du catalogue local,
+La barre présente trois entrées libellées, sur une ligne avec la recherche :
+
+- **Formes** : massifs et surfaces, formes géométriques.
+- **Plantes** : arbres, arbustes et haies, fleurs et vivaces, légumes et aromatiques.
+- **Aménagements** : constructions, mobilier, clôtures et murs, équipements,
+  contenants et supports verticaux. C’est le groupe des éléments non organiques.
+
+Choisir une entrée, puis sa sous-catégorie. Toutes les catégories précédentes
+restent accessibles ; la recherche globale continue de les parcourir ensemble.
+La ligne dédiée reste visible après réouverture d’une ancienne disposition.
+
+Les sous-menus de **Plantes** proposent les fiches du catalogue local,
 avec recherche, filtres et pages de 48 plantes. **Previous plants / Next plants**
 changent de page. **All plants (including unclassified)** donne accès à toutes
 les fiches, y compris celles dont le type n'est pas renseigné.
+Les filtres actifs prennent un fond vert contrasté dans les thèmes clair et
+sombre ; les valeurs choisies ne dépendent pas de la langue affichée.
 
 Par défaut, choisir une fiche, cliquer sur le plan pour fixer son centre, puis
 cliquer sur le bord pour choisir sa taille. La case **Choose size on plan
@@ -512,8 +524,8 @@ lorsque la disposition ou les barres de défilement changent. On peut la masquer
 
 Choisir **View > Language > Français**, puis redémarrer l'application. Le choix
 est mémorisé ; le menu devient **Affichage > Langue** et permet aussi de revenir
-à English ou Deutsch. Le catalogue Qt français couvre les 2 751 textes actifs de
-l'inventaire actuel : menus, panneaux, dialogues, outils de dessin, messages et
+à English ou Deutsch. Le catalogue Qt français couvre les textes actifs de
+l'inventaire : menus, panneaux, dialogues, outils de dessin, messages et
 noms usuels intégrés. Les noms scientifiques, données personnelles et textes
 libres provenant de services en ligne conservent leur contenu d'origine.
 
