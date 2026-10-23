@@ -93,6 +93,13 @@ coordonnées X/Y dans Propriétés respectent aussi ce verrou. Le verrou porte s
 la position ; les autres propriétés restent modifiables. Un calque verrouillé
 doit d'abord être déverrouillé dans Calques.
 
+À la réouverture, les verrous portent sur les positions effectivement sauvegardées.
+Les anciens fichiers dont les coordonnées de verrou ont été perdues sont pris
+en charge sans déplacer les objets : le verrou est rétabli dans le repère chargé.
+La prochaine sauvegarde normale conserve les coordonnées complètes. Le chargement
+ne réécrit pas le fichier personnel et ne rapproche pas automatiquement des formes
+verrouillées dont une autre liaison était déjà violée.
+
 Pendant un glissement, une position verrouillée reste prioritaire sur les
 contraintes d’alignement et les accrochages. Un objet verrouillé sélectionné
 avec un objet mobile reste en place ; le partenaire mobile peut glisser le long

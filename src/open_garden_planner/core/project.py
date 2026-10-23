@@ -1960,8 +1960,24 @@ class ProjectManager(QObject):
         # Parse constraints
         parsed_constraints = None
         if data.constraints:
-            from open_garden_planner.core.constraints import ConstraintGraph
+            from open_garden_planner.core.constraints import ConstraintGraph, ConstraintType
             parsed_constraints = ConstraintGraph.from_list(data.constraints)
+            # Saving folds item.pos() into shape coordinates. FIXED targets use
+            # the loaded item's frame, not the pre-save Qt translation. This
+            # also restores legacy locks whose target coordinates were lost.
+            positions = {}
+            pending = list(deserialized_items)
+            while pending:
+                item = pending.pop()
+                identity = getattr(item, "item_id", None)
+                if identity is not None:
+                    positions[identity] = item.pos()
+                pending.extend(item.childItems())
+            for constraint in parsed_constraints.constraints.values():
+                position = positions.get(constraint.anchor_a.item_id)
+                if constraint.constraint_type == ConstraintType.FIXED and position is not None:
+                    constraint.target_x = position.x()
+                    constraint.target_y = position.y()
 
         # Parse guides
         parsed_guides = None
