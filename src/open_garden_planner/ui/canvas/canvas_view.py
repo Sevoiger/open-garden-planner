@@ -10,6 +10,7 @@ import json
 import logging
 from datetime import date
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 if TYPE_CHECKING:
     from open_garden_planner.core.plant_renderer import PlantCategory
@@ -124,6 +125,8 @@ from open_garden_planner.ui.canvas.items.resize_handle import (
 )
 
 _log = logging.getLogger(__name__)
+# Half a millimetre: solved geometry must meet the 1 mm coincidence indicator.
+_CONSTRAINT_TOLERANCE_CM = 0.05
 
 
 def _strip_item_ids(data: dict[str, Any]) -> dict[str, Any]:
@@ -1327,6 +1330,14 @@ class CanvasView(QGraphicsView):
         if moves or vertex_moves:
             self._canvas_scene.update_dimension_lines()
 
+    def _constraint_reference_pins(self, anchor_a_id: UUID, anchor_b_id: UUID) -> set[UUID]:
+        """Use the same A-moves/B-stays convention for trial and committed solves."""
+        from open_garden_planner.core.constraints import ConstraintType
+
+        a_fixed = any(c.constraint_type == ConstraintType.FIXED and c.anchor_a.item_id == anchor_a_id
+                      for c in self._canvas_scene.constraint_graph.constraints.values())
+        return set() if a_fixed or anchor_a_id == anchor_b_id else {anchor_b_id}
+
     def _execute_constraint_with_solve(
         self, command: AddConstraintCommand, *, conflicts_checked: bool = False
     ) -> None:
@@ -1361,15 +1372,7 @@ class CanvasView(QGraphicsView):
         graph = self._canvas_scene.constraint_graph
         anchor_a_id = command._anchor_a.item_id
         anchor_b_id = command._anchor_b.item_id
-        a_is_fixed = any(
-            c.constraint_type == _CT.FIXED and c.anchor_a.item_id == anchor_a_id
-            for c in graph.constraints.values()
-        )
-        # Intra-object constraints (e.g. ANGLE on a polygon vertex) have both
-        # anchors on the same item.  Pinning B would pin the item itself and
-        # prevent the solver from deforming any of its vertices.
-        intra_object = anchor_a_id == anchor_b_id
-        extra_pinned: set | None = None if (a_is_fixed or intra_object) else {anchor_b_id}
+        extra_pinned = self._constraint_reference_pins(anchor_a_id, anchor_b_id)
 
         # 1. Add the constraint temporarily so the solver can compute moves.
         command.execute()
@@ -1377,7 +1380,8 @@ class CanvasView(QGraphicsView):
             moves, vertex_moves = self._compute_edge_length_constraint_moves(command)
         else:
             moves, vertex_moves = self._compute_constraint_solve_moves(
-                extra_pinned=extra_pinned
+                extra_pinned=extra_pinned,
+                affected_ids=graph.get_connected_component(anchor_a_id),
             )
         # 2. Remove temporarily — we want the official execute() below to do it.
         command.undo()
@@ -1405,7 +1409,7 @@ class CanvasView(QGraphicsView):
             ConstraintType,
         )
         from open_garden_planner.core.measure_snapper import (  # noqa: PLC0415
-            get_anchor_points,
+            get_constraint_anchor_points,
         )
         from open_garden_planner.ui.canvas.items import GardenItemMixin  # noqa: PLC0415
         from open_garden_planner.ui.canvas.items.construction_item import (  # noqa: PLC0415
@@ -1431,6 +1435,7 @@ class CanvasView(QGraphicsView):
             target_y=command._target_y,
         )
 
+        construction_ids: set = set()
         item_positions: dict = {}
         item_map: dict = {}
         anchor_offsets: dict = {}
@@ -1442,10 +1447,12 @@ class CanvasView(QGraphicsView):
             if not (is_garden or is_construction):
                 continue
             uid = item.item_id
+            if is_construction:
+                construction_ids.add(uid)
             item_map[uid] = item
             pos = item.pos()
             item_positions[uid] = (pos.x(), pos.y())
-            for anchor in get_anchor_points(item):
+            for anchor in get_constraint_anchor_points(item, graph.get_item_constraints(uid)):
                 anchor_offsets[(uid, anchor.anchor_type, anchor.anchor_index)] = (
                     anchor.point.x() - pos.x(),
                     anchor.point.y() - pos.y(),
@@ -1460,7 +1467,9 @@ class CanvasView(QGraphicsView):
                 anchor_offsets=anchor_offsets,
                 deformable_items=deformable_items,
                 deformable_vertices=deformable_vertices,
-                tolerance=1.0,
+                tolerance=_CONSTRAINT_TOLERANCE_CM,
+                pinned_items=construction_ids | self._constraint_reference_pins(
+                    command._anchor_a.item_id, command._anchor_b.item_id),
             )
         except Exception:
             return allow_override  # A non-interactive size probe fails closed.
@@ -1544,7 +1553,7 @@ class CanvasView(QGraphicsView):
             True  — the constraint is compatible with the existing system.
             False — adding it would create an irresolvable conflict.
         """
-        from open_garden_planner.core.measure_snapper import get_anchor_points
+        from open_garden_planner.core.measure_snapper import get_constraint_anchor_points
         from open_garden_planner.ui.canvas.items import GardenItemMixin
         from open_garden_planner.ui.canvas.items.construction_item import (
             ConstructionCircleItem,
@@ -1557,11 +1566,8 @@ class CanvasView(QGraphicsView):
         constrained_ids: set = {anchor_a.item_id, anchor_b.item_id}
         if anchor_c is not None:
             constrained_ids.add(anchor_c.item_id)
-        for c in graph.constraints.values():
-            constrained_ids.add(c.anchor_a.item_id)
-            constrained_ids.add(c.anchor_b.item_id)
-            if c.anchor_c is not None:
-                constrained_ids.add(c.anchor_c.item_id)
+        for uid in list(constrained_ids):
+            constrained_ids.update(graph.get_connected_component(uid))
 
         item_positions: dict = {}
         item_map: dict = {}
@@ -1578,7 +1584,7 @@ class CanvasView(QGraphicsView):
                 item_map[uid] = item
                 pos = item.pos()
                 item_positions[uid] = (pos.x(), pos.y())
-                for anchor in get_anchor_points(item):
+                for anchor in get_constraint_anchor_points(item, graph.get_item_constraints(uid)):
                     key = (uid, anchor.anchor_type, anchor.anchor_index)
                     anchor_offsets[key] = (
                         anchor.point.x() - pos.x(),
@@ -1587,8 +1593,8 @@ class CanvasView(QGraphicsView):
                 if is_construction:
                     construction_ids.add(uid)
 
-        if len(item_positions) < 2:  # noqa: PLR2004
-            return True  # Not enough items to form a conflict — optimistically allow
+        if not item_positions:
+            return False
 
         deformable_items, deformable_vertices = self._gather_deformable_info(item_map)
 
@@ -1600,8 +1606,10 @@ class CanvasView(QGraphicsView):
             item_positions=item_positions,
             anchor_offsets=anchor_offsets,
             anchor_c=anchor_c,  # type: ignore[arg-type]
+            tolerance=_CONSTRAINT_TOLERANCE_CM,
             deformable_items=deformable_items,
             deformable_vertices=deformable_vertices,
+            pinned_items=construction_ids | self._constraint_reference_pins(anchor_a.item_id, anchor_b.item_id),
         )
 
     # Coordinate conversion
@@ -2450,7 +2458,7 @@ class CanvasView(QGraphicsView):
             return
 
         from open_garden_planner.core.constraints import ConstraintType
-        from open_garden_planner.core.measure_snapper import get_anchor_points
+        from open_garden_planner.core.measure_snapper import get_constraint_anchor_points
         from open_garden_planner.ui.canvas.items import GardenItemMixin
 
         graph = self._canvas_scene.constraint_graph
@@ -2482,7 +2490,7 @@ class CanvasView(QGraphicsView):
 
             # Get anchor_a's current scene position (post-drag)
             anchor_a_scene = None
-            for anchor in get_anchor_points(item_a):
+            for anchor in get_constraint_anchor_points(item_a, graph.get_item_constraints(item_a.item_id)):
                 if (
                     anchor.anchor_type == c.anchor_a.anchor_type
                     and anchor.anchor_index == c.anchor_a.anchor_index
@@ -2506,7 +2514,7 @@ class CanvasView(QGraphicsView):
 
             # Resolve anchor_b position (always needed)
             pos_b = None
-            for anchor in get_anchor_points(item_b):
+            for anchor in get_constraint_anchor_points(item_b, graph.get_item_constraints(item_b.item_id)):
                 if (
                     anchor.anchor_type == c.anchor_b.anchor_type
                     and anchor.anchor_index == c.anchor_b.anchor_index
@@ -2532,7 +2540,7 @@ class CanvasView(QGraphicsView):
                 if c.anchor_c is None:
                     continue
                 pos_c = None
-                for anchor in get_anchor_points(item_b):
+                for anchor in get_constraint_anchor_points(item_b, graph.get_item_constraints(item_b.item_id)):
                     if (
                         anchor.anchor_type == c.anchor_c.anchor_type
                         and anchor.anchor_index == c.anchor_c.anchor_index
@@ -2600,7 +2608,7 @@ class CanvasView(QGraphicsView):
             List of (item, delta) tuples for constraint-propagated items.
             Empty list if no propagation needed.
         """
-        from open_garden_planner.core.measure_snapper import get_anchor_points
+        from open_garden_planner.core.measure_snapper import get_constraint_anchor_points
         from open_garden_planner.ui.canvas.items import GardenItemMixin
 
         graph = self._canvas_scene.constraint_graph
@@ -2650,7 +2658,7 @@ class CanvasView(QGraphicsView):
             else:
                 item_positions[uid] = (pos.x(), pos.y())
 
-            anchors = get_anchor_points(gitem)
+            anchors = get_constraint_anchor_points(gitem, graph.get_item_constraints(uid))
             for anchor in anchors:
                 key = (uid, anchor.anchor_type, anchor.anchor_index)
                 anchor_offsets[key] = (
@@ -2666,7 +2674,7 @@ class CanvasView(QGraphicsView):
             anchor_offsets=anchor_offsets,
             pinned_items=dragged_ids | construction_ids,
             max_iterations=20,
-            tolerance=1.0,
+            tolerance=_CONSTRAINT_TOLERANCE_CM,
             deformable_items=deformable_items,
             deformable_vertices=deformable_vertices,
         )
@@ -2695,7 +2703,7 @@ class CanvasView(QGraphicsView):
         if not graph.constraints:
             return
 
-        from open_garden_planner.core.measure_snapper import get_anchor_points
+        from open_garden_planner.core.measure_snapper import get_constraint_anchor_points
         from open_garden_planner.ui.canvas.items import GardenItemMixin
         from open_garden_planner.ui.canvas.items.construction_item import (
             ConstructionCircleItem,
@@ -2837,7 +2845,7 @@ class CanvasView(QGraphicsView):
             pos = gitem.pos()
             item_positions[uid] = (pos.x(), pos.y())
 
-            anchors = get_anchor_points(gitem)
+            anchors = get_constraint_anchor_points(gitem, graph.get_item_constraints(uid))
             for anchor in anchors:
                 key = (uid, anchor.anchor_type, anchor.anchor_index)
                 anchor_offsets[key] = (
@@ -2860,7 +2868,7 @@ class CanvasView(QGraphicsView):
             anchor_offsets=anchor_offsets,
             pinned_items=truly_dragged | construction_ids,
             max_iterations=20,
-            tolerance=1.0,
+            tolerance=_CONSTRAINT_TOLERANCE_CM,
             deformable_items=deformable_items,
             deformable_vertices=deformable_vertices,
         )
@@ -3546,6 +3554,7 @@ class CanvasView(QGraphicsView):
     def _compute_constraint_solve_moves(
         self,
         extra_pinned: "set | None" = None,
+        affected_ids: set | None = None,
     ) -> "tuple[list[tuple[QGraphicsItem, QPointF, QPointF]], list[tuple[QGraphicsItem, int, QPointF, QPointF]]]":
         """Run the constraint solver and return position changes.
 
@@ -3560,7 +3569,7 @@ class CanvasView(QGraphicsView):
                 reference anchor) stays fixed while item A moves to satisfy the
                 new constraint.
         """
-        from open_garden_planner.core.measure_snapper import get_anchor_points
+        from open_garden_planner.core.measure_snapper import get_constraint_anchor_points
         from open_garden_planner.ui.canvas.items import GardenItemMixin
         from open_garden_planner.ui.canvas.items.construction_item import (
             ConstructionCircleItem,
@@ -3578,6 +3587,9 @@ class CanvasView(QGraphicsView):
             if c.anchor_c is not None:
                 constrained_ids.add(c.anchor_c.item_id)
 
+        if affected_ids is not None:
+            constrained_ids.intersection_update(affected_ids)
+
         item_map: dict = {}
         item_positions: dict = {}
         anchor_offsets: dict = {}
@@ -3593,7 +3605,7 @@ class CanvasView(QGraphicsView):
                 item_map[uid] = item
                 pos = item.pos()
                 item_positions[uid] = (pos.x(), pos.y())
-                for anchor in get_anchor_points(item):
+                for anchor in get_constraint_anchor_points(item, graph.get_item_constraints(uid)):
                     key = (uid, anchor.anchor_type, anchor.anchor_index)
                     anchor_offsets[key] = (
                         anchor.point.x() - pos.x(),
@@ -3615,7 +3627,7 @@ class CanvasView(QGraphicsView):
             anchor_offsets=anchor_offsets,
             pinned_items=construction_ids | (extra_pinned or set()),
             max_iterations=20,
-            tolerance=1.0,
+            tolerance=_CONSTRAINT_TOLERANCE_CM,
             deformable_items=deformable_items,
             deformable_vertices=deformable_vertices,
         )

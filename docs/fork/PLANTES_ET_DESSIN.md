@@ -100,6 +100,21 @@ d’un bord auquel il est contraint. Déplacer un objet ne remet pas à leur anc
 position cible d’autres objets verrouillés hors du glissement. Pour déplacer
 volontairement un objet fixe, utiliser d’abord **Déverrouiller la position**.
 
+Les contraintes **Coïncidence** et **Sur le côté** peuvent se combiner : un même
+point contraint sur deux côtés sécants rejoint leur intersection. Deux milieux
+de côtés différents d’un rectangle peuvent aussi le placer dans un coin sans
+changer ses dimensions. Le panneau vérifie la distance au côté, et non la distance
+à son premier sommet. Les traits des rectangles visent le côté choisi ; un bord
+polygonal conserve son identité par son numéro même s’il change de direction.
+
+La création et son contrôle de compatibilité utilisent les mêmes références
+immobiles : A se place par rapport à B ; si A est verrouillé, B peut être ajusté.
+Les lignes et cercles de construction restent fixes. Une contrainte déjà violée
+dans un autre réseau indépendant ne bloque pas une nouvelle liaison et n’est pas
+réparée par cet ajout. Les contrôles utilisent les positions après résolution,
+y compris après translation d’un polygone. La résolution interactive vise une
+précision de 0,5 mm, sous le seuil de 1 mm de l’indicateur de coïncidence.
+
 La sélection d’une **serre** n’ouvre pas le panneau **Rotation des cultures**.
 Ce panneau reste disponible à la sélection des parcelles de culture.
 

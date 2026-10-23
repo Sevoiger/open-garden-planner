@@ -194,3 +194,21 @@ def test_projected_vertex_is_feasible_and_preserves_input(desired, qtbot):
     assert math.dist(projected, positions[circle]) == pytest.approx(100, abs=1e-4)
     assert math.dist(projected, desired) < math.dist(vertices[polygon][0], desired)
     assert (positions, vertices, graph.constraints) == before
+
+
+@pytest.mark.parametrize('with_independent_network', [False, True])
+def test_refinement_ignores_other_satisfied_components(with_independent_network, qtbot):
+    a, b, c, d, e = (uuid4() for _ in range(5))
+    graph = ConstraintGraph()
+    graph.add_constraint(AnchorRef(a, AnchorType.CENTER), AnchorRef(b, AnchorType.CENTER), 100)
+    for uid, x in ((b, 0), (c, 199.99)):
+        ref = AnchorRef(uid, AnchorType.CENTER)
+        graph.add_constraint(ref, ref, 0, constraint_type=ConstraintType.FIXED, target_x=x, target_y=0)
+    positions = {a: (100., 100.), b: (0., 0.), c: (199.99, 0.)}
+    if with_independent_network:
+        positions.update({d: (500., 500.), e: (600., 500.)})
+        graph.add_constraint(AnchorRef(d, AnchorType.CENTER), AnchorRef(e, AnchorType.CENTER), 100)
+    before = copy.deepcopy((graph.constraints, graph._adjacency, positions))
+    assert graph.validate_constraint(AnchorRef(a, AnchorType.CENTER), AnchorRef(c, AnchorType.CENTER),
+                                      100, ConstraintType.DISTANCE, positions, {}, tolerance=.05)
+    assert (graph.constraints, graph._adjacency, positions) == before
