@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from open_garden_planner.app.settings import get_settings
+from open_garden_planner.app.settings import active_language, get_settings
 from open_garden_planner.core.frost_dates import parse_frost
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.models.plant_data import species_key as _species_key
@@ -117,7 +117,7 @@ _STEP_COMMIT_DEBOUNCE_MS = 600
 
 def _month_abbr(month_1: int) -> str:
     """Return the locale-aware short month name (1-indexed)."""
-    return QLocale().monthName(month_1, QLocale.FormatType.ShortFormat)
+    return QLocale(active_language()).monthName(month_1, QLocale.FormatType.ShortFormat)
 
 _CALENDAR_FIELDS = (
     "indoor_sow_start", "indoor_sow_end",
@@ -379,10 +379,11 @@ class _DashboardPanel(QFrame):
         lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout.addWidget(lbl)
 
-        date_lbl = QLabel(task.task_date.strftime("%b %d"))
+        date = task.task_date
+        date_lbl = QLabel(QLocale(active_language()).toString(QDate(date.year, date.month, date.day), "d MMM"))
         date_lbl.setStyleSheet("font-size: 8pt;")
         date_lbl.setProperty("hint", True)
-        date_lbl.setFixedWidth(44)
+        date_lbl.setFixedWidth(64)
         layout.addWidget(date_lbl)
 
         goto_btn = QPushButton()
@@ -808,6 +809,7 @@ class _DetailPanel(QFrame):
             row_layout.addWidget(lbl)
 
             start_edit = QDateEdit()
+            start_edit.setLocale(QLocale(active_language()))
             start_edit.setCalendarPopup(True)
             start_edit.setDisplayFormat("dd MMM")
             start_edit.setFixedWidth(80)
@@ -819,6 +821,7 @@ class _DetailPanel(QFrame):
                 dash.setStyleSheet("font-size: 8pt;")
                 row_layout.addWidget(dash)
                 end_edit = QDateEdit()
+                end_edit.setLocale(QLocale(active_language()))
                 end_edit.setCalendarPopup(True)
                 end_edit.setDisplayFormat("dd MMM")
                 end_edit.setFixedWidth(80)

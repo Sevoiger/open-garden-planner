@@ -1475,7 +1475,8 @@ class VertexHandle(QGraphicsRectItem):
             min_count = MINIMUM_VERTICES
             if hasattr(self._parent_item, '_get_minimum_vertex_count'):
                 min_count = self._parent_item._get_minimum_vertex_count()
-            delete_action.setToolTip(f"Cannot delete: minimum {min_count} vertices required")
+            delete_action.setToolTip(_("VertexHandle", "Cannot delete: minimum {count} vertices required")
+                                     .format(count=min_count))
 
         action = menu.exec(event.screenPos())
 

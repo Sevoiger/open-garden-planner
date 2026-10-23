@@ -204,6 +204,13 @@
       "symbol": "labels",
       "selector": "values",
       "scope": "_season_label"
+    },
+    "weather_conditions": {
+      "file": "services/weather_service.py",
+      "context": "WeatherConditions",
+      "symbol": "_WMO_CODE_MAP",
+      "selector": "first",
+      "scope": ""
     }
   },
   "lookups": [
@@ -503,6 +510,15 @@
       "context": "Permaculture",
       "sources": [
         "traits"
+      ]
+    },
+    {
+      "file": "ui/widgets/weather_widget.py",
+      "scope": "weather_description",
+      "expression": "description",
+      "context": "WeatherConditions",
+      "sources": [
+        "weather_conditions"
       ]
     }
   ],

@@ -9,6 +9,11 @@ The personal fork registers English, Deutsch and Français. Select a language in
 View > Language (Affichage > Langue in French), then restart the application.
 On macOS, use `.venv/bin/python` for the commands below.
 
+Weather conditions are translated at the widget boundary from the shared WMO
+description table. Calendar weekday/month labels, task dates and propagation
+date editors use the selected application language, independently of the system
+locale. Weather caches keep their numeric codes and ISO dates.
+
 Use the locked Python environment from the development setup. From the repository root:
 
 ```powershell
@@ -52,6 +57,8 @@ Declarations cover object/path styles, descriptor labels, gallery/plant names, p
 errors, command fragments and other bounded helper inputs. When adding a table member,
 the inventory grows automatically. A new unsupported expression requires an explicit
 source binding and an extraction/mutation test, not a file-wide exemption.
+The `first` selector extracts the first field of each row in a sequence or dictionary
+of tuples; weather descriptions use this to exclude the adjacent icon identifiers.
 Declarations select complete table values or display-bearing constructor fields, including
 plain strings without markers. Dynamic consumers retain their disambiguation comments.
 

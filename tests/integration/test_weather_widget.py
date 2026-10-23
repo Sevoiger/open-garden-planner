@@ -18,6 +18,64 @@ from open_garden_planner.services.weather_service import DayForecast, WeatherFor
 from open_garden_planner.ui.widgets.weather_widget import WeatherWidget
 
 
+@pytest.mark.parametrize('language,conditions,weekday,month', [
+    ('fr', ['Ciel dégagé', 'Partiellement nuageux', 'Brumeux', 'Pluvieux', 'Neigeux',
+            'Averses', 'Averses de neige', 'Orage', 'Inconnu'], 'sam.', 'févr.'),
+    ('de', ['Klarer Himmel', 'Teilweise bewölkt', 'Neblig', 'Regnerisch', 'Schneefall',
+            'Schauer', 'Schneeschauer', 'Gewitter', 'Unbekannt'], 'Sa.', 'Feb.'),
+])
+def test_forecast_uses_app_language_despite_english_system(qtbot, qapp, language, conditions, weekday, month):
+    from pathlib import Path
+
+    from PyQt6.QtCore import QLocale, QTranslator
+    from PyQt6.QtGui import QColor, QPixmap
+    from PyQt6.QtWidgets import QDateEdit, QLabel
+
+    from open_garden_planner.app.settings import get_settings
+    from open_garden_planner.ui.dialogs.calibration_dialog import CalibrationDialog
+    from open_garden_planner.ui.views.planting_calendar_view import (
+        _DashboardPanel,
+        _DashboardTask,
+        _DetailPanel,
+        _month_abbr,
+    )
+
+    translator = QTranslator()
+    catalogs = Path(__file__).resolve().parents[2] / 'src/open_garden_planner/resources/translations'
+    assert translator.load(str(catalogs / f'open_garden_planner_{language}.qm'))
+    previous_locale = QLocale()
+    QLocale.setDefault(QLocale('en_US'))
+    qapp.installTranslator(translator)
+    get_settings().language = language
+    try:
+        widget = WeatherWidget()
+        qtbot.addWidget(widget)
+        forecast = _make_forecast(9)
+        for day, code in zip(forecast.days, (0, 2, 45, 61, 71, 80, 85, 95, 999), strict=True):
+            day.weathercode = code
+        widget._on_fetch_success(forecast)
+        assert [widget._table.item(row, 1).text() for row in range(9)] == conditions
+        assert widget._day_cells[0]._day_lbl.text() == weekday
+        assert widget._day_cells[0].toolTip() == conditions[0]
+        assert _month_abbr(2) == month
+        dashboard = _DashboardPanel()
+        qtbot.addWidget(dashboard)
+        date = datetime(2024, 2, 21).date()
+        task = _DashboardTask('task', 'harvest', 'Plant', date, date, 'today', 'plant')
+        row = dashboard._make_task_row(task, {}, QColor('green'))
+        qtbot.addWidget(row)
+        assert f'21 {month}' in [label.text() for label in row.findChildren(QLabel)]
+        detail = _DetailPanel()
+        qtbot.addWidget(detail)
+        assert all(field.locale().name().startswith(language) for field in detail.findChildren(QDateEdit))
+        calibration = CalibrationDialog(QPixmap(20, 20))
+        qtbot.addWidget(calibration)
+        assert 'e.g.' not in calibration._distance_input.placeholderText()
+    finally:
+        qapp.removeTranslator(translator)
+        QLocale.setDefault(previous_locale)
+
+
 def _make_forecast(days: int = 16) -> WeatherForecast:
     """Create a dummy forecast with the requested number of days."""
     base_date = datetime(2024, 6, 1, tzinfo=UTC)
