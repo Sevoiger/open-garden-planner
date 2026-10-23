@@ -3447,175 +3447,175 @@ Utiliser 0.1 pour un DXF en mm, 100 pour un DXF en mètres.</translation>
     <context>
         <name>EventEditor</name>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="50" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="52" />
             <source>Amendment</source>
             <translation>Amendement</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="109" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="111" />
             <source>Application method:</source>
             <translation>Méthode d’application :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="148" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="150" />
             <source>Attach photo or document</source>
             <translation>Joindre une photo ou un document</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="132" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="134" />
             <source>Attach photo or document…</source>
             <translation>Joindre une photo ou un document…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="168" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="170" />
             <source>Attachment is missing.</source>
             <translation>Pièce jointe introuvable.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="129" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="131" />
             <source>Attachments…</source>
             <translation>Pièces jointes…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="201" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="203" />
             <source>Check the entered values: {error}</source>
             <translation>Vérifier les valeurs saisies : {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="84" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="86" />
             <source>Completed</source>
             <translation>Terminé</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="110" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="112" />
             <source>Depth or thickness (cm):</source>
             <translation>Profondeur ou épaisseur (cm) :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="94" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="96" />
             <source>Description:</source>
             <translation>Description :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="50" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="52" />
             <source>Fertilisation</source>
             <translation>Fertilisation</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="146" />
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="68" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="148" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="70" />
             <source>Intervention</source>
             <translation>Intervention</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="159" />
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="171" />
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="200" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="161" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="173" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="202" />
             <source>Invalid garden data</source>
             <translation>Données du jardin non valides</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="108" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="110" />
             <source>Material or product:</source>
             <translation>Matériau ou produit :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="51" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="53" />
             <source>Mulching</source>
             <translation>Paillage</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="53" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="55" />
             <source>Observation</source>
             <translation>Observation</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="52" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="54" />
             <source>Occasional watering</source>
             <translation>Arrosage ponctuel</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="91" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="93" />
             <source>Occurrence:</source>
             <translation>Date ou période :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="133" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="135" />
             <source>Open attachment</source>
             <translation>Ouvrir la pièce jointe</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="83" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="85" />
             <source>Planned</source>
             <translation>Prévu</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="49" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="51" />
             <source>Planting</source>
             <translation>Plantation</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="52" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="54" />
             <source>Pruning</source>
             <translation>Taille</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="108" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="110" />
             <source>Quantity (optional):</source>
             <translation>Quantité (facultative) :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="49" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="51" />
             <source>Relocation</source>
             <translation>Déplacement</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="53" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="55" />
             <source>Removal or loss</source>
             <translation>Suppression ou perte</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="134" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="136" />
             <source>Remove attachment reference</source>
             <translation>Retirer la référence à la pièce jointe</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="146" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="148" />
             <source>Save the project before attaching files.</source>
             <translation>Enregistrer le projet avant de joindre des fichiers.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="51" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="53" />
             <source>Sowing</source>
             <translation>Semis</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="86" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="88" />
             <source>Status:</source>
             <translation>État :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="105" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="107" />
             <source>Targets:</source>
             <translation>Cibles :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="110" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="112" />
             <source>Treated area (m²):</source>
             <translation>Surface traitée (m²) :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="81" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="83" />
             <source>Type:</source>
             <translation>Type :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="109" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="111" />
             <source>Unit:</source>
             <translation>Unité :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="90" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="92" />
             <source>YYYY-MM-DD, YYYY-MM, autumn 2023, YYYY, or blank</source>
             <translation>AAAA-MM-JJ, AAAA-MM, automne 2023, AAAA ou vide</translation>
         </message>
@@ -4931,262 +4931,277 @@ Utiliser 0.1 pour un DXF en mm, 100 pour un DXF en mètres.</translation>
     <context>
         <name>GardenMemoryDialog</name>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="291" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="304" />
             <source>Add intervention…</source>
             <translation>Ajouter une intervention…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="354" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="407" />
             <source>All garden interventions</source>
             <translation>Toutes les interventions du jardin</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="273" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="286" />
             <source>All intervention types</source>
             <translation>Tous les types d’intervention</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="249" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="262" />
             <source>Approximate count (optional):</source>
             <translation>Nombre approximatif (facultatif) :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="416" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="473" />
             <source>Check the entered values: {error}</source>
             <translation>Vérifier les valeurs saisies : {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="478" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="543" />
             <source>Choose an export file different from the open project.</source>
             <translation>Choisir un fichier d’export différent du projet ouvert.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="496" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="561" />
             <source>Choose restoration parent folder</source>
             <translation>Choisir le dossier parent de restauration</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="452" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="517" />
             <source>Completed</source>
             <translation>Terminé</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="243" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="256" />
             <source>Condition:</source>
             <translation>État :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="240" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="253" />
             <source>Confirmed dead</source>
             <translation>Mort confirmée</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="293" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="306" />
             <source>Delete intervention</source>
             <translation>Supprimer l’intervention</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="239" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="232" />
+            <source>Displayed layers…</source>
+            <translation>Calques affichés…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="252" />
             <source>Dormant</source>
             <translation>En dormance</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="292" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="305" />
             <source>Edit intervention…</source>
             <translation>Modifier l’intervention…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="251" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="264" />
             <source>Explicit zone:</source>
             <translation>Zone explicite :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="306" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="319" />
             <source>Export complete JSON…</source>
             <translation>Exporter le JSON complet…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="472" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="537" />
             <source>Export garden records</source>
             <translation>Exporter les données du jardin</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="307" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="320" />
             <source>Export tracking CSV…</source>
             <translation>Exporter le suivi en CSV…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="303" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="316" />
             <source>Export…</source>
             <translation>Exporter…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="282" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="295" />
             <source>From YYYY-MM-DD</source>
             <translation>Du AAAA-MM-JJ</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="214" />
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="470" />
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="501" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="218" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="535" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="566" />
             <source>Garden records</source>
             <translation>Données du jardin</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="238" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="251" />
             <source>In place</source>
             <translation>En place</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="233" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="246" />
             <source>Individual</source>
             <translation>Individu</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="516" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="581" />
             <source>Intervention</source>
             <translation>Intervention</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="415" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="472" />
             <source>Invalid garden data</source>
             <translation>Données du jardin non valides</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="231" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="244" />
             <source>Label:</source>
             <translation>Étiquette :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="389" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="443" />
             <source>No explicit zone</source>
             <translation>Aucune zone explicite</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="254" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="362" />
+            <source>No layer</source>
+            <translation>Sans calque</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="267" />
             <source>Notes:</source>
             <translation>Notes :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="246" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="259" />
             <source>Partial dates retain their precision. Search intervals use conventional calendar boundaries.</source>
             <translation>Les dates partielles conservent leur précision. Les intervalles de recherche utilisent les limites conventionnelles du calendrier.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="238" />
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="452" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="251" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="517" />
             <source>Planned</source>
             <translation>Prévu</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="233" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="246" />
             <source>Planting group</source>
             <translation>Groupe de plantation</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="247" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="260" />
             <source>Planting period:</source>
             <translation>Période de plantation :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="397" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="453" />
             <source>Plantings in this zone…</source>
             <translation>Plantations de cette zone…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="308" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="321" />
             <source>Portable backup…</source>
             <translation>Sauvegarde portable…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="320" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="333" />
             <source>Redo</source>
             <translation>Rétablir</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="241" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="254" />
             <source>Removed or moved</source>
             <translation>Retiré ou déplacé</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="312" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="325" />
             <source>Restore backup…</source>
             <translation>Restaurer une sauvegarde…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="492" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="557" />
             <source>Restore garden backup</source>
             <translation>Restaurer une sauvegarde du jardin</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="502" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="567" />
             <source>Restored project: {path}
 Open this file using File &gt; Open.</source>
             <translation>Projet restauré : {path}
 Ouvrir ce fichier via Fichier &gt; Ouvrir.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="261" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="274" />
             <source>Save card</source>
             <translation>Enregistrer la fiche</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="470" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="535" />
             <source>Save the project before creating a portable backup.</source>
             <translation>Enregistrer le projet avant de créer une sauvegarde portable.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="270" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="283" />
             <source>Search interventions…</source>
             <translation>Rechercher des interventions…</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="516" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="581" />
             <source>Select a target on the left first.</source>
             <translation>Sélectionner d’abord une cible à gauche.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="283" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="389" />
+            <source>Show all layers</source>
+            <translation>Afficher tous les calques</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="296" />
             <source>To YYYY-MM-DD</source>
             <translation>Au AAAA-MM-JJ</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="236" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="249" />
             <source>Tracked object:</source>
             <translation>Objet suivi :</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="239" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="252" />
             <source>Uncertain condition</source>
             <translation>État incertain</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="319" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="332" />
             <source>Undo</source>
             <translation>Annuler</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="451" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="516" />
             <source>Unknown date</source>
             <translation>Date inconnue</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="245" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="258" />
             <source>YYYY-MM-DD, YYYY-MM, autumn 2023, YYYY, or blank</source>
             <translation>AAAA-MM-JJ, AAAA-MM, automne 2023, AAAA ou vide</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="493" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="558" />
             <source>ZIP archives (*.zip)</source>
             <translation>Archives ZIP (*.zip)</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="234" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="247" />
             <source>Zone</source>
             <translation>Zone</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="450" />
+            <location filename="../../ui/dialogs/garden_memory_dialog.py" line="515" />
             <source>Zone: </source>
             <translation>Zone : </translation>
         </message>

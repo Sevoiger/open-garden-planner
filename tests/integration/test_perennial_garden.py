@@ -454,3 +454,94 @@ def test_tracking_projection_excludes_decorations_and_includes_group_children(ga
     full = garden_objects(pm.snapshot_dict(scene))
     light = garden_objects(dialog._snapshot())
     assert {o['item_id'] for o in light} == {o['item_id'] for o in full} == {str(bed.item_id), str(plant.item_id)}
+
+
+def test_record_layer_filter_is_remembered_without_changing_plan(garden, qtbot, tmp_path):
+    from PyQt6.QtCore import Qt
+
+    from open_garden_planner.models.layer import Layer
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+
+    scene, pm, commands, service, bed, plant = garden
+    decor = Layer(name='Fonds et bâtiments')
+    scene.add_layer(decor)
+    bed.layer_id = decor.id
+    plant.layer_id = scene.layers[0].id
+    scene.layers[0].name = 'Plantations'
+    dialog = GardenMemoryDialog(service, str(bed.item_id))
+    qtbot.addWidget(dialog)
+    assert any('Fonds et bâtiments' in dialog.targets.item(i).text()
+               for i in range(dialog.targets.count()))
+    before = pm.snapshot_dict(scene)
+    depth = commands.undo_depth
+    action = next(a for a in dialog.layer_filter_menu.actions() if a.data() == str(decor.id))
+    action.trigger()
+    ids = {dialog.targets.item(i).data(Qt.ItemDataRole.UserRole)
+           for i in range(dialog.targets.count())}
+    assert ids == {None, str(plant.item_id)}
+    assert dialog.target_id is None
+    assert {choice['id'] for choice in dialog._target_choices()} == {str(plant.item_id)}
+    after = pm.snapshot_dict(scene)
+    before.pop('metadata', None)
+    after.pop('metadata', None)
+    assert after == before
+    assert commands.undo_depth == depth
+    assert bed.isVisible()
+    # Stable layer IDs preserve the preference through an actual save/reopen.
+    path = tmp_path / 'filtered.ogp'
+    pm.save(scene, path)
+    pm.load(scene, path)
+    reopened = GardenMemoryDialog(service)
+    qtbot.addWidget(reopened)
+    assert reopened.targets.count() == 2
+    reopened.layer_filter_menu.actions()[0].trigger()
+    assert reopened.targets.count() == 3
+    assert not reopened._hidden_layers
+
+
+def test_record_layer_filter_keeps_mixed_and_deleted_target_history(garden, qtbot):
+    from PyQt6.QtCore import Qt
+
+    from open_garden_planner.models.layer import Layer
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor, GardenMemoryDialog
+
+    scene, pm, commands, service, bed, plant = garden
+    hidden_layer = Layer(name='Fond')
+    scene.add_layer(hidden_layer)
+    bed.layer_id = hidden_layer.id
+    plant.layer_id = scene.layers[0].id
+    hidden = service.add_event(fields(bed), 'hidden')['event_id']
+    mixed_fields = fields(bed)
+    mixed_fields['targets'].extend(fields(plant)['targets'])
+    mixed = service.add_event(mixed_fields, 'mixed')['event_id']
+    deleted = CircleItem(700, 700, 20, object_type=ObjectType.PERENNIAL)
+    deleted.name = 'Ancienne plantation'
+    scene.addItem(deleted)
+    deleted_event = service.add_event(fields(deleted), 'deleted')['event_id']
+    scene.removeItem(deleted)
+    service.set_card(str(plant.item_id), {'zone_id': str(bed.item_id)})
+    before = pm.garden_memory
+    dialog = GardenMemoryDialog(service)
+    qtbot.addWidget(dialog)
+    action = next(a for a in dialog.layer_filter_menu.actions() if a.data() == str(hidden_layer.id))
+    action.trigger()
+    visible = {dialog.events.item(i).data(Qt.ItemDataRole.UserRole)
+               for i in range(dialog.events.count())}
+    assert visible == {mixed, deleted_event} and hidden not in visible
+    # Editing a mixed event retains already selected hidden targets.
+    event = pm.garden_memory['events'][mixed]
+    editor = EventEditor(event['targets'], event, choices=dialog._target_choices())
+    qtbot.addWidget(editor)
+    checked = {editor.target_list.item(i).data(Qt.ItemDataRole.UserRole)['id']
+               for i in range(editor.target_list.count())
+               if editor.target_list.item(i).checkState() == Qt.CheckState.Checked}
+    assert checked == {str(bed.item_id), str(plant.item_id)}
+    for index in range(dialog.targets.count()):
+        row = dialog.targets.item(index)
+        if row.data(Qt.ItemDataRole.UserRole) == str(plant.item_id):
+            dialog.targets.setCurrentItem(row)
+            break
+    inherited = {dialog.events.item(i).data(Qt.ItemDataRole.UserRole)
+                 for i in range(dialog.events.count())}
+    assert inherited == {mixed, hidden}
+    assert pm.garden_memory == before

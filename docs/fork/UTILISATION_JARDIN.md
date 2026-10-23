@@ -27,6 +27,19 @@ existantes de l’objet. Le nom « bulbes à identifier » convient. Choisir
 Individual, Planting group ou Zone, l’état et éventuellement une quantité.
 **Save card** constitue une seule opération annulable. La quantité reste facultative.
 
+La liste indique aussi le **calque** de chaque objet. Dans **Calques affichés…**,
+décocher par exemple « Fond » ou « Bâtiments » pour retirer leurs formes de la
+liste et des choix de cibles pour les nouvelles interventions. **Afficher tous
+les calques** permet de les retrouver. Ce filtre est mémorisé sur ce Mac par
+identifiant de calque, y compris après réouverture du plan ; il reste indépendant
+de la visibilité des calques sur le dessin et ne modifie pas le fichier `.ogp`.
+
+Le journal général masque les interventions dont toutes les cibles appartiennent
+à des calques décochés. Une intervention commune à une cible affichée reste visible,
+ainsi que l’historique d’objets supprimés. La fiche d’une plantation conserve les
+interventions héritées de sa zone, même si le calque de la zone est décoché.
+Les exports restent complets ; aucune fiche ni intervention n’est supprimée.
+
 Le champ de date accepte `2023-10-21`, `2023-10`, `Automne 2023`, `2023`, ou
 une case vide pour une date inconnue. Le libellé et la précision sont conservés.
 `Herbst 2023` et `autumn 2023` sont également acceptés. Une date partielle ne
