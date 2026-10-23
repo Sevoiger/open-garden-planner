@@ -32,7 +32,9 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.app.paths import default_dialog_dir, default_save_path
+from open_garden_planner.app.settings import create_qsettings
 from open_garden_planner.core.garden_memory import GardenMemoryService
+from open_garden_planner.core.object_types import get_translated_display_name
 from open_garden_planner.models.garden_memory import optional_number, period
 from open_garden_planner.services.garden_queries import (
     BED_TYPES,
@@ -211,6 +213,8 @@ class GardenMemoryDialog(ResponsiveDialog):
         super().__init__(parent)
         self.service = service
         self.target_id = target_id
+        self._settings = create_qsettings()
+        self._hidden_layers = set(self._settings.value("garden_records/hidden_layers", [], type=list))
         self.setWindowTitle(self.tr("Garden records"))
         self.resize(980, 700)
         layout = QVBoxLayout(self)
@@ -222,7 +226,16 @@ class GardenMemoryDialog(ResponsiveDialog):
         self.targets.setMaximumWidth(280)
         self.targets.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self.targets.itemSelectionChanged.connect(self._target_changed)
-        split.addWidget(self.targets)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        self.layer_filter_button = QPushButton(self.tr("Displayed layers…"))
+        self.layer_filter_button.setObjectName("garden_record_layers")
+        self.layer_filter_menu = QMenu(self)
+        self.layer_filter_button.setMenu(self.layer_filter_menu)
+        left_layout.addWidget(self.layer_filter_button)
+        left_layout.addWidget(self.targets)
+        split.addWidget(left)
         body = QWidget()
         right = QVBoxLayout(body)
         right.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
@@ -338,25 +351,66 @@ class GardenMemoryDialog(ResponsiveDialog):
         )
 
         objects = []
+        layers = {str(layer.id): layer.name for layer in self.service.scene.layers}
         for item in reversed(self.service.scene.items()):
             if isinstance(item, (RectangleItem, EllipseItem, CircleItem, PolygonItem, PolylineItem)) and item.object_type is not None:
                 objects.append({
                     "item_id": str(item.item_id), "object_type": item.object_type.name,
                     "name": item.name,
+                    "display_type": get_translated_display_name(item.object_type),
+                    "layer_id": str(item.layer_id) if item.layer_id is not None else "",
+                    "layer_name": layers.get(str(item.layer_id), self.tr("No layer")),
                     "metadata": {key: deepcopy(item.metadata[key])
                                  for key in ("garden_tracking", "plant_instance") if key in item.metadata},
                 })
         return {"objects": objects, "garden_memory": self.service.project.garden_memory}
 
+    def _visible_objects(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        return [obj for obj in garden_objects(snapshot)
+                if obj.get("layer_id", "") not in self._hidden_layers]
+
+    def _set_layer_shown(self, layer_id: str, shown: bool) -> None:
+        if shown:
+            self._hidden_layers.discard(layer_id)
+        else:
+            self._hidden_layers.add(layer_id)
+        self._settings.setValue("garden_records/hidden_layers", sorted(self._hidden_layers))
+        self._reload_targets()
+
+    def _show_all_layers(self) -> None:
+        current_layers = {str(layer.id) for layer in self.service.scene.layers}
+        current_layers.update(obj["layer_id"] for obj in garden_objects(self._snapshot()))
+        self._hidden_layers.difference_update(current_layers)
+        self._settings.setValue("garden_records/hidden_layers", sorted(self._hidden_layers))
+        self._reload_targets()
+
+    def _reload_layer_menu(self, snapshot: dict[str, Any]) -> None:
+        self.layer_filter_menu.clear()
+        show_all = self.layer_filter_menu.addAction(self.tr("Show all layers"))
+        show_all.triggered.connect(self._show_all_layers)
+        self.layer_filter_menu.addSeparator()
+        layers = {str(layer.id): layer.name for layer in self.service.scene.layers}
+        for obj in garden_objects(snapshot):
+            layers.setdefault(obj["layer_id"], obj["layer_name"])
+        for identity, name in layers.items():
+            action = self.layer_filter_menu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(identity not in self._hidden_layers)
+            action.setData(identity)
+            action.triggered.connect(lambda checked, layer_id=identity: self._set_layer_shown(layer_id, checked))
+
     def _reload_targets(self) -> None:
+        snapshot = self._snapshot()
+        self._reload_layer_menu(snapshot)
         self.targets.blockSignals(True)
         self.targets.clear()
         all_row = QListWidgetItem(self.tr("All garden interventions"))
         all_row.setData(Qt.ItemDataRole.UserRole, None)
         self.targets.addItem(all_row)
         current = all_row
-        for obj in garden_objects(self._snapshot()):
-            row = QListWidgetItem(obj.get("name") or obj["object_type"])
+        for obj in self._visible_objects(snapshot):
+            name = obj.get("name") or obj["display_type"]
+            row = QListWidgetItem(name + " — " + obj["layer_name"])
             row.setToolTip(row.text())
             row.setData(Qt.ItemDataRole.UserRole, obj["item_id"])
             self.targets.addItem(row)
@@ -393,11 +447,14 @@ class GardenMemoryDialog(ResponsiveDialog):
             self.zone_combo.setCurrentIndex(max(0, self.zone_combo.findData(card.get("zone_id", ""))))
         self.zone_members.clear()
         if self.target_id:
-            record = garden_record(self._snapshot(), self.target_id)
+            snapshot = self._snapshot()
+            record = garden_record(snapshot, self.target_id)
+            visible_ids = {obj["item_id"] for obj in self._visible_objects(snapshot)}
             self.zone_members.addItem(self.tr("Plantings in this zone…"), None)
             for card in record["plantings"]:
-                self.zone_members.addItem(card["name"] or card["item_id"], card["item_id"])
-            self.zone_members.setVisible(bool(record["plantings"]))
+                if card["item_id"] in visible_ids:
+                    self.zone_members.addItem(card["name"] or card["item_id"], card["item_id"])
+            self.zone_members.setVisible(self.zone_members.count() > 1)
         else:
             self.zone_members.hide()
         self._refresh_events()
@@ -438,6 +495,8 @@ class GardenMemoryDialog(ResponsiveDialog):
             entries = search_events(snap, event_type=self.filter_type.currentData(),
                                     since=self.since_edit.text() or None, until=self.until_edit.text() or None,
                                     text=self.search_edit.text())
+            hidden_ids = {obj["item_id"] for obj in garden_objects(snap)
+                          if obj.get("layer_id", "") in self._hidden_layers}
             direct, inherited = None, set()
             if self.target_id:
                 record = garden_record(snap, self.target_id)
@@ -445,6 +504,12 @@ class GardenMemoryDialog(ResponsiveDialog):
                 inherited = {e["id"] for e in record["zone_events"]}
             self.events.clear()
             for entry in entries:
+                # Preserve mixed-target events and the history of deleted items.
+                # An explicitly selected planting still inherits its zone history.
+                if not self.target_id and entry["targets"] and all(
+                    target["id"] in hidden_ids for target in entry["targets"]
+                ):
+                    continue
                 if direct is not None and entry["id"] not in direct | inherited:
                     continue
                 prefix = self.tr("Zone: ") if entry["id"] in inherited else ""
@@ -509,7 +574,7 @@ class GardenMemoryDialog(ResponsiveDialog):
 
     def _target_choices(self) -> list[dict[str, str]]:
         return [{"id": o["item_id"], "name": o.get("name") or o["object_type"]}
-                for o in garden_objects(self._snapshot())]
+                for o in self._visible_objects(self._snapshot())]
 
     def _add_event(self) -> None:
         if not self.target_id:
