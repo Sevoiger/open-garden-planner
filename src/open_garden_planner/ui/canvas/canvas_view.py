@@ -2434,8 +2434,6 @@ class CanvasView(QGraphicsView):
         for c in graph.constraints.values():
             if c.constraint_type != ConstraintType.FIXED:
                 continue
-            if c.target_x is None or c.target_y is None:
-                continue
             item_id = c.anchor_a.item_id
             for scene_item in self._drag_start_positions.keys() | self._child_drag_origins.keys():
                 if (
@@ -2444,7 +2442,14 @@ class CanvasView(QGraphicsView):
                 ):
                     from PyQt6.QtCore import QPointF as _QPointF
 
-                    scene_item.setPos(_QPointF(c.target_x, c.target_y))
+                    if c.target_x is not None and c.target_y is not None:
+                        scene_item.setPos(_QPointF(c.target_x, c.target_y))
+                    else:
+                        # FIXED still means immobile for legacy/incomplete locks.
+                        origin = self._drag_start_positions.get(scene_item,
+                                    self._child_drag_origins.get(scene_item))
+                        if origin is not None:
+                            scene_item.setPos(origin)
                     break
 
     def _enforce_point_on_edge_positions(self) -> None:

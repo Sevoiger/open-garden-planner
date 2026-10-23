@@ -681,6 +681,8 @@ class ConstraintGraph:
                 constraint_id=c.constraint_id,
                 constraint_type=c.constraint_type,
                 anchor_c=c.anchor_c,
+                target_x=c.target_x,
+                target_y=c.target_y,
             )
         return graph
 
@@ -736,14 +738,13 @@ class ConstraintGraph:
         for c in self._constraints.values():
             if (
                 c.constraint_type == ConstraintType.FIXED
-                and c.target_x is not None
-                and c.target_y is not None
                 and c.anchor_a.item_id in item_positions
             ):
                 fixed_id = c.anchor_a.item_id
                 pinned_items.add(fixed_id)
-                item_positions = dict(item_positions)
-                item_positions[fixed_id] = (c.target_x, c.target_y)
+                if c.target_x is not None and c.target_y is not None:
+                    item_positions = dict(item_positions)
+                    item_positions[fixed_id] = (c.target_x, c.target_y)
 
         positions = {uid: [pos[0], pos[1]] for uid, pos in item_positions.items()}
 
