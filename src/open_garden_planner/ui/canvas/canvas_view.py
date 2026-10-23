@@ -2122,7 +2122,10 @@ class CanvasView(QGraphicsView):
             super().contextMenuEvent(event)
             return
         menu = self._build_empty_canvas_menu()
-        menu.exec(event.globalPos())
+        try:
+            menu.exec(event.globalPos())
+        finally:
+            menu.deleteLater()
 
     def _build_empty_canvas_menu(self) -> QMenu:
         """Existing backgrounds remain reachable even when transparent or locked."""
@@ -5403,20 +5406,14 @@ class CanvasView(QGraphicsView):
             self.set_status_message(self.tr("Select at least two shapes to merge; intersection and subtraction require exactly two."))
             return
 
-        from open_garden_planner.core.object_types import is_plant_type
+        from open_garden_planner.core.shape_split import can_split_shape
 
         # Replacing linked subjects would discard their botanical identity or
         # invalidate references. Keep this operation on independent geometry.
         for item in selected:
-            if isinstance(item, GardenItemMixin):
-                layer = self._canvas_scene.get_layer_by_id(item.layer_id)
-                if (is_plant_type(item.object_type) or item.parent_bed_id is not None
-                        or item.has_children or item.parentItem() is not None
-                        or self._canvas_scene.constraint_graph.get_item_constraints(item.item_id)
-                        or (layer is not None and layer.locked)
-                        or any(key in item.metadata for key in ("plant_species", "guild", "ridge_item_id"))):
-                    self.set_status_message(self.tr("Use independent shapes without plants, linked objects or constraints to combine outlines."))
-                    return
+            if isinstance(item, GardenItemMixin) and not can_split_shape(item, self._canvas_scene):
+                self.set_status_message(self.tr("Use independent shapes without plants, linked objects or constraints to combine outlines."))
+                return
 
         payloads = [item.metadata for item in selected
                     if isinstance(item, GardenItemMixin) and item.metadata]
@@ -5476,28 +5473,34 @@ class CanvasView(QGraphicsView):
 
         if answer != QMessageBox.StandardButton.Ok:
             return
+        # The modal confirmation pumps Qt events, including agent writes.
+        if any(not can_split_shape(item, self._canvas_scene) for item in selected):
+            self.set_status_message(self.tr("Use independent shapes without plants, linked objects or constraints to combine outlines."))
+            return
 
         # Carry the source's appearance and opaque metadata into the outline.
         # Prefer a metadata-bearing source, otherwise the first selected shape.
         from copy import deepcopy
 
+        from open_garden_planner.core.item_look import copy_visual_style
         from open_garden_planner.core.object_types import get_valid_types_for_shape
 
-        result_item = PolygonItem.from_polygon(result_poly)
         source = next((item for item in selected if isinstance(item, GardenItemMixin)
                        and item.metadata), item_a)
+        # Keep the source's local frame so rotated/offset textures stay put.
+        result_item = PolygonItem.from_polygon(source.mapFromScene(result_poly))
+        result_item._apply_rotation(source.rotation())
+        center = result_item.transformOriginPoint()
+        result_item.setPos(source.mapToScene(center) - center)
         if isinstance(source, GardenItemMixin):
             if source.object_type in get_valid_types_for_shape("polygon"):
                 result_item.object_type = source.object_type
             result_item.name = source.name
+            result_item.label_visible = source.label_visible
             result_item.layer_id = source.layer_id
+            result_item.stack_order = source.stack_order
             result_item.metadata.update(deepcopy(source.metadata))
-            result_item.fill_pattern = source.fill_pattern
-            result_item.fill_color = source.fill_color
-            result_item.stroke_color = source.stroke_color
-            if source.stroke_width is not None:
-                result_item.stroke_width = source.stroke_width
-            result_item.stroke_style = source.stroke_style
+            copy_visual_style(source, result_item)
             result_item._setup_styling()
 
         from open_garden_planner.core import BooleanShapeCommand

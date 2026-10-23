@@ -1,5 +1,21 @@
 # Progression — fork personnel macOS
 
+## Audit technique des écarts du fork — 23 octobre 2026
+
+[Rapport détaillé](AUDIT_TECHNIQUE_2026-10-23.md) : revue des parcours modifiés
+depuis `603e303` jusqu’à `e80a4ff`, corrections des ruptures de références lors
+des transformations, des matériaux après réouverture, des surfaces tournées
+regroupées, des objets Qt temporaires et de l’interface d’orientation.
+Les projections de zone et l’export CSV passent d’un coût quadratique à un
+parcours linéaire ; à 5 000 objets fictifs, environ 2,1 s deviennent 5 à 16 ms.
+
+La campagne large initiale donne 9 970 réussites, 48 skips et 14 échecs ; huit
+échecs sont résolus. Les contrôles finaux ciblés donnent 547 réussites distinctes,
+avec revue indépendante des corrections à risque, Ruff et traductions valides.
+Le rapport conserve les limites : round-trip DXF hérité, outillage CI non adapté
+à Darwin/version de `uv`, citations techniques obsolètes et absence d’acceptation
+visuelle native. Aucun plan ni stockage personnel utilisé pour les tests.
+
 ## Édition des contours denses — 20 octobre 2026
 
 La capture du propriétaire a été reproduite sur une capsule fusionnée de

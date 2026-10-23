@@ -71,6 +71,16 @@ def can_split_shape(item: Any, scene: "CanvasScene") -> bool:
     if any(key in item.metadata for key in ('plant_species', 'guild', 'garden_tracking',
                                            'ridge_item_id', 'owner_polygon_id')):
         return False
+    identity = str(item.item_id)
+    for other in scene.items():
+        metadata = getattr(other, 'metadata', {})
+        if not isinstance(metadata, dict):
+            continue
+        tracking = metadata.get('garden_tracking', {})
+        if isinstance(tracking, dict) and tracking.get('zone_id') == identity:
+            return False
+        if any(metadata.get(key) == identity for key in ('ridge_item_id', 'owner_polygon_id')):
+            return False
     for view in scene.views():
         manager = getattr(view.window(), '_project_manager', None)
         if manager is None:

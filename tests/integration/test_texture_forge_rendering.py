@@ -229,7 +229,9 @@ class TestChrome:
         combos = [c for c in panel.findChildren(QComboBox) if isinstance(c.itemData(0), FillPattern)]
         assert combos, "fill-pattern combo not found"
         combo = combos[0]
-        offered = {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
+        # The disabled None entry describes a personal PNG, outside the built-in enum.
+        offered = {combo.itemData(i): combo.itemText(i) for i in range(combo.count())
+                   if combo.itemData(i) is not None}
         assert set(offered) == set(FillPattern)
         for pattern, text in offered.items():
             assert text and text != pattern.name, f"{pattern.name}: raw enum name shown"

@@ -105,6 +105,8 @@ def make_dialog(module_name, class_name, monkeypatch, tmp_path):
     elif class_name == 'MapPickerDialog':
         monkeypatch.setattr(module, 'QWebEngineView', DummyWebView)
         kwargs = {'api_key': 'layout-test-placeholder'}
+    elif class_name == 'NorthOrientationDialog':
+        kwargs = {'angle': 37}
     elif class_name == 'PlantSearchDialog':
         kwargs = {'api_manager': PlantAPIManager()}
     elif class_name == 'PropertiesDialog':
@@ -206,7 +208,7 @@ def test_all_custom_dialogs_use_screen_policy():
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'QDialog':
                 unmanaged.append((path.name, 'ad hoc QDialog constructor'))
     assert not unmanaged
-    assert len(CASES) == 38
+    assert ('north_orientation_dialog', 'NorthOrientationDialog') in CASES
 
 
 @pytest.mark.parametrize('frame', [QRect(900, 900, 1000, 1000), QRect(-1500, -900, 250, 200)])

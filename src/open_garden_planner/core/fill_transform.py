@@ -5,6 +5,17 @@ import math
 FILL_TRANSFORM_KEY = "fill_transform"
 
 
+def fill_origin_values(record: object) -> tuple[float, float]:
+    """Internal origin compensation when persistence folds pos() into geometry."""
+    def origin(key: str) -> float:
+        value = record.get(key, 0.0) if isinstance(record, dict) else 0.0
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return 0.0
+        return float(value)
+
+    return origin("origin_x_cm"), origin("origin_y_cm")
+
+
 def fill_transform_values(record: object) -> tuple[float, float]:
     if not isinstance(record, dict):
         return 0.0, 1.0

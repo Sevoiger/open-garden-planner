@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from open_garden_planner.core.plan_io import read_plan, validate_plan_data, write_plan
-from open_garden_planner.services.garden_queries import card_for, garden_objects, search_events
+from open_garden_planner.services.garden_queries import garden_cards, search_events
 
 MAX_ARCHIVE_BYTES = 1_000_000_000
 MAX_ARCHIVE_FILES = 2000
@@ -106,8 +106,7 @@ def export_csv(snapshot: dict[str, Any], destination: Path) -> None:
                "material", "application", "area_m2", "depth_cm", "media"]
     writer = csv.DictWriter(buffer, fieldnames=columns)
     writer.writeheader()
-    for obj in garden_objects(snapshot):
-        card = card_for(snapshot, obj["item_id"])
+    for card in garden_cards(snapshot):
         p = card["period"]
         writer.writerow({"record": "card", "id": card["item_id"], "name": card["name"],
                          "kind": card["kind"], "state": card["state"], "date_precision": p["precision"],
