@@ -16,3 +16,15 @@ def fill_transform_values(record: object) -> tuple[float, float]:
             or not math.isfinite(scale) or not 0.01 <= scale <= 100):
         scale = 1.0
     return float(angle) % 360, float(scale)
+
+
+def fill_offset_values(record: object) -> tuple[float, float]:
+    """Return local surface offsets in cm, independent of tile angle/scale."""
+    def offset(key: str) -> float:
+        value = record.get(key, 0.0) if isinstance(record, dict) else 0.0
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or not -100000 <= value <= 100000):
+            return 0.0
+        return float(value)
+
+    return offset("offset_x_cm"), offset("offset_y_cm")

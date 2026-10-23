@@ -2080,7 +2080,10 @@ class PropertiesPanel(QWidget):
         self._register_refresh(remove, lambda: remove.setEnabled(PATTERN_KEY in item.metadata))
 
     def _add_fill_transform_controls(self, item: FillSurface) -> None:
-        from open_garden_planner.core.fill_transform import fill_transform_values
+        from open_garden_planner.core.fill_transform import (
+            fill_offset_values,
+            fill_transform_values,
+        )
 
         angle = QDoubleSpinBox()
         angle.setObjectName("fill_pattern_angle")
@@ -2094,18 +2097,34 @@ class PropertiesPanel(QWidget):
         scale.setRange(1, 10000)
         scale.setSuffix(" %")
         scale.setKeyboardTracking(False)
+        offset_x, offset_y = QDoubleSpinBox(), QDoubleSpinBox()
+        for field, name in ((offset_x, "fill_pattern_offset_x"),
+                            (offset_y, "fill_pattern_offset_y")):
+            field.setObjectName(name)
+            field.setRange(-100000, 100000)
+            field.setDecimals(1)
+            field.setSingleStep(1)
+            field.setSuffix(" cm")
+            field.setKeyboardTracking(False)
 
         def refresh() -> None:
             degrees, factor = fill_transform_values(item.metadata.get("fill_transform"))
             angle.setValue(degrees)
             scale.setValue(factor * 100)
+            dx, dy = fill_offset_values(item.metadata.get("fill_transform"))
+            offset_x.setValue(dx)
+            offset_y.setValue(dy)
 
         refresh()
         self._register_refresh(angle, refresh)
         angle.valueChanged.connect(lambda value: self._set_fill_transform(item, "angle_deg", value))
         scale.valueChanged.connect(lambda value: self._set_fill_transform(item, "scale", value / 100))
+        offset_x.valueChanged.connect(lambda value: self._set_fill_transform(item, "offset_x_cm", value))
+        offset_y.valueChanged.connect(lambda value: self._set_fill_transform(item, "offset_y_cm", value))
         self._form_layout.addRow(self.tr("Pattern angle:"), angle)
         self._form_layout.addRow(self.tr("Pattern scale:"), scale)
+        self._form_layout.addRow(self.tr("Pattern X offset:"), offset_x)
+        self._form_layout.addRow(self.tr("Pattern Y offset:"), offset_y)
 
     def _set_fill_transform(self, item: FillSurface, key: str, value: float) -> None:
         if self._updating:

@@ -475,6 +475,12 @@ le restaure. Un PNG intégré invalide utilise le remplissage standard.
 **Angle du motif** fait tourner le remplissage indépendamment du contour.
 **Échelle du motif** règle la répétition : 100 % conserve la taille de référence,
 200 % donne des motifs deux fois plus grands, 50 % deux fois plus petits.
+**Décalage X du motif** et **Décalage Y du motif** déplacent le remplissage en
+centimètres sans déplacer le contour : X positif vers la droite, Y positif vers
+le haut dans le repère local de la surface. L’angle et l’échelle du motif ne
+multiplient pas ces distances. Pour les tuiles de toiture, ce repère suit le
+faîtage et se reflète sur l’autre pan. Remettre les deux valeurs à zéro rétablit
+l’alignement initial. Les anciens plans commencent à zéro.
 Ces réglages s’appliquent aux motifs standards comme aux PNG et sont enregistrés
 avec la forme ; ils sont annulables. Pour un PNG, l’échelle multiplie la largeur
 réelle indiquée dans **Tile width**.
