@@ -84,7 +84,8 @@ CSV avant/après est identique ; à 5 000 objets :
   correction de persistance : P1 initial du matériau résolu ; aucun autre
   P0/P1 identifié. Composition des transformations corroborée avec Qt.
 
-Huit des quatorze échecs initiaux sont résolus et leurs contrôles relancés.
+Dans la première tranche, huit des quatorze échecs initiaux ont été résolus et
+leurs contrôles relancés ; les six autres sont traités dans le complément ci-dessous.
 Trois tests historiques ont été adaptés à des comportements déjà introduits par
 le fork : une sélection de plante copiée pour porter son option de taille,
 l’émission réelle de `QAction.triggered` dans un menu, et l’entrée descriptive
@@ -92,17 +93,43 @@ désactivée du PNG personnel en plus des motifs standards. Les deux fixtures de
 benchmark déclarent maintenant le nord par défaut. Aucune assertion métier
 n’a été retirée pour masquer un défaut applicatif.
 
-## Échecs résiduels et limites
+## Clôture des points résiduels
 
-| Contrôle | Constat et suite utile |
+La première qualification du défaut DXF était incorrecte : le dessin exporté et
+réimporté a les bonnes coordonnées. La reproduction a montré que
+`list(poly.polygon())` gardait des wrappers `QPointF` empruntés au `QPolygonF`
+temporaire, puis lisait des zéros après sa destruction. Le test copie désormais
+les points par valeur et vérifie aussi les quatre coordonnées exactes. Le service
+DXF de production n’a pas été modifié pour contourner cet échec de test.
+
+| Contrôle | Résolution |
 | --- | --- |
-| `test_dxf_round_trip_preserves_position` | Défaut applicatif hérité déjà documenté dans `PROGRESSION.md` : les abscisses du rectangle réimporté sont toutes nulles au lieu d’une largeur de 300 cm. Non corrigé dans ce lot ; éviter de considérer l’aller-retour DXF comme fiable. C’est le point applicatif prioritaire restant dans cette campagne. |
-| Deux tests CLI mypy de `test_ci_quality_workflows.py` | Le script de baseline exige explicitement Linux/Windows ; le lancement sous Darwin échoue avant le scénario attendu. Aucun élargissement de plateforme ou modification de baseline de CI dans cet audit. |
-| Deux tests CLI de verrou/version | `uv` disponible est en version 0.5.30, alors que le projet impose 0.12.23. Ces contrôles d’outillage ne prouvent pas un défaut du logiciel lancé depuis les sources. |
-| `test_real_corpus_citations_all_resolve` | Neuf références de lignes devenues obsolètes dans les skills et leurs historiques. Le script les énumère ; cette dette documentaire préexistait à l’audit. |
+| `test_dxf_round_trip_preserves_position` | Propriété des points Qt corrigée ; coordonnées `(200,150)`, `(200,250)`, `(500,150)`, `(500,250)` vérifiées. |
+| Deux tests CLI mypy | Gate étendu à Darwin avec référence propre par fichier. Les scénarios création/contrôle/régression/réduction s’exécutent sur macOS. La référence mesurée comprend 1 972 diagnostics existants sur 139 fichiers ; ce n’est pas un typage sans erreur. Les références Linux/Windows et la version mypy restent strictement identiques. |
+| Deux tests CLI de verrou/version | Les scripts privilégient le `uv` 0.12.23 déjà installé par le projet dans `.tools/bootstrap`, puis le PATH en son absence. `--uv` reste prioritaire ; le contrôle de version exacte demeure. Aucun outil global ni fichier de dépendances modifié. |
+| `test_real_corpus_citations_all_resolve` | Les neuf références de lignes sont actualisées. Gates de citations et de contexte valides. |
 
-Les tests Qt utilisent le backend hors écran. Ils vérifient les coordonnées,
-signaux, dimensions et pixels, sans établir l’acceptation visuelle native macOS.
+Les quatorze scénarios initialement en échec passent maintenant ; le lancement
+ciblé qui les reprend, avec tout le module CLI, donne **27 réussites**. Les
+modules outils/interoperabilité/contexte/citations ont aussi donné 108 réussites,
+puis les deux nouveaux cas de sélection de `uv` ont été validés. Le contrôle du
+verrou réel et le contrôle mypy Darwin terminent sans régression.
+
+La validation native utilise **Qt Cocoa**, avec réglages et bibliothèque isolés :
+**43 scénarios réussis** sur les régressions de l’audit, l’orientation et la
+disposition macOS. Une capture supplémentaire a été examinée sur la fenêtre
+principale, les données jardin et l’orientation, en français, thème sombre,
+Helvetica 13 pt. Textes et commandes sont lisibles dans les dimensions testées ;
+le compas répond au clic. Captures locales :
+`.local/audit-2026-10-23-native/{window,records,north}.png` (hors Git).
+
+La revue indépendante de ce complément confirme l’isolation des budgets de
+typage, la résolution de l’outil et la validité des copies Qt, sans défaut
+identifié. Aucun test n’a été ignoré pour résoudre les six échecs résiduels.
+
+La campagne complète initiale utilisait le backend hors écran ; elle n’a pas été
+relancée intégralement après ces changements ciblés. Les preuves natives ci-dessus
+complètent ce résultat sans prétendre couvrir toutes les configurations d’écran.
 Les alertes de dépréciation MCP constatées concernent le nom de son client HTTP.
 La cohérence des paquets installés ne remplace pas un audit externe des avis de
 vulnérabilité. Aucun merge, release ou changement des données personnelles.

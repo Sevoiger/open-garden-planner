@@ -23,6 +23,10 @@ exécuter `bash scripts/build_macos_launcher.sh` pour le recompiler et le signer
 la préparation macOS le fait également. Les modifications Python ne nécessitent
 pas de nouvelle signature.
 Après un changement de dépendances seulement, relancer le script de préparation.
+Les scripts de contrôle du verrou et de préparation de version utilisent par
+défaut le `uv` déjà installé dans `.tools/bootstrap` ; `--uv` permet de choisir
+explicitement un autre exécutable. Le contrôle continue d’exiger la version exacte
+du projet, même si un ancien `uv` reste accessible dans le PATH.
 Si le dossier complet est déplacé, relancer également la préparation (les chemins
 des environnements Python ne sont pas portables).
 
@@ -40,6 +44,14 @@ l’application reste cohérent avec un macOS clair ou sombre. À faible largeur
 la barre d’état garde coordonnées/saisie/zoom et masque les détails secondaires ;
 agrandir la fenêtre les rétablit.
 
-Fermer l’application avant une suite de tests Qt. La première ouverture a révélé
-des défauts de présentation ; les corrections automatiques restent à confirmer
-visuellement sur votre écran. Les clics apparents ne sont pas encore expliqués.
+Fermer l’application avant une suite de tests Qt. La validation du 23 octobre
+comprend des tests natifs Cocoa et une revue de captures françaises à 13 pt des
+fenêtres principale, données jardin et orientation ; les contrôles passent sur
+des données et réglages isolés. Le détail et les limites sont dans
+[l’audit technique](AUDIT_TECHNIQUE_2026-10-23.md).
+
+Le contrôle de typage peut maintenant s’exécuter sur macOS :
+`.venv/bin/python scripts/check_mypy_baseline.py`. La référence Darwin est séparée
+des références Linux/Windows. Elle conserve les diagnostics hérités par fichier ;
+réussir ce contrôle signifie qu’aucune régression n’est apparue, pas que toute
+la dette de typage est supprimée.

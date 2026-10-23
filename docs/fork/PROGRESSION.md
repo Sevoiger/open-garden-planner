@@ -2,6 +2,16 @@
 
 ## Audit technique des écarts du fork — 23 octobre 2026
 
+Les six points résiduels ont ensuite été traités : copies des points Qt dans le
+test DXF (le service import/export était correct), sélection du `uv` local épinglé,
+support du contrôle mypy Darwin avec référence indépendante, et neuf citations
+actualisées. Les quatorze cas initialement en échec passent. Le verrou réel et le
+contrôle mypy macOS passent ; les budgets Linux/Windows sont inchangés.
+La validation est complétée par 43 tests natifs Cocoa et une revue des captures
+françaises des fenêtres principale, données jardin et orientation. Revue
+indépendante du complément : aucun défaut identifié. Détails et limites dans le
+rapport ci-dessous ; le bilan de la première campagne est conservé comme historique.
+
 [Rapport détaillé](AUDIT_TECHNIQUE_2026-10-23.md) : revue des parcours modifiés
 depuis `603e303` jusqu’à `e80a4ff`, corrections des ruptures de références lors
 des transformations, des matériaux après réouverture, des surfaces tournées
@@ -12,9 +22,9 @@ parcours linéaire ; à 5 000 objets fictifs, environ 2,1 s deviennent 5 à 16 m
 La campagne large initiale donne 9 970 réussites, 48 skips et 14 échecs ; huit
 échecs sont résolus. Les contrôles finaux ciblés donnent 547 réussites distinctes,
 avec revue indépendante des corrections à risque, Ruff et traductions valides.
-Le rapport conserve les limites : round-trip DXF hérité, outillage CI non adapté
-à Darwin/version de `uv`, citations techniques obsolètes et absence d’acceptation
-visuelle native. Aucun plan ni stockage personnel utilisé pour les tests.
+Les limites alors signalées (DXF, outillage, citations et validation native) ont
+été réexaminées dans le complément ci-dessus. Aucun plan ni stockage personnel
+utilisé pour les tests.
 
 ## Édition des contours denses — 20 octobre 2026
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,10 +15,16 @@ EXPORT_ARGS = ["export", "--locked", "--all-extras", "--group", "build",
                "--no-emit-project", "--no-header", "--format", "pylock.toml"]
 
 
+def default_uv() -> str:
+    """Use the project bootstrap when installed, otherwise the PATH tool."""
+    bootstrap = ROOT / ".tools" / "bootstrap" / ("Scripts/uv.exe" if os.name == "nt" else "bin/uv")
+    return str(bootstrap) if bootstrap.is_file() else "uv"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
-    parser.add_argument("--uv", default="uv")
+    parser.add_argument("--uv", default=default_uv())
     args = parser.parse_args(argv)
     root = args.root.resolve()
     try:
