@@ -460,6 +460,11 @@
             <source>Reset Points</source>
             <translation>Réinitialiser les points</translation>
         </message>
+        <message>
+            <location filename="../../ui/dialogs/calibration_dialog.py" line="86" />
+            <source>e.g., 1200 (cm) or 12 (m)</source>
+            <translation>par ex. 1200 (cm) ou 12 (m)</translation>
+        </message>
     </context>
     <context>
         <name>CalloutItem</name>
@@ -8592,12 +8597,12 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
     <context>
         <name>MidpointHandle</name>
         <message>
-            <location filename="../../ui/canvas/items/resize_handle.py" line="1605" />
+            <location filename="../../ui/canvas/items/resize_handle.py" line="1606" />
             <source>Add Vertex Here</source>
             <translation>Ajouter un sommet ici</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/resize_handle.py" line="1548" />
+            <location filename="../../ui/canvas/items/resize_handle.py" line="1549" />
             <source>Click to add a vertex</source>
             <translation>Cliquer pour ajouter un sommet</translation>
         </message>
@@ -10951,53 +10956,53 @@ Vérifier la connexion Internet et les identifiants API.</translation>
     <context>
         <name>PlantingCalendarView</name>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1794" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1797" />
             <source>Clear {name} from {bed} (succession)</source>
             <translation>Retirer {name} de {bed} (succession)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1215" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1218" />
             <source>Direct sow</source>
             <translation>Semis direct</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1340" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1343" />
             <source>First frost</source>
             <translation>Première gelée</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1341" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1344" />
             <source>Germination</source>
             <translation>Germination</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1343" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1346" />
             <source>Harden off</source>
             <translation>Acclimatation</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1217" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1220" />
             <source>Harvest</source>
             <translation>Récolte</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1214" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1217" />
             <source>Indoor sow</source>
             <translation>Semis à l’intérieur</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1339" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1342" />
             <source>Last frost</source>
             <translation>Dernière gelée</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1449" />
-            <location filename="../../ui/views/planting_calendar_view.py" line="1583" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1452" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1586" />
             <source>No detailed data available</source>
             <translation>Aucune donnée détaillée disponible</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1352" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1355" />
             <source>No location set.
 Use File › Set Garden Location to configure frost dates
 before the planting calendar can be shown.</source>
@@ -11006,7 +11011,7 @@ Configurer les dates de gel via Fichier › Définir la position du jardin
 pour afficher le calendrier de plantation.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1360" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1363" />
             <source>No plants with calendar data found.
 Place plants on the canvas and use Search Plant Database
 to assign species data.</source>
@@ -11015,38 +11020,38 @@ Placer des plantes sur le plan et utiliser Rechercher dans les bases de plantes
 pour leur associer les données d’une espèce.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1342" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1345" />
             <source>Prick out</source>
             <translation>Repiquage</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1231" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1234" />
             <source>Show propagation steps</source>
             <translation>Afficher les étapes de multiplication</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1792" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1795" />
             <source>Sow {name} in {bed} (succession)</source>
             <translation>Semer {name} dans {bed} (succession)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1554" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1557" />
             <source>The end date of a propagation step cannot be before its start date — the step was not changed.</source>
             <translation>La date de fin d’une étape de multiplication ne peut pas précéder son début : l’étape n’a pas été modifiée.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1338" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1341" />
             <source>Today</source>
             <translation>Aujourd’hui</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1216" />
-            <location filename="../../ui/views/planting_calendar_view.py" line="1344" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1219" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1347" />
             <source>Transplant</source>
             <translation>Transplantation</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1800" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1803" />
             <source>{title} — {names}</source>
             <translation>{title} — {names}</translation>
         </message>
@@ -14372,6 +14377,11 @@ Continuer ?</translation>
     <context>
         <name>VertexHandle</name>
         <message>
+            <location filename="../../ui/canvas/items/resize_handle.py" line="1478" />
+            <source>Cannot delete: minimum {count} vertices required</source>
+            <translation>Suppression impossible : au moins {count} sommets requis</translation>
+        </message>
+        <message>
             <location filename="../../ui/canvas/items/resize_handle.py" line="1472" />
             <source>Delete Vertex</source>
             <translation>Supprimer le sommet</translation>
@@ -14443,71 +14453,120 @@ Continuer ?</translation>
         </message>
     </context>
     <context>
+        <name>WeatherConditions</name>
+        <message>
+            <location filename="../../services/weather_service.py" line="35" />
+            <source>Clear sky</source>
+            <translation>Ciel dégagé</translation>
+        </message>
+        <message>
+            <location filename="../../services/weather_service.py" line="37" />
+            <source>Foggy</source>
+            <translation>Brumeux</translation>
+        </message>
+        <message>
+            <location filename="../../services/weather_service.py" line="36" />
+            <source>Partly cloudy</source>
+            <translation>Partiellement nuageux</translation>
+        </message>
+        <message>
+            <location filename="../../services/weather_service.py" line="38" />
+            <source>Rainy</source>
+            <translation>Pluvieux</translation>
+        </message>
+        <message>
+            <location filename="../../services/weather_service.py" line="40" />
+            <source>Showers</source>
+            <translation>Averses</translation>
+        </message>
+        <message>
+            <location filename="../../services/weather_service.py" line="41" />
+            <source>Snow showers</source>
+            <translation>Averses de neige</translation>
+        </message>
+        <message>
+            <location filename="../../services/weather_service.py" line="39" />
+            <source>Snowy</source>
+            <translation>Neigeux</translation>
+        </message>
+        <message>
+            <location filename="../../services/weather_service.py" line="42" />
+            <location filename="../../services/weather_service.py" line="43" />
+            <source>Thunderstorm</source>
+            <translation>Orage</translation>
+        </message>
+        <message>
+            <location filename="../../ui/widgets/weather_widget.py" line="41" />
+            <source>Unknown</source>
+            <translation>Inconnu</translation>
+        </message>
+    </context>
+    <context>
         <name>WeatherWidget</name>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="177" />
+            <location filename="../../ui/widgets/weather_widget.py" line="186" />
             <source>Date</source>
             <translation>Date</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="381" />
+            <location filename="../../ui/widgets/weather_widget.py" line="390" />
             <source>Last updated %1 h ago</source>
             <translation>Dernière mise à jour il y a %1 h</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="379" />
+            <location filename="../../ui/widgets/weather_widget.py" line="388" />
             <source>Last updated %1 min ago</source>
             <translation>Dernière mise à jour il y a %1 min</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="142" />
+            <location filename="../../ui/widgets/weather_widget.py" line="151" />
             <source>Loading forecast …</source>
             <translation>Chargement des prévisions…</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="179" />
+            <location filename="../../ui/widgets/weather_widget.py" line="188" />
             <source>Max °C</source>
             <translation>Max °C</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="180" />
+            <location filename="../../ui/widgets/weather_widget.py" line="189" />
             <source>Min °C</source>
             <translation>Min °C</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="181" />
+            <location filename="../../ui/widgets/weather_widget.py" line="190" />
             <source>Rain mm</source>
             <translation>Pluie mm</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="126" />
+            <location filename="../../ui/widgets/weather_widget.py" line="135" />
             <source>Refresh forecast</source>
             <translation>Actualiser les prévisions</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="150" />
+            <location filename="../../ui/widgets/weather_widget.py" line="159" />
             <source>Set a location to enable weather forecast.
 Use File › Set Garden Location to configure GPS coordinates.</source>
             <translation>Définir une position pour activer les prévisions météo.
 Configurer les coordonnées GPS via Fichier › Définir la position du jardin.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="133" />
+            <location filename="../../ui/widgets/weather_widget.py" line="142" />
             <source>Show / hide full forecast</source>
             <translation>Afficher / Masquer les prévisions complètes</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="178" />
+            <location filename="../../ui/widgets/weather_widget.py" line="187" />
             <source>Weather</source>
             <translation>Météo</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="113" />
+            <location filename="../../ui/widgets/weather_widget.py" line="122" />
             <source>Weather Forecast</source>
             <translation>Prévisions météo</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="355" />
+            <location filename="../../ui/widgets/weather_widget.py" line="364" />
             <source>Weather forecast unavailable:
 {message}</source>
             <translation>Prévisions météo indisponibles :
@@ -14605,7 +14664,7 @@ Configurer les coordonnées GPS via Fichier › Définir la position du jardin.<
             <translation>Semer %1 en place</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="400" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="401" />
             <source>Done</source>
             <translation>Terminé</translation>
         </message>
@@ -14615,12 +14674,12 @@ Configurer les coordonnées GPS via Fichier › Définir la position du jardin.<
             <translation>Récolter %1</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="392" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="393" />
             <source>Highlight on canvas</source>
             <translation>Mettre en évidence sur le plan</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="404" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="405" />
             <source>Mark as done</source>
             <translation>Marquer comme terminé</translation>
         </message>
@@ -14675,77 +14734,77 @@ Configurer les coordonnées GPS via Fichier › Définir la position du jardin.<
     <context>
         <name>_DetailPanel</name>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1036" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1039" />
             <source>Frost tolerance: {level}</source>
             <translation>Tolérance au gel : {level}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="794" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="795" />
             <source>Germination</source>
             <translation>Germination</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1029" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1032" />
             <source>Germination: {min}–{max} days</source>
             <translation>Germination : {min}–{max} jours</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="796" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="797" />
             <source>Harden off</source>
             <translation>Acclimatation</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="793" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="794" />
             <source>Indoor sow</source>
             <translation>Semis à l’intérieur</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1039" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1042" />
             <source>Maturity: {min}–{max} days</source>
             <translation>Maturité : {min}–{max} jours</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1032" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1035" />
             <source>Min. germ. temp: {temp} °C</source>
             <translation>Temp. min. de germination : {temp} °C</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="795" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="796" />
             <source>Prick out</source>
             <translation>Repiquage</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="785" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="786" />
             <source>Propagation Steps</source>
             <translation>Étapes de multiplication</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="831" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="834" />
             <source>Reset to calculated date</source>
             <translation>Revenir à la date calculée</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1034" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1037" />
             <source>Seed depth: {depth} cm</source>
             <translation>Profondeur de semis : {depth} cm</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="797" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="798" />
             <source>Transplant</source>
             <translation>Transplantation</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1062" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1065" />
             <source>half-hardy</source>
             <translation>semi-rustique</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1061" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1064" />
             <source>hardy</source>
             <translation>rustique</translation>
         </message>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="1063" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="1066" />
             <source>tender</source>
             <translation>sensible au gel</translation>
         </message>
@@ -14817,7 +14876,7 @@ Configurer les coordonnées GPS via Fichier › Définir la position du jardin.<
     <context>
         <name>_GanttWidget</name>
         <message>
-            <location filename="../../ui/views/planting_calendar_view.py" line="643" />
+            <location filename="../../ui/views/planting_calendar_view.py" line="644" />
             <source>Propagation</source>
             <translation>Multiplication</translation>
         </message>
@@ -14847,7 +14906,7 @@ Configurer les coordonnées GPS via Fichier › Définir la position du jardin.<
     <context>
         <name>_WeatherFetchWorker</name>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="76" />
+            <location filename="../../ui/widgets/weather_widget.py" line="85" />
             <source>Forecast unavailable</source>
             <translation>Prévisions indisponibles</translation>
         </message>

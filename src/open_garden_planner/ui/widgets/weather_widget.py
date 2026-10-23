@@ -10,7 +10,7 @@ import contextlib
 import datetime
 from typing import Any
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QDate, QLocale, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.app.settings import active_language
 from open_garden_planner.core.worker_lifecycle import retain_worker_until_finished
 from open_garden_planner.services.weather_service import (
     WeatherForecast,
@@ -31,6 +32,14 @@ from open_garden_planner.services.weather_service import (
 )
 from open_garden_planner.ui.icons import get_icon, get_pixmap
 from open_garden_planner.ui.theme import set_text_role
+
+
+def weather_description(code: int) -> str:
+    """Translate provider conditions at the UI boundary, not in cached data."""
+    description = _wmo_to_description(code)
+    if description == "Unknown":
+        return QCoreApplication.translate("WeatherConditions", "Unknown")
+    return QCoreApplication.translate("WeatherConditions", description)
 
 # ─── Background worker ────────────────────────────────────────────────────────
 
@@ -318,7 +327,7 @@ class WeatherWidget(QFrame):
         self._table.setRowCount(len(forecast.days))
         for row, day in enumerate(forecast.days):
             self._table.setItem(row, 0, QTableWidgetItem(day.date))
-            condition_item = QTableWidgetItem(_wmo_to_description(day.weathercode))
+            condition_item = QTableWidgetItem(weather_description(day.weathercode))
             condition_icon = get_icon(wmo_to_icon(day.weathercode))
             if condition_icon is not None:
                 condition_item.setIcon(condition_icon)
@@ -424,9 +433,10 @@ class _DayCell(QFrame):
 
     def set_day(self, day: Any) -> None:
         """Populate the cell with forecast data."""
-        date = datetime.date.fromisoformat(day.date)
-        day_name = date.strftime("%a")
+        date = QDate.fromString(day.date, Qt.DateFormat.ISODate)
+        day_name = QLocale(active_language()).dayName(date.dayOfWeek(), QLocale.FormatType.ShortFormat)
         self._day_lbl.setText(day_name)
+        self.setToolTip(weather_description(day.weathercode))
         pixmap = get_pixmap(wmo_to_icon(day.weathercode), 36)
         if pixmap is not None:
             self._icon_lbl.setPixmap(pixmap)

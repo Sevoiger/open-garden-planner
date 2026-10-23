@@ -198,11 +198,18 @@ def test_qt_alias_and_simple_wrapper_are_extracted(checked_project):
         inventory(checked_project)
 
 
-def test_finite_table_grows_inventory_and_stale_bindings_fail(checked_project):
+@pytest.mark.parametrize('selector', ['markers', 'first'])
+def test_finite_table_grows_inventory_and_stale_bindings_fail(checked_project, selector):
     import json
 
     path = checked_project / "src/open_garden_planner/labels.py"
     source = 'from PyQt6.QtCore import QCoreApplication, QT_TR_NOOP\nLABELS = {"one": QT_TR_NOOP("One")}\ndef label(key):\n    return QCoreApplication.translate("Labels", LABELS[key])\n'
+    expression = 'LABELS[key]'
+    one, two = '"one": QT_TR_NOOP("One")', '"two": QT_TR_NOOP("Two")'
+    if selector == 'first':
+        source = source.replace(one, '"one": ("One", "sun")').replace(expression, expression + '[0]')
+        expression += '[0]'
+        one, two = '"one": ("One", "sun")', '"two": ("Two", "weather_rain")'
     path.write_text(source, encoding="utf-8")
     directory = checked_project / "scripts"
     directory.mkdir()
@@ -212,14 +219,14 @@ def test_finite_table_grows_inventory_and_stale_bindings_fail(checked_project):
                 "file": "labels.py",
                 "context": "Labels",
                 "symbol": "LABELS",
-                "selector": "markers",
+                "selector": selector,
             }
         },
         "lookups": [
             {
                 "file": "labels.py",
                 "scope": "label",
-                "expression": "LABELS[key]",
+                "expression": expression,
                 "context": "Labels",
                 "sources": ["labels"],
             }
@@ -228,14 +235,13 @@ def test_finite_table_grows_inventory_and_stale_bindings_fail(checked_project):
     (directory / "i18n_bindings.json").write_text(json.dumps(declarations), encoding="utf-8")
     catalogs(checked_project)
     assert check(checked_project) == []
+    assert not any(key.source in {'sun', 'weather_rain'} for key in inventory(checked_project))
     path.write_text(
-        source.replace(
-            '"one": QT_TR_NOOP("One")', '"one": QT_TR_NOOP("One"), "two": QT_TR_NOOP("Two")'
-        ),
+        source.replace(one, one + ', ' + two),
         encoding="utf-8",
     )
     assert any("es: missing [Labels] 'Two'" in error for error in check(checked_project))
-    path.write_text(source.replace("LABELS[key]", '"One"'), encoding="utf-8")
+    path.write_text(source.replace(expression, '"One"'), encoding="utf-8")
     with pytest.raises(CatalogError, match="stale source binding"):
         inventory(checked_project)
 

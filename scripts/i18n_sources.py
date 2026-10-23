@@ -137,9 +137,10 @@ class Sources:
                             if field in arguments:
                                 values.extend(self.strings(arguments[field], file))
             elif selector == "first":
-                if not isinstance(node, ast.List | ast.Tuple):
-                    raise CatalogError(f"{name}: expected a sequence of rows")
-                for row in node.elts:
+                if not isinstance(node, ast.List | ast.Tuple | ast.Dict):
+                    raise CatalogError(f"{name}: expected a sequence or dictionary of rows")
+                rows = node.values if isinstance(node, ast.Dict) else node.elts
+                for row in rows:
                     if not isinstance(row, ast.Tuple | ast.List) or not row.elts:
                         raise CatalogError(f"{name}: expected a nonempty row")
                     values.extend(self.strings(row.elts[0], file))

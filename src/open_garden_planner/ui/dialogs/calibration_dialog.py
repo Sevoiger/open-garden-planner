@@ -83,7 +83,7 @@ class CalibrationDialog(ResponsiveDialog):
         distance_layout.addWidget(QLabel(self.tr("Real-world distance:")))
 
         self._distance_input = QLineEdit()
-        self._distance_input.setPlaceholderText("e.g., 1200 (cm) or 12 (m)")
+        self._distance_input.setPlaceholderText(self.tr("e.g., 1200 (cm) or 12 (m)"))
         self._distance_input.setEnabled(False)
         distance_layout.addWidget(self._distance_input)
 
