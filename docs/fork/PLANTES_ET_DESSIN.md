@@ -101,7 +101,9 @@ ne réécrit pas le fichier personnel et ne rapproche pas automatiquement des fo
 verrouillées dont une autre liaison était déjà violée.
 
 Pendant un glissement, une position verrouillée reste prioritaire sur les
-contraintes d’alignement et les accrochages. Un objet verrouillé sélectionné
+contraintes d’alignement et les accrochages. Le déplacement Qt est bloqué avant
+application : aucun déplacement temporaire suivi d’un retour à la position fixe.
+Un objet verrouillé sélectionné
 avec un objet mobile reste en place ; le partenaire mobile peut glisser le long
 d’un bord auquel il est contraint. Déplacer un objet ne remet pas à leur ancienne
 position cible d’autres objets verrouillés hors du glissement. Pour déplacer
