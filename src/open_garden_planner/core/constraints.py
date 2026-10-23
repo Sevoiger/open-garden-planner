@@ -154,6 +154,27 @@ class Constraint:
         )
 
 
+def incidence_error(constraint: Constraint, a: tuple[float, float], b: tuple[float, float],
+                    c: tuple[float, float] | None = None) -> float:
+    """Distance from the requested incidence, in scene centimetres."""
+    kind = constraint.constraint_type
+    if kind == ConstraintType.COINCIDENT:
+        return math.hypot(a[0]-b[0], a[1]-b[1])
+    if kind == ConstraintType.POINT_ON_CIRCLE:
+        return abs(math.hypot(a[0]-b[0], a[1]-b[1]) - constraint.target_distance)
+    if c is None:
+        return math.inf
+    if kind == ConstraintType.POINT_ON_EDGE:
+        dx, dy = c[0]-b[0], c[1]-b[1]
+        length = math.hypot(dx, dy)
+        return abs((a[0]-b[0])*dy - (a[1]-b[1])*dx) / length if length > 1e-9 else math.inf
+    if kind == ConstraintType.TANGENT:
+        dx, dy = c[0]-a[0], c[1]-a[1]
+        length = math.hypot(dx, dy)
+        return abs((b[0]-a[0])*dx + (b[1]-a[1])*dy) / length if length > 1e-9 else math.inf
+    raise ValueError(f"Not an incidence constraint: {kind.name}")
+
+
 @dataclass
 class SolverResult:
     """Result of constraint solving."""
@@ -717,6 +738,7 @@ class ConstraintGraph:
                 c.constraint_type == ConstraintType.FIXED
                 and c.target_x is not None
                 and c.target_y is not None
+                and c.anchor_a.item_id in item_positions
             ):
                 fixed_id = c.anchor_a.item_id
                 pinned_items.add(fixed_id)
@@ -1125,8 +1147,7 @@ class ConstraintGraph:
                         constraint.anchor_c.anchor_index,
                     )
                     off_c = anchor_offsets.get(key_c, (0.0, 0.0))
-                    cx = positions[id_c][0] + off_c[0]
-                    cy = positions[id_c][1] + off_c[1]
+                    cx, cy = _anchor_pos(id_c, constraint.anchor_c, off_c)
 
                     edx, edy = cx - bx, cy - by
                     line_len_sq = edx * edx + edy * edy
@@ -1266,7 +1287,9 @@ class ConstraintGraph:
                 anchor_offsets=anchor_offsets,
                 deformable_items=deformable,
                 deformable_vkeys=deformable_vkeys,
-                constraints=list(self._constraints.values()),
+                constraints=[c for c in self._constraints.values()
+                             if all(ref is None or ref.item_id in positions
+                                    for ref in (c.anchor_a, c.anchor_b, c.anchor_c))],
                 pinned_items=pinned_items,
                 tol=tolerance,
             )
@@ -1306,6 +1329,14 @@ class ConstraintGraph:
             vertex_deltas=v_deltas,
         )
 
+    def _trial_positions(self, constraint: Constraint,
+                         item_positions: dict[UUID, tuple[float, float]]) -> dict[UUID, tuple[float, float]]:
+        connected: set[UUID] = set()
+        for anchor in (constraint.anchor_a, constraint.anchor_b, constraint.anchor_c):
+            if anchor is not None:
+                connected.update(self.get_connected_component(anchor.item_id))
+        return {uid: value for uid, value in item_positions.items() if uid in connected}
+
     def validate_constraint(
         self,
         anchor_a: AnchorRef,
@@ -1319,12 +1350,14 @@ class ConstraintGraph:
         anchor_c: AnchorRef | None = None,
         deformable_items: set[UUID] | None = None,
         deformable_vertices: dict[UUID, list[tuple[float, float]]] | None = None,
+        pinned_items: set[UUID] | None = None,
     ) -> bool:
         """Test if adding a constraint would conflict with existing constraints.
 
         Temporarily adds the constraint, runs the solver (without mutating
         item_positions), removes the test constraint, and returns whether the
-        solver converged.
+        solver converged. Only the components joined by the trial are checked;
+        unrelated pre-existing violations are outside this operation.
 
         Args:
             anchor_a: First anchor reference.
@@ -1340,6 +1373,7 @@ class ConstraintGraph:
             deformable_items: Item IDs that support per-vertex deformation.
             deformable_vertices: Scene-space vertex positions for deformable
                 items.
+            pinned_items: References kept immobile by the applying caller.
 
         Returns:
             True  — constraint is compatible with the existing system.
@@ -1353,10 +1387,11 @@ class ConstraintGraph:
             anchor_c=anchor_c,
         )
         try:
+            component_positions = self._trial_positions(temp, item_positions)
             result = self.solve_anchored(
-                item_positions=item_positions,
+                item_positions=component_positions,
                 anchor_offsets=anchor_offsets,
-                pinned_items=set(),
+                pinned_items=pinned_items or set(),
                 max_iterations=max_iterations,
                 tolerance=tolerance,
                 deformable_items=deformable_items,
@@ -1463,6 +1498,7 @@ class ConstraintGraph:
         deformable_items: set[UUID] | None = None,
         deformable_vertices: dict[UUID, list[tuple[float, float]]] | None = None,
         tolerance: float = 1.0,
+        pinned_items: set[UUID] | None = None,
     ) -> list[UUID]:
         """Return IDs of existing constraints that would be violated by ``trial_constraint``.
 
@@ -1472,12 +1508,13 @@ class ConstraintGraph:
         order to satisfy the trial one.  Empty list means the trial constraint
         is compatible with everything already in the graph.
         """
+        component_positions = self._trial_positions(trial_constraint, item_positions)
         self._constraints[trial_constraint.constraint_id] = trial_constraint
         try:
             result = self.solve_anchored(
-                item_positions=item_positions,
+                item_positions=component_positions,
                 anchor_offsets=anchor_offsets,
-                pinned_items=set(),
+                pinned_items=pinned_items or set(),
                 max_iterations=50,
                 tolerance=tolerance,
                 deformable_items=deformable_items,
@@ -1492,22 +1529,12 @@ class ConstraintGraph:
             base = item_positions[uid]
             resolved_item_pos[uid] = (base[0] + dx, base[1] + dy)
         resolved_vertex_pos: dict[tuple[UUID, int], tuple[float, float]] = {}
-        if deformable_vertices:
-            for uid, verts in deformable_vertices.items():
-                for vi, (vx, vy) in enumerate(verts):
-                    resolved_vertex_pos[(uid, vi)] = (vx, vy)
-        for vk, (dx, dy) in result.vertex_deltas.items():
-            base = resolved_vertex_pos.get(vk)
-            if base is None:
-                continue
-            # Deltas returned by solve_anchored are vertex deformation, i.e.
-            # they exclude any whole-item translation.  Add the item delta back
-            # to get the absolute vertex position.
-            item_dx, item_dy = result.item_deltas.get(vk[0], (0.0, 0.0))
-            resolved_vertex_pos[vk] = (
-                base[0] + dx + item_dx,
-                base[1] + dy + item_dy,
-            )
+        for uid, verts in (deformable_vertices or {}).items():
+            item_dx, item_dy = result.item_deltas.get(uid, (0.0, 0.0))
+            for vi, (vx, vy) in enumerate(verts):
+                vdx, vdy = result.vertex_deltas.get((uid, vi), (0.0, 0.0))
+                # A polygon may translate rigidly with no vertex_deltas at all.
+                resolved_vertex_pos[(uid, vi)] = (vx + item_dx + vdx, vy + item_dy + vdy)
 
         def anchor_pos(anchor: AnchorRef) -> tuple[float, float]:
             if (
@@ -1526,6 +1553,8 @@ class ConstraintGraph:
 
         conflicting: list[UUID] = []
         for cid, c in self._constraints.items():
+            if c.anchor_a.item_id not in component_positions or c.anchor_b.item_id not in component_positions:
+                continue
             if c.constraint_type in (
                 ConstraintType.PARALLEL,
                 ConstraintType.PERPENDICULAR,
@@ -1553,8 +1582,10 @@ class ConstraintGraph:
                 err = abs(abs(bx - ax) - c.target_distance)
             elif c.constraint_type == ConstraintType.VERTICAL_DISTANCE:
                 err = abs(abs(by - ay) - c.target_distance)
-            elif c.constraint_type == ConstraintType.COINCIDENT:
-                err = math.sqrt((ax - bx) ** 2 + (ay - by) ** 2)
+            elif c.constraint_type in (ConstraintType.COINCIDENT, ConstraintType.POINT_ON_EDGE,
+                                        ConstraintType.TANGENT):
+                pos_c = anchor_pos(c.anchor_c) if c.anchor_c is not None else None
+                err = incidence_error(c, (ax, ay), (bx, by), pos_c)
             else:
                 continue
             if err > tolerance:

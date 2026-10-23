@@ -24,7 +24,11 @@ from open_garden_planner.core.constraints import (
     ConstraintGraph,
     ConstraintType,
 )
-from open_garden_planner.core.measure_snapper import AnchorType, get_anchor_points
+from open_garden_planner.core.measure_snapper import (
+    AnchorType,
+    get_anchor_points,
+    resolve_anchor_point,
+)
 from open_garden_planner.ui.canvas.items import GardenItemMixin
 
 # Colors
@@ -443,13 +447,6 @@ class DimensionLineManager:
             ConstructionLineItem,
         )
 
-        _edge_types = frozenset({
-            AnchorType.EDGE_TOP,
-            AnchorType.EDGE_BOTTOM,
-            AnchorType.EDGE_LEFT,
-            AnchorType.EDGE_RIGHT,
-        })
-
         for item in self._scene.items():
             is_garden = isinstance(item, GardenItemMixin)
             is_construction = isinstance(
@@ -459,31 +456,7 @@ class DimensionLineManager:
                 continue
             if item.item_id != item_id:
                 continue
-            anchors = get_anchor_points(item)
-            # For polygon/polyline edges the EDGE_* classification is dynamic (determined
-            # by the edge's current dominant axis) and may change as vertices move.
-            # Match by index among all EDGE_* anchors so the indicator stays on the
-            # correct edge regardless of its current orientation.
-            if anchor_type in _edge_types:
-                for anchor in anchors:
-                    if anchor.anchor_type in _edge_types and anchor.anchor_index == anchor_index:
-                        return anchor.point
-            # Standard match: type + index
-            for anchor in anchors:
-                if (
-                    anchor.anchor_type == anchor_type
-                    and anchor.anchor_index == anchor_index
-                ):
-                    return anchor.point
-            # Fallback: match by type only (for CENTER and unique types)
-            for anchor in anchors:
-                if anchor.anchor_type == anchor_type:
-                    return anchor.point
-            # Fallback to center if specific anchor type not found
-            for anchor in anchors:
-                if anchor.anchor_type == AnchorType.CENTER:
-                    return anchor.point
-            return None
+            return resolve_anchor_point(item, anchor_type, anchor_index)
         return None
 
     def _build_dimension_line(

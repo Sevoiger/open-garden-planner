@@ -6,11 +6,16 @@ scene position, enabling precise object-to-object distance measurement.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QGraphicsItem
+
+if TYPE_CHECKING:
+    from open_garden_planner.core.constraints import Constraint
 
 
 class AnchorType(Enum):
@@ -80,6 +85,47 @@ def get_anchor_points(item: QGraphicsItem) -> list[AnchorPoint]:
     elif isinstance(item, ArcItem):
         anchors = _arc_anchors(item)
 
+    return anchors
+
+
+_EDGE_TYPES = frozenset({AnchorType.EDGE_TOP, AnchorType.EDGE_BOTTOM,
+                         AnchorType.EDGE_LEFT, AnchorType.EDGE_RIGHT})
+
+
+def resolve_anchor_point(item: QGraphicsItem, anchor_type: AnchorType,
+                         anchor_index: int = 0) -> QPointF | None:
+    """Resolve a stored reference without confusing rectangle sides with edge indices."""
+    from open_garden_planner.ui.canvas.items import PolygonItem, PolylineItem
+
+    anchors = get_anchor_points(item)
+    indexed_edge = isinstance(item, (PolygonItem, PolylineItem)) and anchor_type in _EDGE_TYPES
+    for anchor in anchors:
+        if anchor.anchor_index == anchor_index and (
+            anchor.anchor_type in _EDGE_TYPES if indexed_edge else anchor.anchor_type == anchor_type
+        ):
+            return anchor.point
+    return None
+
+
+def get_constraint_anchor_points(item: QGraphicsItem,
+                                 constraints: Iterable[Constraint]) -> list[AnchorPoint]:
+    """Include stored polygon edge names as aliases after an edge changes direction."""
+    anchors = get_anchor_points(item)
+    from open_garden_planner.ui.canvas.items import PolygonItem, PolylineItem
+
+    if not isinstance(item, (PolygonItem, PolylineItem)):
+        return anchors
+    by_index = {a.anchor_index: a.point for a in anchors if a.anchor_type in _EDGE_TYPES}
+    keys = {(a.anchor_type, a.anchor_index) for a in anchors}
+    for constraint in constraints:
+        for ref in (constraint.anchor_a, constraint.anchor_b, constraint.anchor_c):
+            if (ref is None or ref.item_id != item.item_id or ref.anchor_type not in _EDGE_TYPES
+                    or (ref.anchor_type, ref.anchor_index) in keys):
+                continue
+            point = by_index.get(ref.anchor_index)
+            if point is not None:
+                anchors.append(AnchorPoint(point, ref.anchor_type, item, ref.anchor_index))
+                keys.add((ref.anchor_type, ref.anchor_index))
     return anchors
 
 
