@@ -3,7 +3,8 @@
 import json
 
 import pytest
-from PyQt6.QtCore import QPointF
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtWidgets import QApplication, QGraphicsItem
 
 from open_garden_planner.core.constraints import AnchorRef, ConstraintType
 from open_garden_planner.core.measure_snapper import AnchorType
@@ -11,6 +12,28 @@ from open_garden_planner.core.project import ProjectManager
 from open_garden_planner.ui.canvas.items import RectangleItem
 from open_garden_planner.ui.canvas.items.resize_handle import _is_item_fixed
 from tests.integration.test_drag_fixed_reference import drag, pin
+
+
+def test_locked_drag_never_publishes_a_temporary_position(canvas, qtbot):
+    class ObservedRectangle(RectangleItem):
+        def itemChange(self, change, value):
+            if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+                positions.append(QPointF(value))
+            return super().itemChange(change, value)
+
+    positions = []
+    item = ObservedRectangle(500, 500, 150, 100)
+    canvas.scene().addItem(item)
+    pin(canvas.scene().constraint_graph, item)
+    positions.clear()
+    drag(qtbot, canvas, QPointF(540, 535), QPointF(70, 30))
+    QApplication.processEvents()
+    qtbot.mouseClick(canvas.viewport(), Qt.MouseButton.LeftButton,
+                     pos=canvas.mapFromScene(QPointF(740, 735)))
+    QApplication.processEvents()
+    assert positions == [], 'A locked shape must never move, even before correction'
+    assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+    assert canvas.command_manager.undo_depth == 0
 
 
 @pytest.mark.parametrize('legacy', [True, False])

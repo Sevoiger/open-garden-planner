@@ -2311,7 +2311,23 @@ class CanvasView(QGraphicsView):
                 event.accept()
                 return
 
-        super().mouseMoveEvent(event)
+        # Qt moves the whole movable selection before our constraint solver
+        # runs. Do not publish forbidden positions (and trigger dependent UI
+        # updates) for FIXED items, even temporarily. Preserve the flags rather
+        # than making locks permanent here: layer locks and vertex edit mode
+        # also own ItemIsMovable, and unlocking/undo must keep working.
+        from open_garden_planner.ui.canvas.items.resize_handle import _is_item_fixed
+
+        movable_flag = QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        blocked_items = [item for item in self.scene().selectedItems()
+                         if item.flags() & movable_flag and _is_item_fixed(item)]
+        try:
+            for item in blocked_items:
+                item.setFlag(movable_flag, False)
+            super().mouseMoveEvent(event)
+        finally:
+            for item in blocked_items:
+                item.setFlag(movable_flag, True)
 
         # Propagate bed movement to child plants during drag
         self._propagate_bed_children_during_drag()
