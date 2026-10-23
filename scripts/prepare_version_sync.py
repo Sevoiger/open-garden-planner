@@ -15,7 +15,7 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.check_dependency_lock import EXPORT_ARGS
+from scripts.check_dependency_lock import EXPORT_ARGS, default_uv
 
 ROOT = Path(__file__).resolve().parents[1]
 SYNC_FILES = ("pyproject.toml", "src/open_garden_planner/__init__.py", "uv.lock", "pylock.toml")
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--source-pr", type=int, required=True)
-    parser.add_argument("--uv", default="uv")
+    parser.add_argument("--uv", default=default_uv())
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     root = args.root.resolve()

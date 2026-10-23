@@ -186,13 +186,18 @@ def create_pattern_brush(pattern: FillPattern, color: QColor, personal_pattern: 
     """Apply tile size, angle/scale, then offsets in the surface's local cm."""
     from PyQt6.QtGui import QTransform
 
-    from open_garden_planner.core.fill_transform import fill_offset_values, fill_transform_values
+    from open_garden_planner.core.fill_transform import (
+        fill_offset_values,
+        fill_origin_values,
+        fill_transform_values,
+    )
 
     brush = _base_pattern_brush(pattern, color, personal_pattern)
     angle, scale = fill_transform_values(pattern_transform)
     dx, dy = fill_offset_values(pattern_transform)
+    ox, oy = fill_origin_values(pattern_transform)
     brush.setTransform(brush.transform() * QTransform().rotate(angle).scale(scale, scale)
-                       * QTransform.fromTranslate(dx, dy))
+                       * QTransform.fromTranslate(dx + ox, dy + oy))
     return brush
 
 

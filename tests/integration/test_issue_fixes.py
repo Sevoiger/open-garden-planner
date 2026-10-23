@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from PyQt6.QtCore import QPoint, QPointF, Qt
 from PyQt6.QtGui import QContextMenuEvent, QMouseEvent
+from PyQt6.QtWidgets import QMenu
 
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.tools import ToolType
@@ -186,16 +187,15 @@ class TestIssue131RightClickCanvasMenu:
         event.pos.return_value = QPoint(1000, 1000)  # Far from any items
         event.globalPos.return_value = QPoint(1000, 1000)
 
-        # Patch QMenu so exec() returns the import action (simulates user selecting it)
-        with patch("open_garden_planner.ui.canvas.canvas_view.QMenu") as MockMenu:
-            mock_menu = MockMenu.return_value
-            mock_action = MagicMock()
-            mock_menu.addAction.return_value = mock_action
-            mock_menu.exec.return_value = mock_action  # user "clicked" the action
+        def select_import(menu, *_args):
+            action = menu.actions()[0]
+            action.trigger()  # Real QMenu.exec emits triggered before returning.
+            return action
 
+        with patch.object(QMenu, "exec", select_import):
             canvas.contextMenuEvent(event)
 
-        assert emitted, "import_background_image_requested must be emitted when user selects the action"
+        assert emitted == [True], "Selecting the import action must emit exactly once"
 
 
 # ---------------------------------------------------------------------------

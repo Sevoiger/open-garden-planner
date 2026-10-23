@@ -568,7 +568,9 @@ class TestExportOrientation:
             assert imported_polys, "rectangle not re-imported as polygon"
             poly = imported_polys[0]
             # Use the polygon vertices directly (independent of stroke width).
-            verts = list(poly.polygon())
+            # QPolygonF iteration yields borrowed QPointF wrappers on PyQt6.
+            # Own the points before the temporary polygon returned by Qt dies.
+            verts = [QPointF(vertex) for vertex in poly.polygon()]
             xs = [v.x() for v in verts]
             ys = [v.y() for v in verts]
             # Original rectangle spans x∈[200,500], y∈[150,250]. Y-axis is
@@ -578,6 +580,9 @@ class TestExportOrientation:
             # Width and height preserved exactly (vertices are unaffected by stroke).
             assert abs((max(xs) - min(xs)) - 300) < 1.0, f"width drifted: {xs}"
             assert abs((max(ys) - min(ys)) - 100) < 1.0, f"height drifted: {ys}"
+            assert sorted(zip(xs, ys, strict=True)) == [
+                (200.0, 150.0), (200.0, 250.0), (500.0, 150.0), (500.0, 250.0),
+            ]
         finally:
             tmp.unlink(missing_ok=True)
 

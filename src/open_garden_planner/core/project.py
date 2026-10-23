@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from PyQt6.QtCore import QObject, QPointF, pyqtSignal
+from PyQt6.QtCore import QObject, QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene
 
@@ -1560,6 +1560,36 @@ class ProjectManager(QObject):
         return data
 
     @staticmethod
+    def _stored_shape_offset(item: QGraphicsItem) -> QPointF:
+        """Include Qt's translation compensation when grouping rotated shapes."""
+        transform = item.transform()
+        linear = (transform.m11() - 1, transform.m22() - 1, transform.m33() - 1,
+                  transform.m12(), transform.m21(), transform.m13(), transform.m23())
+        if any(abs(value) > 1e-12 for value in linear):
+            return item.pos()
+        origin = item.transformOriginPoint()
+        return item.mapToParent(origin) - origin
+
+    @staticmethod
+    def _stored_fill_metadata(item: Any, position: QPointF) -> dict[str, Any]:
+        """Keep a texture's scene origin when saved coordinates absorb pos()."""
+        from open_garden_planner.core.fill_transform import fill_origin_values
+        from open_garden_planner.core.object_types import ObjectType
+
+        metadata = deepcopy(item.metadata)
+        if position.isNull() or item.brush().style() != Qt.BrushStyle.TexturePattern:
+            return metadata
+        # Roof tiling is already anchored to the ridge's saved coordinates.
+        if item.object_type == ObjectType.HOUSE and hasattr(item, '_find_ridge') and item._find_ridge() is not None:
+            return metadata
+        stored = metadata.get("fill_transform")
+        transform = deepcopy(stored) if isinstance(stored, dict) else {}
+        ox, oy = fill_origin_values(transform)
+        transform.update(origin_x_cm=ox + position.x(), origin_y_cm=oy + position.y())
+        metadata["fill_transform"] = transform
+        return metadata
+
+    @staticmethod
     def _stored_fill_color(item: Any) -> QColor:
         """The fill colour to persist for ``item`` (issues #438/#469).
 
@@ -1601,6 +1631,13 @@ class ProjectManager(QObject):
             TextItem,
         )
 
+        offset = (ProjectManager._stored_shape_offset(item)
+                  if isinstance(item, (RectangleItem, EllipseItem, CircleItem, PolygonItem))
+                  else item.pos())
+        metadata = (ProjectManager._stored_fill_metadata(item, offset)
+                    if isinstance(item, (RectangleItem, EllipseItem, CircleItem, PolygonItem))
+                    else getattr(item, "metadata", {}))
+
         if isinstance(
             item,
             (
@@ -1617,8 +1654,8 @@ class ProjectManager(QObject):
             data = {
                 "type": "rectangle",
                 "item_id": str(item.item_id),
-                "x": item.pos().x() + rect.x(),
-                "y": item.pos().y() + rect.y(),
+                "x": offset.x() + rect.x(),
+                "y": offset.y() + rect.y(),
                 "width": rect.width(),
                 "height": rect.height(),
             }
@@ -1626,8 +1663,8 @@ class ProjectManager(QObject):
                 data["object_type"] = item.object_type.name
             if hasattr(item, "name") and item.name:
                 data["name"] = item.name
-            if hasattr(item, "metadata") and item.metadata:
-                data["metadata"] = item.metadata
+            if metadata:
+                data["metadata"] = metadata
             if hasattr(item, "layer_id") and item.layer_id:
                 data["layer_id"] = str(item.layer_id)
             if hasattr(item, "label_visible") and not item.label_visible:
@@ -1652,8 +1689,8 @@ class ProjectManager(QObject):
             return data
         elif isinstance(item, EllipseItem):
             rect = item.rect()
-            cx = item.pos().x() + rect.center().x()
-            cy = item.pos().y() + rect.center().y()
+            cx = offset.x() + rect.center().x()
+            cy = offset.y() + rect.center().y()
             data = {
                 "type": "ellipse",
                 "item_id": str(item.item_id),
@@ -1666,8 +1703,8 @@ class ProjectManager(QObject):
                 data["object_type"] = item.object_type.name
             if hasattr(item, "name") and item.name:
                 data["name"] = item.name
-            if hasattr(item, "metadata") and item.metadata:
-                data["metadata"] = item.metadata
+            if metadata:
+                data["metadata"] = metadata
             if hasattr(item, "layer_id") and item.layer_id:
                 data["layer_id"] = str(item.layer_id)
             if hasattr(item, "label_visible") and not item.label_visible:
@@ -1688,16 +1725,16 @@ class ProjectManager(QObject):
             data = {
                 "type": "circle",
                 "item_id": str(item.item_id),
-                "center_x": item.pos().x() + item.center.x(),
-                "center_y": item.pos().y() + item.center.y(),
+                "center_x": offset.x() + item.center.x(),
+                "center_y": offset.y() + item.center.y(),
                 "radius": item.radius,
             }
             if hasattr(item, "object_type") and item.object_type:
                 data["object_type"] = item.object_type.name
             if hasattr(item, "name") and item.name:
                 data["name"] = item.name
-            if hasattr(item, "metadata") and item.metadata:
-                data["metadata"] = item.metadata
+            if metadata:
+                data["metadata"] = metadata
             if hasattr(item, "layer_id") and item.layer_id:
                 data["layer_id"] = str(item.layer_id)
             if hasattr(item, "label_visible") and not item.label_visible:
@@ -1764,8 +1801,8 @@ class ProjectManager(QObject):
             for i in range(polygon.count()):
                 pt = polygon.at(i)
                 points.append({
-                    "x": item.pos().x() + pt.x(),
-                    "y": item.pos().y() + pt.y(),
+                    "x": offset.x() + pt.x(),
+                    "y": offset.y() + pt.y(),
                 })
             data = {
                 "type": "polygon",
@@ -1776,8 +1813,8 @@ class ProjectManager(QObject):
                 data["object_type"] = item.object_type.name
             if hasattr(item, "name") and item.name:
                 data["name"] = item.name
-            if hasattr(item, "metadata") and item.metadata:
-                data["metadata"] = item.metadata
+            if metadata:
+                data["metadata"] = metadata
             if hasattr(item, "layer_id") and item.layer_id:
                 data["layer_id"] = str(item.layer_id)
             if hasattr(item, "label_visible") and not item.label_visible:

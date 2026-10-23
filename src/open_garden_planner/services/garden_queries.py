@@ -29,6 +29,11 @@ def card_for(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
     obj = next((o for o in garden_objects(snapshot) if o["item_id"] == item_id), None)
     if obj is None:
         raise ValueError(f"Unknown garden object: {item_id}")
+    return _card_for_object(obj)
+
+
+def _card_for_object(obj: dict[str, Any]) -> dict[str, Any]:
+    """Project one resolved object without traversing the plan again."""
     metadata = obj.get("metadata", {})
     metadata = metadata if isinstance(metadata, dict) else {}
     card: dict[str, Any] = deepcopy(metadata.get("garden_tracking", {}))
@@ -40,8 +45,13 @@ def card_for(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
     card["name"] = obj.get("name", "")
     card["notes"] = instance.get("notes", "")
     card["cultivar"] = instance.get("variety_cultivar", "")
-    card["item_id"] = item_id
+    card["item_id"] = obj["item_id"]
     return card
+
+
+def garden_cards(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project every card in one traversal, including nested objects."""
+    return [_card_for_object(obj) for obj in garden_objects(snapshot)]
 
 
 def search_events(snapshot: dict[str, Any], target_id: str | None = None,
@@ -74,11 +84,15 @@ def search_events(snapshot: dict[str, Any], target_id: str | None = None,
 
 def garden_record(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
     """Direct and zone events are disjoint views of one source of truth."""
-    card = card_for(snapshot, item_id)
+    objects = garden_objects(snapshot)
+    obj = next((obj for obj in objects if obj["item_id"] == item_id), None)
+    if obj is None:
+        raise ValueError(f"Unknown garden object: {item_id}")
+    card = _card_for_object(obj)
     direct = search_events(snapshot, item_id)
     own_ids = {event["id"] for event in direct}
     zone_events = search_events(snapshot, card["zone_id"]) if card.get("zone_id") else []
-    children = [card_for(snapshot, o["item_id"]) for o in garden_objects(snapshot)
+    children = [_card_for_object(o) for o in objects
                 if o.get("metadata", {}).get("garden_tracking", {}).get("zone_id") == item_id]
     return {"card": card, "direct_events": direct,
             "zone_events": [e for e in zone_events if e["id"] not in own_ids], "plantings": children}

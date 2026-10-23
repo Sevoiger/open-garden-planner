@@ -3822,6 +3822,7 @@ class GardenPlannerApp(QMainWindow):
 
         north_action = QAction(self.tr("Set North Orientation..."), self)
         north_action.triggered.connect(self._on_set_north_orientation)
+        self._set_action_icon(north_action, "location")
         menu.addAction(north_action)
 
         # Set Garden Location
@@ -4507,7 +4508,12 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
 
         service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
-        GardenMemoryDialog(service, target_id, self).exec()
+        dialog = GardenMemoryDialog(service, target_id, self)
+        try:
+            dialog.exec()
+        finally:
+            self._project_manager.garden_memory_changed.disconnect(dialog._refresh_events)
+            dialog.deleteLater()
         self._update_properties_panel()
         self._update_plant_database_panel()
 

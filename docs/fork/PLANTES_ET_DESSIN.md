@@ -426,6 +426,10 @@ par contact ou chevauchement. Les arrondis deviennent une approximation polygona
 ombres et épaisseur du trait ne modifient pas le contour. Le résultat reprend
 l'apparence d'un objet source. Les plantes, objets liés ou contraints et formes
 portant des données incompatibles sont refusés pour préserver leurs informations.
+Cette protection inclut les interventions, analyses de sol et plantations qui
+désignent une zone explicitement, même sans lien de conteneur sur le dessin.
+La texture conserve son orientation et son alignement ; une étiquette masquée
+reste masquée sur le résultat.
 Intersection et soustraction restent limitées à deux formes.
 
 Un double-clic ouvre l'édition des sommets. Pour les contours denses (plus de
@@ -455,6 +459,8 @@ La découpe accepte les surfaces fermées indépendantes : déverrouiller la pos
 et retirer les contraintes avant de couper. Les plantes, objets liés et formes
 portant des données de suivi (sol, cultures, récoltes, tâches ou notes liées) sont
 protégés contre cette transformation.
+Une zone utilisée par une fiche de plantation reste également protégée, même
+si cette zone n’a pas encore sa propre fiche ou ses propres interventions.
 
 ## Importer un remplissage personnel
 
@@ -484,6 +490,8 @@ l’alignement initial. Les anciens plans commencent à zéro.
 Ces réglages s’appliquent aux motifs standards comme aux PNG et sont enregistrés
 avec la forme ; ils sont annulables. Pour un PNG, l’échelle multiplie la largeur
 réelle indiquée dans **Tile width**.
+Après déplacement, fusion ou découpe, l’alignement du motif est conservé à la
+sauvegarde et à la réouverture, sans changer les décalages X et Y affichés.
 
 Le sélecteur **Matériaux** propose les PNG présents dans `visuals/materials/`
 (par exemple ardoise, bois ou paillage). Choisir un matériau l’intègre au plan.

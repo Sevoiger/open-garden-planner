@@ -66,7 +66,13 @@ def test_every_category_stays_on_screen_and_last_item_is_reachable(qtbot, themed
         received = []
         dropdown.item_selected.connect(received.append)
         last.click()
-        assert received == [last.item] and not dropdown.isVisible()
+        assert len(received) == 1 and not dropdown.isVisible()
+        chosen = received[0]
+        # Plant choices are copied to carry the popup's interactive-size option.
+        for field in ("name", "tool_type", "object_type", "species", "plant_category", "species_data"):
+            assert getattr(chosen, field) == getattr(last.item, field)
+        if dropdown._choose_size is not None:
+            assert chosen.interactive_size == dropdown._choose_size.isChecked()
 
 
 @pytest.mark.parametrize("mode", list(ThemeMode))

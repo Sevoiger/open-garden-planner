@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from scripts.check_dependency_lock import default_uv
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -172,7 +173,7 @@ def lock_fixture(path: Path) -> None:
         shutil.copyfile(ROOT / name, target)
 
 
-@pytest.mark.skipif(shutil.which("uv") is None, reason="Requires project-pinned uv")
+@pytest.mark.skipif(shutil.which(default_uv()) is None, reason="Requires project-pinned uv")
 def test_version_sync_cli_is_offline_transactional_and_idempotent(tmp_path: Path, monkeypatch) -> None:
     import tomllib
 
@@ -199,7 +200,7 @@ def test_version_sync_cli_is_offline_transactional_and_idempotent(tmp_path: Path
     assert json.loads(repeated.stdout)["already_synced"] is True
 
 
-@pytest.mark.skipif(shutil.which("uv") is None, reason="Requires project-pinned uv")
+@pytest.mark.skipif(shutil.which(default_uv()) is None, reason="Requires project-pinned uv")
 def test_lock_cli_rejects_altered_export_and_stale_manifest_without_repairs(tmp_path: Path) -> None:
     lock_fixture(tmp_path)
     argv = ("--root", str(tmp_path))

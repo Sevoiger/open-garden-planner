@@ -10,6 +10,7 @@ from scripts.audit_metrics import coverage_section, parse_mypy
 from scripts.check_branch_protection import differences
 from scripts.check_coverage_floors import regressions as coverage_regressions
 from scripts.check_coverage_floors import validate_floors
+from scripts.check_dependency_lock import default_uv
 from scripts.check_mypy_baseline import regressions as type_regressions
 from scripts.check_mypy_baseline import validate_baseline
 from scripts.check_pr_checks import differences as check_differences
@@ -94,12 +95,29 @@ def test_baseline_keeps_platforms_independent_and_rejects_tool_drift() -> None:
             "environments": {
                 "linux": {"per_file": {"src/open_garden_planner/a.py": 1}},
                 "win32": {"per_file": {"src/open_garden_planner/a.py": 2}},
+                "darwin": {"per_file": {"src/open_garden_planner/a.py": 3}},
             }}
     assert validate_baseline(data, "2.4.0")["environments"]["linux"]["per_file"] != (
         data["environments"]["win32"]["per_file"]
     )
+    assert validate_baseline(data, "2.4.0")["environments"]["darwin"]["per_file"] == {
+        "src/open_garden_planner/a.py": 3,
+    }
     with pytest.raises(ValueError, match="metadata"):
         validate_baseline(data, "9.0.0")
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_uv_prefers_the_project_bootstrap_without_overriding_path_fallback(tmp_path, monkeypatch, installed):
+    from scripts import check_dependency_lock
+
+    monkeypatch.setattr(check_dependency_lock, "ROOT", tmp_path)
+    relative = "Scripts/uv.exe" if check_dependency_lock.os.name == "nt" else "bin/uv"
+    bootstrap = tmp_path / ".tools/bootstrap" / relative
+    if installed:
+        bootstrap.parent.mkdir(parents=True)
+        bootstrap.touch()
+    assert default_uv() == (str(bootstrap) if installed else "uv")
 
 
 def test_coverage_compares_exact_counts_and_names_every_package() -> None:

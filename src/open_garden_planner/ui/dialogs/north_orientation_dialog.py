@@ -5,7 +5,6 @@ import math
 from PyQt6.QtCore import QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import QMouseEvent, QPainter, QPaintEvent
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -15,6 +14,7 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.services.north_arrow import draw_north_arrow
+from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 
 class NorthCompass(QWidget):
@@ -48,7 +48,7 @@ class NorthCompass(QWidget):
         self.angle_chosen.emit(math.degrees(math.atan2(delta.x(), -delta.y())) % 360)
 
 
-class NorthOrientationDialog(QDialog):
+class NorthOrientationDialog(ResponsiveDialog):
     def __init__(self, angle: float, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("North orientation"))

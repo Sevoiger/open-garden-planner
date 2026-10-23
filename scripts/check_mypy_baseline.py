@@ -26,8 +26,8 @@ def validate_baseline(data: Any, mypy_version: str) -> dict[str, Any]:
     if data.get("target_python") != "3.11" or data.get("mypy_version") != mypy_version:
         raise ValueError("Baseline Python/mypy metadata does not match the locked tools")
     envs = data.get("environments")
-    if not isinstance(envs, dict) or not envs or set(envs) - {"linux", "win32"}:
-        raise ValueError("Baseline must contain Linux/Windows environment records")
+    if not isinstance(envs, dict) or not envs or set(envs) - {"linux", "win32", "darwin"}:
+        raise ValueError("Baseline must contain Linux/Windows/macOS environment records")
     for env in envs.values():
         if not isinstance(env, dict) or not isinstance(env.get("per_file"), dict):
             raise ValueError("Invalid per-file baseline")
@@ -57,8 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, Any] = {"available": False}
     code = 2
     try:
-        if sys.version_info[:2] != (3, 11) or sys.platform not in {"linux", "win32"}:
-            raise ValueError("Use locked Python 3.11 on Linux or Windows")
+        if sys.version_info[:2] != (3, 11) or sys.platform not in {"linux", "win32", "darwin"}:
+            raise ValueError("Use locked Python 3.11 on Linux, Windows or macOS")
         version = importlib.metadata.version("mypy")
         data = None
         if path.exists():
