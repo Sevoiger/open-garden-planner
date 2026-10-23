@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox
 
 from open_garden_planner.app import visual_paths
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
-from open_garden_planner.core.fill_transform import fill_transform_values
+from open_garden_planner.core.fill_transform import fill_offset_values, fill_transform_values
 from open_garden_planner.core.item_look import copy_visual_style
 from open_garden_planner.core.png_asset import import_png
 from open_garden_planner.core.project import ProjectManager
@@ -52,16 +52,22 @@ def test_angle_scale_geometry_undo_colour_and_save(canvas, qtbot, tmp_path, png,
     panel.set_selected_items([item])
     angle = panel.findChild(QDoubleSpinBox, 'fill_pattern_angle')
     scale = panel.findChild(QDoubleSpinBox, 'fill_pattern_scale')
+    offset_x = panel.findChild(QDoubleSpinBox, 'fill_pattern_offset_x')
+    offset_y = panel.findChild(QDoubleSpinBox, 'fill_pattern_offset_y')
     angle.setValue(90)
     scale.setValue(200)
-    assert canvas.command_manager.undo_depth == 2
+    offset_x.setValue(13.5)
+    offset_y.setValue(-7)
+    assert canvas.command_manager.undo_depth == 4
     record = deepcopy(item.metadata['fill_transform'])
-    assert record == {'angle_deg': 90, 'scale': 2}
+    assert record == {'angle_deg': 90, 'scale': 2, 'offset_x_cm': 13.5, 'offset_y_cm': -7}
     assert item.sceneBoundingRect() == before_geometry
     brush = item.brush()
     expected_scale = 20 if personal else 2
     assert brush.transform().m11() == pytest.approx(0, abs=1e-12)
     assert brush.transform().m12() == pytest.approx(expected_scale)
+    assert brush.transform().dx() == pytest.approx(13.5)
+    assert brush.transform().dy() == pytest.approx(-7)
     color_button = ColorButton(QColor('green'))
     qtbot.addWidget(color_button)
     panel._on_color_changed(item, 'fill_color', color_button)
@@ -71,11 +77,17 @@ def test_angle_scale_geometry_undo_colour_and_save(canvas, qtbot, tmp_path, png,
     # The transform changes repetition without modifying or tinting the embedded PNG.
     rendered = _render_brush(brush)
     canvas.command_manager.undo()
+    canvas.command_manager.undo()
+    panel._refresh_field_values()
+    assert offset_x.value() == offset_y.value() == 0
+    canvas.command_manager.undo()
     assert fill_transform_values(item.metadata['fill_transform']) == (90, 1)
     panel._refresh_field_values()
     assert scale.value() == 100
     canvas.command_manager.undo()
     assert 'fill_transform' not in item.metadata
+    canvas.command_manager.redo()
+    canvas.command_manager.redo()
     canvas.command_manager.redo()
     canvas.command_manager.redo()
     assert item.metadata['fill_transform'] == record
@@ -101,7 +113,8 @@ def test_angle_scale_geometry_undo_colour_and_save(canvas, qtbot, tmp_path, png,
 def test_material_picker_embeds_png_and_keeps_transform(canvas, qtbot, tmp_path, png, monkeypatch):
     monkeypatch.setattr(visual_paths, 'visuals_dir', lambda _kind: tmp_path)
     item = RectangleItem(100, 100, 400, 200)
-    item.metadata['fill_transform'] = {'angle_deg': 45, 'scale': 0.5}
+    transform = {'angle_deg': 45, 'scale': 0.5, 'offset_x_cm': -20, 'offset_y_cm': 7}
+    item.metadata['fill_transform'] = deepcopy(transform)
     canvas.scene().addItem(item)
     panel = PropertiesPanel()
     qtbot.addWidget(panel)
@@ -111,7 +124,7 @@ def test_material_picker_embeds_png_and_keeps_transform(canvas, qtbot, tmp_path,
     assert combo.count() == 2
     combo.activated.emit(1)
     assert item.metadata['personal_fill_pattern']['source_name'] == 'wood.png'
-    assert item.metadata['fill_transform'] == {'angle_deg': 45, 'scale': 0.5}
+    assert item.metadata['fill_transform'] == transform
     assert item.brush().textureImage().width() == 8
     png.unlink()
     item._setup_styling()
@@ -138,3 +151,22 @@ def test_asset_directories_accept_old_flat_layout_and_new_subfolders(tmp_path, m
                                     {'angle_deg': float('nan')}, {'angle_deg': True}])
 def test_invalid_transform_falls_back_safely(qtbot, record):
     assert fill_transform_values(record) == (0, 1)
+
+
+@pytest.mark.parametrize('bad', [None, True, '12', float('nan'), float('inf'), 100001])
+def test_invalid_offset_does_not_discard_other_style_values(bad):
+    record = {'angle_deg': 37, 'scale': 2, 'offset_x_cm': bad, 'offset_y_cm': -12.5}
+    assert fill_offset_values(record) == (0, -12.5)
+    assert fill_transform_values(record) == (37, 2)
+
+
+def test_offsets_change_rendered_pixels_without_changing_tile_size(qtbot, png):
+    material = {'png': import_png(png), 'width_cm': 80}
+    base = create_pattern_brush(FillPattern.WOOD, QColor('white'), material,
+                                {'angle_deg': 37, 'scale': 2})
+    for key in ('offset_x_cm', 'offset_y_cm'):
+        shifted = create_pattern_brush(FillPattern.WOOD, QColor('white'), material,
+                                      {'angle_deg': 37, 'scale': 2, key: 17})
+        assert _render_brush(shifted) != _render_brush(base)
+        assert shifted.textureImage() == base.textureImage()
+        assert shifted.transform().m12() == base.transform().m12()
