@@ -1,7 +1,7 @@
 """Main toolbar with core drawing and selection tools (CAD-style).
 
-Direct object palettes live in `CategoryToolbar`, between the drawing
-tools and the CAD constraints on the same row.
+Direct object palettes live in `CategoryToolbar`, at the right edge after
+the drawing tools and CAD constraints on the same row.
 """
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal

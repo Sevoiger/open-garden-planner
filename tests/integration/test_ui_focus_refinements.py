@@ -59,7 +59,8 @@ def test_french_standard_message_buttons_fit_their_text(qtbot, qapp, mode, font_
 
 
 @pytest.mark.parametrize("font_size", [13, 18])
-def test_french_palettes_share_one_row_after_restoring_two_rows(qtbot, qapp, monkeypatch, font_size):
+@pytest.mark.parametrize("window_width", [800, 1600])
+def test_french_palettes_share_one_row_after_restoring_two_rows(qtbot, qapp, monkeypatch, font_size, window_width):
     from open_garden_planner.app.application import GardenPlannerApp
 
     old_font = qapp.font()
@@ -70,9 +71,10 @@ def test_french_palettes_share_one_row_after_restoring_two_rows(qtbot, qapp, mon
         monkeypatch.setattr(GardenPlannerApp, '_startup_sequence', lambda *_: None)
         window = GardenPlannerApp()
         qtbot.addWidget(window)
-        window.resize(800, 700)
+        window.resize(window_width, 700)
         window.showNormal()
         # Reproduce the rejected two-row layout persisted by the previous patch.
+        window.insertToolBar(window.constraint_toolbar, window.category_toolbar)
         window.insertToolBarBreak(window.category_toolbar)
         window._save_ui_state()
         window._restore_ui_state()
@@ -80,10 +82,14 @@ def test_french_palettes_share_one_row_after_restoring_two_rows(qtbot, qapp, mon
         toolbar = window.category_toolbar
         assert not window.toolBarBreak(toolbar)
         assert toolbar.y() == window.main_toolbar.y() == window.constraint_toolbar.y()
+        assert window.main_toolbar.x() < window.constraint_toolbar.x() < toolbar.x()
         assert [b.text() for b in toolbar._category_buttons] == ["Formes", "Plantes", "Aménagements"]
         for widget in toolbar._category_buttons:
             assert widget.isVisible()
             assert toolbar.rect().contains(widget.geometry()), (widget, widget.geometry(), toolbar.rect())
+        last_button = toolbar._category_buttons[-1]
+        right_edge = toolbar.x() + last_button.x() + last_button.width()
+        assert 0 <= window.width() - right_edge <= 8
         window.close()
     finally:
         load_translator(qapp, "en")

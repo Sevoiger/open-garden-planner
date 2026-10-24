@@ -2,6 +2,9 @@
 
 ## Lisibilité de l’interface — 23 octobre 2026
 
+Le 24 octobre, les trois accès sont replacés tout à droite de la même ligne,
+avec leurs contenus fusionnés conservés, y compris après restauration de la disposition.
+
 Trois palettes **Formes / Plantes / Aménagements** réunissent les contenus des
 onze catégories, avec ouverture directe en un clic. Après retour utilisateur,
 les menus intermédiaires et la recherche du haut ont été retirés ; les palettes

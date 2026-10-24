@@ -183,7 +183,7 @@ class TestGalleryRemoved:
 
 
 class TestMainWindowToolbarLayout:
-    """Core toolbars share one row, with object access before CAD overflow."""
+    """Core toolbars share one row, with object palettes at the right edge."""
 
     def test_three_toolbars_in_expected_order(self, qtbot: object) -> None:
         from PyQt6.QtWidgets import QToolBar

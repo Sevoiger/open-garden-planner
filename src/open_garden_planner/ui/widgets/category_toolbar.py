@@ -2,7 +2,7 @@
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QToolBar, QToolButton, QWidget
+from PyQt6.QtWidgets import QSizePolicy, QToolBar, QToolButton, QWidget
 
 from open_garden_planner.core.tools import ToolType
 from open_garden_planner.ui.icons import get_icon
@@ -60,6 +60,10 @@ class CategoryToolbar(QToolBar):
         self.setOrientation(Qt.Orientation.Horizontal)
         self.setIconSize(QSize(24, 24))
 
+        spacer = QWidget(self)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.addWidget(spacer)
+
         for category in self._categories:
             dropdown = CategoryDropdown(category, self, unified_plants=category.icon_name == "tree")
             dropdown.tool_selected.connect(self.tool_selected)
@@ -68,6 +72,10 @@ class CategoryToolbar(QToolBar):
             self._category_dropdowns.append(dropdown)
 
             self._add_palette_button(category, dropdown)
+
+    def minimumSizeHint(self) -> QSize:
+        """Reserve the three palette buttons before CAD tools overflow."""
+        return self.sizeHint()
 
     def _add_palette_button(self, category: GalleryCategory, dropdown: CategoryDropdown) -> None:
         name, icon_name = category.name, category.icon_name

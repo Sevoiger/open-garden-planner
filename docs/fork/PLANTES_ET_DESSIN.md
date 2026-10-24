@@ -2,7 +2,7 @@
 
 ## Catalogue dans les catégories du haut
 
-La barre présente trois entrées libellées, sur la même ligne que les outils de dessin :
+La barre présente trois entrées libellées tout à droite, sur la même ligne que les outils de dessin :
 
 - **Formes** : massifs et surfaces, formes géométriques.
 - **Plantes** : arbres, arbustes et haies, fleurs et vivaces, légumes et aromatiques.
@@ -12,7 +12,7 @@ La barre présente trois entrées libellées, sur la même ligne que les outils 
 Un clic ouvre directement la palette : les contenus des anciennes catégories
 sont réunis, sans menu intermédiaire. Le champ de recherche du haut a été retiré.
 Une disposition enregistrée avec deux lignes revient à une seule ligne au démarrage.
-Les contraintes CAD viennent après les palettes et utilisent le débordement Qt si nécessaire.
+Les contraintes CAD précèdent les palettes et utilisent le débordement Qt si nécessaire.
 
 La palette **Plantes** propose toutes les fiches du catalogue local,
 avec recherche, filtres et pages de 48 plantes. **Previous plants / Next plants**
