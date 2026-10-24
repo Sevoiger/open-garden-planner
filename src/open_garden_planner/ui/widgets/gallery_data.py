@@ -515,10 +515,10 @@ def _vertical_container_items() -> list[GalleryItem]:
 
 
 def build_toolbar_categories() -> list[GalleryCategory]:
-    """Build the 11 toolbar categories that drive the category dropdowns.
+    """Build the object subcategories shared by grouped menus and search.
 
-    Order is by expected frequency of use. Each category maps 1:1 to a
-    toolbar button and a Sims-style dropdown palette. The icon_name is the
+    Order is by expected frequency of use. Each category has a dropdown
+    palette, reached through one of three toolbar groups. The icon_name is the
     basename of an SVG in resources/icons/ui/.
     """
     categories = [

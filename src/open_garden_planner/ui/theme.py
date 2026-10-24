@@ -1128,6 +1128,22 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         background-color: {colors['button_pressed']};
     }}
 
+    /* Active plant traits must remain distinct inside the category popup. */
+    #TraitFilters QToolButton {{
+        color: {colors['text_primary']};
+        border: 1px solid {colors['border']};
+    }}
+
+    #TraitFilters QToolButton:checked {{
+        background-color: {colors['accent']};
+        color: {colors['accent_text']};
+        border-color: {colors['accent_pressed']};
+    }}
+
+    #TraitFilters QToolButton:checked:hover {{
+        background-color: {colors['accent_hover']};
+    }}
+
     #GlobalSearchResults {{
         background-color: {colors['surface']};
         border: 1px solid {colors['border']};
@@ -1211,6 +1227,13 @@ def apply_theme(app: QApplication, mode: ThemeMode) -> None:
         mode: Theme mode to apply
     """
     global _current_colors
+
+    from open_garden_planner.ui.widgets.dialog_button_sizing import DialogButtonSizing
+
+    sizing = app.findChild(DialogButtonSizing)
+    if sizing is None:
+        sizing = DialogButtonSizing(app)
+        app.installEventFilter(sizing)
 
     # Publish the resolved palette BEFORE restyling so listeners and
     # re-polished widgets that call theme_color() during the restyle

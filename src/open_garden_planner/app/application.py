@@ -4692,10 +4692,7 @@ class GardenPlannerApp(QMainWindow):
         status_bar.insertPermanentWidget(2, self._make_icon_label("status_input", tooltip=self.tr("Typed coordinate input")))
         status_bar.insertPermanentWidget(3, self.coordinate_input_field)
 
-        # Three top toolbars on the same row, left → right:
-        #   MainToolbar (core tools)
-        #   ConstraintToolbar (CAD constraints)
-        #   CategoryToolbar (object categories + global search)
+        # Drawing and CAD tools precede the three palettes at the right edge.
         self.main_toolbar = MainToolbar(self)
         self.addToolBar(self.main_toolbar)
 
@@ -6461,6 +6458,10 @@ class GardenPlannerApp(QMainWindow):
             self.category_toolbar,
         ):
             toolbar.setVisible(True)
+        # Heal the previous two-row layout without resetting unrelated UI state.
+        self.insertToolBar(self.category_toolbar, self.constraint_toolbar)
+        for toolbar in (self.main_toolbar, self.category_toolbar, self.constraint_toolbar):
+            self.removeToolBarBreak(toolbar)
         self._sun_toolbar.setVisible(False)
         self.soil_overlay_toolbar.setVisible(False)
 
