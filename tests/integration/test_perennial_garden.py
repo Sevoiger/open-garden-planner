@@ -545,3 +545,50 @@ def test_record_layer_filter_keeps_mixed_and_deleted_target_history(garden, qtbo
                  for i in range(dialog.events.count())}
     assert inherited == {mixed, hidden}
     assert pm.garden_memory == before
+
+
+def test_planting_date_patch_preserves_notes_and_clears_false_precision(garden):
+    _scene, _pm, commands, service, bed, plant = garden
+    service.set_card(str(plant.item_id), {
+        "kind": "group", "state": "dormant", "period": "2020",
+        "zone_id": str(bed.item_id), "notes": "Observation du propriétaire",
+        "cultivar": "Variété incertaine", "quantity": 4,
+    })
+    plant.metadata["owner_extension"] = {"keep": True}
+    baseline = deepcopy(plant.metadata)
+    service.set_planting_date(str(plant.item_id), "2023-10-15")
+    assert plant.metadata["plant_instance"]["planting_date"] == "2023-10-15"
+    service.set_planting_date(str(plant.item_id), "Automne 2023")
+    assert "planting_date" not in plant.metadata["plant_instance"]
+    for key, value in baseline.items():
+        if key != "garden_tracking":
+            assert plant.metadata[key] == value
+    assert plant.metadata["garden_tracking"] == {
+        **baseline["garden_tracking"],
+        "period": {"precision": "season", "value": "2023-autumn", "label": "Automne 2023"},
+    }
+    service.set_planting_date(str(plant.item_id), None)
+    assert "planting_date" not in plant.metadata["plant_instance"]
+    assert plant.metadata["garden_tracking"]["period"]["precision"] == "unknown"
+    commands.undo()
+    assert plant.metadata["garden_tracking"]["period"]["precision"] == "season"
+    commands.undo()
+    assert plant.metadata["plant_instance"]["planting_date"] == "2023-10-15"
+    commands.undo()
+    assert plant.metadata == baseline
+
+
+def test_planting_date_accepts_unnamed_plant_without_renaming(garden):
+    _scene, _pm, commands, service, _bed, plant = garden
+    plant.name = ""
+    service.set_planting_date(str(plant.item_id), "2023-10-15")
+    assert plant.name == ""
+    assert plant.metadata["plant_instance"]["planting_date"] == "2023-10-15"
+    commands.undo()
+    assert plant.name == ""
+    assert "planting_date" not in plant.metadata.get("plant_instance", {})
+    commands.redo()
+    assert plant.name == ""
+    assert plant.metadata["plant_instance"]["planting_date"] == "2023-10-15"
+    with pytest.raises(ValueError, match="label"):
+        service.set_card(str(plant.item_id), {"state": "in_place"})

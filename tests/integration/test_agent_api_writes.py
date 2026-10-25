@@ -2516,3 +2516,114 @@ def test_reclassify_fresh_pergola_restores_visible_house_pen(canvas: Any) -> Non
     assert item.brush().style() != Qt.BrushStyle.NoBrush
     canvas.command_manager.undo()
     assert item.pen().style() == Qt.PenStyle.NoPen
+
+
+@pytest.mark.parametrize("kind", ["COINCIDENT", "ANGLE"])
+def test_remove_constraint_over_mcp_preserves_geometry_and_undo(
+    canvas: Any, qtbot: Any, tmp_path: Path, kind: str,
+) -> None:
+    from copy import deepcopy
+
+    from open_garden_planner.core.constraints import AnchorRef, ConstraintType
+    from open_garden_planner.core.measure_snapper import AnchorType
+    from open_garden_planner.ui.canvas.items import RectangleItem
+    from tests.integration.test_garden_memory_mcp import unpack_list
+
+    scene = canvas.scene()
+    app = _APP_BY_VIEW[id(canvas)]
+    items = [RectangleItem(100 + i * 200, 100, 100, 100,
+                           layer_id=scene.active_layer.id) for i in range(3)]
+    for item in items:
+        scene.addItem(item)
+    refs = [AnchorRef(item.item_id, AnchorType.CORNER, i) for i, item in enumerate(items)]
+    constraint = scene.constraint_graph.add_constraint(
+        refs[0], refs[1], 45 if kind == "ANGLE" else 0,
+        constraint_type=ConstraintType[kind], anchor_c=refs[2] if kind == "ANGLE" else None,
+        visible=False,
+    )
+    expected = deepcopy(constraint.to_dict())
+    baseline = [app._project_manager._serialize_item(i) for i in items]
+    cid = str(constraint.constraint_id)
+    server = AgentApiServer(_providers(canvas), port=_free_port(),
+                            write_token=TOKEN, writes_enabled=True)
+    server.start()
+
+    async def body(ctx: Any) -> None:
+        http_client, ClientSession, url = ctx
+        async with http_client(url) as (r, w, _), ClientSession(r, w) as session:
+            await session.initialize()
+            listed = unpack_list(await session.call_tool("list_constraints", {}))
+            assert listed[0]["constraint_id"] == cid
+            third = unpack_list(await session.call_tool("list_constraints", {"item_id": str(items[2].item_id)}))
+            assert len(third) == (1 if kind == "ANGLE" else 0)
+            denied = await session.call_tool("remove_constraint", {"constraint_id": cid})
+            assert denied.isError
+        async with (
+            http_client(url, headers={"Authorization": f"Bearer {TOKEN}"}) as (r, w, _),
+            ClientSession(r, w) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool("remove_constraint", {"constraint_id": cid})
+            assert not result.isError, result.content
+            assert result.structuredContent["constraint_id"] == cid
+            assert result.structuredContent["action"] == "remove_constraint"
+            repeated = await session.call_tool("remove_constraint", {"constraint_id": cid})
+            assert repeated.isError
+            geometry = await session.call_tool("get_geometry", {"item_id": str(items[0].item_id)})
+            assert not geometry.structuredContent["is_constrained"]
+            moved = await session.call_tool("move_object", {
+                "item_id": str(items[0].item_id), "dx": 20.0, "dy": 0.0,
+            })
+            assert not moved.isError, moved.content
+            # The newly independent geometry edit is its own undo step.
+            undone = await session.call_tool("undo", {})
+            assert not undone.isError
+
+    try:
+        _run(server, body, qtbot)
+    finally:
+        server.stop()
+    assert not scene.constraint_graph.constraints
+    assert [app._project_manager._serialize_item(i) for i in items] == baseline
+    assert app._project_manager.is_dirty
+    canvas.command_manager.undo()
+    assert scene.constraint_graph.constraints[constraint.constraint_id].to_dict() == expected
+    assert not canvas.command_manager.can_undo
+    save_path = tmp_path / "restored-constraint.ogp"
+    app._project_manager.save(scene, save_path)
+    canvas.command_manager.redo()
+    removed_path = tmp_path / "removed-constraint.ogp"
+    app._project_manager.save(scene, removed_path)
+    app._project_manager.load(scene, removed_path)
+    assert not scene.constraint_graph.constraints
+    app._project_manager.load(scene, save_path)
+    assert scene.constraint_graph.constraints[constraint.constraint_id].to_dict() == expected
+
+
+def test_remove_constraint_refuses_locked_third_anchor_and_bad_ids(canvas: Any) -> None:
+    from uuid import uuid4
+
+    from open_garden_planner.core.constraints import AnchorRef, ConstraintType
+    from open_garden_planner.core.measure_snapper import AnchorType
+    from open_garden_planner.models.layer import Layer
+    from open_garden_planner.ui.canvas.items import RectangleItem
+
+    scene = canvas.scene()
+    app = _APP_BY_VIEW[id(canvas)]
+    locked = Layer(name="Locked", locked=True)
+    scene.add_layer(locked)
+    items = [RectangleItem(100 + i * 100, 100, 80, 80,
+                           layer_id=locked.id if i == 2 else scene.layers[0].id) for i in range(3)]
+    for item in items:
+        scene.addItem(item)
+    refs = [AnchorRef(item.item_id, AnchorType.CENTER) for item in items]
+    constraint = scene.constraint_graph.add_constraint(
+        refs[0], refs[1], 45, constraint_type=ConstraintType.ANGLE, anchor_c=refs[2],
+    )
+    with pytest.raises(ValueError, match="locked"):
+        app._do_agent_remove_constraint(str(constraint.constraint_id))
+    for identity in ("bad-id", str(uuid4())):
+        with pytest.raises(ValueError):
+            app._do_agent_remove_constraint(identity)
+    assert constraint.constraint_id in scene.constraint_graph.constraints
+    assert not canvas.command_manager.can_undo

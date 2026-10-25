@@ -234,3 +234,22 @@ class TestConstraintTool:
             Qt.KeyboardModifier.NoModifier,
         )
         assert tool.mouse_release(event, QPointF(0, 0)) is False
+
+
+@pytest.mark.parametrize("kind", ["ANGLE", "POINT_ON_EDGE", "TANGENT"])
+def test_remove_constraint_undo_preserves_third_anchor(qtbot, kind):
+    from open_garden_planner.core.constraints import ConstraintType
+
+    graph = ConstraintGraph()
+    refs = [AnchorRef(uuid4(), AnchorType.CORNER, index) for index in range(3)]
+    constraint = graph.add_constraint(
+        refs[0], refs[1], 45, constraint_type=ConstraintType[kind], anchor_c=refs[2],
+        visible=False,
+    )
+    expected = constraint.to_dict()
+    command = RemoveConstraintCommand(graph, constraint)
+    command.execute()
+    command.undo()
+    restored = graph.constraints[constraint.constraint_id]
+    assert restored.to_dict() == expected
+    assert graph.get_item_constraints(refs[2].item_id) == [restored]
