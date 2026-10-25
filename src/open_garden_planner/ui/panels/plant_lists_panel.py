@@ -11,7 +11,7 @@ import contextlib
 import json
 from typing import TYPE_CHECKING, Any
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QMimeData, QModelIndex, QPoint, Qt
 from PyQt6.QtGui import QAction, QDrag, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -50,23 +50,25 @@ class _DraggablePlantListWidget(QListWidget):
         super().__init__(parent)
         self.setDragEnabled(True)
 
-    def startDrag(self, supportedActions: Qt.DropAction) -> None:  # noqa: ARG002, N802
-        item = self.currentItem()
-        if not item:
-            return
+    def mime_for_index(self, index: QModelIndex) -> QMimeData:
+        """Build the native drag payload, also used by authenticated UI control."""
+        item = self.itemFromIndex(index)
+        if item is None or not item.data(Qt.ItemDataRole.UserRole):
+            raise ValueError("No plant-list entry at this index")
         entry_id = item.data(Qt.ItemDataRole.UserRole)
         species_json = item.data(Qt.ItemDataRole.UserRole + 1)
-        if not entry_id:
-            return
-
-        drag = QDrag(self)
-        from PyQt6.QtCore import QMimeData  # noqa: PLC0415
-
         mime_data = QMimeData()
         mime_data.setText(f"plant_list:{entry_id}")
         if species_json:
             mime_data.setData("application/x-ogp-plant-data", species_json.encode("utf-8"))
-        drag.setMimeData(mime_data)
+        return mime_data
+
+    def startDrag(self, supportedActions: Qt.DropAction) -> None:  # noqa: ARG002, N802
+        item = self.currentItem()
+        if item is None or not item.data(Qt.ItemDataRole.UserRole):
+            return
+        drag = QDrag(self)
+        drag.setMimeData(self.mime_for_index(self.indexFromItem(item)))
 
         icon = item.icon()
         if not icon.isNull():

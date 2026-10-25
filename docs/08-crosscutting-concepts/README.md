@@ -1921,6 +1921,37 @@ frost dates; the calendar-month fallback that handles that lived in
 entry point both the dialog and the agent call. Copying it would have let an agent
 and the GUI disagree about what "summer" means for the same bed.
 
+### Complete desktop control through MCP (personal macOS fork)
+
+`ui/agent_control.py::ApplicationUiController` supplements the curated domain
+operations with seven authenticated tools: `get_application_ui`, `invoke_ui_action`,
+`set_ui_value`, `interact_ui`, `read_ui_model`, `get_ui_operation`, and
+`render_ui_image`. UI inspection/capture is token-gated too, because forms contain
+user-entered values. The server authenticates in the request task, then the provider
+uses `MainThreadBridge`; all discovery/input/capture runs on the Qt thread.
+
+The adapter invokes actual QActions, control edits, delegate editors, model row
+moves and native Qt input/drop events. It cannot execute Python, mutate arbitrary
+attributes or bypass persistence. Existing UI commands, validation, undo and file
+prompts remain authoritative. Catalogue/list drag payloads are shared with native
+`startDrag`, and LayersPanel retains its `rowsMoved` → `ReorderLayersCommand` path.
+
+Dialog-opening input is scheduled with QTimer and returns a session receipt;
+`queued`/`running` do not report completion. Nested modal Qt event loops keep the
+bridge and MCP available to fill/finish the dialog. `completed` means the input
+handler returned, so clients read back domain/UI state for the actual outcome.
+Session-scoped QObject handles reject destroyed objects. A repeated request key
+replays its receipt without executing input again, even if its target is gone;
+content conflicts are refused. Stopping the server cancels queued input and
+invalidates the session. UI receipts are not durable garden-event receipts.
+
+Qt file dialogs are enabled transiently during UI control and the previous
+application attribute is restored on shutdown. Password controls are redacted in
+inspection. Native 3D input/capture addresses its real QWindow, not the embedding
+QWidget. See [MCP coverage and usage](../fork/MCP_COUVERTURE.md) and
+`tests/integration/test_agent_ui_control.py` for transport, modal, persistence,
+geometry, native Cocoa/3D and control-lifecycle evidence.
+
 ## 8.20 Solar Coordinate Discipline (Phase 14 sun/shade)
 
 The one rule: **do all solar/shadow math in scene centimeters, once, and

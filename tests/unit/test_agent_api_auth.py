@@ -141,6 +141,9 @@ WRITE_TOOL_NAMES = frozenset(
         "set_object_type",
         "remove_constraint",
         "set_planting_date",
+        # Full UI control/inspection can expose entered values; all token gated.
+        "get_application_ui", "invoke_ui_action", "set_ui_value", "interact_ui",
+        "get_ui_operation", "read_ui_model", "render_ui_image",
         "create_layer",
         "rename_layer",
         "delete_layer",
