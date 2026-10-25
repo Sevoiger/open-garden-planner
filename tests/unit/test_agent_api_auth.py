@@ -138,6 +138,7 @@ WRITE_TOOL_NAMES = frozenset(
         "record_soil_test",
         # US-D2.4: layer write tools.
         "set_object_layer",
+        "set_object_type",
         "create_layer",
         "rename_layer",
         "delete_layer",

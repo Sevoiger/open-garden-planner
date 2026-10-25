@@ -745,6 +745,7 @@ def get_valid_types_for_shape(
     if shape == "polygon":
         return [
             ObjectType.GENERIC_POLYGON,
+            ObjectType.PERGOLA,
             ObjectType.HOUSE,
             ObjectType.GARAGE_SHED,
             ObjectType.TERRACE_PATIO,

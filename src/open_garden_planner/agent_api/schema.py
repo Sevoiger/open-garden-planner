@@ -451,6 +451,7 @@ class WriteResult(BaseModel):
         "arrange",
         # US-D2.4: layer actions.
         "set_object_layer",
+        "set_object_type",
         "create_layer",
         "rename_layer",
         "delete_layer",

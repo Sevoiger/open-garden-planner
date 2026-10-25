@@ -1,5 +1,23 @@
 # Plantes classiques, dessin et cercles
 
+## Reclasser une pergola
+
+Le type **Pergola** est disponible pour les rectangles et les polygones dans le
+sélecteur de type des propriétés et le menu contextuel **Changer le type**.
+Pour une structure déjà dessinée comme **Maison**, l’agent MCP peut appeler
+`set_object_type(item_id="…", object_type="PERGOLA")`. Cette opération conserve
+le contour, la position, le nom, le calque, les métadonnées et le style personnalisé ;
+elle s’annule et se rétablit en une étape. Le nouveau type est conservé dans le `.ogp`.
+
+L’outil MCP accepte les structures `HOUSE`, `GARAGE_SHED`, `GREENHOUSE`, `TOOL_SHED`,
+`PERGOLA` et les formes `GENERIC_RECTANGLE` / `GENERIC_POLYGON`, selon les types
+compatibles avec le contour. Il refuse les plantes, les massifs, les objets groupés,
+les calques verrouillés et les structures avec un faîtage lié. Un appel répété sur
+le type déjà appliqué est refusé sans ajouter d’étape d’annulation.
+Pour une nouvelle pergola rectangulaire, utiliser `create_object` avec
+`object_type="PERGOLA"`. Après mise à jour du code, relancer OGP puis reconnecter
+le client MCP pour qu’il découvre le nouvel outil.
+
 ## Catalogue dans les catégories du haut
 
 La barre présente trois entrées libellées tout à droite, sur la même ligne que les outils de dessin :

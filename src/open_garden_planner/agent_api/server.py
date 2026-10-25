@@ -311,7 +311,7 @@ def build_server(
             write tools (``create_object``/``move_object``/
             ``set_object_position``/``delete_object``/``resize_object``/
             ``rotate_object``/``set_vertex``/``add_vertex``/``delete_vertex``/
-            ``set_species``/``set_parent_bed``/``arrange_object``, the US-D2.4 layer tools
+            ``set_species``/``set_parent_bed``/``set_object_type``/``arrange_object``, the US-D2.4 layer tools
             ``set_object_layer``/``create_layer``/``rename_layer``/
             ``delete_layer``/``set_active_layer``/``set_layer_property``, and
             the global history tools ``undo``/``redo``) are registered. When
@@ -2134,6 +2134,26 @@ def build_server(
         # reads). Every tool here runs the SAME core/commands.py layer command
         # the GUI's own surfaces run (invariant #5) — exactly one undo step per
         # call, except set_active_layer, which is session state and says so.
+
+        @mcp.tool()
+        async def set_object_type(item_id: str, object_type: str) -> WriteResult:
+            """Reclassify an existing rectangular or polygonal structure (one undo step).
+
+            Supported source/target types: HOUSE, GARAGE_SHED, GREENHOUSE,
+            TOOL_SHED, PERGOLA, GENERIC_RECTANGLE, GENERIC_POLYGON, subject to
+            the shape's available categories. PERGOLA supports both shapes.
+            Preserves UUID, contour, position, name, layer, metadata and custom
+            styling. Refuses plants/beds, locked/grouped objects, linked roofs,
+            incompatible shapes and an already-applied type (no extra undo step).
+            Use create_object(object_type="PERGOLA", ...) for a new pergola.
+            """
+            _require_write_auth(write_token)
+            if providers.set_object_type is None:
+                raise ValueError("Object reclassification is unavailable.")
+            result = await anyio.to_thread.run_sync(
+                lambda: providers.set_object_type(item_id, object_type)
+            )
+            return WriteResult(**result)
 
         @mcp.tool()
         async def set_object_layer(item_id: str, layer_id: str) -> WriteResult:

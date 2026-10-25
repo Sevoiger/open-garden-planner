@@ -3006,6 +3006,67 @@ class GardenPlannerApp(QMainWindow):
             )
         return layer
 
+    def _agent_set_object_type(self, item_id: str, object_type: str) -> dict[str, Any]:
+        """Reclassify a structure through the usual authenticated Qt bridge."""
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_set_object_type(item_id, object_type)
+        )
+
+    def _do_agent_set_object_type(self, item_id: str, object_type: str) -> dict[str, Any]:
+        """Change only the semantic type; keep the owner's geometry and styling."""
+        from open_garden_planner.core.commands import ChangePropertyCommand
+        from open_garden_planner.core.object_types import ObjectType, get_valid_types_for_shape
+        from open_garden_planner.ui.canvas.items import PolygonItem, RectangleItem
+
+        item = self._resolve_agent_item(item_id)
+        structures = {
+            ObjectType.HOUSE, ObjectType.GARAGE_SHED, ObjectType.GREENHOUSE,
+            ObjectType.TOOL_SHED, ObjectType.PERGOLA,
+            ObjectType.GENERIC_RECTANGLE, ObjectType.GENERIC_POLYGON,
+        }
+        try:
+            target = ObjectType[object_type]
+        except KeyError as exc:
+            raise ValueError(f"Unknown object type: {object_type!r}") from exc
+        if getattr(item, "object_type", None) not in structures or target not in structures:
+            raise ValueError("set_object_type supports structures only, not plants or beds.")
+        if isinstance(item, RectangleItem):
+            shape = "rectangle"
+        elif isinstance(item, PolygonItem):
+            shape = "polygon"
+        else:
+            raise ValueError("set_object_type requires a rectangle or polygon.")
+        if target not in get_valid_types_for_shape(shape):
+            raise ValueError(f"{object_type} is incompatible with a {shape}.")
+        if item.object_type == target:
+            raise ValueError(f"{item_id} is already {object_type}; nothing to do.")
+        if item.metadata.get("ridge_item_id"):
+            raise ValueError("A structure with a linked roof ridge cannot be reclassified.")
+
+        def apply_type(itm: Any, value: ObjectType) -> None:
+            # Type-dependent shadows can change boundingRect, even though the
+            # actual contour and all persisted appearance properties stay fixed.
+            itm.prepareGeometryChange()
+            old_pen = itm.pen()
+            itm.object_type = value
+            itm._setup_styling()
+            # Rectangle furniture hides the pen, but .ogp stores its colour
+            # and width. Retain those values even while the pen is hidden.
+            pen = itm.pen()
+            pen.setColor(old_pen.color())
+            pen.setWidthF(old_pen.widthF())
+            itm.setPen(pen)
+            itm._update_label()
+            itm.update()
+
+        cmd = ChangePropertyCommand(item, "type", item.object_type, target, apply_type)
+        self.canvas_view.command_manager.execute(cmd)
+        cx, cy = self._agent_item_center(item)
+        return {
+            "item_id": item_id, "action": "set_object_type",
+            "undo_description": cmd.description, "x": cx, "y": cy,
+        }
+
     def _agent_set_object_layer(self, item_id: str, layer_id: str) -> dict[str, Any]:
         """Move one object to another layer ON the Qt main thread (for the server)."""
         return self._agent_bridge.run_on_main(
@@ -3609,6 +3670,7 @@ class GardenPlannerApp(QMainWindow):
             set_parent_bed=self._agent_set_parent_bed,
             arrange_object=self._agent_arrange_object,
             set_object_layer=self._agent_set_object_layer,
+            set_object_type=self._agent_set_object_type,
             create_layer=self._agent_create_layer,
             rename_layer=self._agent_rename_layer,
             delete_layer=self._agent_delete_layer,
