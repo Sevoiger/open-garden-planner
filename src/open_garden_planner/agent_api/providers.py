@@ -394,3 +394,4 @@ class AgentProviders:
     # Reclassify existing rectangular/polygonal structures, preserving geometry/style.
     set_object_type: Callable[[str, str], dict[str, Any]] | None = None
     remove_constraint: Callable[[str], dict[str, Any]] | None = None
+    application_ui: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None

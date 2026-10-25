@@ -4,8 +4,12 @@
 
 Après une mise à jour, relancer OGP et reconnecter le client MCP : sa liste d’outils
 peut être mise en cache. `get_capabilities()` indique les outils réellement enregistrés,
-les parcours utiles et les limites actuelles. L’objectif est de couvrir le logiciel ;
-la [matrice de couverture](MCP_COUVERTURE.md) distingue les accès disponibles des manques.
+les parcours utiles et les outils de pilotage. Pour toute fonction sans outil métier
+dédié, utiliser `get_application_ui`, `invoke_ui_action`, `set_ui_value` et `interact_ui`
+puis consulter `get_ui_operation` et relire le résultat. La [matrice de couverture](MCP_COUVERTURE.md)
+détaille ce pilotage des commandes, dialogues, panneaux, imports/exports et de la 3D.
+Un dialogue reste pilotable pendant son ouverture ; les fichiers se choisissent
+dans un dialogue Qt accessible au MCP. Les sept outils UI exigent aussi le jeton.
 
 Pour raconter un retour du jardin, l’agent doit d’abord retrouver les identifiants des
 plantes ou zones avec `list_objects` et lire leurs fiches avec `get_garden_record`.

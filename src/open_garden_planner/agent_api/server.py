@@ -321,7 +321,8 @@ def build_server(
             appear in the agent's tool list. This gating (plus the per-call
             token check) is the D2 write gate ADR-033 requires.
         write_token: The bearer token every write call must present (see
-            ``_require_write_auth``). Read tools never require it.
+            ``_require_write_auth``). Curated plan reads stay unauthenticated;
+            full UI inspection/capture also requires this token.
         host: The loopback address the server binds. Used to build the
             Host/Origin allow-lists below (#396).
         port: The port the server binds. Same purpose.
@@ -390,7 +391,11 @@ def build_server(
             "to discover supported workflows and limits. Garden observations and "
             "work reports belong in add_garden_intervention (with a stable request_key); "
             "dates in set_planting_date. Unknown dates must stay unknown. "
-            "Read back get_garden_record and save_plan to persist accepted edits. save_plan/"
+            "Read back get_garden_record and save_plan to persist accepted edits. "
+            "For EVERY other desktop function use get_application_ui, invoke_ui_action, "
+            "set_ui_value and interact_ui, finish dialogs, poll get_ui_operation and "
+            "verify state. Never declare a UI feature unavailable merely because it "
+            "has no dedicated domain tool. save_plan/"
             "export_pdf/export_dxf/export_csv write a file to disk (the "
             "project's own .ogp, or a PDF/DXF/CSV deliverable) but do not "
             "otherwise modify the plan." + write_note
@@ -417,14 +422,17 @@ def build_server(
                 "garden_report": ["add_garden_intervention", "search_garden_interventions", "save_plan"],
                 "correct_report": ["edit_garden_intervention", "delete_garden_intervention"],
                 "reclassify_structure": ["set_object_type"],
+                "desktop_features": ["get_application_ui", "invoke_ui_action", "set_ui_value",
+                    "interact_ui", "read_ui_model", "get_ui_operation", "render_ui_image"],
             },
             "limitations": [
                 "Write workflows require writes_enabled and the write token.",
                 "Garden edits are in memory until save_plan; dates are never inferred.",
-                "Creating/editing geometric constraints is not exposed; removal is supported.",
-                "Some desktop features have no MCP tools yet: background import/calibration, "
-                "appearance/text edits, grouping/arrays/booleans, journal pins, harvest/pest logs, "
-                "guild editing, seasons, location/north, preferences and interactive 3D navigation.",
+                "For desktop features without a dedicated domain tool, use desktop_features: "
+                "discover the actual actions/controls, invoke/fill them, finish dialogs and read back results.",
+                "UI operation receipts and handles last for the running session only. Queued/running "
+                "is not success; poll get_ui_operation and inspect state. Native dialogs become Qt dialogs "
+                "during UI control, so imports/exports remain discoverable over MCP.",
             ],
         }
 
@@ -1621,6 +1629,142 @@ def build_server(
                 lambda: providers.set_succession_plan(bed_id, entries, year)
             )
             return WriteResult(**result)
+
+        async def _application_ui(operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            # UI inspection includes user-entered form values: unlike curated
+            # plan reads it is also token-gated. Never touch Qt on this thread.
+            _require_write_auth(write_token)
+            provider = providers.application_ui
+            if provider is None:
+                raise ValueError("Application UI control is unavailable")
+            return await anyio.to_thread.run_sync(lambda: provider(operation, arguments))
+
+        @mcp.tool()
+        async def get_application_ui(root_id: str | None = None, max_nodes: int = 1000,
+                                     include_hidden: bool = False) -> dict[str, Any]:
+            """Inspect OGP's actual Qt windows, dialogs, actions and controls (token required).
+
+            Covers every desktop feature through its existing UI, in addition
+            to the direct domain tools. Returns session-scoped handles, labels,
+            choices, values, enabled/visible flags, global bounds, model rows,
+            selected scene UUIDs and active modal/popup. Visible controls are
+            listed by default; include_hidden=true also inspects collapsed/tabbed
+            fields, which must be revealed before input. Password values are redacted.
+            If truncated, read a subtree with root_id or raise max_nodes (<=10000).
+            Handles expire on destruction/server restart: refresh instead of guessing.
+            Use read_ui_model for paginated/child table or tree contents, and
+            render_ui_image for a screenshot. All UI tools require the write token.
+            """
+            return await _application_ui("snapshot", {"root_id": root_id, "max_nodes": max_nodes,
+                                                       "include_hidden": include_hidden})
+
+        @mcp.tool()
+        async def invoke_ui_action(action_id: str, request_key: str) -> dict[str, Any]:
+            """Invoke one discovered QAction through OGP's own UI command path.
+
+            Includes all menu/toolbar commands: imports/exports, preferences,
+            seasons, solvers, grouping, arrays, materials, reports and 3D.
+            A dialog may open: QUEUED is not success. Poll get_ui_operation and
+            get_application_ui, fill the modal controls and click its buttons.
+            This avoids blocking MCP while Qt runs a modal event loop.
+            A stable request_key deduplicates identical retries in this running
+            session; changed input conflicts. After restart inspect state before
+            retrying. Operations use normal GUI undo/validation/close prompts.
+            """
+            return await _application_ui("action", {"action_id": action_id, "request_key": request_key})
+
+        @mcp.tool()
+        async def set_ui_value(widget_id: str, value: Any, request_key: str) -> dict[str, Any]:
+            """Fill a discovered Qt control, then commit its normal UI edit.
+
+            Text/notes: string (Unicode supported). Checkbox: bool. Spinbox or
+            slider: in-range number. Combo/tab: exact text or {"index": integer}
+            from get_application_ui choices. Date: ISO YYYY-MM-DD; datetime: ISO.
+            Colour dialog: #RRGGBB or #AARRGGBB. Readonly/hidden/disabled controls
+            are refused. This sends the control's usual signals and FocusOut,
+            including undo commits; it never edits document metadata directly.
+            Poll get_ui_operation and read back the value/application state.
+            For custom controls use interact_ui; for cells use edit_cell there.
+            """
+            return await _application_ui("value", {"widget_id": widget_id, "value": value,
+                                                     "request_key": request_key})
+
+        @mcp.tool()
+        async def interact_ui(widget_id: str, action: str, request_key: str,
+                              parameters: dict[str, Any] | None = None) -> dict[str, Any]:
+            """Send normal Qt input to a discovered widget/native 3D window.
+
+            Actions and parameters:
+            - click (button), focus, close; accept/reject (dialog Return/Escape).
+            - select/activate/expand/collapse: index_path=[row,...] and column=0
+              for table/tree/list; select accepts additive=true. activate sends
+              Return once; double_click is available for double-click handlers.
+            - edit_cell: index_path, column, value OR checked=bool. Uses the
+              delegate editor (including its validators) or checkbox role;
+              refuses readonly/disabled cells. Expand tree ancestors first.
+            - move_rows: row,count,destination (insertion index before removal),
+              optional parent_path/destination_parent_path; internal row reorder
+              through the model, including layer reordering and its normal undo.
+            - drop: source_id,index_path,column=0,x,y; optional coordinate_space
+              and modifiers. Copies the real catalogue/plant-list/model MIME
+              payload through native dragEnter/dragMove/drop handlers. Use
+              move_rows for an internal reorder, not pointer movement.
+            - select_scene: item_ids=[UUID,...] on a graphics view. Selects only
+              visible/selectable items. Enables all Edit/menu operations on them.
+            - mouse_press/mouse_move/mouse_release/double_click/context_menu:
+              x,y; button=left/right/middle; buttons=[held buttons];
+              modifiers=[shift,ctrl,alt,meta]. Coordinates are local logical pixels;
+              coordinate_space=scene on a QGraphicsView instead accepts actual
+              CAD scene cm and maps through the current zoom/Y-up transform.
+              Keep the held button in buttons during drag moves; release explicitly.
+            - wheel: x,y, delta_x/delta_y (120 per notch), modifiers.
+            - key_sequence: key in Qt PortableText, e.g. Ctrl+A, Return, Escape.
+              key_press/key_release hold a single key (also for 3D WASD walking).
+            - type_text: text, Unicode input at the current text cursor.
+            Unknown handles and presses/drops outside the viewport are refused;
+            captured drag moves/releases may end outside, as with native input. Interact
+            with the active modal before the parent window. Normal application
+            validation and file/unsaved-work dialogs still apply. Poll operation
+            status and read back state; queued/running do not mean completed.
+            """
+            return await _application_ui("interact", {"widget_id": widget_id, "action": action,
+                "parameters": parameters or {}, "request_key": request_key})
+
+        @mcp.tool()
+        async def get_ui_operation(operation_id: str) -> dict[str, Any]:
+            """Read queued/running/completed/failed status of a UI input receipt.
+
+            A dialog-opening action remains running until that dialog finishes.
+            Other UI tools remain usable during its nested Qt event loop.
+            Completed means input was delivered; inspect domain/UI state for the
+            result. Failed includes an error. Never blindly retry with a new key.
+            """
+            return await _application_ui("status", {"operation_id": operation_id})
+
+        @mcp.tool()
+        async def read_ui_model(widget_id: str, index_path: list[int] | None = None,
+                                start: int = 0, count: int = 50) -> dict[str, Any]:
+            """Read a page of table/list/tree rows without changing selection.
+
+            index_path is the row path of a parent tree item (omit for root).
+            Returns text, edit/check capabilities, child counts and selected rows.
+            start >= 0; count 1..200. Use this for catalogues, logs and reports
+            whose contents exceed get_application_ui's initial 50-row preview.
+            """
+            return await _application_ui("model", {"widget_id": widget_id, "index_path": index_path,
+                                                    "start": start, "count": count})
+
+        @mcp.tool(structured_output=False)
+        async def render_ui_image(widget_id: str | None = None) -> list[Image | dict[str, Any]]:
+            """Capture the actual UI or a native 3D window, token required.
+
+            Omit widget_id for active modal or main window. Coordinates in the
+            UI tree are logical pixels; image dimensions include device scaling.
+            For an embedded native 3D surface use its QWindow handle, not its
+            QWidget container. A capture failure is reported, never a blank success.
+            """
+            result = await _application_ui("render", {"widget_id": widget_id})
+            return [Image(data=result.pop("png_bytes"), format="png"), result]
 
         async def _garden_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             # Auth runs in the request task before hopping to the Qt provider.

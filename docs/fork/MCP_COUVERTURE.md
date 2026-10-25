@@ -1,92 +1,141 @@
-# Couverture du logiciel par MCP
+# Pilotage complet de l’application par MCP
 
-État vérifié dans les sources et tests du fork le 25 octobre 2026. L’objectif du
-propriétaire est le pilotage de l’ensemble du logiciel. **Cet objectif n’est pas
-encore atteint** : le MCP expose des opérations métier explicites, mais ne couvre
-pas toutes les commandes du bureau. Le contrôle de l’interface ne remplace pas un
-outil absent et ne doit pas être annoncé comme une garantie.
+Le MCP fournit deux accès complémentaires dans le fork macOS : les outils métier
+adressent directement les objets du plan ; les outils d’interface pilotent les
+commandes, dialogues et surfaces Qt du logiciel. Une fonction sans outil métier
+dédié reste ainsi accessible depuis MCP par son parcours d’interface existant.
+Le client n’a plus besoin d’un connecteur séparé de contrôle de l’ordinateur.
 
-`get_capabilities()` donne la liste effectivement enregistrée dans le serveur en
-cours, avec les parcours jardin et contraintes. Les outils d’écriture sont absents
-si les écritures sont désactivées ou si aucun jeton n’est configuré. Lorsqu’ils sont
-présents, chaque appel exige encore le jeton. Après mise à jour du code : relancer
-OGP puis reconnecter le client MCP pour renouveler sa découverte d’outils.
+`get_capabilities()` décrit ces accès et la liste des outils réellement enregistrés.
+Après mise à jour du code : relancer OGP puis reconnecter le client MCP.
 
-## Matrice fonctionnelle
+## Outils de pilotage Qt
 
-« Partiel » signifie que des fonctions du même domaine restent sans équivalent MCP.
-L’inventaire se fonde sur les outils de `agent_api/server.py`, les commandes de
-`app/application.py` et les opérations de `core/commands.py` / `ui/canvas/canvas_view.py`.
+Tous ces outils, y compris inspection et capture, exigent le jeton d’écriture :
+les dialogues peuvent contenir des données personnelles et des valeurs saisies.
+Ils sont absents lorsque les écritures MCP sont désactivées ou sans jeton.
 
-| Domaine | Accès MCP actuel | Manques identifiés |
+| Outil | Fonction |
+| --- | --- |
+| `get_application_ui(root_id?, max_nodes?, include_hidden?)` | Actions de menus/barres, fenêtres, dialogues, champs, choix, valeurs, états, positions, sélection du dessin et surfaces 3D natives. Les mots de passe sont masqués. |
+| `invoke_ui_action(action_id, request_key)` | Déclenche la commande Qt découverte ; ouvre aussi les menus et les dialogues. |
+| `set_ui_value(widget_id, value, request_key)` | Saisit un texte Unicode, une valeur numérique, une date ISO, un choix, une case ou un onglet et termine l’édition normale. Les plages, champs non modifiables et validateurs sont respectés. |
+| `interact_ui(widget_id, action, request_key, parameters?)` | Clic/double-clic, boutons de dialogue, clavier, souris, molette, sélection du dessin, édition des cellules par leur délégué, arbres, réordonnancement de lignes et dépôt depuis catalogue/liste de plantes. |
+| `read_ui_model(widget_id, index_path?, start?, count?)` | Pagination des listes, tableaux et arbres ; lecture des enfants, états et possibilités d’édition. |
+| `get_ui_operation(operation_id)` | État `queued`, `running`, `completed` ou `failed`, et erreur éventuelle. |
+| `render_ui_image(widget_id?)` | Capture de la fenêtre, du dialogue ou d’une surface native 3D, avec dimensions et facteur d’échelle. |
+
+L’inventaire montre par défaut les contrôles visibles, pour ne pas noyer le client
+dans les champs des onglets inactifs. `include_hidden=true` complète cet inventaire
+lorsqu’une inspection des contrôles masqués est utile.
+
+Les identifiants proviennent du serveur en cours : ne pas les inventer ni les
+réutiliser après destruction du contrôle ou redémarrage du serveur. Les actions
+indiquent leurs menus et widgets associés ; les contrôles indiquent parent,
+enfants, libellé, choix, visibilité et activation. Un inventaire tronqué se poursuit
+avec `root_id` sur un sous-arbre, ou `max_nodes` jusqu’à 10000. Les listes se lisent
+par pages et les arbres par chemins de lignes. Les champs masqués sous un panneau
+replié ou un onglet doivent d’abord être révélés par leur en-tête/onglet.
+
+### Dialogues et fin d’une opération
+
+Une action renvoie immédiatement un reçu ; `queued` n’est pas un succès. Une
+commande ouvrant un dialogue reste `running` pendant son `exec()` Qt. Le serveur
+reste disponible : inspecter le dialogue indiqué par `modal_id`, saisir les valeurs,
+cliquer le bouton normal de validation/annulation, puis consulter le reçu. Les
+sélecteurs de fichiers natifs sont remplacés par leurs dialogues Qt pendant cette
+session de pilotage afin de pouvoir saisir les chemins depuis MCP. Le choix
+antérieur de l’application est rétabli à l’arrêt du serveur ; rien n’est écrit dans
+les préférences du propriétaire pour ce mécanisme.
+
+`completed` signifie que l’entrée a été délivrée et que le gestionnaire Qt est
+revenu. Relire ensuite l’état métier, la fiche ou l’interface pour constater le
+résultat : une validation applicative peut garder un dialogue ouvert ou afficher
+un message. Un dialogue modal actif doit être traité avant la fenêtre parente.
+La fermeture conserve les confirmations ordinaires de travail non enregistré.
+Quitter l’application ou désactiver son serveur coupe naturellement la connexion.
+
+Un même `request_key` rejoue le reçu de la même entrée sans la répéter ; un contenu
+différent avec la même clé est refusé. Les reçus sont conservés pour la session,
+y compris après destruction du widget. Après redémarrage, relire l’état avant de
+reprendre : les reçus UI ne sont pas des événements persistants du jardin. Pour les
+récits, utiliser l’idempotence persistante d’`add_garden_intervention`.
+
+### Dessin, groupes et glisser-déposer
+
+- Sur le `CanvasView`, `select_scene` reçoit `item_ids` et prépare les commandes
+  Edit, les raccourcis, les propriétés ou les opérations sur plusieurs objets.
+- Les événements souris utilisent des pixels logiques locaux ; sur un
+  `QGraphicsView`, `coordinate_space="scene"` accepte aussi les coordonnées CAD
+  réelles en cm, avec conversion par la transformation courante (zoom et Y-up).
+  Un déplacement avec bouton tenu précise `buttons=["left"]`, puis libère le bouton.
+- `double_click` délivre la séquence complète Qt. Les menus contextuels sont
+  actionnés de manière à terminer leur `exec()` avec l’action choisie.
+- `move_rows` reçoit `row`, `count`, `destination` (indice d’insertion avant retrait)
+  et, pour un arbre, les chemins des parents. Il utilise le déplacement natif du
+  modèle `InternalMove` : la liste des calques émet son signal habituel et crée
+  sa commande annulable de réordonnancement.
+- `drop` reçoit `source_id`, `index_path`, `column`, `x`, `y` et éventuellement
+  `coordinate_space="scene"`. Catalogue et listes de plantes fournissent exactement
+  leur charge MIME native ; le canevas traite les événements enter/move/drop.
+  Un déplacement souris seul n’est pas un transfert MIME entre contrôles.
+- Dans une cellule, `edit_cell` ouvre l’éditeur du délégué existant ; ses bornes et
+  validateurs restent actifs. Déplier les parents d’une cellule d’arbre avant édition.
+- Pour la 3D, utiliser le nœud `Qt3DWindow` pour les entrées et captures, puis les
+  actions de sa barre pour Walk/Refresh. `key_press` / `key_release` permettent la
+  marche continue ; Escape ressort du mode marche. Le conteneur QWidget n’est pas
+  la cible réelle des touches de la vue native.
+
+## Couverture fonctionnelle
+
+La colonne Qt décrit les parcours désormais pilotables par les outils ci-dessus,
+même lorsqu’une API métier dédiée n’existe pas. Les commandes sont celles de
+l’application, donc conservent sa validation, ses confirmations et son historique.
+Les réglages et opérations qui n’avaient pas d’undo dans l’interface n’en gagnent
+pas artificiellement ; les mutations documentaires utilisent leurs commandes existantes.
+
+| Domaine | Outils métier directs | Parcours Qt pilotable depuis MCP |
 | --- | --- | --- |
-| Fichiers | `new_plan`, `open_plan`, `save_plan` | Redimensionner un plan existant, gestion des récents et récupération/autosave |
-| Inspection | Résumé, objets, géométrie réelle, recherche spatiale, distances, diagnostics | Pas d’équivalent exhaustif de tous les inspecteurs du bureau |
-| Création | `list_creatable_types`, `create_object` | Arcs/Bézier et symboles paramétriques exclus ; certaines variantes de forme non proposées |
-| Géométrie simple | Déplacement relatif/absolu, redimensionnement, rotation, édition de sommets | Courbes, découpe/extension, arrondis/chanfreins et séparation de formes |
-| Contraintes et jonctions | `get_geometry`, `list_constraints`, **`remove_constraint`** | Création/modification d’une contrainte ; édition avec solveur multi-objets |
-| Catégories | `set_object_type` pour structures rectangle/polygone ; Pergola disponible | Reclassement général des autres familles avec migration de leurs liens métier |
-| Calques | Lister/créer/renommer/supprimer, affecter un objet, verrouiller, visibilité/opacité | Réordonner les calques et réglages spécifiques de forêt-jardin |
-| Superposition | `arrange_object` | Alignements et distributions de plusieurs objets |
-| Copie et transformations multiples | Pas d’outil dédié | Copier/coller/dupliquer, miroirs, réseaux, groupement/dégroupement, opérations booléennes |
-| Apparence | Création avec les valeurs prévues par le catalogue | Couleurs, contours, motifs, matières, décalages/rotation/échelle de remplissage, hauteur, libellés et texte existant |
-| Botanique | Fiches de ressources, `set_species`, création avec espèce | Gestion du catalogue personnalisé, import personnel, traits et apparence individuelle complets |
-| Plantation | **`set_planting_date`**, `set_garden_card`, `set_parent_bed` | Certaines propriétés de croissance et de pépinière restent accessibles seulement par les propriétés UI |
-| Retour du jardin | `add_garden_intervention`, consultation/recherche, édition/suppression | Pas de transcription audio ni d’interprétation implicite du récit dans OGP : c’est le rôle du client conversationnel |
-| Fiches de suivi | Nom, état, précision de date, notes, cultivar, zone, quantité et autres champs validés via `set_garden_card` | Cet outil remplace les champs de suivi fournis ; lire la fiche avant une réécriture complète. `set_planting_date` préserve les autres champs |
-| Tâches | Lire calendrier/tâches, ajouter/modifier/supprimer une tâche manuelle | Mise à jour explicite de l’état de toutes les tâches automatiques |
-| Sol | Lire état/incompatibilités, recommandations, `record_soil_test` | Édition/suppression d’un relevé existant et sol par défaut du projet |
-| Associations et succession | Suggestions, ensembles compatibles, placement, plans et lacunes de succession | CRUD complet des guildes, rotation culturale et paramètres de propagation |
-| Récoltes et ravageurs | Une observation générique peut être consignée dans le suivi ; export CSV des récoltes déjà saisies | CRUD des journaux spécialisés récoltes et ravageurs/maladies |
-| Journal avec épingles | Aucun outil dédié | Créer/modifier/supprimer une note et son épingle liée ; distinct du suivi d’interventions |
-| Saisons | Aucun outil dédié | Créer/gérer/changer/comparer les saisons |
-| Fond et import | Aucun outil dédié | Import DXF, image/satellite, calibration, géoréférencement, verrouillage et visibilité du fond |
-| Localisation et soleil | Lecture des métadonnées brutes du projet | Position, nord, date/heure de simulation, calcul/export d’ombre et carte solaire |
-| Rendu et exports | `render_canvas_image`, `export_pdf`, `export_dxf`, CSV shopping/récoltes | Export SVG, CSV botanique, rapport PDF complet du jardin, impression et export PNG fichier dédié |
-| Vue et 3D | Image du canevas 2D | Zoom/sélection/navigation de l’UI, caméra/marche 3D, éclairage et captures 3D |
-| Préférences et application | Pas d’outil dédié | Thème/langue, grilles/accrochages/overlays, panneaux, préférences et mises à jour |
-| Historique | `get_history`, `undo`, `redo`, pile commune à l’interface | Pas de transaction arbitraire regroupant plusieurs outils |
+| Fichiers | `new_plan`, `open_plan`, `save_plan` | Taille du canevas, récents, autosave et récupération ; dialogues Fichier/Edit |
+| Inspection | Résumé, objets, géométrie, recherche spatiale, distances, diagnostics | Tous les inspecteurs, panneaux, tableaux et captures de l’UI |
+| Création | `list_creatable_types`, `create_object` | Tous les outils de dessin, arcs/Bézier, symboles, catalogue et dépôt de plantes |
+| Géométrie | Déplacement, dimensions, rotation, sommets | Courbes, découpe/extension, arrondis/chanfreins, séparation et opérations booléennes |
+| Contraintes/jonctions | `get_geometry`, `list_constraints`, `remove_constraint` | Outils de création/édition avec le solveur existant et panneau Contraintes |
+| Catégories | `set_object_type` pour structures | Tous les types proposés par les propriétés et les menus contextuels |
+| Calques | Liste, création, renommage, suppression, affectation, verrou, visibilité/opacité | Réordonnancement `move_rows`, paramètres forêt-jardin et commandes du panneau |
+| Superposition | `arrange_object` | Alignements/distributions, menus Edit et sélection multiple |
+| Copie et transformations multiples | Historique commun | Copier/coller/dupliquer, groupes, miroirs et réseaux par clavier/menus/dialogues |
+| Apparence | Valeurs initiales du catalogue | Couleurs, contours, matières, motifs, remplissages, hauteur, texte et libellés dans les propriétés |
+| Botanique | Ressources, `set_species`, création avec espèce | Catalogue personnalisé, imports personnels, traits et apparence par panneaux/dialogues |
+| Plantation | `set_planting_date`, `set_garden_card`, `set_parent_bed` | Toutes les propriétés de croissance et de pépinière présentes dans l’UI |
+| Retours du jardin | CRUD/recherche d’interventions | Fiches et dialogues de suivi ; le récit conversationnel utilise les outils métier |
+| Tâches | Calendrier, CRUD manuel | Cases d’état des tâches automatiques et dialogues du calendrier |
+| Sol | État/incompatibilités, recommandations, `record_soil_test` | Édition/suppression des relevés et sol par défaut du projet |
+| Associations/succession | Suggestions, ensembles, placement, plans et lacunes | Guildes, rotation culturale, propagation via leurs panneaux/dialogues |
+| Récoltes/ravageurs | Export des récoltes et observations génériques | CRUD des journaux spécialisés, tableaux et formulaires |
+| Journal avec épingles | Suivi d’interventions distinct | Création, modification, suppression de notes et de leurs épingles par l’outil/panneau Journal |
+| Saisons | Lecture du projet | Gestion, création, changement et comparaison des saisons |
+| Fond/import | Inspection du canevas | Import DXF, images/satellite, calibration, géoréférencement, visibilité/verrouillage |
+| Localisation/soleil | Métadonnées du projet | Localisation, nord, date/heure, calculs d’ombre et carte solaire |
+| Exports | PNG en conversation, PDF/DXF, CSV shopping/récoltes | SVG, CSV botanique, rapport jardin, impression et export PNG fichier |
+| Vue 2D/3D | Rendu du canevas | Zoom, sélection, caméra/marche, soleil et captures natives |
+| Préférences/application | Inventaire des capacités | Thème/langue, grilles/accrochages, overlays, panneaux, préférences et mises à jour |
+| Historique | `get_history`, `undo`, `redo` | Même pile que les commandes d’interface, sans pile parallèle |
 
-## Parcours immédiatement utilisables
+## Vérification
 
-Voir les [exemples d’usage](PLANTES_ET_DESSIN.md#piloter-le-jardin-par-mcp).
-Un récit de plantation peut donner lieu à une date de plantation sur la fiche et à
-un événement `planting` : ce sont deux faits distincts, deux commandes annulables.
-Une recommandation, un projet et une intervention réalisée ne sont pas équivalents.
-Les dates partielles gardent leur précision ; elles ne deviennent jamais un jour
-inventé dans le champ botanique `planting_date`.
+`tests/integration/test_agent_ui_control.py` vérifie la frontière entière : refus
+sans jeton de chacun des sept outils, transport HTTP MCP réel, dialogue modal
+pilotable pendant son ouverture, validation/saisie Unicode, menus contextuels,
+rejeu sans double exécution, champs désactivés et handles détruits, pagination et
+édition par délégué, propriétés réelles avec undo/redo et sauvegarde-réouverture,
+gestes viewport en coordonnées réelles, groupement, réordonnancement de calques,
+dépôt de plante avec undo et captures UI. Le parcours Cocoa natif vérifie aussi la
+vraie fenêtre Qt3D : mode marche, touche tenue, déplacement mesuré de la caméra,
+relâchement, capture et sortie par Escape. Les données et préférences des tests
+sont isolées de celles du propriétaire.
 
-La suppression d’une contrainte s’adresse à son identifiant propre, jamais à un
-indice de liste. Elle ne lance pas le solveur et ne déplace pas les objets. Une
-répétition après suppression est refusée sans ajouter de commande à l’historique.
-L’annulation restaure également la troisième ancre des contraintes d’angle,
-point-sur-droite ou tangence, qui était perdue par l’ancienne commande partagée.
-
-## Ordre conseillé pour atteindre la couverture complète
-
-1. Parcours quotidiens : propriétés d’objet (nom, style, matière, hauteur, texte),
-   journaux spécialisés et tâches, localisation/nord.
-2. Édition du dessin : contraintes en création/édition avec solveur, alignements,
-   groupes, copie, réseaux et opérations géométriques.
-3. Entrées/sorties : fond calibré, imports/exports manquants, catalogue personnel,
-   saisons et rotation/guildes.
-4. Pilotage de la présentation : vue 2D/3D, simulation solaire, panneaux et réglages.
-
-Chaque famille doit réutiliser la commande/service existant, valider les entrées
-avant mutation et exposer une lecture de contrôle. Les commandes graphiques passent
-sur le thread Qt ; les changements documentaires gardent l’undo et la sauvegarde
-atomique. Éviter un outil « exécuter du Python » ou un dictionnaire de mutations
-brutes : il contournerait les contrats que les outils actuels protègent.
-
-## Preuves de ce lot
-
-- `test_agent_api_writes.py` : consultation/suppression d’une jonction et d’un angle
-  via HTTP MCP authentifié, refus sans jeton, rejeu refusé, géométrie inchangée,
-  undo/redo et fichiers isolés restauré/supprimé puis réouverts ; verrou de la
-  troisième ancre protégé.
-- `test_garden_memory_mcp.py` : date exacte/partielle/inconnue, maintien de la zone
-  et de l’état, refus d’une date impossible, absence de doublon sur rejeu, récit,
-  correction annulée et sauvegarde-réouverture du suivi.
-- `test_constraint_tool.py` : régression reproduite avant correction pour les
-  troisièmes ancres ANGLE, POINT_ON_EDGE et TANGENT.
-- `test_agent_api_auth.py` : inventaire exhaustif des écritures et gate commun.
+Ces preuves couvrent les mécanismes partagés ; elles ne prétendent pas avoir
+exercé chaque combinaison de données et chaque commande du logiciel. Les erreurs
+métier, dépendances absentes ou erreurs réseau restent celles de la fonction appelée
+et doivent être relues dans son dialogue/état, comme lors d’une utilisation manuelle.

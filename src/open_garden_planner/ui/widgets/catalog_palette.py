@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QCoreApplication, QMimeData, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QMimeData, QModelIndex, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QDrag, QIcon, QPixmap
 from PyQt6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QWidget
 
@@ -108,13 +108,20 @@ class CatalogList(QListWidget):
     def _choose(self, row: QListWidgetItem) -> None:
         self.item_chosen.emit(row.data(Qt.ItemDataRole.UserRole))
 
+    def mime_for_index(self, index: QModelIndex) -> QMimeData:
+        """The same MIME payload for native drag and authenticated UI control."""
+        row = self.itemFromIndex(index)
+        if row is None:
+            raise ValueError("No catalogue item at this index")
+        return gallery_mime(row.data(Qt.ItemDataRole.UserRole))
+
     def startDrag(self, _supported_actions: Qt.DropAction) -> None:  # noqa: N802
         row = self.currentItem()
         if row is None:
             return
         item = row.data(Qt.ItemDataRole.UserRole)
         drag = QDrag(self)
-        drag.setMimeData(gallery_mime(item))
+        drag.setMimeData(self.mime_for_index(self.indexFromItem(row)))
         if item.thumbnail is not None:
             drag.setPixmap(item.thumbnail)
         drag.exec(Qt.DropAction.CopyAction)

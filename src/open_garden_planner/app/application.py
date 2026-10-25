@@ -95,6 +95,7 @@ if TYPE_CHECKING:
     from open_garden_planner.core.sim_clock import SimChange
     from open_garden_planner.services import PlantAPIManager
     from open_garden_planner.services.update_checker import ReleaseInfo
+    from open_garden_planner.ui.agent_control import ApplicationUiController
 
 logger = logging.getLogger(__name__)
 
@@ -309,10 +310,21 @@ class GardenPlannerApp(QMainWindow):
         """Create the main-thread bridge and defer auto-start if the user enabled it."""
         from open_garden_planner.agent_api import MainThreadBridge
 
+        self._agent_ui_controller: ApplicationUiController | None = None
         self._agent_bridge = MainThreadBridge(self)
         self._agent_server: AgentApiServer | None = None
         # Auto-start shortly after launch (when enabled in Preferences).
         QTimer.singleShot(1500, self._maybe_start_agent_api)
+
+    def _agent_application_ui(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._agent_bridge.run_on_main(lambda: self._do_agent_application_ui(operation, arguments))
+
+    def _do_agent_application_ui(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        from open_garden_planner.ui.agent_control import ApplicationUiController
+
+        if self._agent_ui_controller is None:
+            self._agent_ui_controller = ApplicationUiController(self)
+        return self._agent_ui_controller.dispatch(operation, arguments)
 
     def _agent_snapshot(self) -> dict[str, Any]:
         """Read a snapshot of the live plan ON the Qt main thread (for the server)."""
@@ -3679,6 +3691,7 @@ class GardenPlannerApp(QMainWindow):
 
         return AgentProviders(
             snapshot=self._agent_snapshot,
+            application_ui=self._agent_application_ui,
             garden_write=self._agent_garden_write,
             diagnostics=self._agent_diagnostics,
             render=self._agent_render,
@@ -3734,6 +3747,9 @@ class GardenPlannerApp(QMainWindow):
 
     def _stop_agent_api(self) -> None:
         """Stop the embedded MCP server if it is running."""
+        if self._agent_ui_controller is not None:
+            self._agent_ui_controller.close()
+            self._agent_ui_controller = None
         if self._agent_server is not None:
             # Abort any in-flight main-thread hops first so the server thread's
             # tool handler returns at once — otherwise stop()'s join could wait
