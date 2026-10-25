@@ -1,5 +1,41 @@
 # Plantes classiques, dessin et cercles
 
+## Piloter le jardin par MCP
+
+Après une mise à jour, relancer OGP et reconnecter le client MCP : sa liste d’outils
+peut être mise en cache. `get_capabilities()` indique les outils réellement enregistrés,
+les parcours utiles et les limites actuelles. L’objectif est de couvrir le logiciel ;
+la [matrice de couverture](MCP_COUVERTURE.md) distingue les accès disponibles des manques.
+
+Pour raconter un retour du jardin, l’agent doit d’abord retrouver les identifiants des
+plantes ou zones avec `list_objects` et lire leurs fiches avec `get_garden_record`.
+Il peut ensuite :
+
+- Appeler `set_planting_date(item_id="…", planting_date="2026-10-24")` pour une date
+  connue, ou passer `"2026-10"`, `"Automne 2023"`, `"2023"` selon ce qui est connu.
+  `null` signifie explicitement inconnu. Les autres champs de la fiche sont conservés.
+  La date seule ne déclare pas une intervention réalisée.
+- Appeler `add_garden_intervention(target_ids=["…"], event_type="observation",
+  description="Feuilles jaunies observées sur le plant", request_key="retour-2026-10-25-obs-1",
+  occurrence="2026-10-25")`. Les autres types incluent `planting`, `watering`, `pruning`,
+  `mulching`, `amendment` et `sowing`. Une même clé doit être réutilisée pour rejouer
+  le même enregistrement ; un nouvel événement reçoit une nouvelle clé.
+- Relire `get_garden_record` / `search_garden_interventions`, puis appeler `save_plan`
+  pour écrire dans le fichier. Les actions précédentes restent en mémoire jusque-là.
+
+L’agent conserve les mots de l’utilisateur et la précision de ses observations.
+Une date absente reste inconnue ; une suggestion n’est pas enregistrée comme un
+travail effectué. Une observation peut concerner plusieurs plantes ou une zone.
+`edit_garden_intervention` corrige un récit, `delete_garden_intervention` le retire ;
+`undo` / `redo` permettent de revenir sur les modifications.
+
+Pour détacher une jonction : lire `list_constraints(item_id="…")` (ou toutes les
+contraintes sans filtre), identifier la bonne paire ou les trois points, puis appeler
+`remove_constraint(constraint_id="…")`. Cela conserve les contours et positions.
+La suppression est annulable, y compris pour les contraintes à trois points ; les
+objets verrouillés ou membres d’un groupe restent protégés. Les déplacements ou
+modifications de sommets peuvent ensuite être effectués indépendamment.
+
 ## Reclasser une pergola
 
 Le type **Pergola** est disponible pour les rectangles et les polygones dans le

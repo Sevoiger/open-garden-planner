@@ -12,7 +12,7 @@ from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtWidgets import QGraphicsScene
 
 from open_garden_planner.core.commands import Command, CommandManager
-from open_garden_planner.core.object_types import is_bed_type
+from open_garden_planner.core.object_types import is_bed_type, is_plant_type
 from open_garden_planner.models.garden_memory import validate_card, validate_event, validate_memory
 
 if TYPE_CHECKING:
@@ -101,13 +101,27 @@ class GardenMemoryService:
     def _memory(self) -> dict[str, Any]:
         return self.project.garden_memory or {"version": 1, "events": {}, "requests": {}}
 
+    def set_planting_date(self, item_id: str, value: str | None) -> dict[str, Any]:
+        """Patch only a plant's date, preserving the other tracking fields."""
+        from open_garden_planner.models.garden_memory import period
+
+        item = self._item(item_id)
+        if not is_plant_type(getattr(item, "object_type", None)):
+            raise ValueError("A planting date requires a plant (TREE, SHRUB or PERENNIAL)")
+        fields = deepcopy(item.metadata.get("garden_tracking", {}))
+        fields["period"] = period(value)
+        return self._set_card(item_id, fields, require_name=False)
+
     def set_card(self, item_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         """Replace tracking fields, retaining the shape's existing identity/geometry."""
+        return self._set_card(item_id, fields, require_name=True)
+
+    def _set_card(self, item_id: str, fields: dict[str, Any], *, require_name: bool) -> dict[str, Any]:
         item = self._item(item_id)
         self._editable(item)
         fields = deepcopy(fields)
         name = fields.pop("name", item.name)
-        if not isinstance(name, str) or not name.strip():
+        if not isinstance(name, str) or require_name and not name.strip():
             raise ValueError("A provisional or botanical label is required")
         card = validate_card(fields)
         if card.get("kind") == "zone" and not is_bed_type(item.object_type):

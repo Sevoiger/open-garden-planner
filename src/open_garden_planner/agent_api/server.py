@@ -84,6 +84,7 @@ from open_garden_planner.agent_api.schema import (
     CompatibleSet,
     Diagnostic,
     ExportResult,
+    GeometryConstraint,
     GeometryResult,
     HistoryResult,
     HistoryState,
@@ -311,6 +312,7 @@ def build_server(
             write tools (``create_object``/``move_object``/
             ``set_object_position``/``delete_object``/``resize_object``/
             ``rotate_object``/``set_vertex``/``add_vertex``/``delete_vertex``/
+            ``remove_constraint``/``set_planting_date``/
             ``set_species``/``set_parent_bed``/``set_object_type``/``arrange_object``, the US-D2.4 layer tools
             ``set_object_layer``/``create_layer``/``rename_layer``/
             ``delete_layer``/``set_active_layer``/``set_layer_property``, and
@@ -384,7 +386,11 @@ def build_server(
             "located in centimetres on the canvas. Use list_objects/get_object to "
             "inspect structure, get_geometry for stable low-level vertices, curves, "
             "extents and constraints, the spatial tools to locate and measure, and "
-            "get_diagnostics for the plan's current warnings. save_plan/"
+            "get_diagnostics for the plan's current warnings. Use get_capabilities "
+            "to discover supported workflows and limits. Garden observations and "
+            "work reports belong in add_garden_intervention (with a stable request_key); "
+            "dates in set_planting_date. Unknown dates must stay unknown. "
+            "Read back get_garden_record and save_plan to persist accepted edits. save_plan/"
             "export_pdf/export_dxf/export_csv write a file to disk (the "
             "project's own .ogp, or a PDF/DXF/CSV deliverable) but do not "
             "otherwise modify the plan." + write_note
@@ -392,6 +398,51 @@ def build_server(
         stateless_http=stateless_http,
         log_level="WARNING",
     )
+
+    @mcp.tool()
+    async def get_capabilities() -> dict[str, Any]:
+        """Discover actual tools, garden workflows and remaining desktop-only features.
+
+        This is a coverage inventory, not a promise that every GUI action has
+        an MCP equivalent. Tool registration reflects the current write gate.
+        """
+        names = sorted(tool.name for tool in await mcp.list_tools())
+        return {
+            "writes_enabled": writes_active,
+            "available_tools": names,
+            "workflows": {
+                "inspect_plan": ["list_objects", "get_object", "get_geometry"],
+                "detach_junction": ["list_constraints", "remove_constraint"],
+                "planting_date": ["get_garden_record", "set_planting_date", "save_plan"],
+                "garden_report": ["add_garden_intervention", "search_garden_interventions", "save_plan"],
+                "correct_report": ["edit_garden_intervention", "delete_garden_intervention"],
+                "reclassify_structure": ["set_object_type"],
+            },
+            "limitations": [
+                "Write workflows require writes_enabled and the write token.",
+                "Garden edits are in memory until save_plan; dates are never inferred.",
+                "Creating/editing geometric constraints is not exposed; removal is supported.",
+                "Some desktop features have no MCP tools yet: background import/calibration, "
+                "appearance/text edits, grouping/arrays/booleans, journal pins, harvest/pest logs, "
+                "guild editing, seasons, location/north, preferences and interactive 3D navigation.",
+            ],
+        }
+
+    @mcp.tool()
+    async def list_constraints(item_id: str | None = None) -> list[GeometryConstraint]:
+        """List all geometric constraints, optionally referencing one object UUID.
+
+        Includes the stable constraint_id for remove_constraint and all two or
+        three anchors, type, target and visibility. Read-only; no solver runs.
+        """
+        snapshot = await anyio.to_thread.run_sync(providers.snapshot)
+        constraints = snapshot.get("constraints", [])
+        if item_id is not None:
+            constraints = [c for c in constraints if any(
+                c.get(key, {}).get("item_id") == item_id
+                for key in ("anchor_a", "anchor_b", "anchor_c")
+            )]
+        return [GeometryConstraint(**c) for c in sorted(constraints, key=lambda c: c["constraint_id"])]
 
     @mcp.tool()
     async def get_plan_summary() -> PlanSummary:
@@ -462,7 +513,7 @@ def build_server(
         referencing constraint in deterministic order. If ``is_constrained`` is
         true, geometry writes deliberately refuse rather than run the GUI's
         multi-item live solver: inspect ``constraints`` and ask the user to
-        remove or edit them in the app.
+        remove a constraint with remove_constraint when the user authorizes detaching it.
 
         Reads remain unauthenticated under the documented loopback model and
         never mutate the plan.
@@ -1421,7 +1472,7 @@ def build_server(
             Fails if the object (or a plant it contains) participates in a
             geometric constraint. This refusal is permanent for one-shot agent
             moves: call get_geometry on the blocking object to inspect the
-            constraint, then remove/edit it in the app. Journal pins also remain
+            constraint, then use remove_constraint for an authorized detachment. Journal pins also remain
             unsupported by scene writes.
 
             Args:
@@ -1578,6 +1629,22 @@ def build_server(
             if provider is None:
                 raise ValueError("Garden tracking writes are not available in this application")
             return await anyio.to_thread.run_sync(lambda: provider(operation, payload))
+
+        @mcp.tool(structured_output=False)
+        async def set_planting_date(item_id: str, planting_date: str | None) -> dict[str, Any]:
+            """Set only a plant's planting date, preserving its other tracking fields.
+
+            TREE/SHRUB/PERENNIAL only. Accepts YYYY-MM-DD, YYYY-MM, YYYY,
+            or a season such as 'Automne 2023'; null means explicitly unknown.
+            Exact days update the plant's existing planting_date field as well;
+            partial dates never invent a day. Does not create a planting event
+            or claim the work is done: use add_garden_intervention for that.
+            One undo step for a change, no extra step for an identical retry.
+            Read back get_garden_record; call save_plan to persist.
+            """
+            return await _garden_write("planting_date", {
+                "item_id": item_id, "planting_date": planting_date,
+            })
 
         @mcp.tool(structured_output=False)
         async def set_garden_card(item_id: str, fields: dict[str, Any]) -> dict[str, Any]:
@@ -2136,6 +2203,26 @@ def build_server(
         # call, except set_active_layer, which is session state and says so.
 
         @mcp.tool()
+        async def remove_constraint(constraint_id: str) -> WriteResult:
+            """Remove a geometric constraint/junction by UUID, in one undo step.
+
+            Get IDs from list_constraints or get_geometry. Keeps every object's
+            position and contour unchanged; no solver runs. Undo restores the
+            whole constraint, including its third anchor when present. Refuses
+            unknown/already removed IDs, or anchors on locked/grouped objects.
+            Removing a constraint permits subsequent independent geometry edits;
+            do so only when the user wants to detach the objects.
+            """
+            _require_write_auth(write_token)
+            provider = providers.remove_constraint
+            if provider is None:
+                raise ValueError("Constraint removal is unavailable.")
+            result = await anyio.to_thread.run_sync(
+                lambda: provider(constraint_id)
+            )
+            return WriteResult(**result)
+
+        @mcp.tool()
         async def set_object_type(item_id: str, object_type: str) -> WriteResult:
             """Reclassify an existing rectangular or polygonal structure (one undo step).
 
@@ -2148,10 +2235,11 @@ def build_server(
             Use create_object(object_type="PERGOLA", ...) for a new pergola.
             """
             _require_write_auth(write_token)
-            if providers.set_object_type is None:
+            provider = providers.set_object_type
+            if provider is None:
                 raise ValueError("Object reclassification is unavailable.")
             result = await anyio.to_thread.run_sync(
-                lambda: providers.set_object_type(item_id, object_type)
+                lambda: provider(item_id, object_type)
             )
             return WriteResult(**result)
 

@@ -436,7 +436,9 @@ class WriteResult(BaseModel):
         "set_active_layer/set_layer_property), which address a layer, not an "
         "object — see layer_id.",
     )
+    constraint_id: str | None = Field(default=None, description="Constraint UUID for remove_constraint.")
     action: Literal[
+        "remove_constraint",
         "create",
         "move",
         "delete",

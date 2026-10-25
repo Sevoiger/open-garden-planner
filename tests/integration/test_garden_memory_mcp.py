@@ -49,12 +49,54 @@ def test_mcp_tracking_auth_idempotence_and_durable_roundtrip(qtbot, monkeypatch,
             results["read"] = unpack(await session.call_tool("get_garden_record", {"item_id": plant_id}))
             denied = await session.call_tool("set_garden_card", {"item_id": plant_id, "fields": {"kind": "group"}})
             assert denied.isError
+            denied_date = await session.call_tool("set_planting_date", {
+                "item_id": plant_id, "planting_date": "2023-10-15",
+            })
+            assert denied_date.isError
         async with (http_client(url, headers={"Authorization": f"Bearer {TOKEN}"}) as (reader, writer, _),
                     ClientSession(reader, writer) as session):
             await session.initialize()
             card = unpack(await session.call_tool("set_garden_card", {"item_id": plant_id,
                            "fields": {"kind": "group", "state": "dormant", "period": "Automne 2023", "zone_id": zone_id}}))
             assert card["persisted"] is False
+            capabilities = unpack(await session.call_tool("get_capabilities", {}))
+            assert capabilities["writes_enabled"]
+            assert "set_planting_date" in capabilities["available_tools"]
+            assert "add_garden_intervention" in capabilities["workflows"]["garden_report"]
+            exact = unpack(await session.call_tool("set_planting_date", {
+                "item_id": plant_id, "planting_date": "2023-10-15",
+            }))
+            assert exact["card"]["period"]["value"] == "2023-10-15"
+            assert exact["card"]["state"] == "dormant"
+            assert exact["card"]["zone_id"] == zone_id
+            assert exact["card"]["kind"] == "group"
+            history = await session.call_tool("get_history", {})
+            depth = history.structuredContent["undo_depth"]
+            await session.call_tool("set_planting_date", {
+                "item_id": plant_id, "planting_date": "2023-10-15",
+            })
+            history = await session.call_tool("get_history", {})
+            assert history.structuredContent["undo_depth"] == depth
+            invalid = await session.call_tool("set_planting_date", {
+                "item_id": plant_id, "planting_date": "2023-02-30",
+            })
+            assert invalid.isError
+            not_plant = await session.call_tool("set_planting_date", {
+                "item_id": zone_id, "planting_date": "2023-10-15",
+            })
+            assert not_plant.isError
+            partial = unpack(await session.call_tool("set_planting_date", {
+                "item_id": plant_id, "planting_date": "Automne 2023",
+            }))
+            assert partial["card"]["period"]["precision"] == "season"
+            unknown = unpack(await session.call_tool("set_planting_date", {
+                "item_id": plant_id, "planting_date": None,
+            }))
+            assert unknown["card"]["period"]["precision"] == "unknown"
+            await session.call_tool("undo", {})
+            await session.call_tool("undo", {})
+            confirmed = unpack(await session.call_tool("get_garden_record", {"item_id": plant_id}))
+            assert confirmed["card"]["period"]["value"] == "2023-10-15"
             members = unpack_list(await session.call_tool("list_zone_plantings", {"zone_id": zone_id}))
             assert members[0]["item_id"] == plant_id
             fields = {"target_ids": [plant_id], "event_type": "observation", "description": "Observation fictive",
@@ -85,6 +127,9 @@ def test_mcp_tracking_auth_idempotence_and_durable_roundtrip(qtbot, monkeypatch,
         window.close()
     reopened, scene = ProjectManager(), CanvasScene()
     reopened.load(scene, path)
+    restored_plant = scene.find_item_by_id(plant.item_id)
+    assert restored_plant.metadata["plant_instance"]["planting_date"] == "2023-10-15"
+    assert restored_plant.metadata["garden_tracking"]["zone_id"] == zone_id
     event = reopened.garden_memory["events"][results["event_id"]]
     assert event["period"]["precision"] == "unknown"
     assert event["description"] == "Observation fictive"

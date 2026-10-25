@@ -2323,7 +2323,7 @@ class GardenPlannerApp(QMainWindow):
         connected items. US-D2.6 deliberately does not expose that multi-item
         mutation to one-shot agent calls: silently skipping it would violate the
         user's design intent. The agent can call ``get_geometry`` to see the
-        exact constraints, then ask the user to remove or edit them in the app.
+        exact constraints, then use remove_constraint for an authorized removal.
 
         This one helper is the perimeter for every geometry-changing tool:
         move/set-position, resize/rotate, species assignment when it resizes,
@@ -2345,8 +2345,8 @@ class GardenPlannerApp(QMainWindow):
             f"{subject} participates in geometric constraint "
             f"{first.constraint_type.name}/{first.constraint_id}{extra}; "
             f"{tool_name} does not support constrained objects. Call get_geometry "
-            "to inspect the constraints, then remove them or edit the object in "
-            "the app."
+            "to inspect the constraints; use remove_constraint(constraint_id) "
+            "for an authorized detachment, then retry."
         )
 
     def _agent_resize_object(
@@ -3006,6 +3006,36 @@ class GardenPlannerApp(QMainWindow):
             )
         return layer
 
+    def _agent_remove_constraint(self, constraint_id: str) -> dict[str, Any]:
+        return self._agent_bridge.run_on_main(
+            lambda: self._do_agent_remove_constraint(constraint_id)
+        )
+
+    def _do_agent_remove_constraint(self, constraint_id: str) -> dict[str, Any]:
+        """Remove only the addressed junction; never move its objects."""
+        from uuid import UUID
+
+        from open_garden_planner.core.commands import RemoveConstraintCommand
+
+        try:
+            identity = UUID(constraint_id)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Not a valid constraint id: {constraint_id!r}") from exc
+        graph = self.canvas_scene.constraint_graph
+        constraint = graph.constraints.get(identity)
+        if constraint is None:
+            raise ValueError(f"No constraint with id {constraint_id}; use list_constraints.")
+        anchors = [constraint.anchor_a, constraint.anchor_b, constraint.anchor_c]
+        items = [self._resolve_agent_item(str(item_id)) for item_id in sorted(
+            {anchor.item_id for anchor in anchors if anchor is not None}, key=str
+        )]
+        self._agent_require_unique_items(items)
+        cmd = RemoveConstraintCommand(graph, constraint)
+        self.canvas_view.command_manager.execute(cmd)
+        self.canvas_scene.update_dimension_lines()
+        return {"action": "remove_constraint", "constraint_id": str(identity),
+                "undo_description": cmd.description}
+
     def _agent_set_object_type(self, item_id: str, object_type: str) -> dict[str, Any]:
         """Reclassify a structure through the usual authenticated Qt bridge."""
         return self._agent_bridge.run_on_main(
@@ -3628,6 +3658,8 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.core.garden_memory import GardenMemoryService
 
         service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
+        if operation == "planting_date":
+            return service.set_planting_date(payload["item_id"], payload["planting_date"])
         if operation == "card":
             return service.set_card(payload["item_id"], payload["fields"])
         if operation == "add":
@@ -3671,6 +3703,7 @@ class GardenPlannerApp(QMainWindow):
             arrange_object=self._agent_arrange_object,
             set_object_layer=self._agent_set_object_layer,
             set_object_type=self._agent_set_object_type,
+            remove_constraint=self._agent_remove_constraint,
             create_layer=self._agent_create_layer,
             rename_layer=self._agent_rename_layer,
             delete_layer=self._agent_delete_layer,

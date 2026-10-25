@@ -139,6 +139,8 @@ WRITE_TOOL_NAMES = frozenset(
         # US-D2.4: layer write tools.
         "set_object_layer",
         "set_object_type",
+        "remove_constraint",
+        "set_planting_date",
         "create_layer",
         "rename_layer",
         "delete_layer",
@@ -390,3 +392,15 @@ def test_plant_lists_resource_custom_provider() -> None:
     data = json.loads(res[0].content)
     assert data[0]["id"] == "custom-list"
 
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_capabilities_lists_the_actual_registered_tools(enabled: bool) -> None:
+    mcp = build_server(_stub_providers(), writes_enabled=enabled, write_token="tok")
+    tool = mcp._tool_manager.get_tool("get_capabilities")
+    assert tool is not None
+    capabilities = asyncio.run(tool.fn())
+    assert capabilities["writes_enabled"] is enabled
+    assert capabilities["available_tools"] == sorted(_tool_names(mcp))
+    assert ("set_planting_date" in capabilities["available_tools"]) is enabled
+    assert ("remove_constraint" in capabilities["available_tools"]) is enabled
