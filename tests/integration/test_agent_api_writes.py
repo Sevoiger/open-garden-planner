@@ -2377,3 +2377,142 @@ def test_clamped_house_create_and_position_are_one_undo_step_each(
     assert tree is not None
     assert tree.sceneBoundingRect().left() >= canvas_rect.left() - 0.01
     assert tree.sceneBoundingRect().top() >= canvas_rect.top() - 0.01
+
+
+@pytest.mark.parametrize("shape", ["polygon", "rectangle"])
+def test_reclassify_house_as_pergola_preserves_document(
+    canvas: Any, qtbot: Any, tmp_path: Path, shape: str,
+) -> None:
+    """Real MCP -> Qt -> command, replay refusal, undo/redo and .ogp reload."""
+    from copy import deepcopy
+
+    from open_garden_planner.core.object_types import get_valid_types_for_shape
+    from open_garden_planner.ui.canvas.items import PolygonItem, RectangleItem
+
+    assert ObjectType.PERGOLA in get_valid_types_for_shape(shape)
+    scene = canvas.scene()
+    app = _APP_BY_VIEW[id(canvas)]
+    if shape == "polygon":
+        item = PolygonItem(
+            [QPointF(100, 100), QPointF(450, 100), QPointF(400, 350), QPointF(100, 300)],
+            object_type=ObjectType.HOUSE, name="Pergola existante",
+            layer_id=scene.active_layer.id,
+        )
+    else:
+        item = RectangleItem(
+            100, 100, 350, 250, object_type=ObjectType.HOUSE,
+            name="Pergola existante", layer_id=scene.active_layer.id,
+        )
+    item.setRotation(17)
+    item.set_metadata("owner_extension", {"keep": True})
+    scene.addItem(item)
+    baseline = deepcopy(app._project_manager._serialize_item(item))
+    server = AgentApiServer(
+        _providers(canvas), port=_free_port(), write_token=TOKEN, writes_enabled=True,
+    )
+    server.start()
+
+    async def body(ctx: Any) -> None:
+        http_client, ClientSession, url = ctx
+        async with (
+            http_client(url, headers={"Authorization": f"Bearer {TOKEN}"}) as (r, w, _),
+            ClientSession(r, w) as session,
+        ):
+            await session.initialize()
+            args = {"item_id": str(item.item_id), "object_type": "PERGOLA"}
+            call = await session.call_tool("set_object_type", args)
+            assert not call.isError, call
+            assert call.structuredContent["action"] == "set_object_type"
+            repeated = await session.call_tool("set_object_type", args)
+            assert repeated.isError
+            read = await session.call_tool("get_geometry", {"item_id": str(item.item_id)})
+            assert read.structuredContent["object_type"] == "PERGOLA"
+
+    try:
+        _run(server, body, qtbot)
+    finally:
+        server.stop()
+    expected = {**baseline, "object_type": "PERGOLA"}
+    assert app._project_manager._serialize_item(item) == expected
+    assert app._project_manager.is_dirty
+    canvas.command_manager.undo()
+    assert app._project_manager._serialize_item(item) == baseline
+    assert not canvas.command_manager.can_undo
+    canvas.command_manager.redo()
+    assert app._project_manager._serialize_item(item) == expected
+    save_path = tmp_path / "pergola.ogp"
+    app._project_manager.save(scene, save_path)
+    saved_id = item.item_id
+    app._project_manager.load(scene, save_path)
+    restored = scene.find_item_by_id(saved_id)
+    assert app._project_manager._serialize_item(restored) == expected
+    if shape == "rectangle":
+        from PyQt6.QtCore import Qt
+
+        app._do_agent_set_object_type(str(saved_id), "HOUSE")
+        assert restored.pen().style() != Qt.PenStyle.NoPen
+        assert restored.brush().style() != Qt.BrushStyle.NoBrush
+        assert app._project_manager._serialize_item(restored) == baseline
+        canvas.command_manager.undo()
+        assert restored.object_type == ObjectType.PERGOLA
+        assert restored.pen().style() == Qt.PenStyle.NoPen
+
+
+def test_reclassify_requires_auth_and_refuses_unsafe_types(canvas: Any, qtbot: Any) -> None:
+    from open_garden_planner.ui.canvas.items import RectangleItem
+
+    scene = canvas.scene()
+    app = _APP_BY_VIEW[id(canvas)]
+    item = RectangleItem(100, 100, 300, 200, object_type=ObjectType.HOUSE,
+                         layer_id=scene.active_layer.id)
+    scene.addItem(item)
+    server = AgentApiServer(
+        _providers(canvas), port=_free_port(), write_token=TOKEN, writes_enabled=True,
+    )
+    server.start()
+
+    async def body(ctx: Any) -> None:
+        http_client, ClientSession, url = ctx
+        async with http_client(url) as (r, w, _), ClientSession(r, w) as session:
+            await session.initialize()
+            call = await session.call_tool(
+                "set_object_type", {"item_id": str(item.item_id), "object_type": "PERGOLA"},
+            )
+            assert call.isError
+
+    try:
+        _run(server, body, qtbot)
+    finally:
+        server.stop()
+    for target in ("TREE", "GARDEN_BED", "GENERIC_POLYGON", "UNKNOWN"):
+        with pytest.raises(ValueError):
+            app._do_agent_set_object_type(str(item.item_id), target)
+    scene.active_layer.locked = True
+    with pytest.raises(ValueError, match="locked"):
+        app._do_agent_set_object_type(str(item.item_id), "PERGOLA")
+    scene.active_layer.locked = False
+    item.set_metadata("ridge_item_id", "linked-roof")
+    with pytest.raises(ValueError, match="roof"):
+        app._do_agent_set_object_type(str(item.item_id), "PERGOLA")
+    item.metadata.pop("ridge_item_id")
+    item.object_type = ObjectType.GARDEN_BED
+    with pytest.raises(ValueError, match="structures only"):
+        app._do_agent_set_object_type(str(item.item_id), "PERGOLA")
+    assert not canvas.command_manager.can_undo
+
+
+def test_reclassify_fresh_pergola_restores_visible_house_pen(canvas: Any) -> None:
+    from PyQt6.QtCore import Qt
+
+    from open_garden_planner.ui.canvas.items import RectangleItem
+
+    app = _APP_BY_VIEW[id(canvas)]
+    item = RectangleItem(100, 100, 300, 200, object_type=ObjectType.PERGOLA,
+                         layer_id=canvas.scene().active_layer.id)
+    canvas.scene().addItem(item)
+    assert item.pen().style() == Qt.PenStyle.NoPen
+    app._do_agent_set_object_type(str(item.item_id), "HOUSE")
+    assert item.pen().style() != Qt.PenStyle.NoPen
+    assert item.brush().style() != Qt.BrushStyle.NoBrush
+    canvas.command_manager.undo()
+    assert item.pen().style() == Qt.PenStyle.NoPen

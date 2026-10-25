@@ -391,3 +391,5 @@ class AgentProviders:
     redo: Callable[[], dict[str, Any]]
     get_plant_lists: Callable[[], list[dict[str, Any]]] | None = None
     garden_write: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
+    # Reclassify existing rectangular/polygonal structures, preserving geometry/style.
+    set_object_type: Callable[[str, str], dict[str, Any]] | None = None

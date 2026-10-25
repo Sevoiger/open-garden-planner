@@ -232,3 +232,28 @@ class TestBuildChangeTypeMenu:
         parent = QMenu()
         result = plain._build_change_type_menu(parent, [])
         assert result is None
+
+
+def test_polygon_pergola_is_available_and_selectable(canvas: CanvasView, qtbot) -> None:
+    from PyQt6.QtWidgets import QComboBox, QMenu
+
+    from open_garden_planner.ui.canvas.items import PolygonItem
+    from open_garden_planner.ui.panels.properties_panel import PropertiesPanel
+
+    item = PolygonItem(
+        [QPointF(100, 100), QPointF(400, 100), QPointF(350, 300)],
+        object_type=ObjectType.HOUSE,
+    )
+    canvas.scene().addItem(item)
+    panel = PropertiesPanel()
+    qtbot.addWidget(panel)
+    combo = QComboBox()
+    panel._populate_object_type_combo(combo, item)
+    assert combo.findData(ObjectType.PERGOLA) >= 0
+    parent = QMenu()
+    menu = item._build_change_type_menu(parent, get_valid_types_for_shape("polygon"))
+    action = next(a for a in menu.actions() if a.data() == ObjectType.PERGOLA)
+    item._dispatch_change_type(action.data())
+    assert item.object_type == ObjectType.PERGOLA
+    canvas.command_manager.undo()
+    assert item.object_type == ObjectType.HOUSE
