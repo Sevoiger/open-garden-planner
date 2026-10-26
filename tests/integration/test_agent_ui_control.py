@@ -176,6 +176,25 @@ def test_special_numeric_and_date_values_remain_unknown(qtbot):
         controller.close()
 
 
+def test_text_input_commits_when_owner_lost_activation(qtbot):
+    owner = QWidget()
+    qtbot.addWidget(owner)
+    editor = QLineEdit(owner)
+    QVBoxLayout(owner).addWidget(editor)
+    values = []
+    editor.editingFinished.connect(lambda: values.append(editor.text()))
+    owner.show()
+    QApplication.setActiveWindow(None)
+    controller = ApplicationUiController(owner)
+    try:
+        handle = node(snapshot(controller), **{"class": "QLineEdit"})["id"]
+        complete(controller, qtbot, queue(controller, "value", widget_id=handle, value="Committed"))
+        assert editor.text() == "Committed"
+        assert values == ["Committed"]
+    finally:
+        controller.close()
+
+
 @pytest.fixture
 def ui_window(qtbot, monkeypatch):
     monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)

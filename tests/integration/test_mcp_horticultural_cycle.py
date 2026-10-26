@@ -143,6 +143,20 @@ def run_cycle(window, qtbot, body):
                 await body(Desktop(session))
             except Exception as exc:
                 print(traceback.format_exc())
+                # Unwind child-first while the HTTP session can still deliver
+                # input; closing a parent first can leave its QFileDialog alive.
+                desktop = Desktop(session)
+                for _ in range(8):
+                    state = await desktop.state()
+                    if not state["modal_id"] and not state["popup_id"]:
+                        break
+                    root = state["modal_id"] or state["popup_id"]
+                    form = await desktop.state(root)
+                    cancel = next((n for n in form["nodes"] if n["class"] == "QPushButton"
+                                   and n.get("text", "").replace("&", "") in {"No", "Cancel"}), None)
+                    await desktop.call("interact_ui", widget_id=cancel["id"] if cancel else root,
+                                       action="click" if cancel else "close", request_key=str(uuid4()))
+                    await anyio.sleep(0.02)
                 raise AssertionError(traceback.format_exc()) from exc
 
     # Unwind nested event loops even when a remote assertion fails.
@@ -229,6 +243,8 @@ def test_discovery_and_explicit_refusals_over_mcp(ui_window, qtbot, tmp_path):  
         assert capabilities["identity"]["application_version"] == __version__
         assert capabilities["identity"]["mcp_sdk_version"] != ""
         assert capabilities["identity"]["source_sha256_at_server_build"]
+        assert capabilities["retry_policy"]["persistent_request_key"] == ["add_garden_intervention"]
+        assert "move_object" in capabilities["retry_policy"]["read_before_retry"]
         tools = {t.name: t for t in (await d.client.list_tools()).tools}
         assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools.values())
         schema = tools["add_garden_intervention"].inputSchema
@@ -462,6 +478,7 @@ def test_complete_culture_observation_intervention_harvest_task_reopen(ui_window
         form, receipts = await d.context_dialog(plant, 400, 300, "Log Harvest")
         tabs = d.one(form, **{"class": "QTabWidget"})
         await d.run("set_ui_value", widget_id=tabs["id"], value="History")
+        d.one(await d.modal(), record={"kind": "harvest", "id": harvest["id"], "target_id": plant})
         edit_receipt = await d.button(await d.modal(), "Edit", wait=False)
         edit_form = await d.modal()
         # The parent dialog remains visible too: wait for the edit form itself.

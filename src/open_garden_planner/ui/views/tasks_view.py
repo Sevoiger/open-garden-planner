@@ -254,6 +254,7 @@ class TasksView(QWidget):
         is_done: bool,
     ) -> QFrame:
         row = QFrame()
+        row.setProperty("agent_record", {"kind": "task", "id": task.task_id, "source": task.source})
         row.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(6, 3, 6, 3)

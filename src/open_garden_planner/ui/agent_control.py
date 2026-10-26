@@ -115,6 +115,9 @@ def _field_label(widget: QWidget) -> str:
     """Recover labels for direct and composite QFormLayout fields."""
     current = widget
     while (parent := current.parentWidget()) is not None:
+        for label in parent.findChildren(QLabel, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if label.buddy() is current:
+                return label.text()
         layouts = [parent.layout()] if parent.layout() is not None else []
         while layouts:
             layout = layouts.pop()
@@ -396,6 +399,9 @@ class ApplicationUiController:
                                        if v["status"] in {"queued", "running"}]}
 
     def _describe_widget(self, widget: QWidget, node: dict[str, Any]) -> None:
+        record = widget.property("agent_record")
+        if record is not None:
+            node["record"] = _json_data(record)
         semantic_state = getattr(widget, "agent_ui_state", None)
         if callable(semantic_state):
             node["custom_state"] = _json_data(semantic_state(), max_length=1_000_000)
@@ -413,7 +419,7 @@ class ApplicationUiController:
             node.update(value=widget.text() if widget.echoMode() == QLineEdit.EchoMode.Normal else "<redacted>",
                         read_only=widget.isReadOnly(), placeholder=widget.placeholderText())
         elif isinstance(widget, (QTextEdit, QPlainTextEdit)):
-            node.update(value=widget.toPlainText(), read_only=widget.isReadOnly())
+            node.update(value=widget.toPlainText(), read_only=widget.isReadOnly(), placeholder=widget.placeholderText())
         elif isinstance(widget, (QLabel, QAbstractButton)):
             node["text"] = widget.text()
             if isinstance(widget, QAbstractButton):
@@ -530,6 +536,10 @@ class ApplicationUiController:
     def _set_value(self, identity: str, value: Any) -> None:
         widget = self._resolve(identity, QWidget)
         self._modal_guard(widget)
+        # A closed modal can leave the owner inactive until the window system
+        # returns focus. setFocus alone then changes text without FocusOut or
+        # editingFinished, so the receipt succeeds while the model stays old.
+        QApplication.setActiveWindow(widget.window())
         if isinstance(widget, QLineEdit):
             if widget.isReadOnly():
                 raise ValueError("Text field is read only")

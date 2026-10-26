@@ -6003,7 +6003,11 @@ class GardenPlannerApp(QMainWindow):
         if dialog.exec():
             width_cm = dialog.width_cm
             height_cm = dialog.height_cm
-            self.canvas_scene.resize_canvas(width_cm, height_cm)
+            if (width_cm, height_cm) == (self.canvas_scene.width_cm, self.canvas_scene.height_cm):
+                return
+            from open_garden_planner.core.commands import ResizeCanvasCommand
+
+            self.canvas_view.command_manager.execute(ResizeCanvasCommand(self.canvas_scene, width_cm, height_cm))
             self.canvas_view.fit_in_view()
 
             width_m = width_cm / 100.0
@@ -8657,10 +8661,10 @@ class GardenPlannerApp(QMainWindow):
         )
         if file_path:
             try:
+                from open_garden_planner.core.commands import CreateItemCommand
                 from open_garden_planner.ui.canvas.items import BackgroundImageItem
 
                 image_item = BackgroundImageItem(file_path)
-                self.canvas_scene.addItem(image_item)
 
                 # Center the image on the canvas
                 canvas_center = self.canvas_scene.canvas_rect.center()
@@ -8670,7 +8674,9 @@ class GardenPlannerApp(QMainWindow):
                     canvas_center.y() - image_rect.height() / 2,
                 )
 
-                self._project_manager.mark_dirty()
+                self.canvas_view.command_manager.execute(
+                    CreateItemCommand(self.canvas_scene, image_item, self.tr("Import Background Image"))
+                )
                 self.statusBar().showMessage(self.tr("Imported: {path}").format(path=file_path))
             except Exception as e:
                 QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to import image:\n{error}").format(error=e))

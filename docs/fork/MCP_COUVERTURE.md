@@ -18,6 +18,10 @@ PID, heure de construction du serveur et empreinte des sources à cet instant.
 `initialize.serverInfo.version` annonce également OGP. L’empreinte ne certifie pas
 du code remplacé à chaud : reconstruire le serveur après modification des sources.
 Les workflows annoncés ne référencent que les outils effectivement enregistrés.
+`retry_policy` distingue les clés persistantes d’interventions, les reçus Qt de
+session et les écritures à relire avant toute nouvelle tentative après réponse
+perdue. Créer un objet ou une tâche métier, déplacer relativement ou annuler
+n’est pas automatiquement dédupliqué. Préférer une position absolue si possible.
 
 ## Outils de pilotage Qt
 
@@ -57,6 +61,14 @@ la sentinelle technique sans la présenter comme une mesure ; `set_ui_value(null
 rétablit cet état uniquement sur un contrôle configuré avec une valeur spéciale.
 La sélection d’un tableau respecte son mode lignes/colonnes ; relire après tri ou
 filtre, car `index_path` est une adresse temporaire et non une identité métier.
+Les lignes des tâches, récoltes et maladies portent aussi `record` : `kind`, `id`
+et `source` ou `target_id`. Retrouver la ligne par cette identité puis lire son
+sous-arbre pour choisir Edit/Delete/Done ; deux textes identiques ne désignent
+pas forcément le même enregistrement. Une reconstruction différée du panneau
+peut détruire le handle entre deux appels : redécouvrir la ligne par son UUID.
+Les champs libres du journal et des maladies exposent un libellé associé et un
+nom stable. La saisie réactive la fenêtre avant focus/édition afin que la perte
+de focus termine réellement la modification après un dialogue.
 
 ### Dialogues et fin d’une opération
 
@@ -167,6 +179,9 @@ de semences, plantes personnelles, listes et préférences ont des stockages glo
 distincts. Leur sauvegarde n’est pas assurée par `save_plan`. L’undo est celui du
 produit : les états de tâches, dates de propagation et stocks n’ont pas d’undo
 commun artificiellement ajouté par le MCP.
+Le redimensionnement du canevas, l’import d’un fond d’image et le lien
+plante–lot passent désormais par une commande de cette pile commune : chaque
+geste est annulable et la sauvegarde/réouverture conserve son résultat.
 
 ## Compatibilité des contraintes et déplacements
 

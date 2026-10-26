@@ -450,6 +450,19 @@ def build_server(
                 "global": "Seed packets, custom plants, plant lists and preferences use separate application storage; save_plan does not include them.",
                 "history": "Undo/redo and UI receipts are session-only; intervention request keys persist in .ogp.",
             },
+            "retry_policy": {
+                "persistent_request_key": [name for name in ["add_garden_intervention"] if name in names],
+                "session_request_key": [name for name in ["invoke_ui_action", "set_ui_value", "interact_ui"] if name in names],
+                "read_before_retry": [name for name in [
+                    "create_object", "create_layer", "add_manual_task", "record_soil_test",
+                    "move_object", "rotate_object", "add_vertex", "delete_vertex", "undo", "redo",
+                ] if name in names],
+                "guidance": "Only the listed request-key contracts deduplicate writes. "
+                    "After a lost reply for any other write, read current state before retrying. "
+                    "Prefer set_object_position to a repeated relative move. UI receipts do not survive "
+                    "server restart; persisted intervention keys require save_plan. "
+                    "A completed input receipt still requires business-state verification.",
+            },
             "limitations": [
                 "Write workflows require writes_enabled and the write token.",
                 "Garden edits are in memory until save_plan. Dedicated tracking tools never infer dates; "
@@ -1687,9 +1700,11 @@ def build_server(
                                      include_hidden: bool = False) -> dict[str, Any]:
             """Inspect OGP's actual Qt windows, dialogs, actions and controls (token required).
 
-            Covers every desktop feature through its existing UI, in addition
-            to the direct domain tools. Returns session-scoped handles, labels,
+            Discover desktop features through their existing UI, in addition
+            to the direct domain tools. This is not a coverage certification.
+            Returns session-scoped handles, labels,
             choices, values, enabled/visible flags, global bounds, model rows,
+            record IDs on task/harvest/pest rows (scope actions to that subtree),
             selected scene UUIDs and active modal/popup. Visible controls are
             listed by default; include_hidden=true also inspects collapsed/tabbed
             fields, which must be revealed before input. Password values are redacted.
