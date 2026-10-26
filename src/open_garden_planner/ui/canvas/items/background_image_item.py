@@ -77,6 +77,7 @@ class BackgroundImageItem(QGraphicsPixmapItem):
         self._geo_metadata: dict | None = geo_metadata
         self._is_placeholder: bool = _placeholder
         self._raw_dict: dict | None = _raw_dict
+        self._encoded_png: tuple[int, str] | None = None
 
         if _placeholder:
             w = 300
@@ -111,6 +112,15 @@ class BackgroundImageItem(QGraphicsPixmapItem):
                 self._original_pixmap = _read_background_pixmap(QImageReader(image_path))
                 if self._original_pixmap.isNull():
                     raise ValueError(f"Failed to load image: {image_path}")
+
+            # Loading/importing owns image encoding. A read-only MCP snapshot
+            # must not recompress a large plan image on Qt's thread on every
+            # request (this can exceed the bridge timeout even for a summary).
+            if _pixmap_data is not None:
+                self._encoded_png = (self._original_pixmap.cacheKey(),
+                                     base64.b64encode(_pixmap_data).decode("ascii"))
+            else:
+                self._png_payload()
 
         # Derive the scale from geo metadata so the satellite image is true-to-life.
         # 1 cm = 0.01 m → px_per_cm = 0.01 / meters_per_pixel.
@@ -253,15 +263,10 @@ class BackgroundImageItem(QGraphicsPixmapItem):
             res["position"] = {"x": self.pos().x(), "y": self.pos().y()}
             return res
 
-        buf = QBuffer()
-        buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        self._original_pixmap.save(buf, "PNG")
-        image_data_b64 = base64.b64encode(bytes(buf.data())).decode("ascii")
-        buf.close()
         data: dict = {
             "type": "background_image",
             "image_path": self._image_path,
-            "image_data": image_data_b64,
+            "image_data": self._png_payload(),
             "position": {"x": self.pos().x(), "y": self.pos().y()},
             "opacity": self._opacity,
             "locked": self._locked,
@@ -270,6 +275,20 @@ class BackgroundImageItem(QGraphicsPixmapItem):
         if self._geo_metadata is not None:
             data["geo_metadata"] = self._geo_metadata
         return data
+
+    def _png_payload(self) -> str:
+        """Cache by pixmap identity; geometry, opacity and calibration stay live."""
+        key = self._original_pixmap.cacheKey()
+        if self._encoded_png is None or self._encoded_png[0] != key:
+            buf = QBuffer()
+            buf.open(QIODevice.OpenModeFlag.WriteOnly)
+            try:
+                if not self._original_pixmap.save(buf, "PNG"):
+                    raise ValueError("Could not encode the background image as PNG")
+                self._encoded_png = (key, base64.b64encode(bytes(buf.data())).decode("ascii"))
+            finally:
+                buf.close()
+        return self._encoded_png[1]
 
     @classmethod
     def from_dict(cls, data: dict) -> "BackgroundImageItem":
@@ -293,6 +312,8 @@ class BackgroundImageItem(QGraphicsPixmapItem):
                     _pixmap_data=pixmap_bytes,
                     geo_metadata=geo_metadata,
                 )
+                if isinstance(data["image_data"], str):
+                    item._encoded_png = (item._original_pixmap.cacheKey(), data["image_data"])
             else:
                 item = cls(image_path, geo_metadata=geo_metadata)
         except PlanValidationError:

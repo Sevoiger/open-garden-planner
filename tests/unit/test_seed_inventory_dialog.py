@@ -88,12 +88,12 @@ class TestSeedTableModel:
         idx = model.index(0, 3)  # Quantity column
         assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "50 seeds"
 
-    def test_display_quantity_zero_is_empty(self, tmp_store: SeedInventoryStore, db: SeedViabilityDB) -> None:
+    def test_display_quantity_zero_is_explicit(self, tmp_store: SeedInventoryStore, db: SeedViabilityDB) -> None:
         from PyQt6.QtCore import Qt
         tmp_store.add(SeedPacket(species_name="Bean", purchase_year=2024, quantity=0.0))
         model = SeedTableModel(tmp_store, db)
         idx = model.index(0, 3)
-        assert model.data(idx, Qt.ItemDataRole.DisplayRole) == ""
+        assert model.data(idx, Qt.ItemDataRole.DisplayRole) == "0 seeds"
 
     def test_background_role_good(self, tmp_store: SeedInventoryStore, db: SeedViabilityDB) -> None:
         from PyQt6.QtCore import Qt

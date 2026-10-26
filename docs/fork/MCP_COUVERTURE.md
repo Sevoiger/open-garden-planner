@@ -1,13 +1,23 @@
-# Pilotage complet de l’application par MCP
+# Pilotage de l’application par MCP
 
 Le MCP fournit deux accès complémentaires dans le fork macOS : les outils métier
 adressent directement les objets du plan ; les outils d’interface pilotent les
 commandes, dialogues et surfaces Qt du logiciel. Une fonction sans outil métier
-dédié reste ainsi accessible depuis MCP par son parcours d’interface existant.
+dédié peut être pilotée par son parcours d’interface existant. L’existence de ce
+parcours ne démontre pas sa réussite pour toutes les fonctions.
 Le client n’a plus besoin d’un connecteur séparé de contrôle de l’ordinateur.
+
+La [matrice d’audit du 26 octobre 2026](MCP_AUDIT_2026-10-26.md) distingue les
+parcours démontrés, partiels et non testés. Elle fait foi pour le niveau de preuve ;
+le tableau ci-dessous est un inventaire des accès, sans certification exhaustive.
 
 `get_capabilities()` décrit ces accès et la liste des outils réellement enregistrés.
 Après mise à jour du code : relancer OGP puis reconnecter le client MCP.
+Le contrat API `2` expose `identity` : version OGP, version du SDK MCP distincte,
+PID, heure de construction du serveur et empreinte des sources à cet instant.
+`initialize.serverInfo.version` annonce également OGP. L’empreinte ne certifie pas
+du code remplacé à chaud : reconstruire le serveur après modification des sources.
+Les workflows annoncés ne référencent que les outils effectivement enregistrés.
 
 ## Outils de pilotage Qt
 
@@ -21,8 +31,8 @@ Ils sont absents lorsque les écritures MCP sont désactivées ou sans jeton.
 | `invoke_ui_action(action_id, request_key)` | Déclenche la commande Qt découverte ; ouvre aussi les menus et les dialogues. |
 | `set_ui_value(widget_id, value, request_key)` | Saisit un texte Unicode, une valeur numérique, une date ISO, un choix, une case ou un onglet et termine l’édition normale. Les plages, champs non modifiables et validateurs sont respectés. |
 | `interact_ui(widget_id, action, request_key, parameters?)` | Clic/double-clic, boutons de dialogue, clavier, souris, molette, sélection du dessin, édition des cellules par leur délégué, arbres, réordonnancement de lignes et dépôt depuis catalogue/liste de plantes. |
-| `read_ui_model(widget_id, index_path?, start?, count?)` | Pagination des listes, tableaux et arbres ; lecture des enfants, états et possibilités d’édition. |
-| `get_ui_operation(operation_id)` | État `queued`, `running`, `completed` ou `failed`, et erreur éventuelle. |
+| `read_ui_model(widget_id, index_path?, start?, count?)` | Pagination, en-têtes, textes des lignes personnalisées, données JSON `UserRole` (souvent UUID), chemins de lignes, handles des widgets intégrés, états et possibilités d’édition. |
+| `get_ui_operation(operation_id)` | État `queued`, `running`, `completed` ou `failed`, clé de requête, horodatages et type/message d’erreur éventuel. |
 | `render_ui_image(widget_id?)` | Capture de la fenêtre, du dialogue ou d’une surface native 3D, avec dimensions et facteur d’échelle. |
 
 L’inventaire montre par défaut les contrôles visibles, pour ne pas noyer le client
@@ -36,6 +46,17 @@ enfants, libellé, choix, visibilité et activation. Un inventaire tronqué se p
 avec `root_id` sur un sous-arbre, ou `max_nodes` jusqu’à 10000. Les listes se lisent
 par pages et les arbres par chemins de lignes. Les champs masqués sous un panneau
 replié ou un onglet doivent d’abord être révélés par leur en-tête/onglet.
+Les champs donnent aussi leur `label` de formulaire et leurs `groups`. Les
+contrôles Min/Opt/Max des semences, les étapes de propagation et le lien de lot
+possèdent des `object_name` stables. Le calendrier peint expose `custom_state` :
+identités botaniques, fenêtres **prévues**, année, sélection et rectangles de lignes
+en pixels locaux pour `interact_ui(click)`. Il n’atteste aucune réalisation.
+Les nombres/dates affichés comme inconnus utilisent `value=null`, avec
+`display_text`, `special_value_text` et `value_is_special`. `raw_value` conserve
+la sentinelle technique sans la présenter comme une mesure ; `set_ui_value(null)`
+rétablit cet état uniquement sur un contrôle configuré avec une valeur spéciale.
+La sélection d’un tableau respecte son mode lignes/colonnes ; relire après tri ou
+filtre, car `index_path` est une adresse temporaire et non une identité métier.
 
 ### Dialogues et fin d’une opération
 
@@ -60,6 +81,19 @@ différent avec la même clé est refusé. Les reçus sont conservés pour la se
 y compris après destruction du widget. Après redémarrage, relire l’état avant de
 reprendre : les reçus UI ne sont pas des événements persistants du jardin. Pour les
 récits, utiliser l’idempotence persistante d’`add_garden_intervention`.
+
+Un timeout du pont Qt annule une opération encore en attente et indique qu’elle
+n’a pas été exécutée. Si elle avait déjà commencé, le résultat est explicitement
+indéterminé : relire l’état avant de réessayer. La livraison d’une entrée UI n’attend
+pas tous les traitements différés de l’application (par exemple les 600 ms de
+regroupement des dates du calendrier) ; attendre ensuite l’état métier attendu.
+
+Les arguments inconnus sont refusés pour tous les outils. Les schémas de suivi
+détaillent les types/statuts d’événements, périodes, cibles et champs autorisés ;
+les nombres négatifs, booléens et non finis y sont refusés. Les unités
+d’intervention restent des libellés explicites sans conversion automatique.
+`get_object` refuse désormais les UUID invalides ou absents avec un message ;
+il ne renvoie plus un succès sans contenu pour ces cas.
 
 ### Dessin, groupes et glisser-déposer
 
@@ -88,13 +122,13 @@ récits, utiliser l’idempotence persistante d’`add_garden_intervention`.
 
 ## Couverture fonctionnelle
 
-La colonne Qt décrit les parcours désormais pilotables par les outils ci-dessus,
+La colonne Qt décrit les parcours identifiés pour les outils ci-dessus,
 même lorsqu’une API métier dédiée n’existe pas. Les commandes sont celles de
 l’application, donc conservent sa validation, ses confirmations et son historique.
 Les réglages et opérations qui n’avaient pas d’undo dans l’interface n’en gagnent
 pas artificiellement ; les mutations documentaires utilisent leurs commandes existantes.
 
-| Domaine | Outils métier directs | Parcours Qt pilotable depuis MCP |
+| Domaine | Outils métier directs | Parcours Qt identifié (preuve dans l’audit) |
 | --- | --- | --- |
 | Fichiers | `new_plan`, `open_plan`, `save_plan` | Taille du canevas, récents, autosave et récupération ; dialogues Fichier/Edit |
 | Inspection | Résumé, objets, géométrie, recherche spatiale, distances, diagnostics | Tous les inspecteurs, panneaux, tableaux et captures de l’UI |
@@ -121,6 +155,18 @@ pas artificiellement ; les mutations documentaires utilisent leurs commandes exi
 | Vue 2D/3D | Rendu du canevas | Zoom, sélection, caméra/marche, soleil et captures natives |
 | Préférences/application | Inventaire des capacités | Thème/langue, grilles/accrochages, overlays, panneaux, préférences et mises à jour |
 | Historique | `get_history`, `undo`, `redo` | Même pile que les commandes d’interface, sans pile parallèle |
+
+Une plante créée par MCP conserve une date de plantation **inconnue** ; donner une
+date connue avec `set_planting_date`. Les anciens projets et la commodité de dessin
+de l’interface ne sont pas réécrits. Un stock de graines nul s’affiche explicitement
+comme `0 seeds`/`0 grams`. Le produit ne représente pas actuellement une quantité
+inconnue de stock ou de récolte ; ne pas la convertir implicitement en zéro.
+
+Les récoltes, tâches, observations et dates sont dans le projet `.ogp`. Les stocks
+de semences, plantes personnelles, listes et préférences ont des stockages globaux
+distincts. Leur sauvegarde n’est pas assurée par `save_plan`. L’undo est celui du
+produit : les états de tâches, dates de propagation et stocks n’ont pas d’undo
+commun artificiellement ajouté par le MCP.
 
 ## Compatibilité des contraintes et déplacements
 

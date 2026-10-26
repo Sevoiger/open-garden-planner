@@ -179,8 +179,6 @@ class SeedTableModel(QAbstractTableModel):
         if col == _COL_YEAR:
             return str(p.purchase_year)
         if col == _COL_QUANTITY:
-            if p.quantity == 0.0:
-                return ""
             qty = int(p.quantity) if p.quantity == int(p.quantity) else p.quantity
             return f"{qty} {p.quantity_unit}"
         if col == _COL_VIABILITY:
@@ -383,6 +381,19 @@ class SeedPacketEditDialog(ResponsiveDialog):
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        # Stable machine names complement translated form/group labels, notably
+        # the Min/Opt/Max controls sharing the same composite form row.
+        for attribute, name in {
+            "_name_edit": "species_name", "_variety_edit": "variety",
+            "_year_spin": "purchase_year", "_qty_spin": "quantity",
+            "_unit_combo": "quantity_unit", "_manufacturer_edit": "manufacturer",
+            "_batch_edit": "batch_number", "_temp_min": "germination_temp_min_c",
+            "_temp_opt": "germination_temp_opt_c", "_temp_max": "germination_temp_max_c",
+            "_days_min": "germination_days_min", "_days_max": "germination_days_max",
+            "_light_combo": "light_germinator", "_notes_edit": "notes",
+        }.items():
+            getattr(self, attribute).setObjectName(name)
 
     @staticmethod
     def _make_temp_spin() -> QDoubleSpinBox:

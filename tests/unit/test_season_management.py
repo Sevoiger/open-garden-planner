@@ -3,7 +3,65 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from open_garden_planner.core.project import ProjectData, ProjectManager
+
+
+@pytest.mark.parametrize("tracking", [False, True])
+def test_new_season_preserves_extensions_and_rebases_links(qtbot, tmp_path, tracking):
+    from open_garden_planner.core.plan_io import read_plan, write_plan
+    from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
+
+    folder, target_folder = tmp_path / "source", tmp_path / "target"
+    folder.mkdir()
+    target_folder.mkdir()
+    source = folder / "garden_2026.ogp"
+    target = target_folder / "garden_2027.ogp"
+    scene, pm = CanvasScene(), ProjectManager()
+    raw = pm.snapshot_dict(scene)
+    raw.update(season_year=2026, linked_seasons=[{"year": 2025, "file": "older.ogp"}],
+               owner_extension={"preserved": True})
+    if tracking:
+        raw["garden_memory"] = {"version": 1, "events": {}, "requests": {}}
+    write_plan(source, raw)
+    pm.load(scene, source)
+    original = source.read_bytes()
+    with pytest.raises(ValueError, match="different project file"):
+        pm.create_new_season(scene, 2027, source)
+    assert source.read_bytes() == original
+    pm.create_new_season(scene, 2027, target)
+    saved = read_plan(target)
+    assert saved["owner_extension"] == {"preserved": True}
+    links = {s["year"]: s["file"] for s in saved["linked_seasons"]}
+    assert (target.parent / links[2025]).resolve() == folder / "older.ogp"
+    assert (target.parent / links[2026]).resolve() == source
+    back = read_plan(source)["linked_seasons"]
+    assert (source.parent / next(s["file"] for s in back if s["year"] == 2027)).resolve() == target
+
+
+@pytest.mark.parametrize("tracking", [False, True])
+def test_season_source_link_failure_is_explicit(qtbot, tmp_path, monkeypatch, tracking):
+    import open_garden_planner.core.project as module
+    from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
+
+    scene, pm = CanvasScene(), ProjectManager()
+    source, target = tmp_path / "source.ogp", tmp_path / "next.ogp"
+    if tracking:
+        pm.restore_garden_memory({"version": 1, "events": {}, "requests": {}})
+    pm.save(scene, source)
+    before = source.read_bytes()
+    write = module.write_plan
+
+    def fail_source(path, data):
+        if path == source:
+            raise OSError("synthetic read-only source")
+        return write(path, data)
+
+    monkeypatch.setattr(module, "write_plan", fail_source)
+    with pytest.raises(RuntimeError, match="Season created.*link.*could not be updated"):
+        pm.create_new_season(scene, 2027, target)
+    assert target.exists() and source.read_bytes() == before
 
 # ─── ProjectData season fields ─────────────────────────────────────────────────
 

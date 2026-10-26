@@ -78,6 +78,47 @@ class TestMainThreadBridge:
 
         assert "timeout" in captured
 
+    def test_timed_out_queued_write_never_executes_later(self, qtbot: Any) -> None:
+        bridge = MainThreadBridge()
+        mutations = []
+        captured = {}
+
+        def worker():
+            try:
+                bridge.run_on_main(lambda: mutations.append("late write"), timeout=0.02)
+            except FutureTimeoutError as exc:
+                captured["error"] = str(exc)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+        qtbot.wait(20)  # Deliver the queued signal AFTER the caller saw failure.
+        assert mutations == []
+        assert "cancelled before execution" in captured["error"]
+
+    def test_timeout_after_execution_starts_reports_indeterminate_outcome(self, qtbot: Any) -> None:
+        bridge = MainThreadBridge()
+        mutations = []
+        captured = {}
+
+        def operation():
+            time.sleep(0.08)
+            mutations.append("one write")
+
+        def worker():
+            try:
+                bridge.run_on_main(operation, timeout=0.02)
+            except FutureTimeoutError as exc:
+                captured["error"] = str(exc)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        qtbot.waitUntil(lambda: "error" in captured, timeout=2000)
+        thread.join(timeout=2)
+        assert mutations == ["one write"]
+        assert "may have completed" in captured["error"]
+
     def test_abort_pending_unblocks_in_flight_call(self, qtbot: Any) -> None:
         bridge = MainThreadBridge()
         captured: dict[str, Any] = {}

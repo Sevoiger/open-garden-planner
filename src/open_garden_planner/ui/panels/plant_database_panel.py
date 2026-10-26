@@ -773,6 +773,7 @@ class PlantDatabasePanel(QWidget):
         seed_link_vbox.setSpacing(2)
 
         self.seed_packet_combo = QComboBox()
+        self.seed_packet_combo.setObjectName("seed_packet_id")
         self.seed_packet_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.seed_packet_combo.currentIndexChanged.connect(self._on_seed_packet_changed)
         seed_link_vbox.addWidget(self.seed_packet_combo)

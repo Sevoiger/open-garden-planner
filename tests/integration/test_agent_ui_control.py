@@ -9,17 +9,21 @@ from uuid import uuid4
 
 import pytest
 from PyQt6 import sip
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QDate, Qt, QTimer
 from PyQt6.QtGui import QAction, QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QMessageBox,
     QSpinBox,
@@ -107,6 +111,69 @@ def action(state, text):
     matches = [a for a in state["actions"] if a["text"].replace("&", "") == text]
     assert len(matches) == 1, (text, [a["text"] for a in state["actions"]])
     return matches[0]
+
+
+def test_model_exposes_custom_rows_headers_identity_and_form_labels(qtbot):
+    owner = QWidget()
+    qtbot.addWidget(owner)
+    layout = QFormLayout(owner)
+    name = QLineEdit()
+    layout.addRow("Species", name)  # QFormLayout does not set a QLabel buddy.
+    view = QListWidget()
+    layout.addRow("Layers", view)
+    item = QListWidgetItem(view)
+    item.setData(Qt.ItemDataRole.UserRole, "stable-layer-id")
+    row = QWidget()
+    QVBoxLayout(row).addWidget(QLabel("Synthetic layer"))
+    view.setItemWidget(item, row)
+    owner.show()
+    controller = ApplicationUiController(owner)
+    try:
+        state = snapshot(controller)
+        field = node(state, **{"class": "QLineEdit"})
+        assert field["label"] == "Species"
+        handle = node(state, **{"class": "QListWidget"})["id"]
+        data = controller.dispatch("model", {"widget_id": handle})
+        assert "headers" in data
+        cell = data["rows"][0]["cells"][0]
+        assert cell["text"] == "Synthetic layer"
+        assert cell["user_data"] == "stable-layer-id"
+        assert cell["widget_id"]
+        assert data["rows"][0]["index_path"] == [0]
+    finally:
+        controller.close()
+
+
+def test_special_numeric_and_date_values_remain_unknown(qtbot):
+    owner = QWidget()
+    qtbot.addWidget(owner)
+    layout = QFormLayout(owner)
+    temperature = QDoubleSpinBox()
+    temperature.setRange(-20, 60)
+    temperature.setSpecialValueText("—")
+    temperature.setValue(-20)
+    day = QDateEdit()
+    day.setMinimumDate(QDate(2000, 1, 1))
+    day.setSpecialValueText("Unknown date")
+    day.setDate(day.minimumDate())
+    layout.addRow("Temperature", temperature)
+    layout.addRow("Planting", day)
+    owner.show()
+    controller = ApplicationUiController(owner)
+    try:
+        state = snapshot(controller)
+        for cls, known in (("QDoubleSpinBox", 20), ("QDateEdit", "2026-04-15")):
+            field = node(state, **{"class": cls})
+            assert field["value"] is None and field["value_is_special"]
+            assert field["display_text"] == field["special_value_text"]
+            assert field["raw_value"] is not None
+            complete(controller, qtbot, queue(controller, "value", widget_id=field["id"], value=known))
+            complete(controller, qtbot, queue(controller, "value", widget_id=field["id"], value=None))
+            current = node(snapshot(controller), **{"class": cls})
+            assert current["value"] is None and current["value_is_special"]
+        assert temperature.value() == temperature.minimum() and day.date() == day.minimumDate()
+    finally:
+        controller.close()
 
 
 @pytest.fixture

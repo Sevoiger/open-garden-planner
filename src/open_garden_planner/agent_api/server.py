@@ -64,6 +64,7 @@ import threading
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Annotated, Any, Literal
+from uuid import UUID
 
 from mcp.server.fastmcp.utilities.types import Image
 from pydantic import Field, StrictFloat, StrictInt
@@ -72,6 +73,17 @@ from open_garden_planner.agent_api import creates as agent_creates
 from open_garden_planner.agent_api import prompts as agent_prompts
 from open_garden_planner.agent_api import queries
 from open_garden_planner.agent_api.diagnostics import diagnostics_from_records
+from open_garden_planner.agent_api.garden_schema import (
+    EventStatus,
+    EventType,
+    GardenCardInput,
+    InterventionDetails,
+    InterventionPatch,
+    Occurrence,
+    PeriodInput,
+    input_fields,
+)
+from open_garden_planner.agent_api.identity import server_identity
 from open_garden_planner.agent_api.mapping import (
     layers_from_snapshot,
     plan_summary_from_snapshot,
@@ -332,6 +344,7 @@ def build_server(
     from mcp.server.transport_security import TransportSecuritySettings
 
     writes_active = bool(writes_enabled and write_token)
+    identity = server_identity()
     write_note = (
         " scene-mutating tools (including move_object/delete_object and "
         "undo/redo) edit the live plan (the history is the same global LIFO "
@@ -403,6 +416,9 @@ def build_server(
         stateless_http=stateless_http,
         log_level="WARNING",
     )
+    # FastMCP v1 has no version constructor argument. Its low-level Server
+    # otherwise advertises the SDK version as if it were the application's.
+    mcp._mcp_server.version = identity["application_version"]
 
     @mcp.tool()
     async def get_capabilities() -> dict[str, Any]:
@@ -413,9 +429,10 @@ def build_server(
         """
         names = sorted(tool.name for tool in await mcp.list_tools())
         return {
+            "identity": identity,
             "writes_enabled": writes_active,
             "available_tools": names,
-            "workflows": {
+            "workflows": {key: value for key, value in {
                 "inspect_plan": ["list_objects", "get_object", "get_geometry"],
                 "move_with_constraints": ["get_geometry", "move_object", "set_object_position"],
                 "detach_junction": ["list_constraints", "remove_constraint"],
@@ -425,10 +442,19 @@ def build_server(
                 "reclassify_structure": ["set_object_type"],
                 "desktop_features": ["get_application_ui", "invoke_ui_action", "set_ui_value",
                     "interact_ui", "read_ui_model", "get_ui_operation", "render_ui_image"],
+            }.items() if all(name in names for name in value)},
+            "coverage_claim": "Tool availability only; desktop workflows require end-to-end verification.",
+            "resources": ["garden://plan", "garden://plan/raw", "garden://species", "garden://plant-lists"],
+            "storage": {
+                "project": "Garden objects, interventions, tasks, harvests and journal: save_plan then open_plan.",
+                "global": "Seed packets, custom plants, plant lists and preferences use separate application storage; save_plan does not include them.",
+                "history": "Undo/redo and UI receipts are session-only; intervention request keys persist in .ogp.",
             },
             "limitations": [
                 "Write workflows require writes_enabled and the write token.",
-                "Garden edits are in memory until save_plan; dates are never inferred.",
+                "Garden edits are in memory until save_plan. Dedicated tracking tools never infer dates; "
+                "create_object leaves planting dates unknown. GUI catalogue/drop/guild creation can default "
+                "to today: inspect and clear with set_planting_date(null) if unknown.",
                 "For desktop features without a dedicated domain tool, use desktop_features: "
                 "discover the actual actions/controls, invoke/fill them, finish dialogs and read back results.",
                 "UI operation receipts and handles last for the running session only. Queued/running "
@@ -492,8 +518,8 @@ def build_server(
     @mcp.tool()
     async def get_object(
         item_id: str, raw: bool = False
-    ) -> dict[str, Any] | ObjectDetail | None:
-        """Return full detail for one object by its UUID, or null if not found.
+    ) -> dict[str, Any] | ObjectDetail:
+        """Return full detail for one object by its UUID; refuse unknown IDs explicitly.
 
         The result's stack_index is its 0-based position within its layer,
         bottom→top, as displayed — compare it only against other objects on
@@ -504,8 +530,15 @@ def build_server(
             raw: If true, return the underlying serialiser dict instead of the
                 curated schema.
         """
+        try:
+            identity = str(UUID(item_id))
+        except ValueError as exc:
+            raise ValueError(f"Invalid object UUID: {item_id}") from exc
         snapshot = await anyio.to_thread.run_sync(providers.snapshot)
-        return queries.get_object(snapshot, item_id, raw=raw)
+        result = queries.get_object(snapshot, identity, raw=raw)
+        if result is None:
+            raise ValueError(f"Unknown object: {identity}; refresh list_objects")
+        return result
 
     @mcp.tool()
     async def get_geometry(item_id: str) -> GeometryResult:
@@ -1340,7 +1373,7 @@ def build_server(
         return list(garden_record(snapshot, zone_id)["plantings"])
 
     @mcp.tool(structured_output=False)
-    async def search_garden_interventions(target_id: str | None = None, event_type: str | None = None,
+    async def search_garden_interventions(target_id: str | None = None, event_type: EventType | None = None,
                                           since: str | None = None, until: str | None = None,
                                           text: str = "") -> list[dict[str, Any]]:
         """Search occurrence periods by target/type/text and inclusive ISO day bounds.
@@ -1392,8 +1425,8 @@ def build_server(
             shifted back so the whole object lies inside. An object cannot be
             created fully off-plan (where it would be invisible).
 
-            A new plant is stamped with today's planting date (which drives the
-            growth, shadow and sun-hours views) and, when 'species' matches the
+            A new plant's planting date stays UNKNOWN. Use set_planting_date
+            for an explicitly known exact/partial date. When 'species' matches the
             bundled species database, is auto-populated with that species' data.
             A plant created inside a bed is automatically linked to that bed,
             within this same single undo step -- the bed's id comes back as
@@ -1757,7 +1790,10 @@ def build_server(
             """Read a page of table/list/tree rows without changing selection.
 
             index_path is the row path of a parent tree item (omit for root).
-            Returns text, edit/check capabilities, child counts and selected rows.
+            Returns headers, text (including custom row widgets), JSON UserRole
+            data, row index paths, embedded widget handles, edit/check capabilities,
+            child counts and selected rows. Re-read after sorting/filtering;
+            row indices are not stable identities. Handles expire with widgets.
             start >= 0; count 1..200. Use this for catalogues, logs and reports
             whose contents exceed get_application_ui's initial 50-row preview.
             """
@@ -1801,7 +1837,7 @@ def build_server(
             })
 
         @mcp.tool(structured_output=False)
-        async def set_garden_card(item_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        async def set_garden_card(item_id: str, fields: GardenCardInput) -> dict[str, Any]:
             """Replace tracking fields on an existing shape in one undo command.
 
             fields: name (provisional labels accepted), kind individual/group/zone,
@@ -1812,12 +1848,12 @@ def build_server(
             The shape's identity, footprint and growth rings remain distinct.
             Token required. Changes are in memory; call save_plan to persist.
             """
-            return await _garden_write("card", {"item_id": item_id, "fields": fields})
+            return await _garden_write("card", {"item_id": item_id, "fields": input_fields(fields)})
 
         @mcp.tool(structured_output=False)
-        async def add_garden_intervention(target_ids: list[str], event_type: str, description: str,
-                                           request_key: str, occurrence: dict[str, str] | str | None = None,
-                                           status: str = "done", details: dict[str, Any] | None = None) -> dict[str, Any]:
+        async def add_garden_intervention(target_ids: list[str], event_type: EventType, description: str,
+                                           request_key: str, occurrence: Occurrence = None,
+                                           status: EventStatus = "done", details: InterventionDetails | None = None) -> dict[str, Any]:
             """Record one intervention on one or more stable target IDs, undoable.
 
             Types: planting, relocation, amendment, fertilisation, mulching,
@@ -1831,23 +1867,20 @@ def build_server(
             changed content conflicts, and retry after deletion never recreates it.
             Token required; result persisted=false means memory only: use save_plan.
             """
-            allowed = {"material", "quantity", "unit", "application", "area_m2", "depth_cm", "media"}
-            if details and set(details) - allowed:
-                raise ValueError("Unknown intervention detail fields")
-            fields = {**(details or {}), "type": event_type, "description": description,
-                      "status": status, "period": occurrence,
+            fields = {**(input_fields(details) if details else {}), "type": event_type, "description": description,
+                      "status": status, "period": occurrence.as_period() if isinstance(occurrence, PeriodInput) else occurrence,
                       "targets": [{"id": identity, "name": identity} for identity in target_ids]}
             return await _garden_write("add", {"fields": fields, "request_key": request_key})
 
         @mcp.tool(structured_output=False)
-        async def edit_garden_intervention(event_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        async def edit_garden_intervention(event_id: str, fields: InterventionPatch) -> dict[str, Any]:
             """Patch one intervention, preserving its identity and creation time.
 
             Targets require {id,name} records, retaining readable historical
             names if an object was deleted. Same validation/undo service as GUI.
             Token required; changes remain in memory until save_plan.
             """
-            return await _garden_write("edit", {"event_id": event_id, "fields": fields})
+            return await _garden_write("edit", {"event_id": event_id, "fields": input_fields(fields)})
 
         @mcp.tool(structured_output=False)
         async def delete_garden_intervention(event_id: str) -> dict[str, Any]:
@@ -2901,6 +2934,14 @@ def build_server(
             status, plan, mismatches, planted
         )
 
+    # The SDK defaults to silently dropping unknown top-level arguments. A
+    # misspelled filter could therefore read the wrong dates; a misspelled write
+    # field could apply a default. Tighten THIS server's generated models only.
+    for tool in mcp._tool_manager.list_tools():
+        arguments = tool.fn_metadata.arg_model
+        arguments.model_config["extra"] = "forbid"
+        arguments.model_rebuild(force=True)
+        tool.parameters = arguments.model_json_schema(by_alias=True)
     return mcp
 
 

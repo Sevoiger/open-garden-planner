@@ -80,6 +80,19 @@ class MainThreadBridge(QObject):
         try:
             self._invoke.emit(fn, future)
             return future.result(timeout=timeout)
+        except TimeoutError as exc:
+            # A wait timeout does NOT finish a Future. Without cancellation a
+            # queued write would still execute when Qt resumed, after the client
+            # had already seen a failure (and might have retried it).
+            if future.done():
+                message = str(exc) or "Qt operation raised TimeoutError; inspect application state before retrying"
+            elif future.cancel():
+                message = "Qt main-thread timeout: operation cancelled before execution; no changes applied"
+            else:
+                # set_running_or_notify_cancel won the race. We cannot roll
+                # back a function already running on Qt's thread.
+                message = "Qt operation started before timeout and may have completed; inspect application state before retrying"
+            raise TimeoutError(message) from exc
         finally:
             with self._lock:
                 self._pending.discard(future)
@@ -92,17 +105,17 @@ class MainThreadBridge(QObject):
         thread (which is busy tearing down). Safe to call repeatedly.
         """
         with self._lock:
-            pending = list(self._pending)
-        for future in pending:
-            if not future.done():
-                # InvalidStateError: raced with _on_invoke completing it — fine.
-                with contextlib.suppress(InvalidStateError):
-                    future.set_exception(BridgeClosedError("Agent API shutting down"))
+            for future in self._pending:
+                if not future.done():
+                    # Completion/cancellation can race with shutdown.
+                    with contextlib.suppress(InvalidStateError):
+                        future.set_exception(BridgeClosedError("Agent API shutting down"))
 
     def _on_invoke(self, fn: Callable[[], Any], future: Future[Any]) -> None:
         """Run a queued callable on the main thread and resolve its future."""
-        if future.done():
-            return  # aborted (abort_pending) before we got here
+        with self._lock:
+            if future.done() or not future.set_running_or_notify_cancel():
+                return  # Aborted/cancelled before execution; no late writes.
         try:
             result = fn()
         except BaseException as exc:  # noqa: BLE001 - propagate to the caller thread

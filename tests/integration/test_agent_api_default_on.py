@@ -168,42 +168,29 @@ def test_do_agent_create_object_is_one_undoable_step(
         win._stop_agent_api()
 
 
-def test_created_plant_gets_todays_planting_date(qtbot: Any, monkeypatch: Any) -> None:
-    """US-E8: EVERY new plant is dated at creation, species or not -- the date
-    drives the growth model, and therefore the shadow/heatmap/3D views. The GUI
-    stamps it deliberately outside its species guard; so must this."""
-    from datetime import date
-    from typing import Any as _Any
+def test_agent_created_plant_does_not_invent_a_planting_date(qtbot: Any, monkeypatch: Any) -> None:
+    """Drawing via an agent does not establish an exact planting date.
+
+    The former today-stamp contract was superseded by the garden audit's
+    explicit requirement to retain unknown dates. The GUI convenience remains.
+    """
     from uuid import UUID
 
     from open_garden_planner.core.growth_model import (
         planting_date_from_metadata,
-        stamp_default_planting_date,
     )
 
     _discard_on_close(monkeypatch)
     win = GardenPlannerApp()
     qtbot.addWidget(win)
     try:
-        # No species -- the stamp must still happen.
         result = win._do_agent_create_object(
             "PERENNIAL", 100.0, 100.0, None, None, None, None, None
         )
         item = win.canvas_scene.find_item_by_id(UUID(result["item_id"]))
         assert item is not None
 
-        # Compare against what the SAME stamping function writes, rather than
-        # hardcoding the metadata schema here (it would drift silently).
-        reference: dict[str, _Any] = {}
-        stamp_default_planting_date(reference, date.today())
-        assert reference, "stamp_default_planting_date wrote nothing -- test is vacuous"
-        assert item.metadata == reference
-
-        # Close the loop: the growth model's own READER must see it. Comparing
-        # writer-to-writer alone would still agree after a key rename inside
-        # plant_instance, and the growth/shadow/heatmap/3D views would silently
-        # stop engaging for new plants.
-        assert planting_date_from_metadata(item.metadata) == date.today()
+        assert planting_date_from_metadata(item.metadata) is None
     finally:
         win._stop_agent_api()
 

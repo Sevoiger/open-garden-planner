@@ -146,6 +146,8 @@ def test_carried_plant_relation_allows_common_motion_but_external_fixed_blocks(c
 
 
 def test_size_constrained_rectangle_roundtrips_through_real_mcp(canvas, qtbot, tmp_path):
+    from PyQt6.QtGui import QColor
+
     from open_garden_planner.agent_api import AgentApiServer
     from tests.integration.test_agent_api_writes import TOKEN, _free_port, _providers, _run
     from tests.integration.test_garden_memory_mcp import unpack
@@ -153,8 +155,15 @@ def test_size_constrained_rectangle_roundtrips_through_real_mcp(canvas, qtbot, t
     app = _APP_BY_VIEW[id(canvas)]
     scene = canvas.scene()
     item = RectangleItem(300, 300, 200, 100, layer_id=scene.active_layer.id)
+    item.stroke_color = QColor("#315779")
+    item.fill_color = QColor("#b2d6ae")
+    item.stroke_width = 2.5
+    item._setup_styling()
     item.set_metadata("owner_extension", {"keep": True})
     scene.addItem(item)
+    appearance = deepcopy(app._project_manager._serialize_item(item))
+    appearance.pop("x")
+    appearance.pop("y")
     for first, second, length in ((0, 1, 200), (1, 2, 100)):
         scene.constraint_graph.add_constraint(
             AnchorRef(item.item_id, AnchorType.CORNER, first),
@@ -200,6 +209,10 @@ def test_size_constrained_rectangle_roundtrips_through_real_mcp(canvas, qtbot, t
     assert app._agent_item_center(restored) == (800, 700)
     assert restored.rect().width() == 200 and restored.rect().height() == 100
     assert restored.metadata["owner_extension"] == {"keep": True}
+    restored_appearance = app._project_manager._serialize_item(restored)
+    restored_appearance.pop("x")
+    restored_appearance.pop("y")
+    assert restored_appearance == appearance
     assert scene.constraint_graph.to_list() == constraints
 
 
