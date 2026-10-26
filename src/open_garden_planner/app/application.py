@@ -793,7 +793,6 @@ class GardenPlannerApp(QMainWindow):
         current_x, current_y = self._agent_item_center(item)
         delta = QPointF(target_x - current_x, target_y - current_y)
         item_deltas = self._agent_move_item_deltas(item, delta)
-        self._agent_preflight_object_move(item_deltas, item_id, "set_object_position")
         if math.hypot(target_x - current_x, target_y - current_y) <= (
             GEOMETRY_ROUNDTRIP_EPS_CM
         ):
@@ -844,15 +843,72 @@ class GardenPlannerApp(QMainWindow):
         item_id: str,
         tool_name: str,
     ) -> None:
-        """Refuse the complete move graph before any command can be executed."""
-        for constrained_item, _ in item_deltas:
-            constrained_id = getattr(constrained_item, "item_id", None)
-            subject_id = str(constrained_id) if constrained_id is not None else item_id
-            self._agent_require_unconstrained(
-                constrained_item,
-                subject_id,
-                tool_name,
-            )
+        """Check actual clamped motion, including implicit Qt/roof dependents."""
+        from open_garden_planner.agent_api.constraint_policy import translation_preserves_constraint
+        from open_garden_planner.ui.canvas.items import PolygonItem, PolylineItem
+
+        targets: dict[int, tuple[Any, Any]] = {}
+        explicit = {id(moved) for moved, _delta in item_deltas}
+        if len(explicit) != len(item_deltas):
+            raise ValueError(f"{tool_name} cannot move the same object twice.")
+        for moved, delta in item_deltas:
+            parent = moved.parentItem()
+            while parent is not None:
+                if id(parent) in explicit:
+                    raise ValueError(f"{tool_name} cannot move a parent and its Qt child twice.")
+                parent = parent.parentItem()
+            stack = [moved]
+            while stack:
+                dependent = stack.pop()
+                stack.extend(dependent.childItems())
+                if self._agent_item_uuid(dependent) is not None:
+                    targets[id(dependent)] = (dependent, delta)
+            # PolygonItem's position-change hook translates a linked ridge's
+            # points, without putting that ridge into the explicit undo command.
+            if isinstance(moved, PolygonItem) and not (abs(delta.x()) < 1e-6 and abs(delta.y()) < 1e-6):
+                ridge = moved._find_ridge()
+                if isinstance(ridge, PolylineItem):
+                    if id(ridge) in explicit:
+                        raise ValueError(f"{tool_name} cannot also move the derived roof ridge explicitly.")
+                    from PyQt6.QtCore import QPointF
+
+                    # The existing hook adds the HOUSE's local-pos delta to
+                    # ridge._points (ridge-local coordinates). A rotated/scaled
+                    # ridge, or its transformed Qt parent, therefore travels a
+                    # different scene vector: prove the real mapped shift.
+                    transform = ridge.sceneTransform()
+                    if not transform.isAffine():
+                        raise ValueError(f"{tool_name} cannot prove motion of a projective roof ridge.")
+                    # Linear part of map(delta)-map(0), avoiding subtraction of
+                    # large translation offsets (no numerical tolerance band).
+                    ridge_delta = QPointF(
+                        transform.m11() * delta.x() + transform.m21() * delta.y(),
+                        transform.m12() * delta.x() + transform.m22() * delta.y(),
+                    )
+                    targets[id(ridge)] = (ridge, ridge_delta)
+
+        self._agent_require_unique_items([target for target, _delta in targets.values()], action=tool_name)
+        deltas = {str(target.item_id): (delta.x(), delta.y()) for target, delta in targets.values()}
+        constraints = {}
+        for target, _delta in targets.values():
+            if self._agent_item_is_locked(target):
+                raise ValueError(f"{target.item_id} is on a locked layer; {tool_name} was not applied.")
+            for constraint in self._agent_item_constraints(target):
+                constraints[constraint.constraint_id] = constraint
+        blocking = [c for c in constraints.values()
+                    if not translation_preserves_constraint(c.to_dict(), deltas)]
+        if not blocking:
+            return
+        first = min(blocking, key=lambda c: (c.constraint_type.name, str(c.constraint_id)))
+        extra = f" (+{len(blocking) - 1} more)" if len(blocking) > 1 else ""
+        raise ValueError(
+            f"{item_id}: {tool_name} would violate geometric constraint "
+            f"{first.constraint_type.name}/{first.constraint_id}{extra} "
+            f"(anchors: {', '.join(str(a.item_id) for a in (first.anchor_a, first.anchor_b, first.anchor_c) if a is not None)}). "
+            "Use get_geometry/list_constraints to inspect it and choose a compatible "
+            "direction, or use the UI solver to move the connected objects together. "
+            "Remove a constraint only when the intended relation should be detached."
+        )
 
     def _agent_apply_object_move(
         self,
@@ -875,12 +931,6 @@ class GardenPlannerApp(QMainWindow):
 
         if item_deltas is None:
             item_deltas = self._agent_move_item_deltas(item, delta)
-            constraint_tool_name = (
-                "set_object_position" if action == "set_position" else "move_object"
-            )
-            self._agent_preflight_object_move(
-                item_deltas, item_id, constraint_tool_name
-            )
 
         # Clamp the move so the whole group stays on the canvas (issue #380) —
         # the GUI clamps drags and nudges; the agent path did not, so it could
@@ -944,6 +994,14 @@ class GardenPlannerApp(QMainWindow):
                 for moved_item, _ in item_deltas
             ]
             delta = _QPointF(clamped_dx, clamped_dy)
+
+        # Compatibility is about the effective move, after canvas clamping.
+        # Axis-restricted moves can become compatible when an outward component
+        # is trimmed; checking the original request would needlessly reject them.
+        self._agent_preflight_object_move(
+            item_deltas, item_id,
+            "set_object_position" if action == "set_position" else "move_object",
+        )
 
         if len(item_deltas) == 1:
             move_cmd = MoveItemsCommand([item], delta)
@@ -2329,7 +2387,7 @@ class GardenPlannerApp(QMainWindow):
         item_id: str,
         tool_name: str,
     ) -> None:
-        """Refuse a geometry edit on a constrained object — the final D2.6 rule.
+        """Protect constrained geometry-changing edits that lack a rigid-motion proof.
 
         ``CanvasView`` runs a live, iterative solver that may move several
         connected items. US-D2.6 deliberately does not expose that multi-item
@@ -2337,9 +2395,10 @@ class GardenPlannerApp(QMainWindow):
         user's design intent. The agent can call ``get_geometry`` to see the
         exact constraints, then use remove_constraint for an authorized removal.
 
-        This one helper is the perimeter for every geometry-changing tool:
-        move/set-position, resize/rotate, species assignment when it resizes,
-        and vertex writes.
+        Translation has its own invariance preflight after clamping, so size
+        constraints do not freeze position. This strict helper remains the
+        perimeter for resize/rotate, resizing species assignments and vertex
+        edits, which can change the anchors/dimensions themselves.
         """
         constraints = sorted(
             self._agent_item_constraints(item),
@@ -2399,8 +2458,8 @@ class GardenPlannerApp(QMainWindow):
         Refuses (raises) rather than guessing: a vertex-backed object
         (polygon/polyline — US-D2.6's vertex tools own those), a dimension that
         doesn't fit the shape, a missing dimension, a non-finite/non-positive
-        or implausible extent, and — like every D2 geometry tool — a
-        constrained object. ``_resolve_agent_item`` supplies the shared
+        or implausible extent, and a constrained object for this shape-changing
+        operation. ``_resolve_agent_item`` supplies the shared
         group-member / journal-pin / locked-layer refusals.
         """
         from open_garden_planner.agent_api import edits

@@ -1028,6 +1028,20 @@ Scope is deliberately narrow (plants + the five `SOIL_CONTAINER_TYPES`); resize/
 
 **Plant-parent types follow §8.14 / ADR-017 exactly**, including the asymmetry that trips people up: `TRELLIS` is a plant parent but **not** a soil container, so a plant on a trellis has a parent yet no soil readings. `agent_api/edits.py` inlines the name set to stay Qt-free and `tests/unit/test_agent_api_edits.py` guards it against the real `PLANT_PARENT_TYPES`; a `HOUSE` target is refused by name, with the message listing what *would* work. `WriteResult` gains `species_key`, `link_is_geometric`, `width`/`height`/`radius` and `rotation_deg`, and its `action` literal gains the four new verbs — the `Literal` is itself the drift guard. One undo step each. No `FILE_VERSION` change. See FR-AGENT-16.
 
+### ADR-036 fork addendum: constraint-preserving translations (2026-10-26)
+
+The former blanket constraint refusal is superseded for `move_object` and
+`set_object_position`. A Qt-free invariant policy classifies every ConstraintType:
+translation-independent size/direction relations, common two/three-anchor motion,
+axis-specific motion, world-axis symmetry and FIXED pinning. Unknown/malformed
+relations fail closed. The application checks actual clamped deltas before any
+command, including carried plants, Qt group descendants and derived roof-ridge
+translations. Exact component comparisons provide no cumulative tolerance band.
+No solver is run, no connected external object is moved and no constraint is
+removed. Shape-changing operations retain their strict perimeter. Commands,
+authentication, Qt thread marshaling, undo and persistence remain unchanged.
+See `agent_api/constraint_policy.py` and the fork coverage table for the rules.
+
 ### ADR-036 addendum: low-level geometry escape hatches + permanent constraint refusal (US-D2.6, #330)
 
 **Status**: Accepted (2026-09-25) | Completes D2 with `get_geometry`, absolute positioning, and polygon/polyline vertex writes behind the existing double gate.
