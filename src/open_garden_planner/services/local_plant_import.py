@@ -14,10 +14,12 @@ import math
 import os
 import re
 import tempfile
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from open_garden_planner.core.file_lock import ProcessFileLock
 from open_garden_planner.models.plant_data import (
     GrowthRate,
     PlantSpeciesData,
@@ -27,6 +29,13 @@ from open_garden_planner.models.plant_data import (
 )
 from open_garden_planner.models.plant_lists import PlantList, PlantListEntry, PlantListStore
 from open_garden_planner.services.classic_plant_lists import _validate_existing
+from open_garden_planner.services.library_operations import (
+    LibraryConflictError,
+    bump_record_versions,
+    changed_library_record_ids,
+    commit_library_document,
+    read_library_document,
+)
 
 
 def _dimension(value: object) -> float | None:
@@ -94,18 +103,23 @@ def read_sheets(directory: Path) -> list[PlantSpeciesData]:
     return result
 
 
-def _custom_store(path: Path) -> tuple[dict[str, Any], bytes | None]:
-    if not path.exists():
-        return {"version": "1.0", "plants": {}}, None
-    original = path.read_bytes()
-    value = json.loads(original)
-    if (not isinstance(value, dict) or value.get("version") != "1.0"
-            or not isinstance(value.get("plants"), dict)):
+def _read_custom_store(path: Path) -> tuple[dict[str, Any], bytes | None, str]:
+    try:
+        value, original, fingerprint = read_library_document(path)
+    except Exception as exc:
+        raise ValueError("Unsupported custom plant library; left unchanged") from exc
+    if value.get("version") != "1.0" or not isinstance(value.get("plants"), dict):
         raise ValueError("Unsupported custom plant library; left unchanged")
     for key, record in value["plants"].items():
         if not isinstance(key, str) or not isinstance(record, dict):
             raise ValueError("Malformed custom plant library; left unchanged")
         PlantSpeciesData.from_dict(record)
+    return value, original, fingerprint
+
+
+def _custom_store(path: Path) -> tuple[dict[str, Any], bytes | None]:
+    """Compatibility reader returning the document and its original bytes."""
+    value, original, _ = _read_custom_store(path)
     return value, original
 
 
@@ -132,7 +146,8 @@ def install_collections(
     the existing collection including user removals. Use a new key for a new batch.
     """
     library_path, lists_path = app_data / "custom_plants.json", app_data / "plant_lists.json"
-    library, original_library = _custom_store(library_path)
+    library, _, library_fingerprint = _read_custom_store(library_path)
+    original_library_document = deepcopy(library)
     original_lists = _validate_existing(lists_path)
     store = PlantListStore(lists_path)
     markers = {item.description for item in store.all_lists()}
@@ -163,22 +178,44 @@ def install_collections(
             entries.append(PlantListEntry(species=snapshot))
         if marker not in markers:
             pending.append(PlantList(name=name, description=marker, entries=entries))
-    backups = []
+    library_backup: Path | None = None
+    lists_backup: Path | None = None
     app_data.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
-    for path, original, changes in (
-        (library_path, original_library, added), (lists_path, original_lists, len(pending)),
-    ):
-        if original is not None and changes:
-            backup = path.with_name(path.stem + f".before-local-import-{stamp}.json")
-            with backup.open("xb") as stream:
-                stream.write(original)
-            backups.append(str(backup))
+    if original_lists is not None and pending:
+        lists_backup = lists_path.with_name(
+            lists_path.stem + f".before-local-import-{stamp}.json"
+        )
+        with lists_backup.open("xb") as stream:
+            stream.write(original_lists)
     if added:
-        _atomic_json(library_path, library)
+        changed_ids = changed_library_record_ids(
+            original_library_document["plants"],
+            library["plants"],
+        )
+        if changed_ids:
+            bump_record_versions(library, changed_ids)
+        with ProcessFileLock(library_path.with_name(library_path.name + ".writer.lock")):
+            _, current_library_bytes, current_fingerprint = _read_custom_store(library_path)
+            if current_fingerprint != library_fingerprint:
+                raise LibraryConflictError(
+                    "Custom plant library changed during import preparation; retry the import"
+                )
+            if current_library_bytes is not None:
+                library_backup = library_path.with_name(
+                    library_path.stem + f".before-local-import-{stamp}.json"
+                )
+                with library_backup.open("xb") as stream:
+                    stream.write(current_library_bytes)
+            commit_library_document(
+                library_path,
+                library,
+                expected_fingerprint=library_fingerprint,
+            )
     installed = []
     for item in pending:
         imported = store.import_list_from_json(json.dumps({"list": item.to_dict()}, ensure_ascii=False))
         installed.append({"name": imported.name, "count": len(imported.entries)})
+    backups = [str(path) for path in (library_backup, lists_backup) if path is not None]
     return {"added_to_search": added, "collections": installed,
             "skipped_collections": len(collections) - len(pending), "backups": backups}

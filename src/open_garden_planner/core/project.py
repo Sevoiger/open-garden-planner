@@ -9,8 +9,7 @@ import contextlib
 import logging
 from collections.abc import Iterable
 from copy import deepcopy
-from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -31,220 +30,13 @@ from open_garden_planner.core.plan_io import (
     validate_plan_data,
     write_plan,
 )
+from open_garden_planner.core.project_data import (
+    FILE_VERSION,
+    ProjectData,
+    _is_newer_file_version,
+)
 from open_garden_planner.models.garden_memory import validate_memory
 from open_garden_planner.models.layer import Layer, create_default_layers
-
-# File format version for backward compatibility.
-#
-# 1.4 (Phase 13 Package B): adds ``bezier`` and ``arc`` item types.
-# v1.3 files load transparently with no new items.
-#
-# A short-lived earlier draft also wrote a top-level ``paper_layouts``
-# array for the Paper Space MVP; that feature was dropped before PR
-# #191 merged because the existing ``pdf_report_service`` already
-# covers print-to-PDF at chosen paper sizes. The loader silently
-# ignores any ``paper_layouts`` key it encounters so projects saved by
-# those draft builds still open.
-FILE_VERSION = "1.4"
-
-
-def _is_newer_file_version(file_version: str, supported_version: str) -> bool:
-    """Return True if ``file_version`` is strictly newer than ``supported_version``.
-
-    Versions are ``X.Y`` strings. Unparseable strings are treated as
-    equal-or-older so legacy files (e.g. an early build that wrote
-    "1.0" or no version key at all) still open.
-    """
-    def _parse(v: str) -> tuple[int, int] | None:
-        try:
-            parts = v.split(".")
-            return (int(parts[0]), int(parts[1]))
-        except (ValueError, IndexError):
-            return None
-
-    a = _parse(file_version)
-    b = _parse(supported_version)
-    if a is None or b is None:
-        return False
-    return a > b
-
-
-@dataclass
-class ProjectData:
-    """Data structure for a project."""
-
-    canvas_width: float = 5000.0
-    canvas_height: float = 3000.0
-    objects: list[dict[str, Any]] = field(default_factory=list)
-    layers: list[dict[str, Any]] = field(default_factory=list)
-    constraints: list[dict[str, Any]] = field(default_factory=list)
-    guides: list[dict[str, Any]] = field(default_factory=list)
-    north_angle_deg: float = 0.0
-    location: dict[str, Any] | None = None
-    task_completions: list[str] = field(default_factory=list)
-    seed_inventory: list[dict[str, Any]] = field(default_factory=list)
-    # US-9.5: per-species user overrides for propagation step dates
-    # shape: {species_key: {step_id: {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}}}
-    propagation_overrides: dict[str, Any] = field(default_factory=dict)
-    # US-10.5: crop rotation history
-    crop_rotation: dict[str, Any] = field(default_factory=dict)
-    # US-10.7: season management
-    season_year: int | None = None
-    # List of dicts: {"year": int, "file": "relative/or/absolute/path.ogp"}
-    linked_seasons: list[dict[str, Any]] = field(default_factory=list)
-    # US-12.10a: per-bed (and "global" default) soil test history
-    # shape: {target_id: SoilTestHistory.to_dict()} where target_id is bed UUID or "global"
-    soil_tests: dict[str, Any] = field(default_factory=dict)
-    # US-12.7: per-bed and per-plant pest/disease log history
-    # shape: {target_id: PestLogHistory.to_dict()} where target_id is a bed or plant UUID
-    pest_disease_logs: dict[str, Any] = field(default_factory=dict)
-    # US-12.6: user-entered prices for the shopping list, keyed by ShoppingListItem.id
-    shopping_list_prices: dict[str, float] = field(default_factory=dict)
-    # US-12.6: shopping-list rows the user already owns. Excluded from CSV /
-    # PDF / clipboard export and from the dialog's grand total, but still
-    # rendered (dimmed) in the table so the toggle is discoverable.
-    excluded_shopping_items: list[str] = field(default_factory=list)
-
-    # US-12.11: amendment-library allowlist + organic-preference flag.
-    # ``None`` means "every amendment in the bundled library is enabled" — the
-    # default for new projects so the calculator behaves identically to legacy
-    # files. A non-``None`` list is the user's explicit toggleable allowlist.
-    enabled_amendments: list[str] | None = None
-    prefer_organic: bool = True
-
-    # US-12.8: per-bed succession plans
-    # shape: {bed_id: SuccessionPlan.to_dict()} where bed_id is a bed UUID string
-    succession_plans: dict[str, Any] = field(default_factory=dict)
-    auto_assign_permaculture_layers: bool = False
-
-    # US-12.9: garden journal map-linked notes
-    # shape: {note_id: JournalNote.to_dict()}; canvas pins reference notes by id
-    garden_journal_notes: dict[str, Any] = field(default_factory=dict)
-
-    # US-C2 (#188): task management.
-    # manual_tasks shape: {task_id: ManualTask.to_dict()} (user-created tasks).
-    manual_tasks: dict[str, Any] = field(default_factory=dict)
-    # task_states shape: {task_id: {"status": "done"|"dismissed"|"open",
-    #   "done_date"?: "YYYY-MM-DD", "snooze_until"?: "YYYY-MM-DD"}} — per-task
-    # status for BOTH generated (deterministic id) and manual tasks. Sparse:
-    # plain "open" with no snooze is never stored. Legacy task_completions are
-    # folded into this on load (see ProjectManager.load).
-    task_states: dict[str, Any] = field(default_factory=dict)
-
-    # US-C1 (#188): harvest / yield log.
-    # shape: {target_id: HarvestHistory.to_dict()} where target_id is a plant
-    # or bed UUID string.
-    harvest_logs: dict[str, Any] = field(default_factory=dict)
-
-    garden_memory: dict[str, Any] = field(default_factory=dict)
-    extra_fields: dict[str, Any] = field(default_factory=dict)
-    source_metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        data: dict[str, Any] = {
-            "version": FILE_VERSION,
-            "metadata": {
-                **deepcopy(self.source_metadata),
-                "modified": datetime.now(UTC).isoformat(),
-            },
-            "canvas": {
-                "width": self.canvas_width,
-                "height": self.canvas_height,
-            },
-            "north_angle_deg": normalize_north_angle(self.north_angle_deg),
-            "layers": self.layers,
-            "objects": self.objects,
-        }
-        data = {**deepcopy(self.extra_fields), **data}
-        if self.constraints:
-            data["constraints"] = self.constraints
-        if self.guides:
-            data["guides"] = self.guides
-        if self.location:
-            data["location"] = self.location
-        if self.task_completions:
-            data["task_completions"] = sorted(self.task_completions)
-        if self.seed_inventory:
-            data["seed_inventory"] = self.seed_inventory
-        if self.propagation_overrides:
-            data["propagation_overrides"] = self.propagation_overrides
-        if self.crop_rotation:
-            data["crop_rotation"] = self.crop_rotation
-        if self.season_year is not None:
-            data["season_year"] = self.season_year
-        if self.linked_seasons:
-            data["linked_seasons"] = self.linked_seasons
-        if self.soil_tests:
-            data["soil_tests"] = self.soil_tests
-        if self.pest_disease_logs:
-            data["pest_disease_logs"] = self.pest_disease_logs
-        if self.shopping_list_prices:
-            data["shopping_list_prices"] = self.shopping_list_prices
-        if self.excluded_shopping_items:
-            data["excluded_shopping_items"] = sorted(self.excluded_shopping_items)
-
-        if self.enabled_amendments is not None:
-            data["enabled_amendments"] = sorted(self.enabled_amendments)
-        if self.prefer_organic is False:
-            data["prefer_organic"] = False
-        if self.succession_plans:
-            data["succession_plans"] = self.succession_plans
-        if self.auto_assign_permaculture_layers:
-            data["auto_assign_permaculture_layers"] = True
-        if self.garden_journal_notes:
-            data["garden_journal_notes"] = self.garden_journal_notes
-        if self.manual_tasks:
-            data["manual_tasks"] = self.manual_tasks
-        if self.task_states:
-            data["task_states"] = self.task_states
-        if self.harvest_logs:
-            data["harvest_logs"] = self.harvest_logs
-        if self.garden_memory:
-            data["garden_memory"] = validate_memory(self.garden_memory)
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ProjectData:
-        """Create ProjectData from dictionary."""
-        canvas = data.get("canvas", {})
-        known = (set(cls.__dataclass_fields__) - {"canvas_width", "canvas_height", "extra_fields", "source_metadata"}) | {"version", "metadata", "canvas", "paper_layouts"}
-        return cls(
-            extra_fields=deepcopy({key: value for key, value in data.items() if key not in known}),
-            source_metadata=deepcopy(data.get("metadata", {})) if isinstance(data.get("metadata", {}), dict) else {},
-            canvas_width=canvas.get("width", 5000.0),
-            canvas_height=canvas.get("height", 3000.0),
-            layers=data.get("layers", []),
-            objects=data.get("objects", []),
-            constraints=data.get("constraints", []),
-            guides=data.get("guides", []),
-            north_angle_deg=normalize_north_angle(data.get("north_angle_deg", 0.0)),
-            location=data.get("location") or None,
-            task_completions=data.get("task_completions", []),
-            seed_inventory=data.get("seed_inventory", []),
-            propagation_overrides=data.get("propagation_overrides", {}),
-            crop_rotation=data.get("crop_rotation", {}),
-            season_year=data.get("season_year"),
-            linked_seasons=data.get("linked_seasons", []),
-            soil_tests=data.get("soil_tests", {}),
-            pest_disease_logs=data.get("pest_disease_logs", {}),
-            shopping_list_prices=data.get("shopping_list_prices", {}),
-            excluded_shopping_items=list(data.get("excluded_shopping_items", [])),
-
-            enabled_amendments=data.get("enabled_amendments"),
-            prefer_organic=bool(data.get("prefer_organic", True)),
-            succession_plans=data.get("succession_plans", {}),
-            auto_assign_permaculture_layers=bool(data.get("auto_assign_permaculture_layers", False)),
-            garden_journal_notes=data.get("garden_journal_notes", {}),
-            manual_tasks=data.get("manual_tasks", {}),
-            task_states=data.get("task_states", {}),
-            harvest_logs=data.get("harvest_logs", {}),
-            garden_memory=validate_memory(data.get("garden_memory", {})),
-            # Note: `data.get("paper_layouts", ...)` is intentionally
-            # not consumed here — the Paper Space feature was dropped
-            # before PR #191 merged but earlier draft builds may have
-            # written this key. Silently ignored.
-        )
 
 
 class ProjectManager(QObject):
@@ -809,26 +601,59 @@ class ProjectManager(QObject):
         snooze_until: str | None = None,
     ) -> None:
         """Set a task's status, persisting it. Sparse: a plain "open" with no
-        snooze clears the stored state (keeps the file small)."""
-        if status == "open" and not snooze_until:
-            self._task_states.pop(task_id, None)
+        snooze clears known status fields while preserving extension fields."""
+        from open_garden_planner.services.task_status import prepare_task_status
+
+        change = prepare_task_status(
+            self._task_states,
+            task_id,
+            status,
+            done_date=done_date,
+            snooze_until=snooze_until,
+        )
+        if change.is_noop:
+            return
+        candidate = deepcopy(self._task_states)
+        if change.after is None:
+            candidate.pop(task_id, None)
         else:
-            entry: dict[str, Any] = {"status": status}
-            if done_date:
-                entry["done_date"] = done_date
-            if snooze_until:
-                entry["snooze_until"] = snooze_until
-            self._task_states[task_id] = entry
-        # Keep the legacy task_completions set in sync as a write-only .ogp
-        # forward/back-compat mirror (#228: the calendar now reads effective_status,
-        # so nothing in-app reads task_completions anymore).
-        if status == "done":
-            self._task_completions.add(task_id)
+            candidate[task_id] = deepcopy(change.after)
+        self.restore_task_statuses(candidate)
+
+    def restore_task_status(
+        self, task_id: str, state: dict[str, Any] | None
+    ) -> None:
+        """Restore an exact detached task-status snapshot for command undo."""
+        candidate = deepcopy(self._task_states)
+        if state is None:
+            candidate.pop(task_id, None)
         else:
-            self._task_completions.discard(task_id)
-        self.task_states_changed.emit(self._task_states)
-        self.task_completions_changed.emit(self._task_completions)
-        self.mark_dirty()
+            candidate[task_id] = deepcopy(state)
+        self.restore_task_statuses(candidate)
+
+    def restore_task_statuses(
+        self, states: dict[str, Any], *, notify: bool = True
+    ) -> None:
+        """Replace all task statuses and their legacy completion mirror.
+
+        Batch domain operations may set ``notify=False`` while applying the
+        candidate alongside other document data, then publish the task-state
+        and completion notifications once the whole transaction is installed.
+        """
+        detached = deepcopy(states)
+        completions = {
+            task_id
+            for task_id, state in detached.items()
+            if isinstance(state, dict) and state.get("status") == "done"
+        }
+        if detached == self._task_states and completions == self._task_completions:
+            return
+        self._task_states = detached
+        self._task_completions = completions
+        if notify:
+            self.task_states_changed.emit(self._task_states)
+            self.task_completions_changed.emit(self._task_completions)
+            self.mark_dirty()
 
     def clear_task_status(self, task_id: str) -> None:
         """Reset a task to open (remove any stored state)."""
@@ -872,6 +697,9 @@ class ProjectManager(QObject):
 
     def mark_dirty(self) -> None:
         """Mark the project as having unsaved changes."""
+        # Count every mutation, including edits while already dirty. Prepared
+        # operations must detect edit-then-undo (ABA), not only value changes.
+        self._domain_revision = getattr(self, "_domain_revision", 0) + 1
         if not self._dirty:
             self._dirty = True
             self.dirty_changed.emit(True)
@@ -884,6 +712,7 @@ class ProjectManager(QObject):
 
     def new_project(self) -> None:
         """Start a new untitled project."""
+        self.release_document_ownership()
         self._current_file = None
         self._dirty = False
         self._north_angle_deg = 0.0
@@ -934,6 +763,36 @@ class ProjectManager(QObject):
         self.harvest_logs_changed.emit({})
 
     def save(self, scene: QGraphicsScene, file_path: Path) -> None:
+        """Save under the shared writer lease and refuse stale disk content."""
+        from open_garden_planner.core.document_store import (
+            DocumentOwnership,
+            check_disk_version,
+            disk_version,
+        )
+
+        destination = file_path.with_suffix(".ogp").resolve()
+        current = getattr(self, "_document_ownership", None)
+        ownership = current if current is not None and current.path == destination else DocumentOwnership(destination, gui=True)
+        try:
+            if ownership is current:
+                check_disk_version(destination, self._document_disk_version)
+            self._save_owned(scene, destination)
+        except BaseException:
+            if ownership is not current:
+                ownership.close()
+            raise
+        if current is not None and current is not ownership:
+            current.close()
+        self._document_ownership = ownership
+        self._document_disk_version = disk_version(destination)
+
+    def release_document_ownership(self) -> None:
+        ownership = getattr(self, "_document_ownership", None)
+        if ownership is not None:
+            ownership.close()
+            self._document_ownership = None
+
+    def _save_owned(self, scene: QGraphicsScene, file_path: Path) -> None:
         """Save the project to a file.
 
         Args:
@@ -1117,6 +976,26 @@ class ProjectManager(QObject):
         return records
 
     def load(self, scene: QGraphicsScene, file_path: Path) -> None:
+        """Open a document while retaining its cooperating writer lease."""
+        from open_garden_planner.core.document_store import DocumentOwnership, disk_version
+
+        destination = file_path.resolve()
+        current = getattr(self, "_document_ownership", None)
+        ownership = current if current is not None and current.path == destination else DocumentOwnership(destination, gui=True)
+        try:
+            self._load_owned(scene, destination)
+        except BaseException:
+            if ownership is not current:
+                ownership.close()
+            if self._current_file is None:
+                self.release_document_ownership()
+            raise
+        if current is not None and current is not ownership:
+            current.close()
+        self._document_ownership = ownership
+        self._document_disk_version = disk_version(destination)
+
+    def _load_owned(self, scene: QGraphicsScene, file_path: Path) -> None:
         """Load a project from a file.
 
         Args:
@@ -1339,6 +1218,23 @@ class ProjectManager(QObject):
         self._write_new_season(current_data, new_year, new_file_path)
 
     def _write_new_season(self, current_data: ProjectData, new_year: int, new_file_path: Path) -> None:
+        from open_garden_planner.core.document_store import (
+            DocumentOwnership,
+            check_disk_version,
+            disk_version,
+        )
+
+        destination = new_file_path.with_suffix(".ogp").resolve()
+        # Both existing write paths participate in the same ownership protocol.
+        # The historical two-file season operation still reports partial failure.
+        with DocumentOwnership(destination, gui=True):
+            if self._current_file is not None and getattr(self, "_document_ownership", None) is not None:
+                check_disk_version(self._current_file, self._document_disk_version)
+            self._write_new_season_owned(current_data, new_year, destination)
+            if self._current_file is not None:
+                self._document_disk_version = disk_version(self._current_file)
+
+    def _write_new_season_owned(self, current_data: ProjectData, new_year: int, new_file_path: Path) -> None:
         """Write both season links for legacy and perennial tracking alike."""
 
         # Build linked_seasons: include all previous links + current season

@@ -17,6 +17,7 @@ file as historical record only.
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,17 +39,20 @@ class PestLogRecord:
     # filter and the new-season carryover (unresolved records carry over).
     resolved: bool = False
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # Keep fields written by newer versions when an older client edits a record.
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict, omitting empty optional fields."""
-        d: dict[str, Any] = {
+        d: dict[str, Any] = deepcopy(self.extra_fields)
+        d.update({
             "id": self.id,
             "date": self.date,
             "entry_type": self.entry_type,
             "name": self.name,
             "severity": self.severity,
             "resolved": self.resolved,
-        }
+        })
         if self.treatment:
             d["treatment"] = self.treatment
         if self.notes:
@@ -70,6 +74,13 @@ class PestLogRecord:
             notes=data.get("notes", ""),
             photo_path=data.get("photo_path"),
             resolved=bool(data.get("resolved", False)),
+            extra_fields=deepcopy({
+                key: value for key, value in data.items()
+                if key not in {
+                    "id", "date", "entry_type", "name", "severity", "treatment",
+                    "notes", "photo_path", "resolved",
+                }
+            }),
         )
 
 
@@ -79,13 +90,16 @@ class PestLogHistory:
 
     target_id: str
     records: list[PestLogRecord] = field(default_factory=list)
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict."""
-        return {
+        result = deepcopy(self.extra_fields)
+        result.update({
             "target_id": self.target_id,
             "records": [r.to_dict() for r in self.records],
-        }
+        })
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PestLogHistory:
@@ -93,4 +107,8 @@ class PestLogHistory:
         return cls(
             target_id=data.get("target_id", ""),
             records=[PestLogRecord.from_dict(r) for r in data.get("records", [])],
+            extra_fields=deepcopy({
+                key: value for key, value in data.items()
+                if key not in {"target_id", "records"}
+            }),
         )

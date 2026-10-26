@@ -342,6 +342,50 @@ class TestSetSuccessionPlanCommand:
         cm.redo()
         assert "bed-1" in project_manager.succession_plans
 
+    def test_command_keeps_ui_overlap_policy_and_unknown_fields(
+        self, project_manager: ProjectManager
+    ) -> None:
+        original = {
+            "bed_id": "bed-1",
+            "year": 2026,
+            "future_plan": {"keep": True},
+            "entries": [
+                {
+                    "id": "old",
+                    "species_key": "spinach",
+                    "common_name": "Spinach",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-04-20",
+                    "future_entry": [1, 2],
+                }
+            ],
+        }
+        project_manager.restore_succession_plan("bed-1", original)
+        plan = SuccessionPlan(
+            bed_id="bed-1",
+            year=2026,
+            entries=[
+                SuccessionEntry(
+                    id="old",
+                    species_key="spinach",
+                    common_name="Spinach",
+                    start_date="2026-03-01",
+                    end_date="2026-04-20",
+                ),
+                _make_entry("Beans", "2026-04-10", "2026-05-15", "beans"),
+            ],
+        )
+
+        command = SetSuccessionPlanCommand(project_manager, "bed-1", plan)
+        command.execute()
+        updated = project_manager.succession_plans["bed-1"]
+        assert updated["future_plan"] == {"keep": True}
+        assert updated["entries"][0]["future_entry"] == [1, 2]
+        assert len(updated["entries"]) == 2
+
+        command.undo()
+        assert project_manager.succession_plans["bed-1"] == original
+
 
 # ---------------------------------------------------------------------------
 # .ogp save / load round-trip

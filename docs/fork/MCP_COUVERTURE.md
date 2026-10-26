@@ -7,6 +7,10 @@ dédié peut être pilotée par son parcours d’interface existant. L’existen
 parcours ne démontre pas sa réussite pour toutes les fonctions.
 Le client n’a plus besoin d’un connecteur séparé de contrôle de l’ordinateur.
 
+Les opérations documentaires partagées, leur parcours d’aperçu/relecture et
+l’hôte autonome sans Qt sont décrits dans le [guide métier partagé](METIER_PARTAGE.md).
+Cette surface est distincte des outils de dessin et des commandes de pilotage Qt.
+
 La [matrice d’audit du 26 octobre 2026](MCP_AUDIT_2026-10-26.md) distingue les
 parcours démontrés, partiels et non testés. Elle fait foi pour le niveau de preuve ;
 le tableau ci-dessous est un inventaire des accès, sans certification exhaustive.
@@ -22,6 +26,62 @@ Les workflows annoncés ne référencent que les outils effectivement enregistr�
 session et les écritures à relire avant toute nouvelle tentative après réponse
 perdue. Créer un objet ou une tâche métier, déplacer relativement ou annuler
 n’est pas automatiquement dédupliqué. Préférer une position absolue si possible.
+
+## Opérations documentaires partagées
+
+Lorsque le fournisseur de document est disponible, MCP expose
+<code>get_document_state</code>, <code>prepare_document_operations</code>,
+<code>get_document_operation</code> et <code>assess_document_soil</code>.
+<code>apply_document_operations</code> est enregistré seulement si les
+écritures sont activées avec un jeton valide. Ces outils emploient les services
+de préparation communs à l’interface ; un lot de 1 à 100 opérations est préparé
+sur un instantané sans effet, puis appliqué comme une commande unique après
+revalidation de sa révision.
+
+Les noms admis sont définis dans
+<code>services/document_operations.SUPPORTED_OPERATIONS</code> : CRUD des tâches
+manuelles, fiches de jardin, dates de plantation, interventions, relevés de sol,
+récoltes, ravageurs, notes de journal, statuts des tâches manuelles et plans de
+succession. Le [guide utilisateur](METIER_PARTAGE.md) en donne la liste complète,
+le format d’appel et les limites par famille. L’évaluation du sol est une
+lecture seule : elle ne crée pas de relevé ni d’intervention. Dans le lot documentaire préparé, <code>record_soil_test</code> exige un <code>test_date</code> ISO explicite et non vide ; l’ancien outil MCP direct <code>record_soil_test</code> conserve son défaut historique de date du jour.
+
+Pour <code>set_succession_plan</code>, le champ <code>entries</code> doit être une liste et l’année doit être explicite. La liste vide supprime le plan ; un champ absent ou nul est refusé.
+
+Un aperçu expire au bout de cinq minutes, est limité à 128 préparations en cache
+et ne survit pas au redémarrage. En cas d’expiration ou de conflit de version,
+relire l’état et préparer à nouveau. Après application, le
+<code>request_key</code> stable permet le rejeu idempotent. Le reçu reste dans le
+projet après <code>save_plan</code>, undo ou suppression ultérieure de
+l’enregistrement. <code>get_document_operation</code> indique l’effet courant :
+<code>present</code>, <code>reverted</code>, <code>changed</code> ou
+<code>unchanged</code>. <code>reverted</code> signifie que les valeurs d’avant sont revenues ;
+il ne prouve pas qu’un undo a eu lieu, car une édition suivie d’un retour peut
+produire le même état. Une modification en direct n’est durable qu’après
+sauvegarde du plan ; en hôte autonome, chaque mutation réussie et son reçu sont
+écrits avant de répondre.
+
+L’option autonome démarre le serveur par
+<code>python -m open_garden_planner.agent_api.autonomous PROJECT --port 8767 --write</code>.
+Elle exige un chemin projet explicite et un jeton configuré dans
+<code>OGP_DOMAIN_TOKEN</code> (ou l’environnement indiqué par
+<code>--token-env</code>). Le jeton n’est pas passé en argument de commande. Le
+mode autonome n’instancie pas l’interface ni le canevas : son undo/redo est une
+pile de session ; dessin, rendu, captures et exports restent Qt. La bibliothèque
+personnelle est désactivée par défaut et n’est exposée en autonome qu’avec un
+chemin explicite <code>--library PATH</code>.
+
+Tous les outils de bibliothèque — lecture comprise — exigent le jeton. Ils
+préparent et publient une transaction dans le stockage JSON de bibliothèque,
+distincte du projet et de sa pile undo/redo. Annuler cette transaction ne
+modifie pas le document, les objets du canevas, ni les instantanés botaniques
+déjà copiés dans un projet.
+
+L’application Qt et l’hôte autonome utilisent un verrou de fichier consultatif
+et un contrôle de version du disque pour coordonner les écrivains OGP coopératifs.
+Fermer le propriétaire du projet ou utiliser son serveur MCP live lorsqu’il est
+déjà ouvert en écriture. Un logiciel externe qui ignore le verrou reste hors de
+cette coordination.
 
 ## Outils de pilotage Qt
 
@@ -139,6 +199,9 @@ même lorsqu’une API métier dédiée n’existe pas. Les commandes sont celle
 l’application, donc conservent sa validation, ses confirmations et son historique.
 Les réglages et opérations qui n’avaient pas d’undo dans l’interface n’en gagnent
 pas artificiellement ; les mutations documentaires utilisent leurs commandes existantes.
+Les noms de la colonne « Outils métier directs » n’impliquent pas que toute
+commande GUI est offerte par l’API. Les opérations documentaires et leurs
+limitations sont recensées séparément ci-dessus.
 
 | Domaine | Outils métier directs | Parcours Qt identifié (preuve dans l’audit) |
 | --- | --- | --- |

@@ -1,18 +1,61 @@
 # Progression — fork personnel macOS
 
-## Plan du métier partagé Qt / MCP — 26 octobre 2026
+## Opérations métier partagées Qt / MCP — 26 octobre 2026
 
-Le [plan d’implémentation](PLAN_METIER_PARTAGE.md) distingue les opérations
-métier sans dialogue et l’exécution autonome sans import de Qt. Il prévoit
-une migration par familles, d’abord les tâches manuelles, puis le suivi et
-les interventions, avec aperçu, lots, conflits de version et reçus de rejeu.
-La bibliothèque botanique globale demande un durcissement de sa persistance
-avant les imports par lot. Les données personnelles restent hors périmètre.
+Depuis la base 9217bf9, les frontières de données pures, les préparateurs
+documentaires et l’hôte MCP autonome sont implémentés sur la branche
+`feat/shared-domain-operations`.
+Le plan [PLAN_METIER_PARTAGE.md](PLAN_METIER_PARTAGE.md) décrit l’état de chaque
+lot ; le parcours utilisateur est dans le [guide métier partagé](METIER_PARTAGE.md).
 
-Cette étape est documentaire : audits délégués à trois agents Luna avec effort
-maximal, constats structurants recoupés dans le code et diagnostic d’import en
-sous-processus. Aucune nouvelle capacité métier ou MCP n’est implémentée.
-Le plan porte les critères de preuve et de revue des futurs lots.
+Les outils documentaires lisent un snapshot, préparent un lot jusqu’à 100
+opérations avec expiration de cinq minutes, puis l’appliquent après revalidation.
+Dans OGP ouvert, l’application utilise la même pile d’undo Qt et la sauvegarde
+reste explicite. En mode autonome, le fichier projet doit être donné sur la
+commande ; chaque mutation réussie est écrite avec son reçu. Le moteur
+CommandHistory est commun, mais l’historique autonome disparaît au redémarrage.
+
+Les transactions de bibliothèque sont distinctes du projet et de la pile du
+canevas. L’hôte autonome n’ouvre une bibliothèque que si son chemin est fourni
+avec --library. Il ne construit pas de canevas, et n’offre pas le dessin, le
+rendu ou les exports graphiques.
+
+Limites maintenues : création/suppression des épingles de journal par Qt, aucune
+écriture documentaire sur les statuts des tâches générées, et politique MCP de
+succession plus stricte que le parcours d’avertissement du dialogue Qt. Les
+snapshots botaniques des projets ne sont pas réécrits par les imports de
+bibliothèque.
+
+Preuves sur données et réglages temporaires :
+
+- Régression élargie de 540 cas : 539 réussis ; son unique défaut de schéma MCP
+  a été corrigé, puis le parcours concerné, les nouveaux outils HTTP et les
+  contrôles d’authentification passent ensemble (33 cas).
+- Compléments statuts, successions, catalogue, isolation, persistance et
+  traduction : 179 cas réussis. Les runs se recouvrent et ne sont pas additionnés.
+- Préparation/applications et hôte dans un processus interdisant Qt : 9 cas
+  réussis au dernier contrôle de ces modules. Les scénarios incluent échec
+  d’écriture puis reprise, refus de suppression implicite d’une succession et
+  contrôle d’identité avant undo après réordonnancement.
+- Cocoa natif : cinq parcours de tâches/statuts/convergence réussis, puis un
+  parcours multi-domaines supplémentaire réussit après correction de la
+  mutation en place des métadonnées Qt. Il applique tâche, suivi, récolte,
+  maladie, journal, sol et succession en une commande, puis undo/redo,
+  sauvegarde et réouverture. Cela ne certifie pas une qualité visuelle globale.
+- Bibliothèque sur transport HTTP réel : aperçu de 30 fiches homonymes à IDs
+  distincts sans écriture, import atomique, rejeu, annulation de transaction et
+  absence de résurrection. Les tests de stockage couvrent inconnus, conflits,
+  écriture échouée et autres écrivains coopératifs.
+- Ruff, contrôle de contexte agent, contrôles de formats et traductions
+  compilées EN/DE/FR passent (2 799 clés actives).
+
+Revue indépendante `senior-reviewer` Luna effort maximal du diff source exact
+et des corrections : aucun P0/P1/P2 actionnable restant. La revue a identifié
+l’omission dangereuse de `entries`, corrigée et protégée par une régression ;
+le dernier contrôle natif a révélé le setter Qt inexistant, également corrigé,
+testé et relu. Les tests HTTP/Cocoa n’ont pas été répétés par le reviewer.
+Les coupures testées sont des erreurs injectées et des reprises de session ;
+aucune résistance à une panne matérielle n’est déduite.
 
 ## Lisibilité de l’interface — 23 octobre 2026
 

@@ -395,3 +395,5 @@ class AgentProviders:
     set_object_type: Callable[[str, str], dict[str, Any]] | None = None
     remove_constraint: Callable[[str], dict[str, Any]] | None = None
     application_ui: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
+    document_operation: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None
+    library_operation: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None

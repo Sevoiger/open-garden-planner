@@ -11,34 +11,8 @@ package never pulls in ``mcp``/``uvicorn``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from open_garden_planner.agent_api.bridge import MainThreadBridge
-from open_garden_planner.agent_api.diagnostics import diagnostics_from_records
-from open_garden_planner.agent_api.mapping import plan_summary_from_snapshot
-from open_garden_planner.agent_api.providers import AgentProviders
-from open_garden_planner.agent_api.schema import (
-    CurveGeometry,
-    Diagnostic,
-    ExportResult,
-    GeometryAnchor,
-    GeometryConstraint,
-    GeometryPoint,
-    GeometryResult,
-    LeaderGeometry,
-    Measurement,
-    ObjectDetail,
-    ObjectRef,
-    PlanSummary,
-    RenderMeta,
-)
-
-if TYPE_CHECKING:
-    from open_garden_planner.agent_api.server import (
-        AgentApiServer,
-        PortInUseError,
-        build_server,
-    )
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "AgentApiServer",
@@ -63,13 +37,39 @@ __all__ = [
     "plan_summary_from_snapshot",
 ]
 
-_LAZY = {"AgentApiServer", "PortInUseError", "build_server"}
+_EXPORT_MODULES = {
+    "AgentApiServer": "server",
+    "AgentProviders": "providers",
+    "CurveGeometry": "schema",
+    "Diagnostic": "schema",
+    "ExportResult": "schema",
+    "GeometryAnchor": "schema",
+    "GeometryConstraint": "schema",
+    "GeometryPoint": "schema",
+    "GeometryResult": "schema",
+    "LeaderGeometry": "schema",
+    "MainThreadBridge": "bridge",
+    "Measurement": "schema",
+    "ObjectDetail": "schema",
+    "ObjectRef": "schema",
+    "PlanSummary": "schema",
+    "PortInUseError": "server",
+    "RenderMeta": "schema",
+    "build_server": "server",
+    "diagnostics_from_records": "diagnostics",
+    "plan_summary_from_snapshot": "mapping",
+}
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily expose server symbols without forcing ``mcp``/``uvicorn`` at import."""
-    if name in _LAZY:
-        from open_garden_planner.agent_api import server as _server
+    """Resolve the old package surface without importing unrelated adapters."""
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(f"{__name__}.{module_name}"), name)
+    globals()[name] = value
+    return value
 
-        return getattr(_server, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

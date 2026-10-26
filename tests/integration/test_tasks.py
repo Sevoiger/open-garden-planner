@@ -12,8 +12,10 @@ from PyQt6.QtWidgets import QApplication
 
 from open_garden_planner.core.commands import (
     AddManualTaskCommand,
+    CommandManager,
     DeleteManualTaskCommand,
     EditManualTaskCommand,
+    SetTaskStatusCommand,
 )
 from open_garden_planner.core.project import ProjectData, ProjectManager
 from open_garden_planner.models.task import ManualTask
@@ -109,6 +111,82 @@ class TestStatusFlows:
         pm.set_task_completion(tid, False)
         assert tid not in pm.task_states
         assert tid not in pm.task_completions
+
+    def test_status_command_undo_redo_restores_extensions(self, qtbot) -> None:
+        pm = ProjectManager()
+        original = {
+            "status": "dismissed",
+            "future_extension": {"items": ["retain"]},
+        }
+        pm.restore_task_status("x", original)
+        manager = CommandManager()
+
+        manager.execute(
+            SetTaskStatusCommand(
+                pm, "x", "done", done_date=datetime.date.today().isoformat()
+            )
+        )
+        assert pm.task_states["x"]["future_extension"] == {"items": ["retain"]}
+        assert "x" in pm.task_completions
+
+        manager.undo()
+        assert pm.task_states["x"] == original
+        assert "x" not in pm.task_completions
+
+        manager.redo()
+        assert pm.task_states["x"]["status"] == "done"
+        assert pm.task_states["x"]["future_extension"] == {"items": ["retain"]}
+
+    def test_tasks_view_status_change_uses_undo_command(self, qtbot) -> None:
+        from open_garden_planner.ui.views.tasks_view import TasksView
+
+        pm = ProjectManager()
+        scene = CanvasScene(width_cm=500, height_cm=500)
+        manager = CommandManager()
+        view = TasksView(scene, pm, manager)
+        qtbot.addWidget(view)
+
+        view._set_task_status("manual:task", "dismissed")
+        assert pm.task_states["manual:task"]["status"] == "dismissed"
+        manager.undo()
+        assert "manual:task" not in pm.task_states
+
+    def test_calendar_toggle_uses_undo_command(self, qtbot) -> None:
+        from open_garden_planner.ui.views.planting_calendar_view import (
+            PlantingCalendarView,
+        )
+
+        pm = ProjectManager()
+        scene = CanvasScene(width_cm=500, height_cm=500)
+        manager = CommandManager()
+        view = PlantingCalendarView(scene, pm, command_manager=manager)
+        qtbot.addWidget(view)
+
+        view._on_task_toggled("calendar:task", True)
+        assert pm.task_states["calendar:task"]["status"] == "done"
+        manager.undo()
+        assert "calendar:task" not in pm.task_states
+
+    def test_batched_status_restore_can_defer_notifications(self, qtbot) -> None:
+        pm = ProjectManager()
+        status_events: list[object] = []
+        completion_events: list[object] = []
+        pm.task_states_changed.connect(status_events.append)
+        pm.task_completions_changed.connect(completion_events.append)
+
+        pm.restore_task_statuses(
+            {
+                "done": {"status": "done", "extension": {"keep": 1}},
+                "open": {"status": "dismissed"},
+            },
+            notify=False,
+        )
+
+        assert pm.task_states["done"]["extension"] == {"keep": 1}
+        assert pm.task_completions == {"done"}
+        assert status_events == []
+        assert completion_events == []
+        assert not pm.is_dirty
 
 
 class TestManualTaskCommands:

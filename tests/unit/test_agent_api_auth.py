@@ -74,6 +74,8 @@ def _stub_providers() -> AgentProviders:
         find_compatible_sets=_boom,
         find_sets_for_bed=_boom,
         check_placement=_boom,
+        document_operation=_boom,
+        library_operation=_boom,
     )
 
 
@@ -165,6 +167,12 @@ WRITE_TOOL_NAMES = frozenset(
         "add_garden_intervention",
         "edit_garden_intervention",
         "delete_garden_intervention",
+        "apply_document_operations",
+        "get_custom_plant_library",
+        "prepare_plant_library_import",
+        "apply_plant_library_import",
+        "get_plant_library_operation",
+        "undo_plant_library_import",
     }
 )
 

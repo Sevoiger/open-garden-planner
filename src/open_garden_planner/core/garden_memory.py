@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -12,8 +10,8 @@ from PyQt6.QtCore import QCoreApplication
 from PyQt6.QtWidgets import QGraphicsScene
 
 from open_garden_planner.core.commands import Command, CommandManager
-from open_garden_planner.core.object_types import is_bed_type, is_plant_type
-from open_garden_planner.models.garden_memory import validate_card, validate_event, validate_memory
+from open_garden_planner.models.garden_memory import validate_memory
+from open_garden_planner.services.garden_operations import prepare_garden_operation
 
 if TYPE_CHECKING:
     from open_garden_planner.core.project import ProjectManager
@@ -74,131 +72,91 @@ class GardenMemoryService:
         item = next((i for i in self.scene.items() if getattr(i, "item_id", None) == identity), None)
         if item is None or not hasattr(item, "metadata"):
             raise ValueError(f"Unknown garden target: {item_id}")
-        if not isinstance(item.metadata, dict) or not isinstance(item.metadata.get("plant_instance", {}), dict):
-            raise ValueError("Target metadata is malformed; repair it before editing")
-        if getattr(item, "note_id", None) is not None:
-            raise ValueError("A positional journal pin is not a garden target")
         return item
 
-    def _editable(self, item: Any) -> None:
-        if item.parentItem() is not None:
-            raise ValueError("Edit the top-level object or ungroup it first")
-        layer = next((layer for layer in getattr(self.scene, "layers", [])
-                      if layer.id == getattr(item, "layer_id", None)), None)
-        if layer is not None and layer.locked:
-            raise ValueError("The target layer is locked")
-
-    def _check_media(self, media: list[str], previous: list[str] | None = None) -> None:
-        for reference in set(media) - set(previous or []):
-            project = self.project.current_file
-            if project is None:
-                raise ValueError("Save the project before attaching media")
-            path = (project.parent / reference).resolve()
-            path.relative_to(project.parent.resolve())
-            if not path.is_file():
-                raise ValueError(f"Missing project attachment: {reference}")
+    def _check_media_reference(self, reference: str) -> None:
+        project = self.project.current_file
+        if project is None:
+            raise ValueError("Save the project before attaching media")
+        path = (project.parent / reference).resolve()
+        path.relative_to(project.parent.resolve())
+        if not path.is_file():
+            raise ValueError(f"Missing project attachment: {reference}")
 
     def _memory(self) -> dict[str, Any]:
         return self.project.garden_memory or {"version": 1, "events": {}, "requests": {}}
 
+    @staticmethod
+    def _snapshot_object(document: dict[str, Any], item_id: str) -> dict[str, Any]:
+        """Find one item in the exact candidate produced by the pure planner."""
+        matches: list[dict[str, Any]] = []
+        wanted = str(UUID(item_id))
+
+        def walk(records: list[dict[str, Any]]) -> None:
+            for record in records:
+                raw_identity = record.get("item_id", record.get("id"))
+                if raw_identity is not None:
+                    try:
+                        if str(UUID(raw_identity)) == wanted:
+                            matches.append(record)
+                    except (TypeError, ValueError):
+                        pass
+                children = record.get("children", [])
+                if isinstance(children, list):
+                    walk(children)
+
+        walk(document.get("objects", []))
+        if len(matches) != 1:
+            raise ValueError(f"Garden target id is ambiguous or absent: {item_id}")
+        return matches[0]
+
+    def _prepare(self, operation: str, fields: dict[str, Any] | None,
+                 target_id: str | None = None, request_key: str | None = None
+                 ) -> tuple[dict[str, Any], dict[str, Any]]:
+        document = self.project.snapshot_dict(self.scene)
+        return prepare_garden_operation(
+            document, operation, fields, target_id, request_key,
+            media_check=self._check_media_reference,
+        )
+
+    def _apply_card(self, operation: str, item_id: str,
+                    fields: dict[str, Any]) -> dict[str, Any]:
+        candidate, result = self._prepare(operation, fields, item_id)
+        target = self._item(item_id)
+        record = self._snapshot_object(candidate, item_id)
+        metadata = deepcopy(record.get("metadata", {}))
+        name = record.get("name", "")
+        if metadata != target.metadata or name != target.name:
+            self.commands.execute(GardenEditCommand(
+                self.project,
+                candidate.get("garden_memory", self._memory()),
+                target,
+                metadata,
+                name,
+            ))
+        return result
+
     def set_planting_date(self, item_id: str, value: str | None) -> dict[str, Any]:
         """Patch only a plant's date, preserving the other tracking fields."""
-        from open_garden_planner.models.garden_memory import period
-
-        item = self._item(item_id)
-        if not is_plant_type(getattr(item, "object_type", None)):
-            raise ValueError("A planting date requires a plant (TREE, SHRUB or PERENNIAL)")
-        fields = deepcopy(item.metadata.get("garden_tracking", {}))
-        fields["period"] = period(value)
-        return self._set_card(item_id, fields, require_name=False)
+        return self._apply_card("set_planting_date", item_id, {"planting_date": value})
 
     def set_card(self, item_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         """Replace tracking fields, retaining the shape's existing identity/geometry."""
-        return self._set_card(item_id, fields, require_name=True)
-
-    def _set_card(self, item_id: str, fields: dict[str, Any], *, require_name: bool) -> dict[str, Any]:
-        item = self._item(item_id)
-        self._editable(item)
-        fields = deepcopy(fields)
-        name = fields.pop("name", item.name)
-        if not isinstance(name, str) or require_name and not name.strip():
-            raise ValueError("A provisional or botanical label is required")
-        card = validate_card(fields)
-        if card.get("kind") == "zone" and not is_bed_type(item.object_type):
-            raise ValueError("A zone must use an existing bed shape")
-        zone_id = card.get("zone_id")
-        if zone_id:
-            zone = self._item(zone_id)
-            if zone is item or not is_bed_type(zone.object_type):
-                raise ValueError("Zone must reference another existing bed")
-        self._check_media(card.get("media", []), item.metadata.get("garden_tracking", {}).get("media", []))
-        metadata = deepcopy(item.metadata)
-        for key, legacy in (("notes", "notes"), ("cultivar", "variety_cultivar")):
-            if key in card:
-                metadata.setdefault("plant_instance", {})[legacy] = card.pop(key)
-        metadata["garden_tracking"] = card
-        if "period" in fields:
-            instance = metadata.setdefault("plant_instance", {})
-            if card["period"]["precision"] == "day":
-                instance["planting_date"] = card["period"]["value"]
-            else:
-                instance.pop("planting_date", None)
-        if metadata != item.metadata or name != item.name:
-            self.commands.execute(GardenEditCommand(self.project, self._memory(), item, metadata, name))
-        return {"item_id": item_id, "card": card, "persisted": False}
+        return self._apply_card("set_card", item_id, fields)
 
     def add_event(self, fields: dict[str, Any], request_key: str) -> dict[str, Any]:
         """Add once per durable key; replay after deletion never recreates an event."""
-        if not isinstance(request_key, str) or not request_key.strip():
-            raise ValueError("An idempotence request_key is required")
-        if "id" in fields or "created_at" in fields:
-            raise ValueError("Creation id and timestamp are assigned by the application")
-        event = validate_event(fields)
-        content = {k: v for k, v in event.items() if k not in {"id", "created_at"}}
-        content["targets"] = sorted(t["id"] for t in event["targets"])
-        fingerprint = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-        memory = self._memory()
-        receipt = memory["requests"].get(request_key)
-        if receipt:
-            if receipt["fingerprint"] != fingerprint:
-                raise ValueError("Idempotence conflict: request_key was used with different content")
-            identity = receipt["event_id"]
-            return {"event_id": identity, "replayed": True,
-                    "deleted": identity not in memory["events"], "persisted": False}
-        self._check_media(event["media"])
-        # Resolve targets only after receipt lookup: retries survive target deletion.
-        for target in event["targets"]:
-            item = self._item(target["id"])
-            self._editable(item)
-            target["name"] = item.name or target["name"]
-        memory["events"][event["id"]] = event
-        memory["requests"][request_key] = {"fingerprint": fingerprint, "event_id": event["id"]}
-        self.commands.execute(GardenEditCommand(self.project, memory))
-        return {"event_id": event["id"], "replayed": False, "persisted": False}
+        candidate, result = self._prepare("add_event", fields, request_key=request_key)
+        if not result["replayed"]:
+            self.commands.execute(GardenEditCommand(
+                self.project, candidate["garden_memory"]
+            ))
+        return result
 
     def edit_event(self, event_id: str, fields: dict[str, Any] | None) -> dict[str, Any]:
         """Edit or delete; historical targets may be absent, with readable snapshots."""
-        memory = self._memory()
-        old = memory["events"].get(event_id)
-        if old is None:
-            raise ValueError(f"Unknown intervention: {event_id}")
-        for target in old["targets"]:
-            try:
-                item = self._item(target["id"])
-            except ValueError:
-                continue  # Historical targets may have been removed.
-            self._editable(item)
-        if fields is None:
-            del memory["events"][event_id]
-        else:
-            if "id" in fields or "created_at" in fields:
-                raise ValueError("Intervention identity and creation time cannot change")
-            candidate = validate_event({**old, **fields})
-            self._check_media(candidate["media"], old["media"])
-            old_ids = {t["id"] for t in old["targets"]}
-            for target in candidate["targets"]:
-                if target["id"] not in old_ids:
-                    self._editable(self._item(target["id"]))
-            memory["events"][event_id] = candidate
-        self.commands.execute(GardenEditCommand(self.project, memory))
-        return {"event_id": event_id, "deleted": fields is None, "persisted": False}
+        candidate, result = self._prepare("edit_event", fields, target_id=event_id)
+        self.commands.execute(GardenEditCommand(
+            self.project, candidate["garden_memory"]
+        ))
+        return result

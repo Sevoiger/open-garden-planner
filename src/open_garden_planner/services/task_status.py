@@ -14,6 +14,86 @@ display state. The module is pure: no Qt, no I/O, defensive ISO parsing.
 from __future__ import annotations
 
 import datetime
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any, Literal
+
+TASK_STATUSES: tuple[str, ...] = ("open", "done", "dismissed")
+_STATUS_FIELDS = frozenset({"status", "done_date", "snooze_until"})
+
+
+@dataclass(frozen=True)
+class TaskStatusChange:
+    """Detached before/after state for one task-status edit."""
+
+    task_id: str
+    before: dict[str, Any] | None
+    after: dict[str, Any] | None
+
+    @property
+    def is_noop(self) -> bool:
+        """Whether applying the prepared change leaves storage untouched."""
+        return self.before == self.after
+
+
+def prepare_task_status(
+    task_states: Mapping[str, Mapping[str, Any]],
+    task_id: str,
+    status: Literal["open", "done", "dismissed"],
+    *,
+    done_date: str | None = None,
+    snooze_until: str | None = None,
+) -> TaskStatusChange:
+    """Validate one status mutation and return detached snapshots.
+
+    A plain ``open`` removes known status fields while retaining any unknown
+    extension fields. A snooze is represented by ``snooze_until`` and remains
+    compatible with :func:`effective_status`'s render-time expiry rule.
+    """
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id is required.")
+    if status not in TASK_STATUSES:
+        raise ValueError(
+            f"status={status!r} is unsupported. Use one of {', '.join(TASK_STATUSES)}."
+        )
+
+    resolved_done_date = _validate_iso_date(done_date, "done_date")
+    resolved_snooze_until = _validate_iso_date(snooze_until, "snooze_until")
+
+    raw_before = task_states.get(task_id)
+    before = deepcopy(dict(raw_before)) if raw_before is not None else None
+    after: dict[str, Any] = {
+        key: deepcopy(value)
+        for key, value in (before or {}).items()
+        if key not in _STATUS_FIELDS
+    }
+    if status != "open" or resolved_snooze_until:
+        after["status"] = status
+        if resolved_done_date:
+            after["done_date"] = resolved_done_date
+        if resolved_snooze_until:
+            after["snooze_until"] = resolved_snooze_until
+
+    return TaskStatusChange(task_id, before, after or None)
+
+
+def _validate_iso_date(value: str | None, field_name: str) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be an ISO YYYY-MM-DD date or null.")
+    try:
+        parsed = datetime.date.fromisoformat(value)
+    except ValueError:
+        raise ValueError(
+            f"{field_name}={value!r} is not an ISO date. Use YYYY-MM-DD."
+        ) from None
+    if parsed.isoformat() != value:
+        raise ValueError(
+            f"{field_name}={value!r} is not an ISO date. Use YYYY-MM-DD."
+        )
+    return value
 
 
 def _parse_iso(value: object) -> datetime.date | None:

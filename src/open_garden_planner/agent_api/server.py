@@ -89,7 +89,7 @@ from open_garden_planner.agent_api.mapping import (
     plan_summary_from_snapshot,
 )
 from open_garden_planner.agent_api.providers import AgentProviders
-from open_garden_planner.agent_api.render import DEFAULT_IMAGE_PX
+from open_garden_planner.agent_api.render_config import DEFAULT_IMAGE_PX
 from open_garden_planner.agent_api.schema import (
     AmendmentPlanView,
     CompanionSuggestion,
@@ -293,6 +293,15 @@ class PortInUseError(RuntimeError):
         self.port = port
 
 
+def _finalize_tool_schemas(mcp: Any) -> None:
+    """Refuse unknown top-level arguments on both host compositions."""
+    for tool in mcp._tool_manager.list_tools():
+        arguments = tool.fn_metadata.arg_model
+        arguments.model_config["extra"] = "forbid"
+        arguments.model_rebuild(force=True)
+        tool.parameters = arguments.model_json_schema(by_alias=True)
+
+
 def build_server(
     providers: AgentProviders,
     *,
@@ -420,6 +429,40 @@ def build_server(
     # otherwise advertises the SDK version as if it were the application's.
     mcp._mcp_server.version = identity["application_version"]
 
+    from open_garden_planner.agent_api.document_tools import DomainProviders
+
+    if isinstance(providers, DomainProviders):
+        from open_garden_planner.agent_api.document_tools import (
+            register_autonomous_history,
+            register_document_tools,
+        )
+
+        register_document_tools(mcp, providers.document_operation, writes_active=writes_active,
+                                authorize=lambda: _require_write_auth(write_token))
+        if providers.library_operation is not None:
+            from open_garden_planner.agent_api.document_tools import register_library_tools
+
+            register_library_tools(mcp, providers.library_operation, writes_active=writes_active,
+                                   authorize=lambda: _require_write_auth(write_token))
+        if writes_active:
+            register_autonomous_history(mcp, providers.document_operation,
+                                        authorize=lambda: _require_write_auth(write_token))
+
+        @mcp.tool(name="get_capabilities")
+        async def autonomous_capabilities() -> dict[str, Any]:
+            """Discover data operations available without Qt; no graphical tools."""
+            from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
+
+            return {"identity": identity, "mode": "autonomous", "writes_enabled": writes_active,
+                    "available_tools": sorted(tool.name for tool in await mcp.list_tools()),
+                    "storage": "explicit project file", "history": "session only",
+                    "durability": "data and receipt committed together before success",
+                    "preparation": "session only; expires after 300 seconds",
+                    "operations": list(SUPPORTED_OPERATIONS)}
+
+        _finalize_tool_schemas(mcp)
+        return mcp
+
     @mcp.tool()
     async def get_capabilities() -> dict[str, Any]:
         """Discover actual tools, garden workflows and remaining desktop-only features.
@@ -427,10 +470,17 @@ def build_server(
         This is a coverage inventory, not a promise that every GUI action has
         an MCP equivalent. Tool registration reflects the current write gate.
         """
+        from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
+
         names = sorted(tool.name for tool in await mcp.list_tools())
         return {
             "identity": identity,
             "writes_enabled": writes_active,
+            "shared_document_operations": {
+                "mode": "live", "operations": list(SUPPORTED_OPERATIONS),
+                "preparation_ttl_seconds": 300, "max_batch_size": 100,
+                "undo": "same global stack as Qt", "persisted_on_apply": False,
+            } if providers.document_operation is not None else None,
             "available_tools": names,
             "workflows": {key: value for key, value in {
                 "inspect_plan": ["list_objects", "get_object", "get_geometry"],
@@ -2952,11 +3002,17 @@ def build_server(
     # The SDK defaults to silently dropping unknown top-level arguments. A
     # misspelled filter could therefore read the wrong dates; a misspelled write
     # field could apply a default. Tighten THIS server's generated models only.
-    for tool in mcp._tool_manager.list_tools():
-        arguments = tool.fn_metadata.arg_model
-        arguments.model_config["extra"] = "forbid"
-        arguments.model_rebuild(force=True)
-        tool.parameters = arguments.model_json_schema(by_alias=True)
+    if providers.document_operation is not None:
+        from open_garden_planner.agent_api.document_tools import register_document_tools
+
+        register_document_tools(mcp, providers.document_operation, writes_active=writes_active,
+                                authorize=lambda: _require_write_auth(write_token))
+    if providers.library_operation is not None:
+        from open_garden_planner.agent_api.document_tools import register_library_tools
+
+        register_library_tools(mcp, providers.library_operation, writes_active=writes_active,
+                               authorize=lambda: _require_write_auth(write_token))
+    _finalize_tool_schemas(mcp)
     return mcp
 
 

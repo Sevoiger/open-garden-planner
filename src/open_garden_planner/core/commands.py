@@ -4,15 +4,16 @@ All modifications to the canvas are wrapped in commands that can be
 executed, undone, and redone.
 """
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from PyQt6.QtCore import QCoreApplication, QObject, QPointF, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsScene
 
+from open_garden_planner.core.command_history import Command, CommandHistory
 from open_garden_planner.core.stacking import STACK_STEP
 
 if TYPE_CHECKING:
@@ -25,26 +26,6 @@ if TYPE_CHECKING:
     from open_garden_planner.core.project import ProjectManager
     from open_garden_planner.models.layer import Layer
     from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
-
-
-class Command(ABC):
-    """Abstract base class for all undoable commands."""
-
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """Human-readable description of the command."""
-        pass
-
-    @abstractmethod
-    def execute(self) -> None:
-        """Execute (or re-execute) the command."""
-        pass
-
-    @abstractmethod
-    def undo(self) -> None:
-        """Undo the command."""
-        pass
 
 
 class CommandManager(QObject):
@@ -67,20 +48,25 @@ class CommandManager(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         """Initialize the command manager."""
         super().__init__(parent)
-        self._undo_stack: list[Command] = []
-        self._redo_stack: list[Command] = []
+        self._history = CommandHistory()
+
+    @property
+    def _undo_stack(self) -> list[Command]:
+        """Compatibility view of the one stack owned by ``_history``."""
+        return self._history.undo_stack
+
+    @property
+    def _redo_stack(self) -> list[Command]:
+        """Compatibility view of the one stack owned by ``_history``."""
+        return self._history.redo_stack
 
     def execute(self, command: Command) -> None:
         """Execute a command and add it to the undo stack.
 
         Clears the redo stack since we've branched off.
         """
-        command.execute()
-        self._undo_stack.append(command)
-
-        # Clear redo stack on new command
-        had_redo = len(self._redo_stack) > 0
-        self._redo_stack.clear()
+        had_redo = self._history.can_redo
+        self._history.execute(command)
 
         self.can_undo_changed.emit(True)
         if had_redo:
@@ -100,9 +86,8 @@ class CommandManager(QObject):
         every "already applied" call site in sync with :meth:`execute`; do NOT
         hand-roll ``_undo_stack.append`` + signal emits at call sites (issue #209).
         """
-        self._undo_stack.append(command)
-        had_redo = len(self._redo_stack) > 0
-        self._redo_stack.clear()
+        had_redo = self._history.can_redo
+        self._history.register_applied(command)
 
         self.can_undo_changed.emit(True)
         if had_redo:
@@ -112,76 +97,59 @@ class CommandManager(QObject):
 
     def undo(self) -> None:
         """Undo the last command."""
-        if not self._undo_stack:
+        command = self._history.undo()
+        if command is None:
             return
 
-        command = self._undo_stack.pop()
-        command.undo()
-        self._redo_stack.append(command)
-
-        self.can_undo_changed.emit(len(self._undo_stack) > 0)
+        self.can_undo_changed.emit(self._history.can_undo)
         self.can_redo_changed.emit(True)
         self.stack_changed.emit()
 
     def redo(self) -> None:
         """Redo the last undone command."""
-        if not self._redo_stack:
+        command = self._history.redo()
+        if command is None:
             return
 
-        command = self._redo_stack.pop()
-        try:
-            command.execute()
-        except Exception:
-            # A command may discover that a mutable precondition changed after
-            # it was undone. Keep it redoable when execution is refused.
-            self._redo_stack.append(command)
-            raise
-        self._undo_stack.append(command)
-
         self.can_undo_changed.emit(True)
-        self.can_redo_changed.emit(len(self._redo_stack) > 0)
+        self.can_redo_changed.emit(self._history.can_redo)
         self.stack_changed.emit()
 
     def clear(self) -> None:
         """Clear all undo/redo history."""
-        self._undo_stack.clear()
-        self._redo_stack.clear()
+        self._history.clear()
         self.can_undo_changed.emit(False)
         self.can_redo_changed.emit(False)
 
     @property
     def can_undo(self) -> bool:
         """Whether there are commands to undo."""
-        return len(self._undo_stack) > 0
+        return self._history.can_undo
 
     @property
     def can_redo(self) -> bool:
         """Whether there are commands to redo."""
-        return len(self._redo_stack) > 0
+        return self._history.can_redo
 
     @property
     def undo_depth(self) -> int:
         """Number of commands on the undo stack (US-D2.7)."""
-        return len(self._undo_stack)
+        return self._history.undo_depth
 
     @property
     def redo_depth(self) -> int:
         """Number of commands on the redo stack (US-D2.7)."""
-        return len(self._redo_stack)
+        return self._history.redo_depth
 
     @property
     def undo_description(self) -> str | None:
         """Description of the command that would be undone."""
-        if self._undo_stack:
-            return self._undo_stack[-1].description
-        return None
+        return self._history.undo_description
 
     @property
     def redo_description(self) -> str | None:
         """Description of the command that would be redone."""
-        if self._redo_stack:
-            return self._redo_stack[-1].description
-        return None
+        return self._history.redo_description
 
 
 def _refresh_z_after_relink(scene: QGraphicsScene, item: QGraphicsItem) -> None:
@@ -2338,6 +2306,42 @@ class ChamferCornerCommand(Command):
             self._scene.addItem(self._original)
 
 
+def _prepare_soil_test_command_change(
+    project_manager: Any,
+    operation: str,
+    target_id: str,
+    record: Any = None,
+    record_id: str | None = None,
+) -> Any:
+    """Adapt existing soil-test commands to the shared pure preparer."""
+    from open_garden_planner.services.soil_assessment import (
+        SoilTestChange,
+        SoilTestOperationError,
+        prepare_soil_test_change,
+    )
+
+    candidate = record if isinstance(record, SoilTestChange) else record_id
+    if isinstance(candidate, SoilTestChange):
+        if candidate.operation != operation or candidate.target_id != target_id:
+            raise ValueError("The prepared soil-test change targets a different operation or history.")
+        return candidate
+
+    try:
+        return prepare_soil_test_change(
+            project_manager.soil_tests,
+            operation=operation,
+            target_id=target_id,
+            record=record,
+            record_id=record_id,
+        )
+    except SoilTestOperationError:
+        # Historically edit/delete against a stale or unknown row did nothing.
+        # Keep that command API while allowing other validation failures through.
+        if operation in {"edit", "delete"}:
+            return None
+        raise
+
+
 class AddSoilTestCommand(Command):
     """Add a soil test record to a bed (or the global default) — undoable.
 
@@ -2352,23 +2356,11 @@ class AddSoilTestCommand(Command):
         target_id: str,
         record: "Any",
     ) -> None:
-        """Initialise.
-
-        Args:
-            project_manager: The ``ProjectManager`` holding the soil test state.
-            target_id: Bed UUID string or the literal ``"global"``.
-            record: A ``SoilTestRecord`` instance to append.
-        """
-        from open_garden_planner.models.soil_test import SoilTestHistory
-
+        """Initialise from a record or a prepared shared operation."""
         self._pm = project_manager
         self._target_id = target_id
-        self._record = record
-        self._SoilTestHistory = SoilTestHistory
-        # Snapshot the prior history dict (or None if no history existed yet)
-        existing = self._pm.soil_tests.get(target_id)
-        self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+        self._change = _prepare_soil_test_command_change(
+            project_manager, "add", target_id, record=record
         )
 
     @property
@@ -2376,18 +2368,14 @@ class AddSoilTestCommand(Command):
         return QCoreApplication.translate("Commands", "Add soil test")
 
     def execute(self) -> None:
-        # Build the new history from the prior snapshot (or fresh) + the new record
-        if self._prior_history_dict is None:
-            history = self._SoilTestHistory(target_id=self._target_id)
-        else:
-            history = self._SoilTestHistory.from_dict(self._prior_history_dict)
-        if not any(r.id == self._record.id for r in history.records):
-            history.records.append(self._record)
-        self._pm.set_soil_test_history(self._target_id, history)
+        self._pm.restore_soil_test_history(
+            self._target_id, deepcopy(self._change.after)
+        )
 
     def undo(self) -> None:
-        # Restore (or delete) the prior snapshot
-        self._pm.restore_soil_test_history(self._target_id, self._prior_history_dict)
+        self._pm.restore_soil_test_history(
+            self._target_id, deepcopy(self._change.before)
+        )
 
 
 class EditSoilTestCommand(Command):
@@ -2404,15 +2392,10 @@ class EditSoilTestCommand(Command):
         target_id: str,
         new_record: "Any",
     ) -> None:
-        from open_garden_planner.models.soil_test import SoilTestHistory
-
         self._pm = project_manager
         self._target_id = target_id
-        self._new_record = new_record
-        self._SoilTestHistory = SoilTestHistory
-        existing = self._pm.soil_tests.get(target_id)
-        self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+        self._change = _prepare_soil_test_command_change(
+            project_manager, "edit", target_id, record=new_record
         )
 
     @property
@@ -2420,19 +2403,18 @@ class EditSoilTestCommand(Command):
         return QCoreApplication.translate("Commands", "Edit soil test")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
+        if self._change is None or self._change.is_noop:
             return
-        history = self._SoilTestHistory.from_dict(self._prior_history_dict)
-        for idx, r in enumerate(history.records):
-            if r.id == self._new_record.id:
-                history.records[idx] = self._new_record
-                break
-        else:
-            return  # id not found; nothing to edit
-        self._pm.set_soil_test_history(self._target_id, history)
+        self._pm.restore_soil_test_history(
+            self._target_id, deepcopy(self._change.after)
+        )
 
     def undo(self) -> None:
-        self._pm.restore_soil_test_history(self._target_id, self._prior_history_dict)
+        if self._change is None or self._change.is_noop:
+            return
+        self._pm.restore_soil_test_history(
+            self._target_id, deepcopy(self._change.before)
+        )
 
 
 class DeleteSoilTestCommand(Command):
@@ -2448,15 +2430,11 @@ class DeleteSoilTestCommand(Command):
         target_id: str,
         record_id: str,
     ) -> None:
-        from open_garden_planner.models.soil_test import SoilTestHistory
-
         self._pm = project_manager
         self._target_id = target_id
         self._record_id = record_id
-        self._SoilTestHistory = SoilTestHistory
-        existing = self._pm.soil_tests.get(target_id)
-        self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+        self._change = _prepare_soil_test_command_change(
+            project_manager, "delete", target_id, record_id=record_id
         )
 
     @property
@@ -2464,14 +2442,18 @@ class DeleteSoilTestCommand(Command):
         return QCoreApplication.translate("Commands", "Delete soil test")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
+        if self._change is None or self._change.is_noop:
             return
-        history = self._SoilTestHistory.from_dict(self._prior_history_dict)
-        history.records = [r for r in history.records if r.id != self._record_id]
-        self._pm.set_soil_test_history(self._target_id, history)
+        self._pm.restore_soil_test_history(
+            self._target_id, deepcopy(self._change.after)
+        )
 
     def undo(self) -> None:
-        self._pm.restore_soil_test_history(self._target_id, self._prior_history_dict)
+        if self._change is None or self._change.is_noop:
+            return
+        self._pm.restore_soil_test_history(
+            self._target_id, deepcopy(self._change.before)
+        )
 
 
 class AddPestLogCommand(Command):
@@ -2488,32 +2470,46 @@ class AddPestLogCommand(Command):
         target_id: str,
         record: "Any",
     ) -> None:
-        from open_garden_planner.models.pest_log import PestLogHistory
-
         self._pm = project_manager
         self._target_id = target_id
         self._record = record
-        self._PestLogHistory = PestLogHistory
         existing = self._pm.pest_logs.get(target_id)
         self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
+        from open_garden_planner.services.record_operations import (
+            prepare_command_record_change,
+        )
+
+        try:
+            candidate, _result = prepare_command_record_change(
+                self._pm, "add_pest_log", target_id, record.to_dict()
+            )
+        except ValueError as exc:
+            # Preserve the old command's idempotent redo/duplicate behavior.
+            if "already exists" not in str(exc):
+                raise
+            self._after_history_dict = deepcopy(self._prior_history_dict)
+        else:
+            self._after_history_dict = deepcopy(
+                candidate["pest_disease_logs"].get(target_id)
+            )
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Add pest/disease log")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
-            history = self._PestLogHistory(target_id=self._target_id)
-        else:
-            history = self._PestLogHistory.from_dict(self._prior_history_dict)
-        if not any(r.id == self._record.id for r in history.records):
-            history.records.append(self._record)
-        self._pm.set_pest_log_history(self._target_id, history)
+        if self._after_history_dict is None:
+            return
+        self._pm.restore_pest_log_history(
+            self._target_id, deepcopy(self._after_history_dict)
+        )
 
     def undo(self) -> None:
-        self._pm.restore_pest_log_history(self._target_id, self._prior_history_dict)
+        self._pm.restore_pest_log_history(
+            self._target_id, deepcopy(self._prior_history_dict)
+        )
 
 
 class EditPestLogCommand(Command):
@@ -2528,35 +2524,52 @@ class EditPestLogCommand(Command):
         target_id: str,
         new_record: "Any",
     ) -> None:
-        from open_garden_planner.models.pest_log import PestLogHistory
-
         self._pm = project_manager
         self._target_id = target_id
         self._new_record = new_record
-        self._PestLogHistory = PestLogHistory
         existing = self._pm.pest_logs.get(target_id)
         self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
+        self._after_history_dict: dict[str, Any] | None = None
+        if self._prior_history_dict is not None:
+            from open_garden_planner.services.record_operations import (
+                prepare_command_record_change,
+            )
+
+            try:
+                candidate, _result = prepare_command_record_change(
+                    self._pm, "edit_pest_log", target_id,
+                    new_record.to_dict() | {
+                        "id": new_record.id,
+                        "treatment": new_record.treatment,
+                        "notes": new_record.notes,
+                        "photo_path": new_record.photo_path,
+                    },
+                )
+            except ValueError as exc:
+                if "No record with id" not in str(exc):
+                    raise
+            else:
+                self._after_history_dict = deepcopy(
+                    candidate["pest_disease_logs"].get(target_id)
+                )
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Edit pest/disease log")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
+        if self._after_history_dict is None:
             return
-        history = self._PestLogHistory.from_dict(self._prior_history_dict)
-        for idx, r in enumerate(history.records):
-            if r.id == self._new_record.id:
-                history.records[idx] = self._new_record
-                break
-        else:
-            return
-        self._pm.set_pest_log_history(self._target_id, history)
+        self._pm.restore_pest_log_history(
+            self._target_id, deepcopy(self._after_history_dict)
+        )
 
     def undo(self) -> None:
-        self._pm.restore_pest_log_history(self._target_id, self._prior_history_dict)
+        self._pm.restore_pest_log_history(
+            self._target_id, deepcopy(self._prior_history_dict)
+        )
 
 
 class DeletePestLogCommand(Command):
@@ -2568,27 +2581,42 @@ class DeletePestLogCommand(Command):
         target_id: str,
         record_id: str,
     ) -> None:
-        from open_garden_planner.models.pest_log import PestLogHistory
-
         self._pm = project_manager
         self._target_id = target_id
         self._record_id = record_id
-        self._PestLogHistory = PestLogHistory
         existing = self._pm.pest_logs.get(target_id)
         self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
+        self._after_history_dict: dict[str, Any] | None = None
+        if self._prior_history_dict is not None:
+            from open_garden_planner.services.record_operations import (
+                prepare_command_record_change,
+            )
+
+            try:
+                candidate, _result = prepare_command_record_change(
+                    self._pm, "delete_pest_log", target_id,
+                    {"record_id": record_id},
+                )
+            except ValueError as exc:
+                if "No record with id" not in str(exc):
+                    raise
+            else:
+                self._after_history_dict = deepcopy(
+                    candidate["pest_disease_logs"].get(target_id)
+                )
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Delete pest/disease log")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
+        if self._after_history_dict is None:
             return
-        history = self._PestLogHistory.from_dict(self._prior_history_dict)
-        history.records = [r for r in history.records if r.id != self._record_id]
-        self._pm.set_pest_log_history(self._target_id, history)
+        self._pm.restore_pest_log_history(
+            self._target_id, deepcopy(self._after_history_dict)
+        )
 
     def undo(self) -> None:
         self._pm.restore_pest_log_history(self._target_id, self._prior_history_dict)
@@ -2623,50 +2651,62 @@ class AddHarvestRecordCommand(Command):
         species_key: str = "",
         species_name: str = "",
     ) -> None:
-        from open_garden_planner.models.harvest_log import HarvestHistory
-        from open_garden_planner.models.journal_note import JournalNote
-
         self._pm = project_manager
         self._target_id = target_id
         self._record = record
         self._species_key = species_key
         self._species_name = species_name
-        self._HarvestHistory = HarvestHistory
         existing = self._pm.harvest_logs.get(target_id)
         self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
-        # Build the linked pin-less journal note once so redo re-applies the
-        # same note (and undo can delete it by id).
-        note = JournalNote(
-            date=record.date,
-            text=_harvest_note_text(record, species_name),
-            tags=["harvest"],
+        from open_garden_planner.services.record_operations import (
+            prepare_command_record_change,
         )
-        self._note = note
-        record.journal_note_id = note.id
+
+        candidate, _result = prepare_command_record_change(
+            self._pm,
+            "add_harvest_record",
+            target_id,
+            record.to_dict() | {
+                "species_key": species_key,
+                "species_name": species_name,
+            },
+            note_text=_harvest_note_text(record, species_name),
+        )
+        self._after_history_dict = deepcopy(
+            candidate["harvest_logs"].get(target_id)
+        )
+        self._note_id: str | None = record.journal_note_id
+        if self._note_id is None and self._after_history_dict is not None:
+            for raw in self._after_history_dict.get("records", []):
+                if raw.get("id") == record.id:
+                    self._note_id = raw.get("journal_note_id")
+                    break
+        if self._note_id is None:
+            raise ValueError("The harvest planner did not create a linked journal note")
+        # Keep the legacy object API: callers inspect the record after command
+        # construction to retrieve its linked journal-note id.
+        record.journal_note_id = self._note_id
+        self._after_note_dict = deepcopy(
+            candidate["garden_journal_notes"][self._note_id]
+        )
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Add harvest entry")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
-            history = self._HarvestHistory(target_id=self._target_id)
-        else:
-            history = self._HarvestHistory.from_dict(self._prior_history_dict)
-        if self._species_key:
-            history.species_key = self._species_key
-        if self._species_name:
-            history.species_name = self._species_name
-        if not any(r.id == self._record.id for r in history.records):
-            history.records.append(self._record)
-        self._pm.set_journal_note(self._note)
-        self._pm.set_harvest_history(self._target_id, history)
+        self._pm.restore_journal_note(self._note_id, deepcopy(self._after_note_dict))
+        self._pm.restore_harvest_history(
+            self._target_id, deepcopy(self._after_history_dict)
+        )
 
     def undo(self) -> None:
-        self._pm.delete_journal_note(self._note.id)
-        self._pm.restore_harvest_history(self._target_id, self._prior_history_dict)
+        self._pm.restore_harvest_history(
+            self._target_id, deepcopy(self._prior_history_dict)
+        )
+        self._pm.restore_journal_note(self._note_id, None)
 
 
 class EditHarvestRecordCommand(Command):
@@ -2682,52 +2722,84 @@ class EditHarvestRecordCommand(Command):
         target_id: str,
         new_record: "Any",
     ) -> None:
-        from open_garden_planner.models.harvest_log import HarvestHistory
-
         self._pm = project_manager
         self._target_id = target_id
         self._new_record = new_record
-        self._HarvestHistory = HarvestHistory
         existing = self._pm.harvest_logs.get(target_id)
         self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
+        self._after_history_dict: dict[str, Any] | None = None
+        self._after_note_dict: dict[str, Any] | None = None
         self._note_id: str | None = new_record.journal_note_id
-        prior_note = (
-            self._pm.garden_journal_notes.get(self._note_id) if self._note_id else None
-        )
-        self._prior_note_dict: dict[str, Any] | None = (
-            dict(prior_note) if prior_note is not None else None
-        )
+        self._prior_note_dict: dict[str, Any] | None = None
+        if self._prior_history_dict is not None:
+            for raw in self._prior_history_dict.get("records", []):
+                if raw.get("id") == new_record.id:
+                    self._note_id = self._note_id or raw.get("journal_note_id")
+                    break
+            if self._note_id:
+                prior_note = self._pm.garden_journal_notes.get(self._note_id)
+                self._prior_note_dict = (
+                    deepcopy(prior_note) if prior_note is not None else None
+                )
+            from open_garden_planner.services.record_operations import (
+                prepare_command_record_change,
+            )
+
+            try:
+                candidate, _result = prepare_command_record_change(
+                    self._pm,
+                    "edit_harvest_record",
+                    target_id,
+                    new_record.to_dict() | {
+                        "id": new_record.id,
+                        "quality": new_record.quality,
+                        "notes": new_record.notes,
+                        "photo_path": new_record.photo_path,
+                    },
+                    note_text=(
+                        _harvest_note_text(
+                            new_record,
+                            str((self._prior_history_dict or {}).get("species_name", "")),
+                        )
+                    ),
+                )
+            except ValueError as exc:
+                if "No record with id" not in str(exc):
+                    raise
+            else:
+                self._after_history_dict = deepcopy(
+                    candidate["harvest_logs"].get(target_id)
+                )
+                self._after_note_dict = (
+                    deepcopy(candidate["garden_journal_notes"].get(self._note_id))
+                    if self._note_id else None
+                )
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Edit harvest entry")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
+        if self._after_history_dict is None:
             return
-        history = self._HarvestHistory.from_dict(self._prior_history_dict)
-        for idx, r in enumerate(history.records):
-            if r.id == self._new_record.id:
-                history.records[idx] = self._new_record
-                break
-        else:
-            return
-        self._pm.set_harvest_history(self._target_id, history)
-        if self._note_id:
-            note = self._pm.get_journal_note(self._note_id)
-            if note is not None:
-                note.date = self._new_record.date
-                note.text = _harvest_note_text(
-                    self._new_record, history.species_name
-                )
-                self._pm.set_journal_note(note)
+        self._pm.restore_harvest_history(
+            self._target_id, deepcopy(self._after_history_dict)
+        )
+        if self._note_id and self._after_note_dict is not None:
+            self._pm.restore_journal_note(
+                self._note_id, deepcopy(self._after_note_dict)
+            )
 
     def undo(self) -> None:
-        self._pm.restore_harvest_history(self._target_id, self._prior_history_dict)
+        self._pm.restore_harvest_history(
+            self._target_id, deepcopy(self._prior_history_dict)
+        )
         if self._note_id:
-            self._pm.restore_journal_note(self._note_id, self._prior_note_dict)
+            self._pm.restore_journal_note(
+                self._note_id, deepcopy(self._prior_note_dict)
+            )
 
 
 class DeleteHarvestRecordCommand(Command):
@@ -2742,16 +2814,15 @@ class DeleteHarvestRecordCommand(Command):
         target_id: str,
         record_id: str,
     ) -> None:
-        from open_garden_planner.models.harvest_log import HarvestHistory
-
         self._pm = project_manager
         self._target_id = target_id
         self._record_id = record_id
-        self._HarvestHistory = HarvestHistory
         existing = self._pm.harvest_logs.get(target_id)
         self._prior_history_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
+        self._after_history_dict: dict[str, Any] | None = None
+        self._prepared = False
         # Find the linked journal note id from the prior snapshot.
         self._note_id: str | None = None
         self._prior_note_dict: dict[str, Any] | None = None
@@ -2763,30 +2834,114 @@ class DeleteHarvestRecordCommand(Command):
             if self._note_id:
                 prior_note = self._pm.garden_journal_notes.get(self._note_id)
                 self._prior_note_dict = (
-                    dict(prior_note) if prior_note is not None else None
+                    deepcopy(prior_note) if prior_note is not None else None
                 )
+            from open_garden_planner.services.record_operations import (
+                prepare_command_record_change,
+            )
+
+            try:
+                candidate, _result = prepare_command_record_change(
+                    self._pm, "delete_harvest_record", target_id,
+                    {"record_id": record_id},
+                )
+            except ValueError as exc:
+                if "No record with id" not in str(exc):
+                    raise
+            else:
+                self._after_history_dict = deepcopy(
+                    candidate["harvest_logs"].get(target_id)
+                )
+                self._prepared = True
+                if self._note_id:
+                    self._after_note_dict = deepcopy(
+                        candidate.get("garden_journal_notes", {}).get(self._note_id)
+                    )
+                else:
+                    self._after_note_dict = None
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Delete harvest entry")
 
     def execute(self) -> None:
-        if self._prior_history_dict is None:
+        if not self._prepared:
             return
-        history = self._HarvestHistory.from_dict(self._prior_history_dict)
-        history.records = [r for r in history.records if r.id != self._record_id]
-        if history.records:
-            self._pm.set_harvest_history(self._target_id, history)
-        else:
-            # Drop the whole key rather than leave a phantom empty history.
+        if self._after_history_dict is None:
             self._pm.restore_harvest_history(self._target_id, None)
+        else:
+            self._pm.restore_harvest_history(
+                self._target_id, deepcopy(self._after_history_dict)
+            )
         if self._note_id:
-            self._pm.delete_journal_note(self._note_id)
+            self._pm.restore_journal_note(
+                self._note_id, deepcopy(self._after_note_dict)
+            )
 
     def undo(self) -> None:
-        self._pm.restore_harvest_history(self._target_id, self._prior_history_dict)
+        self._pm.restore_harvest_history(
+            self._target_id, deepcopy(self._prior_history_dict)
+        )
         if self._note_id:
-            self._pm.restore_journal_note(self._note_id, self._prior_note_dict)
+            self._pm.restore_journal_note(
+                self._note_id, deepcopy(self._prior_note_dict)
+            )
+
+
+class SetTaskStatusCommand(Command):
+    """Replace one task's status through ProjectManager's shared write path."""
+
+    def __init__(
+        self,
+        project_manager: "Any",
+        task_id_or_change: "Any",
+        status: str | None = None,
+        *,
+        done_date: str | None = None,
+        snooze_until: str | None = None,
+    ) -> None:
+        from open_garden_planner.services.task_status import (
+            TaskStatusChange,
+            prepare_task_status,
+        )
+
+        self._pm = project_manager
+        if isinstance(task_id_or_change, TaskStatusChange):
+            if status is not None or done_date is not None or snooze_until is not None:
+                raise ValueError("A prepared status change cannot include status fields.")
+            self._change = task_id_or_change
+        else:
+            if status is None:
+                raise ValueError("status is required when no change is prepared.")
+            self._change = prepare_task_status(
+                project_manager.task_states,
+                str(task_id_or_change),
+                status,
+                done_date=done_date,
+                snooze_until=snooze_until,
+            )
+
+    @property
+    def description(self) -> str:
+        return QCoreApplication.translate("Commands", "Set task status")
+
+    def execute(self) -> None:
+        if self._change.is_noop:
+            return
+        after = self._change.after or {}
+        self._pm.set_task_status(
+            self._change.task_id,
+            after.get("status", "open"),
+            done_date=after.get("done_date"),
+            snooze_until=after.get("snooze_until"),
+        )
+
+    def undo(self) -> None:
+        if self._change.is_noop:
+            return
+        self._pm.restore_task_status(
+            self._change.task_id, deepcopy(self._change.before)
+        )
 
 
 class SetSuccessionPlanCommand(Command):
@@ -2801,30 +2956,49 @@ class SetSuccessionPlanCommand(Command):
         self,
         project_manager: "Any",
         bed_id: str,
-        new_plan: "Any",  # SuccessionPlan | None
+        new_plan: "Any",  # SuccessionPlan | SuccessionChange | None
     ) -> None:
+        from open_garden_planner.services.succession_operations import (
+            SuccessionChange,
+            prepare_succession_change,
+        )
+
         self._pm = project_manager
         self._bed_id = bed_id
-        self._new: dict[str, Any] | None = (
-            new_plan.to_dict() if new_plan is not None else None
-        )
-        existing = self._pm.succession_plans.get(bed_id)
-        self._old: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
-        )
+        if isinstance(new_plan, SuccessionChange):
+            if new_plan.bed_id != bed_id:
+                raise ValueError(
+                    f"Prepared bed {new_plan.bed_id!r} does not match {bed_id!r}."
+                )
+            self._change = new_plan
+        else:
+            self._change = prepare_succession_change(
+                self._pm.succession_plans,
+                bed_id=bed_id,
+                new_plan=new_plan,
+                allow_overlap=True,
+            )
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Set succession plan")
 
     def execute(self) -> None:
-        if self._new is None:
+        if self._change.is_noop:
+            return
+        if self._change.after is None:
             self._pm.restore_succession_plan(self._bed_id, None)
         else:
-            self._pm.set_succession_plan(self._bed_id, self._new)
+            self._pm.set_succession_plan(
+                self._bed_id, deepcopy(self._change.after)
+            )
 
     def undo(self) -> None:
-        self._pm.restore_succession_plan(self._bed_id, self._old)
+        if self._change.is_noop:
+            return
+        self._pm.restore_succession_plan(
+            self._bed_id, deepcopy(self._change.before)
+        )
 
 
 class AddJournalNoteCommand(Command):
@@ -2847,6 +3021,27 @@ class AddJournalNoteCommand(Command):
         self._scene = scene
         self._pin = pin_item
         self._note = note
+        self._prior_note_dict = deepcopy(
+            self._pm.garden_journal_notes.get(note.id)
+        )
+        from open_garden_planner.services.record_operations import (
+            prepare_command_record_change,
+        )
+
+        fields = note.to_dict()
+        position = {
+            "scene_x": fields.pop("scene_x", 0.0),
+            "scene_y": fields.pop("scene_y", 0.0),
+        }
+        candidate, _result = prepare_command_record_change(
+            self._pm, "add_journal_note", note.id, fields
+        )
+        self._after_note_dict = deepcopy(
+            candidate["garden_journal_notes"][note.id]
+        )
+        # The Qt adapter owns coordinates and the pin object; body validation
+        # and future-field preservation still come from the pure planner.
+        self._after_note_dict.update(position)
 
     @property
     def description(self) -> str:
@@ -2855,10 +3050,12 @@ class AddJournalNoteCommand(Command):
     def execute(self) -> None:
         if self._pin.scene() is None:
             self._scene.addItem(self._pin)
-        self._pm.set_journal_note(self._note)
+        self._pm.restore_journal_note(self._note.id, deepcopy(self._after_note_dict))
 
     def undo(self) -> None:
-        self._pm.delete_journal_note(self._note.id)
+        self._pm.restore_journal_note(
+            self._note.id, deepcopy(self._prior_note_dict)
+        )
         if self._pin.scene() is not None:
             self._scene.removeItem(self._pin)
 
@@ -2880,20 +3077,41 @@ class EditJournalNoteCommand(Command):
         self._new_note = new_note
         existing = self._pm.garden_journal_notes.get(new_note.id)
         self._old_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
+        self._after_dict: dict[str, Any] | None = None
+        if self._old_dict is not None:
+            from open_garden_planner.services.record_operations import (
+                prepare_command_record_change,
+            )
+
+            fields = new_note.to_dict()
+            fields.pop("scene_x", None)
+            fields.pop("scene_y", None)
+            fields["photo_path"] = new_note.photo_path
+            fields["tags"] = list(new_note.tags)
+            candidate, _result = prepare_command_record_change(
+                self._pm, "edit_journal_note", new_note.id, fields
+            )
+            self._after_dict = deepcopy(
+                candidate["garden_journal_notes"][new_note.id]
+            )
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Edit garden journal note")
 
     def execute(self) -> None:
-        if self._old_dict is None:
+        if self._after_dict is None:
             return
-        self._pm.set_journal_note(self._new_note)
+        self._pm.restore_journal_note(
+            self._new_note.id, deepcopy(self._after_dict)
+        )
 
     def undo(self) -> None:
-        self._pm.restore_journal_note(self._new_note.id, self._old_dict)
+        self._pm.restore_journal_note(
+            self._new_note.id, deepcopy(self._old_dict)
+        )
 
 
 class DeleteJournalNoteCommand(Command):
@@ -2911,38 +3129,101 @@ class DeleteJournalNoteCommand(Command):
         self._note_id = pin_item.note_id
         existing = self._pm.garden_journal_notes.get(self._note_id)
         self._old_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+            deepcopy(existing) if existing is not None else None
         )
+        self._prepared_delete = self._old_dict is not None
+        if self._prepared_delete:
+            from open_garden_planner.services.record_operations import (
+                prepare_command_record_change,
+            )
+
+            candidate, _result = prepare_command_record_change(
+                self._pm, "delete_journal_note", self._note_id, {}
+            )
+            self._after_dict = deepcopy(
+                candidate["garden_journal_notes"].get(self._note_id)
+            )
+        else:
+            self._after_dict = None
 
     @property
     def description(self) -> str:
         return QCoreApplication.translate("Commands", "Delete garden journal note")
 
     def execute(self) -> None:
-        self._pm.delete_journal_note(self._note_id)
+        if self._prepared_delete:
+            self._pm.restore_journal_note(
+                self._note_id, deepcopy(self._after_dict)
+            )
         if self._pin.scene() is not None:
             self._scene.removeItem(self._pin)
 
     def undo(self) -> None:
-        if self._old_dict is not None:
-            self._pm.restore_journal_note(self._note_id, self._old_dict)
+        if self._prepared_delete and self._old_dict is not None:
+            self._pm.restore_journal_note(
+                self._note_id, deepcopy(self._old_dict)
+            )
         if self._pin.scene() is None:
             self._scene.addItem(self._pin)
+
+
+def _prepare_manual_task_command_change(
+    project_manager: Any,
+    operation: str,
+    task_or_change: Any = None,
+    task_id: str | None = None,
+) -> Any:
+    """Adapt legacy command arguments to the shared pure task preparer."""
+    from open_garden_planner.services.task_operations import (
+        ManualTaskChange,
+        prepare_manual_task_change,
+    )
+
+    if isinstance(task_or_change, ManualTaskChange):
+        if task_or_change.operation != operation:
+            raise ValueError(
+                f"Expected a prepared {operation!r} change, received "
+                f"{task_or_change.operation!r}."
+            )
+        if task_or_change.after is None and operation != "delete":
+            raise ValueError("The prepared change does not contain a task to write.")
+        if operation == "delete" and task_or_change.after is not None:
+            raise ValueError("The prepared change does not delete a task.")
+        return task_or_change
+
+    if operation == "delete":
+        resolved_id = task_id if task_id is not None else str(task_or_change or "")
+        return prepare_manual_task_change(
+            project_manager.manual_tasks,
+            operation="delete",
+            task_id=resolved_id,
+        )
+
+    task = task_or_change
+    if task is None:
+        raise ValueError("A manual task is required.")
+    return prepare_manual_task_change(
+        project_manager.manual_tasks,
+        operation=operation,
+        task_id=getattr(task, "id", None),
+        date=getattr(task, "date", None),
+        title=getattr(task, "title", None),
+        notes=getattr(task, "notes", None),
+        bed_id=getattr(task, "bed_id", None),
+    )
 
 
 class AddManualTaskCommand(Command):
     """Add a manual task — undoable (US-C2, #188).
 
-    Snapshots any prior task with the same id on construction so undo restores
-    the exact pre-state (normally absence, for a brand-new task).
+    The shared preparer refuses an id collision and snapshots the exact change
+    on construction so undo restores the pre-state (absence for an add).
     """
 
     def __init__(self, project_manager: "Any", task: "Any") -> None:
         self._pm = project_manager
-        self._task = task
-        existing = self._pm.manual_tasks.get(task.id)
-        self._prior_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+        self._change = _prepare_manual_task_command_change(
+            project_manager, "add", task
         )
 
     @property
@@ -2950,10 +3231,10 @@ class AddManualTaskCommand(Command):
         return QCoreApplication.translate("Commands", "Add task")
 
     def execute(self) -> None:
-        self._pm.set_manual_task(self._task)
+        self._pm.restore_manual_task(self._change.task_id, deepcopy(self._change.after))
 
     def undo(self) -> None:
-        self._pm.restore_manual_task(self._task.id, self._prior_dict)
+        self._pm.restore_manual_task(self._change.task_id, deepcopy(self._change.before))
 
 
 class EditManualTaskCommand(Command):
@@ -2961,10 +3242,8 @@ class EditManualTaskCommand(Command):
 
     def __init__(self, project_manager: "Any", new_task: "Any") -> None:
         self._pm = project_manager
-        self._new_task = new_task
-        existing = self._pm.manual_tasks.get(new_task.id)
-        self._prior_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+        self._change = _prepare_manual_task_command_change(
+            project_manager, "edit", new_task
         )
 
     @property
@@ -2972,10 +3251,10 @@ class EditManualTaskCommand(Command):
         return QCoreApplication.translate("Commands", "Edit task")
 
     def execute(self) -> None:
-        self._pm.set_manual_task(self._new_task)
+        self._pm.restore_manual_task(self._change.task_id, deepcopy(self._change.after))
 
     def undo(self) -> None:
-        self._pm.restore_manual_task(self._new_task.id, self._prior_dict)
+        self._pm.restore_manual_task(self._change.task_id, deepcopy(self._change.before))
 
 
 class DeleteManualTaskCommand(Command):
@@ -2983,10 +3262,8 @@ class DeleteManualTaskCommand(Command):
 
     def __init__(self, project_manager: "Any", task_id: str) -> None:
         self._pm = project_manager
-        self._task_id = task_id
-        existing = self._pm.manual_tasks.get(task_id)
-        self._prior_dict: dict[str, Any] | None = (
-            dict(existing) if existing is not None else None
+        self._change = _prepare_manual_task_command_change(
+            project_manager, "delete", task_id=task_id
         )
 
     @property
@@ -2994,7 +3271,7 @@ class DeleteManualTaskCommand(Command):
         return QCoreApplication.translate("Commands", "Delete task")
 
     def execute(self) -> None:
-        self._pm.delete_manual_task(self._task_id)
+        self._pm.restore_manual_task(self._change.task_id, deepcopy(self._change.after))
 
     def undo(self) -> None:
-        self._pm.restore_manual_task(self._task_id, self._prior_dict)
+        self._pm.restore_manual_task(self._change.task_id, deepcopy(self._change.before))
