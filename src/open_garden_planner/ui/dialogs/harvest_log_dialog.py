@@ -245,6 +245,7 @@ class HarvestLogDialog(ResponsiveDialog):
 
     def _build_history_row(self, rec: HarvestRecord) -> QWidget:
         row = QWidget()
+        row.setProperty("agent_record", {"kind": "harvest", "id": rec.id, "target_id": self._target_id})
         h = QHBoxLayout(row)
         h.setContentsMargins(12, 0, 0, 0)
         h.setSpacing(4)

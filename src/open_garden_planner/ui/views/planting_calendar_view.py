@@ -451,6 +451,24 @@ class _GanttWidget(QWidget):
         """Total row height per plant (including propagation sub-row if enabled)."""
         return _ROW_H + (_PROP_ROW_H if self._show_propagation else 0)
 
+    def agent_ui_state(self) -> dict:
+        """Semantic read-only projection of this custom-painted chart for MCP.
+
+        Bounds are widget-local logical pixels for interact_ui(click). Windows
+        come from the same generator snapshot as the painting, not new advice.
+        """
+        return {
+            "year": self._year, "selected_row": self._selected,
+            "propagation_visible": self._show_propagation,
+            "rows": [{
+                "row": index, "species_key": row.species_key, "name": row.display_name,
+                "bounds": {"x": 0, "y": _HEADER_H + index * self.effective_row_h,
+                           "width": _NAME_W, "height": self.effective_row_h},
+                "planned_windows": [{"type": w.task_type, "start": w.start.isoformat(), "end": w.end.isoformat()}
+                                    for w in getattr(self, "_windows", {}).get(row.species_key, ())],
+            } for index, row in enumerate(self._rows)],
+        }
+
     def set_data(
         self,
         rows: list[_PlantRow],
@@ -809,6 +827,7 @@ class _DetailPanel(QFrame):
             row_layout.addWidget(lbl)
 
             start_edit = QDateEdit()
+            start_edit.setObjectName(f"propagation_{step_id}_start")
             start_edit.setLocale(QLocale(active_language()))
             start_edit.setCalendarPopup(True)
             start_edit.setDisplayFormat("dd MMM")
@@ -821,6 +840,7 @@ class _DetailPanel(QFrame):
                 dash.setStyleSheet("font-size: 8pt;")
                 row_layout.addWidget(dash)
                 end_edit = QDateEdit()
+                end_edit.setObjectName(f"propagation_{step_id}_end")
                 end_edit.setLocale(QLocale(active_language()))
                 end_edit.setCalendarPopup(True)
                 end_edit.setDisplayFormat("dd MMM")
@@ -828,6 +848,7 @@ class _DetailPanel(QFrame):
                 row_layout.addWidget(end_edit)
 
             reset_btn = QPushButton()  # provider refresh icon (was "↺", #310)
+            reset_btn.setObjectName(f"propagation_{step_id}_reset")
             reset_icon = get_icon("refresh")
             if reset_icon is not None:
                 reset_btn.setIcon(reset_icon)

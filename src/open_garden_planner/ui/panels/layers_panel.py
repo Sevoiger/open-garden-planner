@@ -343,6 +343,7 @@ class LayersPanel(QWidget):
 
         for layer in self._layers:
             item = QListWidgetItem(self.layer_list)
+            item.setData(Qt.ItemDataRole.UserRole, str(layer.id))
             widget = LayerListItem(layer)
             widget.visibility_changed.connect(self.layer_visibility_changed.emit)
             widget.lock_changed.connect(self.layer_lock_changed.emit)

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     )
     from open_garden_planner.core.project import ProjectManager
     from open_garden_planner.models.layer import Layer
+    from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 
 
 class Command(ABC):
@@ -540,6 +541,28 @@ class MoveItemsCommand(Command):
         """Move items back by negative delta."""
         for item in self._items:
             item.moveBy(-self._delta.x(), -self._delta.y())
+
+
+class ResizeCanvasCommand(Command):
+    """Change plan dimensions without moving or resizing its contents."""
+
+    def __init__(self, scene: "CanvasScene", width_cm: float, height_cm: float) -> None:
+        from open_garden_planner.core.plan_io import validate_canvas_size
+
+        validate_canvas_size(width_cm, height_cm)
+        self._scene = scene
+        self._old = (scene.width_cm, scene.height_cm)
+        self._new = (width_cm, height_cm)
+
+    @property
+    def description(self) -> str:
+        return QCoreApplication.translate("GardenPlannerApp", "Canvas Size")
+
+    def execute(self) -> None:
+        self._scene.resize_canvas(*self._new)
+
+    def undo(self) -> None:
+        self._scene.resize_canvas(*self._old)
 
 
 class SetNorthAngleCommand(Command):

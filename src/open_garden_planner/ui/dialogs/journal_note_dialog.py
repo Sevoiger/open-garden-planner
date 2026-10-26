@@ -85,8 +85,11 @@ class JournalNoteDialog(ResponsiveDialog):
         form.addRow(self.tr("Date"), self._date_edit)
         layout.addLayout(form)
 
-        layout.addWidget(QLabel(self.tr("Note")))
+        text_label = QLabel(self.tr("Note"))
+        layout.addWidget(text_label)
         self._text_edit = QPlainTextEdit()
+        self._text_edit.setObjectName("journal_note_text")
+        text_label.setBuddy(self._text_edit)
         self._text_edit.setPlaceholderText(
             self.tr("What happened here? Observations, weather, plans…")
         )

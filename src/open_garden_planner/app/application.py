@@ -555,11 +555,10 @@ class GardenPlannerApp(QMainWindow):
         things in order, and skipping any of them ships a subtly broken object:
         build the item, apply the species, auto-populate its species metadata
         from the bundled DB (so the plant-detail panel and US-12.10d
-        soil-mismatch warnings light up without a manual "Suchen"), stamp
-        today's planting date (US-E8 — deliberately OUTSIDE the species guard,
-        so a placeholder that gains a species later is not left permanently
-        undated, which would break the growth model), and assign the active
-        layer.
+        soil-mismatch warnings light up without a manual "Suchen"), and assign
+        the active layer. Unlike the GUI's drawing convenience, agent creation
+        leaves the planting date unknown: drawing a plant is not evidence it
+        was planted today. set_planting_date records an explicitly known date.
 
         The item itself is built by ``_deserialize_item_core`` — the file
         loader's own factory — so an agent-created object is constructed by
@@ -578,11 +577,8 @@ class GardenPlannerApp(QMainWindow):
         (all in the Qt-free ``creates`` module), or a locked active layer — the
         GUI can't draw onto a locked layer either.
         """
-        from datetime import date
-
         from open_garden_planner.agent_api import creates
         from open_garden_planner.core.commands import CreateItemCommand, CreateItemsCommand
-        from open_garden_planner.core.growth_model import stamp_default_planting_date
 
         if species and not creates.is_plant_type_name(object_type):
             # The only silent-ignore an otherwise loud tool would have had.
@@ -617,16 +613,13 @@ class GardenPlannerApp(QMainWindow):
         if item is None:
             raise ValueError(f"Could not build a {object_type} from those parameters.")
 
-        if creates.is_plant_type_name(object_type):
-            if species:
-                from open_garden_planner.services.bundled_species_db import (
-                    populate_item_species_metadata,
-                )
+        if creates.is_plant_type_name(object_type) and species:
+            from open_garden_planner.services.bundled_species_db import (
+                populate_item_species_metadata,
+            )
 
-                item.plant_species = species
-                populate_item_species_metadata(item, species)
-            # US-E8: every new plant is dated, species or not (see docstring).
-            stamp_default_planting_date(item.metadata, date.today())
+            item.plant_species = species
+            populate_item_species_metadata(item, species)
 
         linked_items: list[Any] = []
         if object_type == "HOUSE":
@@ -6010,7 +6003,11 @@ class GardenPlannerApp(QMainWindow):
         if dialog.exec():
             width_cm = dialog.width_cm
             height_cm = dialog.height_cm
-            self.canvas_scene.resize_canvas(width_cm, height_cm)
+            if (width_cm, height_cm) == (self.canvas_scene.width_cm, self.canvas_scene.height_cm):
+                return
+            from open_garden_planner.core.commands import ResizeCanvasCommand
+
+            self.canvas_view.command_manager.execute(ResizeCanvasCommand(self.canvas_scene, width_cm, height_cm))
             self.canvas_view.fit_in_view()
 
             width_m = width_cm / 100.0
@@ -8664,10 +8661,10 @@ class GardenPlannerApp(QMainWindow):
         )
         if file_path:
             try:
+                from open_garden_planner.core.commands import CreateItemCommand
                 from open_garden_planner.ui.canvas.items import BackgroundImageItem
 
                 image_item = BackgroundImageItem(file_path)
-                self.canvas_scene.addItem(image_item)
 
                 # Center the image on the canvas
                 canvas_center = self.canvas_scene.canvas_rect.center()
@@ -8677,7 +8674,9 @@ class GardenPlannerApp(QMainWindow):
                     canvas_center.y() - image_rect.height() / 2,
                 )
 
-                self._project_manager.mark_dirty()
+                self.canvas_view.command_manager.execute(
+                    CreateItemCommand(self.canvas_scene, image_item, self.tr("Import Background Image"))
+                )
                 self.statusBar().showMessage(self.tr("Imported: {path}").format(path=file_path))
             except Exception as e:
                 QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to import image:\n{error}").format(error=e))

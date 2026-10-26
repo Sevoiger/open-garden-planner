@@ -1243,12 +1243,13 @@ class ProjectManager(QObject):
             new_file_path: Where to write the new .ogp file
             keep_plants: Whether to copy plant objects to the new season
         """
+        new_file_path = new_file_path.with_suffix(".ogp")
+        if self._current_file and new_file_path.resolve() == self._current_file.resolve():
+            raise ValueError("A new season must use a different project file")
         if self._garden_memory:
             # Perennial mode is activated by an explicit tracking edit. Keep
             # every identity and all journal/observation data across years.
             target = new_file_path.with_suffix(".ogp")
-            if self._current_file and target.resolve() == self._current_file.resolve():
-                raise ValueError("A new season must use a different project file")
             data = self._build_project_data(scene)
             data.season_year = new_year
             from open_garden_planner.services.garden_archive import copy_relative_media
@@ -1256,11 +1257,11 @@ class ProjectManager(QObject):
             payload = data.to_dict()
             if self._current_file:
                 copy_relative_media(payload, self._current_file.parent, target.parent)
-            write_plan(target, payload)
+            self._write_new_season(data, new_year, target)
             return
 
         # Serialize the current scene
-        current_data = self._serialize_scene(scene)
+        current_data = self._build_project_data(scene)
         current_data.auto_assign_permaculture_layers = self.auto_assign_permaculture_layers
         current_data.north_angle_deg = self._north_angle_deg
         current_data.location = self._location
@@ -1335,8 +1336,22 @@ class ProjectManager(QObject):
                 carried_states[tid] = {"status": "open", "snooze_until": snooze}
         current_data.task_states = carried_states
 
+        self._write_new_season(current_data, new_year, new_file_path)
+
+    def _write_new_season(self, current_data: ProjectData, new_year: int, new_file_path: Path) -> None:
+        """Write both season links for legacy and perennial tracking alike."""
+
         # Build linked_seasons: include all previous links + current season
-        linked = list(self._linked_seasons)
+        linked = deepcopy(self._linked_seasons)
+        if self._current_file:
+            for season in linked:
+                reference = Path(season.get("file", ""))
+                if season.get("file") and not reference.is_absolute():
+                    resolved = (self._current_file.parent / reference).resolve()
+                    try:
+                        season["file"] = str(resolved.relative_to(new_file_path.parent.resolve()))
+                    except ValueError:
+                        season["file"] = str(resolved)
         if self._current_file is not None and self._season_year is not None:
             # Add current season to the list (use relative path if same dir)
             try:
@@ -1373,8 +1388,13 @@ class ProjectManager(QObject):
                     write_plan(self._current_file, source_raw)
                     # Also update in-memory linked_seasons
                     self._linked_seasons = source_linked
-            except Exception:
-                pass  # Don't let source-update failure break new-season creation
+            except Exception as exc:
+                # The target already exists; never claim the whole operation
+                # succeeded when its reverse link could not be saved.
+                raise RuntimeError(
+                    f"Season created at {new_file_path}, but the link in {self._current_file} "
+                    f"could not be updated: {exc or type(exc).__name__}"
+                ) from exc
 
     @staticmethod
     def _is_plant_object(obj: dict[str, Any]) -> bool:

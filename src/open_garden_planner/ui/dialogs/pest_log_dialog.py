@@ -152,8 +152,11 @@ class PestLogDialog(ResponsiveDialog):
         layout.addLayout(form)
 
         # Notes — multi-line so users can describe affected plants and other context.
-        layout.addWidget(QLabel(self.tr("Notes")))
+        notes_label = QLabel(self.tr("Notes"))
+        layout.addWidget(notes_label)
         self._notes_edit = QPlainTextEdit()
+        self._notes_edit.setObjectName("pest_log_notes")
+        notes_label.setBuddy(self._notes_edit)
         self._notes_edit.setFixedHeight(60)
         layout.addWidget(self._notes_edit)
 
@@ -236,6 +239,7 @@ class PestLogDialog(ResponsiveDialog):
 
     def _build_history_row(self, rec: PestLogRecord) -> QWidget:
         row = QWidget()
+        row.setProperty("agent_record", {"kind": "pest_disease", "id": rec.id, "target_id": self._target_id})
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)

@@ -12,8 +12,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import (
@@ -51,6 +53,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QAbstractItemDelegate,
     QAbstractItemView,
     QAbstractSlider,
     QApplication,
@@ -60,7 +63,9 @@ from PyQt6.QtWidgets import (
     QDateTimeEdit,
     QDialog,
     QDoubleSpinBox,
+    QFormLayout,
     QGraphicsView,
+    QGroupBox,
     QLabel,
     QLineEdit,
     QMenu,
@@ -90,6 +95,55 @@ def _text(value: Any) -> str:
     if not isinstance(value, str):
         raise ValueError("Expected text")
     return value
+
+
+def _json_data(value: Any, max_length: int = 16384) -> Any:
+    """Expose JSON role data only; never stringify opaque Qt/Python objects."""
+    def known_scalar(obj: Any) -> str:
+        if isinstance(obj, (Path, UUID)):
+            return str(obj)
+        raise TypeError("Opaque role data")
+
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, default=known_scalar)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return json.loads(encoded) if len(encoded) <= max_length else None
+
+
+def _field_label(widget: QWidget) -> str:
+    """Recover labels for direct and composite QFormLayout fields."""
+    current = widget
+    while (parent := current.parentWidget()) is not None:
+        for label in parent.findChildren(QLabel, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if label.buddy() is current:
+                return label.text()
+        layouts = [parent.layout()] if parent.layout() is not None else []
+        while layouts:
+            layout = layouts.pop()
+            if isinstance(layout, QFormLayout):
+                for row in range(layout.rowCount()):
+                    field = layout.itemAt(row, QFormLayout.ItemRole.FieldRole)
+                    if field is None:
+                        continue
+                    fields = [field]
+                    contains = False
+                    while fields:
+                        child = fields.pop()
+                        if child.widget() is current:
+                            contains = True
+                            break
+                        nested = child.layout()
+                        if nested is not None:
+                            fields.extend(nested.itemAt(i) for i in range(nested.count()))
+                    if contains:
+                        label = layout.itemAt(row, QFormLayout.ItemRole.LabelRole)
+                        if label is not None and isinstance(label.widget(), QLabel):
+                            return label.widget().text()
+            layouts.extend(item.layout() for i in range(layout.count())
+                           if (item := layout.itemAt(i)) is not None and item.layout() is not None)
+        current = parent
+    return ""
 
 
 class ApplicationUiController:
@@ -184,7 +238,8 @@ class ApplicationUiController:
         self._resolve(args["action_id"] if kind == "action" else args["widget_id"])
         identity = str(uuid4())
         receipt = {"operation_id": identity, "session_id": self.session,
-                   "status": "queued", "operation": kind}
+                   "status": "queued", "operation": kind,
+                   "request_key": request_key, "queued_at": datetime.now(UTC).isoformat()}
         self._operations[identity] = receipt
         self._requests[request_key] = (fingerprint, identity)
 
@@ -193,6 +248,7 @@ class ApplicationUiController:
                 receipt.update(status="failed", error="UI session ended before execution")
                 return
             receipt["status"] = "running"
+            receipt["started_at"] = datetime.now(UTC).isoformat()
             try:
                 QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
                 if kind == "action":
@@ -202,9 +258,12 @@ class ApplicationUiController:
                 else:
                     self._interact(args["widget_id"], args["action"], args.get("parameters", {}))
             except Exception as exc:  # Boundary: report application/input failures to the remote client.
-                receipt.update(status="failed", error=str(exc))
+                receipt.update(status="failed", error=str(exc) or type(exc).__name__,
+                               error_type=type(exc).__name__)
             else:
                 receipt["status"] = "completed"
+            finally:
+                receipt["finished_at"] = datetime.now(UTC).isoformat()
 
         QTimer.singleShot(0, run)
         return dict(receipt)
@@ -340,24 +399,57 @@ class ApplicationUiController:
                                        if v["status"] in {"queued", "running"}]}
 
     def _describe_widget(self, widget: QWidget, node: dict[str, Any]) -> None:
+        record = widget.property("agent_record")
+        if record is not None:
+            node["record"] = _json_data(record)
+        semantic_state = getattr(widget, "agent_ui_state", None)
+        if callable(semantic_state):
+            node["custom_state"] = _json_data(semantic_state(), max_length=1_000_000)
+        node["label"] = _field_label(widget)
+        groups = []
+        parent = widget.parentWidget()
+        while parent is not None:
+            if isinstance(parent, QGroupBox):
+                groups.append(parent.title())
+            parent = parent.parentWidget()
+        node["groups"] = list(reversed(groups))
         if isinstance(widget, QMenu):
             node["text"] = widget.title()
         elif isinstance(widget, QLineEdit):
             node.update(value=widget.text() if widget.echoMode() == QLineEdit.EchoMode.Normal else "<redacted>",
                         read_only=widget.isReadOnly(), placeholder=widget.placeholderText())
         elif isinstance(widget, (QTextEdit, QPlainTextEdit)):
-            node.update(value=widget.toPlainText(), read_only=widget.isReadOnly())
+            node.update(value=widget.toPlainText(), read_only=widget.isReadOnly(), placeholder=widget.placeholderText())
         elif isinstance(widget, (QLabel, QAbstractButton)):
             node["text"] = widget.text()
             if isinstance(widget, QAbstractButton):
                 node.update(checkable=widget.isCheckable(), checked=widget.isChecked())
         elif isinstance(widget, QComboBox):
             node.update(value=widget.currentText(), current_index=widget.currentIndex(),
-                        choices=[{"index": i, "text": widget.itemText(i)} for i in range(widget.count())])
+                        editable=widget.isEditable(),
+                        choices=[{"index": i, "text": widget.itemText(i),
+                                  "user_data": _json_data(widget.itemData(i))} for i in range(widget.count())])
         elif isinstance(widget, (QSpinBox, QDoubleSpinBox, QAbstractSlider)):
             node.update(value=widget.value(), minimum=widget.minimum(), maximum=widget.maximum())
+            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                special = bool(widget.specialValueText()) and widget.value() == widget.minimum()
+                node.update(display_text=widget.text(), special_value_text=widget.specialValueText(),
+                            value_is_special=special)
+                if special:
+                    node.update(raw_value=widget.value(), value=None)
         elif isinstance(widget, QDateTimeEdit):
-            node["value"] = widget.dateTime().toString(Qt.DateFormat.ISODate)
+            is_date = isinstance(widget, QDateEdit)
+            current = widget.date() if is_date else widget.dateTime()
+            minimum = widget.minimumDate() if is_date else widget.minimumDateTime()
+            maximum = widget.maximumDate() if is_date else widget.maximumDateTime()
+            special = bool(widget.specialValueText()) and current == minimum
+            raw = current.toString(Qt.DateFormat.ISODate)
+            node.update(value=None if special else raw, display_text=widget.text(),
+                        minimum=minimum.toString(Qt.DateFormat.ISODate),
+                        maximum=maximum.toString(Qt.DateFormat.ISODate),
+                        special_value_text=widget.specialValueText(), value_is_special=special)
+            if special:
+                node["raw_value"] = raw
         elif isinstance(widget, (QTabWidget, QTabBar)):
             node.update(current_index=widget.currentIndex(), choices=[
                 {"index": i, "text": widget.tabText(i), "enabled": widget.isTabEnabled(i)}
@@ -377,13 +469,17 @@ class ApplicationUiController:
             node["selected_item_ids"] = [str(i.item_id) for i in scene.selectedItems()
                                           if hasattr(i, "item_id")] if scene is not None else []
 
-    @staticmethod
-    def _model_rows(view: QAbstractItemView, parent: QModelIndex, start: int, count: int = 50) -> dict[str, Any]:
+    def _model_rows(self, view: QAbstractItemView, parent: QModelIndex, start: int, count: int = 50) -> dict[str, Any]:
         model = view.model()
         if model is None:
             return {"row_count": 0, "column_count": 0, "rows": []}
         rows = model.rowCount(parent)
         columns = 1 if isinstance(model, QAbstractListModel) else model.columnCount(parent)
+        parent_path = []
+        ancestor = parent
+        while ancestor.isValid():
+            parent_path.insert(0, ancestor.row())
+            ancestor = ancestor.parent()
         data = []
         for row in range(start, min(rows, start + count)):
             cells = []
@@ -392,13 +488,30 @@ class ApplicationUiController:
                 value = model.data(index, Qt.ItemDataRole.DisplayRole)
                 check = model.data(index, Qt.ItemDataRole.CheckStateRole)
                 flags = model.flags(index)
+                embedded = view.indexWidget(index)
+                if (value is None or value == "") and embedded is not None:
+                    # setItemWidget rows often have no DisplayRole at all.
+                    labels = [embedded, *embedded.findChildren(QLabel)]
+                    value = embedded.accessibleName() or " · ".join(
+                        label.text() for label in labels
+                        if isinstance(label, QLabel) and not label.isHidden() and label.text())
                 cells.append({"column": column, "text": str(value) if value is not None else "",
+                              "user_data": _json_data(model.data(index, Qt.ItemDataRole.UserRole)),
+                              "accessible_text": _json_data(model.data(index, Qt.ItemDataRole.AccessibleTextRole)),
+                              "tooltip": _json_data(model.data(index, Qt.ItemDataRole.ToolTipRole)),
+                              "widget_id": self._remember(embedded) if embedded is not None else None,
+                              "enabled": bool(flags & Qt.ItemFlag.ItemIsEnabled),
+                              "selectable": bool(flags & Qt.ItemFlag.ItemIsSelectable),
                               "editable": bool(flags & Qt.ItemFlag.ItemIsEditable),
                               "check_state": check.value if isinstance(check, Qt.CheckState) else check})
-            data.append({"row": row, "cells": cells,
+            data.append({"row": row, "index_path": [*parent_path, row], "cells": cells,
+                         "header": _json_data(model.headerData(row, Qt.Orientation.Vertical)),
                          "child_count": model.rowCount(model.index(row, 0, parent))})
         selection_model = view.selectionModel()
         return {"row_count": rows, "column_count": columns, "start": start, "rows": data,
+                "headers": [_json_data(model.headerData(c, Qt.Orientation.Horizontal))
+                            for c in range(min(columns, 50))],
+                "has_more": start + len(data) < rows, "columns_truncated": columns > 50,
                 "selected_rows": sorted({i.row() for i in selection_model.selectedIndexes()}) if selection_model else []}
 
     @staticmethod
@@ -423,6 +536,10 @@ class ApplicationUiController:
     def _set_value(self, identity: str, value: Any) -> None:
         widget = self._resolve(identity, QWidget)
         self._modal_guard(widget)
+        # A closed modal can leave the owner inactive until the window system
+        # returns focus. setFocus alone then changes text without FocusOut or
+        # editingFinished, so the receipt succeeds while the model stays old.
+        QApplication.setActiveWindow(widget.window())
         if isinstance(widget, QLineEdit):
             if widget.isReadOnly():
                 raise ValueError("Text field is read only")
@@ -456,6 +573,12 @@ class ApplicationUiController:
                 index = _integer(value["index"])
             else:
                 index = widget.findText(_text(value), Qt.MatchFlag.MatchExactly)
+                if index < 0 and widget.isEditable():
+                    editor = widget.lineEdit()
+                    if editor is None:
+                        raise ValueError("Editable combo has no text editor")
+                    self._set_value(self._remember(editor), value)
+                    return
             if not 0 <= index < widget.count():
                 raise ValueError("Unknown combo choice")
             model = widget.model()
@@ -469,7 +592,10 @@ class ApplicationUiController:
             if not sip.isdeleted(widget):
                 widget.activated.emit(index)
         elif isinstance(widget, (QSpinBox, QDoubleSpinBox, QAbstractSlider)):
-            number = _number(value) if isinstance(widget, QDoubleSpinBox) else _integer(value)
+            if value is None and isinstance(widget, (QSpinBox, QDoubleSpinBox)) and widget.specialValueText():
+                number = widget.minimum()
+            else:
+                number = _number(value) if isinstance(widget, QDoubleSpinBox) else _integer(value)
             if not widget.minimum() <= number <= widget.maximum():
                 raise ValueError("Number is outside the control's range")
             widget.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -485,13 +611,13 @@ class ApplicationUiController:
             else:
                 widget.setValue(int(number))
         elif isinstance(widget, QDateEdit):
-            day = QDate.fromString(_text(value), Qt.DateFormat.ISODate)
+            day = widget.minimumDate() if value is None and widget.specialValueText() else QDate.fromString(_text(value), Qt.DateFormat.ISODate)
             if not day.isValid() or not widget.minimumDate() <= day <= widget.maximumDate():
                 raise ValueError("Invalid or out of range ISO date")
             widget.setFocus(Qt.FocusReason.OtherFocusReason)
             widget.setDate(day)
         elif isinstance(widget, QDateTimeEdit):
-            instant = QDateTime.fromString(_text(value), Qt.DateFormat.ISODate)
+            instant = widget.minimumDateTime() if value is None and widget.specialValueText() else QDateTime.fromString(_text(value), Qt.DateFormat.ISODate)
             if not instant.isValid() or not widget.minimumDateTime() <= instant <= widget.maximumDateTime():
                 raise ValueError("Invalid or out of range ISO datetime")
             widget.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -660,7 +786,10 @@ class ApplicationUiController:
                     self._set_value(self._remember(editor), params.get("value"))
                 except Exception:
                     if not sip.isdeleted(editor):
-                        self._test.keyClick(editor, Qt.Key.Key_Escape)
+                        # Close this failed editor without committing its value.
+                        # Native Escape delivery can leave the view in EditingState,
+                        # preventing the next corrected request from opening it.
+                        obj.closeEditor(editor, QAbstractItemDelegate.EndEditHint.NoHint)
                     raise
         elif action in {"expand", "collapse"}:
             from PyQt6.QtWidgets import QTreeView
@@ -669,6 +798,10 @@ class ApplicationUiController:
             obj.setExpanded(index, action == "expand")
         else:
             selection = QItemSelectionModel.SelectionFlag.Select
+            if obj.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows:
+                selection |= QItemSelectionModel.SelectionFlag.Rows
+            elif obj.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectColumns:
+                selection |= QItemSelectionModel.SelectionFlag.Columns
             if not params.get("additive", False):
                 selection |= QItemSelectionModel.SelectionFlag.Clear
             selection_model = obj.selectionModel()

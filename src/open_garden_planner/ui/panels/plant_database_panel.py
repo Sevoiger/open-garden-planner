@@ -773,6 +773,7 @@ class PlantDatabasePanel(QWidget):
         seed_link_vbox.setSpacing(2)
 
         self.seed_packet_combo = QComboBox()
+        self.seed_packet_combo.setObjectName("seed_packet_id")
         self.seed_packet_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.seed_packet_combo.currentIndexChanged.connect(self._on_seed_packet_changed)
         seed_link_vbox.addWidget(self.seed_packet_combo)
@@ -1037,12 +1038,31 @@ class PlantDatabasePanel(QWidget):
         """Handle seed packet link change — save to plant instance metadata."""
         if not self._current_plant_item:
             return
-        from open_garden_planner.models.seed_inventory import get_seed_inventory
+        from open_garden_planner.core.commands import ChangePropertyCommand
 
+        item = self._current_plant_item
         packet_id = self.seed_packet_combo.currentData()
-        self._update_instance_metadata("seed_packet_id", packet_id)
-        packet = get_seed_inventory().get(packet_id) if packet_id else None
-        self._update_seed_packet_info(packet)
+        previous = item.metadata.get("plant_instance", {}).get("seed_packet_id")
+        if previous == packet_id:
+            return
+
+        def apply(target: Any, value: str | None) -> None:
+            instance = target.metadata.setdefault("plant_instance", {})
+            if value is None:
+                instance.pop("seed_packet_id", None)
+            else:
+                instance["seed_packet_id"] = value
+            target.update()
+            if self._current_plant_item is target and self._current_plant_data is not None:
+                self._populate_seed_packet_combo(self._current_plant_data, instance)
+
+        command = ChangePropertyCommand(item, "seed packet", previous, packet_id, apply)
+        scene = item.scene()
+        manager = scene.get_command_manager() if scene and hasattr(scene, "get_command_manager") else None
+        if manager:
+            manager.execute(command)
+        else:
+            command.execute()
 
     def _update_seed_packet_info(self, packet) -> None:
         """Show germination info for the linked seed packet."""
