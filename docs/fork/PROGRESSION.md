@@ -1,5 +1,19 @@
 # Progression — fork personnel macOS
 
+## Plan du métier partagé Qt / MCP — 26 octobre 2026
+
+Le [plan d’implémentation](PLAN_METIER_PARTAGE.md) distingue les opérations
+métier sans dialogue et l’exécution autonome sans import de Qt. Il prévoit
+une migration par familles, d’abord les tâches manuelles, puis le suivi et
+les interventions, avec aperçu, lots, conflits de version et reçus de rejeu.
+La bibliothèque botanique globale demande un durcissement de sa persistance
+avant les imports par lot. Les données personnelles restent hors périmètre.
+
+Cette étape est documentaire : audits délégués à trois agents Luna avec effort
+maximal, constats structurants recoupés dans le code et diagnostic d’import en
+sous-processus. Aucune nouvelle capacité métier ou MCP n’est implémentée.
+Le plan porte les critères de preuve et de revue des futurs lots.
+
 ## Lisibilité de l’interface — 23 octobre 2026
 
 Le 24 octobre, les trois accès sont replacés tout à droite de la même ligne,
