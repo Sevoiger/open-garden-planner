@@ -286,7 +286,12 @@ class GeometryResult(BaseModel):
     leader: LeaderGeometry | None = None
     child_count: int | None = None
     constraints: list[GeometryConstraint] = Field(default_factory=list)
-    is_constrained: bool = False
+    is_constrained: bool = Field(
+        default=False,
+        description="Geometric constraints exist; this does not freeze position. "
+        "move_object/set_object_position allow translations preserving all relations. "
+        "Inspect constraints to choose a compatible direction; shape-changing edits remain protected.",
+    )
 
 
 class Diagnostic(BaseModel):

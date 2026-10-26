@@ -100,7 +100,7 @@ pas artificiellement ; les mutations documentaires utilisent leurs commandes exi
 | Inspection | Résumé, objets, géométrie, recherche spatiale, distances, diagnostics | Tous les inspecteurs, panneaux, tableaux et captures de l’UI |
 | Création | `list_creatable_types`, `create_object` | Tous les outils de dessin, arcs/Bézier, symboles, catalogue et dépôt de plantes |
 | Géométrie | Déplacement, dimensions, rotation, sommets | Courbes, découpe/extension, arrondis/chanfreins, séparation et opérations booléennes |
-| Contraintes/jonctions | `get_geometry`, `list_constraints`, `remove_constraint` | Outils de création/édition avec le solveur existant et panneau Contraintes |
+| Contraintes/jonctions | `get_geometry`, `list_constraints`, `remove_constraint` ; translations compatibles sans suppression des règles | Outils de création/édition avec le solveur existant et panneau Contraintes |
 | Catégories | `set_object_type` pour structures | Tous les types proposés par les propriétés et les menus contextuels |
 | Calques | Liste, création, renommage, suppression, affectation, verrou, visibilité/opacité | Réordonnancement `move_rows`, paramètres forêt-jardin et commandes du panneau |
 | Superposition | `arrange_object` | Alignements/distributions, menus Edit et sélection multiple |
@@ -121,6 +121,38 @@ pas artificiellement ; les mutations documentaires utilisent leurs commandes exi
 | Vue 2D/3D | Rendu du canevas | Zoom, sélection, caméra/marche, soleil et captures natives |
 | Préférences/application | Inventaire des capacités | Thème/langue, grilles/accrochages, overlays, panneaux, préférences et mises à jour |
 | Historique | `get_history`, `undo`, `redo` | Même pile que les commandes d’interface, sans pile parallèle |
+
+## Compatibilité des contraintes et déplacements
+
+Les translations métier ne lancent pas le solveur et n’effacent aucune contrainte.
+La règle pure `agent_api/constraint_policy.py` vérifie l’invariance avant la commande,
+après limitation au canevas, sur toutes les entités effectivement déplacées : objet,
+plantes transportées, descendants Qt et faîtage traduit par le crochet de la maison.
+
+| Contrainte | Translation autorisée |
+| --- | --- |
+| EQUAL, PARALLEL, PERPENDICULAR | Libre : taille et direction restent identiques |
+| DISTANCE, EDGE_LENGTH, COINCIDENT, POINT_ON_CIRCLE | Même vecteur pour les deux ancres ; donc libre pour une dimension interne à un objet |
+| ANGLE, POINT_ON_EDGE, TANGENT | Même vecteur pour les trois ancres, y compris la troisième |
+| HORIZONTAL, VERTICAL_DISTANCE | Même déplacement Y des deux ancres ; X reste libre |
+| VERTICAL, HORIZONTAL_DISTANCE | Même déplacement X des deux ancres ; Y reste libre |
+| SYMMETRY_HORIZONTAL | Déplacements X égaux et déplacements Y opposés : l’axe du monde est conservé |
+| SYMMETRY_VERTICAL | Déplacements Y égaux et déplacements X opposés |
+| FIXED | Aucun déplacement de l’objet fixé (première ancre) |
+| Type inconnu ou relation incomplète | Refus conservatoire |
+
+Les composantes de déplacement sont comparées exactement, sans marge réutilisable
+par de petites translations répétées. Il ne s’agit pas de déclarer une relation
+précédemment invalide satisfaite : une translation autorisée préserve sa géométrie.
+Les changements de forme et rotations gardent leur garde stricte ; leur compatibilité
+ne peut pas être déduite de la seule translation des ancres.
+
+Les régressions `test_agent_constraint_policy.py` et
+`test_agent_constraint_compatibility.py` couvrent les types réels, le rectangle à
+longueurs imposées, les axes, le déplacement groupé et les refus atomiques d’un
+point fixe porté, le faîtage lié et le contrôle après clamp. Le test HTTP MCP
+vérifie les deux outils de position, leurs réponses, l’authentification, le maintien
+des dimensions/règles, l’undo/redo et la sauvegarde-réouverture isolée.
 
 ## Vérification
 

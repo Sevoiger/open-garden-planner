@@ -33,6 +33,22 @@ travail effectué. Une observation peut concerner plusieurs plantes ou une zone.
 `edit_garden_intervention` corrige un récit, `delete_garden_intervention` le retire ;
 `undo` / `redo` permettent de revenir sur les modifications.
 
+Un déplacement MCP ne nécessite plus de retirer les contraintes de taille.
+`move_object` et `set_object_position` conservent les longueurs de côtés,
+l’égalité de taille et les directions parallèles/perpendiculaires. Une relation
+horizontale permet encore un déplacement horizontal, une relation verticale un
+déplacement vertical ; leurs autres composantes restent protégées. Les relations
+internes à un groupe ou à un massif et ses plantes peuvent suivre un même
+vecteur. Les positions **fixes**, les liens modifiés vers un objet laissé en place
+et les symétries dont l’axe serait déplacé restent bloquants. Le contrôle porte
+sur le déplacement réel après limitation au canevas, avant toute commande.
+
+Les contraintes ne sont jamais effacées automatiquement. Un échec indique la
+relation incompatible ; choisir une direction compatible ou passer par le
+solveur de l’interface pour déplacer les objets liés. Les autres outils qui
+modifient les formes (dimensions, sommets, rotation, espèce redimensionnée)
+conservent leur protection actuelle des géométries contraintes.
+
 Pour détacher une jonction : lire `list_constraints(item_id="…")` (ou toutes les
 contraintes sans filtre), identifier la bonne paire ou les trois points, puis appeler
 `remove_constraint(constraint_id="…")`. Cela conserve les contours et positions.

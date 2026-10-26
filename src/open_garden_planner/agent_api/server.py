@@ -417,6 +417,7 @@ def build_server(
             "available_tools": names,
             "workflows": {
                 "inspect_plan": ["list_objects", "get_object", "get_geometry"],
+                "move_with_constraints": ["get_geometry", "move_object", "set_object_position"],
                 "detach_junction": ["list_constraints", "remove_constraint"],
                 "planting_date": ["get_garden_record", "set_planting_date", "save_plan"],
                 "garden_report": ["add_garden_intervention", "search_garden_interventions", "save_plan"],
@@ -518,10 +519,13 @@ def build_server(
 
         The result includes the object's centre, native dimensions/radius,
         curve or leader data when applicable, vertex capabilities, and every
-        referencing constraint in deterministic order. If ``is_constrained`` is
-        true, geometry writes deliberately refuse rather than run the GUI's
-        multi-item live solver: inspect ``constraints`` and ask the user to
-        remove a constraint with remove_constraint when the user authorizes detaching it.
+        referencing constraint in deterministic order. ``is_constrained``
+        means constraints exist, not that position is frozen. move_object and
+        set_object_position allow translations that preserve every relation
+        (local sizes, edge directions, free axes and common translations).
+        Other shape-changing tools still protect constrained geometry. For a
+        coupled move use the UI solver; remove a constraint only when the user
+        wants the relation detached.
 
         Reads remain unauthenticated under the documented loopback model and
         never mutate the plan.
@@ -1477,11 +1481,16 @@ def build_server(
             off-plan is snapped fully back onto the plan, whatever direction
             was requested.
 
-            Fails if the object (or a plant it contains) participates in a
-            geometric constraint. This refusal is permanent for one-shot agent
-            moves: call get_geometry on the blocking object to inspect the
-            constraint, then use remove_constraint for an authorized detachment. Journal pins also remain
-            unsupported by scene writes.
+            Constraints are retained, not removed. The actual clamped move is
+            checked before mutation, including carried plants, group descendants
+            and translated roof ridges. Size/edge-direction rules do not freeze
+            position; an axis rule protects only that axis, and relations whose
+            anchors share a common translation are preserved. FIXED positions
+            and any relation changed by the move are refused, without moving
+            connected external objects or running a solver. Inspect get_geometry
+            or list_constraints for the blocker; use the UI solver for coupled
+            motion. Journal pins, locked layers and lone group members remain
+            protected.
 
             Args:
                 item_id: The object's stable UUID (from list_objects/get_object).
@@ -1513,9 +1522,10 @@ def build_server(
             membership, so those cases inherit ``move_object``'s one-or-two
             undo-step contract.
 
-            Call ``get_geometry`` first for a constrained object. This tool
-            permanently refuses constrained geometry rather than silently
-            skipping the GUI's multi-item live solver. It also refuses group
+            Uses the same constraint-compatibility preflight as move_object:
+            dimensions do not freeze position, compatible axis/common motions
+            are allowed, FIXED and changed relations remain protected. No solver
+            runs and no constraint is removed. It also refuses lone group
             members, journal pins, and objects on locked layers.
 
             The resulting position is CLAMPED to the canvas, so the object
