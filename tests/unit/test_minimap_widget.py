@@ -451,3 +451,25 @@ class TestMinimapIdleQuiescence:
         qtbot.wait(300)  # type: ignore[attr-defined]
         assert renders["n"] >= 1
         assert minimap._thumbnail is not None
+
+
+@pytest.mark.parametrize("target", ["point", "label"])
+def test_thumbnail_preserves_reference_selection_visibility_and_mouse_grab(canvas_pair, minimap, target):
+    from open_garden_planner.ui.canvas.items import CircleItem
+
+    _view, scene = canvas_pair
+    point = CircleItem(500, 500, 8, name="Reference", metadata={"reference_point": True})
+    scene.addItem(point)
+    point.setSelected(True)
+    grabber = point if target == "point" else point._label_item
+    grabber.grabMouse()
+    try:
+        minimap._do_update()
+        assert point.isVisible()
+        assert point._label_item.isVisible()
+        assert point.isSelected()
+        assert scene.mouseGrabberItem() is grabber
+        assert not scene._rendering_minimap
+    finally:
+        if scene.mouseGrabberItem() is grabber:
+            grabber.ungrabMouse()

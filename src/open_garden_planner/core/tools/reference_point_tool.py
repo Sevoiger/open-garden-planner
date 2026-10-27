@@ -11,6 +11,9 @@ class ReferencePointTool(BaseTool):
     display_name = "Reference point"
     shortcut = ""
     cursor = Qt.CursorShape.CrossCursor
+    # Ownership is determined at the raw click, before another anchor can
+    # displace it onto the edge of a different object.
+    skip_anchor_snap = True
 
     def mouse_press(self, event: QMouseEvent, scene_pos: QPointF) -> bool:
         if event.button() != Qt.MouseButton.LeftButton:

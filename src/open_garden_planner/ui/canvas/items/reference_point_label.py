@@ -1,7 +1,14 @@
 """A reference name is also a screen-sized drag target for its point."""
 
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtWidgets import QGraphicsItem, QGraphicsSceneMouseEvent, QGraphicsSimpleTextItem
+from PyQt6.QtGui import QPainter
+from PyQt6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsSceneMouseEvent,
+    QGraphicsSimpleTextItem,
+    QStyleOptionGraphicsItem,
+    QWidget,
+)
 
 
 class ReferencePointLabel(QGraphicsSimpleTextItem):
@@ -10,6 +17,12 @@ class ReferencePointLabel(QGraphicsSimpleTextItem):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self._origins: dict[QGraphicsItem, QPointF] = {}
         self._press_scene = QPointF()
+
+    def paint(self, painter: QPainter | None, option: QStyleOptionGraphicsItem | None,
+              widget: QWidget | None = None) -> None:
+        if getattr(self.scene(), "_rendering_minimap", False):
+            return
+        super().paint(painter, option, widget)
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent | None) -> None:
         parent, scene = self.parentItem(), self.scene()

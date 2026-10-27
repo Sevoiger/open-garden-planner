@@ -950,6 +950,12 @@ class GardenPlannerApp(QMainWindow):
         if item_deltas is None:
             item_deltas = self._agent_move_item_deltas(item, delta)
 
+        requested_delta = delta
+        if len(item_deltas) == 1:
+            from open_garden_planner.ui.reference_points import reference_contour_delta
+            delta = reference_contour_delta(item, delta)
+            item_deltas = [(item, delta)]
+
         # Clamp the move so the whole group stays on the canvas (issue #380) —
         # the GUI clamps drags and nudges; the agent path did not, so it could
         # push an object entirely off-plan in one call. Shared math with the GUI
@@ -991,14 +997,16 @@ class GardenPlannerApp(QMainWindow):
         )
 
         requested_was_nonzero = (
-            abs(delta.x()) > GEOMETRY_ROUNDTRIP_EPS_CM
-            or abs(delta.y()) > GEOMETRY_ROUNDTRIP_EPS_CM
+            abs(requested_delta.x()) > GEOMETRY_ROUNDTRIP_EPS_CM
+            or abs(requested_delta.y()) > GEOMETRY_ROUNDTRIP_EPS_CM
         )
         clamp_erased_the_move = (
             abs(clamped_dx) <= GEOMETRY_ROUNDTRIP_EPS_CM
             and abs(clamped_dy) <= GEOMETRY_ROUNDTRIP_EPS_CM
         )
         if requested_was_nonzero and clamp_erased_the_move:
+            if delta != requested_delta:
+                raise ValueError(f"{item_id}: the parent outline prevents this move. Nothing to change.")
             raise ValueError(
                 f"{item_id} (with anything it carries) is already at the canvas "
                 "edge; the requested move was clamped to no displacement. "

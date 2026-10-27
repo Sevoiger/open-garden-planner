@@ -233,6 +233,8 @@ class MinimapWidget(QWidget):
         # connector lines. A slightly inflated copy absorbs the
         # anti-aliasing margin Qt adds to the dirty rect it reports.
         hidden = self._hide_overlay_items()
+        was_rendering_minimap = self._canvas_scene._rendering_minimap
+        self._canvas_scene._rendering_minimap = True
         ignore_flag = QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
         try:
             self._self_dirty_rects = [
@@ -245,6 +247,7 @@ class MinimapWidget(QWidget):
             self._canvas_scene.render(painter, QRectF(0, 0, w, h), canvas_rect)
             painter.end()
         finally:
+            self._canvas_scene._rendering_minimap = was_rendering_minimap
             self._restore_overlay_items(hidden)
 
         # Flip vertically to match the view's Y-flip transform
@@ -262,7 +265,12 @@ class MinimapWidget(QWidget):
         # Never hide the scene's current focus item — it may be an active inline
         # text editor (EditableLabel). Hiding it would steal focus and close the editor.
         focus_item = self._canvas_scene.focusItem()
+        from open_garden_planner.core.reference_points import is_reference_point
         for item in self._canvas_scene.items():
+            # Hiding a document reference deselects it and drops its mouse
+            # grab. Its paint method supplies a tiny thumbnail dot instead.
+            if is_reference_point(item) or is_reference_point(item.parentItem()):
+                continue
             if item is focus_item:
                 continue
             if item.isVisible() and (

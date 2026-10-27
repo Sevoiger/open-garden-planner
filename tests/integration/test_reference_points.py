@@ -8,6 +8,7 @@ from PyQt6.QtGui import QAction, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -410,7 +411,8 @@ def test_reference_label_respects_movement_protection(canvas, qtbot, monkeypatch
 
 
 @pytest.mark.parametrize("target", ["point", "label"])
-def test_continuous_reference_drag_with_default_snapping(canvas, qtbot, monkeypatch, target):
+@pytest.mark.parametrize("lose_grab", [False, True])
+def test_continuous_reference_drag_with_default_snapping(canvas, qtbot, monkeypatch, target, lose_grab):
     scene, view = canvas
     terrain = PolygonItem([QPointF(0, 0), QPointF(2000, 0), QPointF(2000, 1200), QPointF(0, 1200)])
     scene.addItem(terrain)
@@ -437,6 +439,8 @@ def test_continuous_reference_drag_with_default_snapping(canvas, qtbot, monkeypa
             Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
         qtbot.wait(30)
         trace.append((point.pos().x(), point.pos().y(), type(scene.mouseGrabberItem()).__name__))
+        if lose_grab and scene.mouseGrabberItem() is not None:
+            scene.mouseGrabberItem().ungrabMouse()
     expected = original + view.mapToScene(end) - view.mapToScene(start)
     QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
     assert point.pos().x() == pytest.approx(expected.x(), abs=1), trace
@@ -542,3 +546,322 @@ def test_placing_on_terrain_never_inherits_selected_pergola(canvas, monkeypatch)
     assert point.parent_bed_id is None
     assert not pergola.child_item_ids
     assert not terrain.child_item_ids
+
+
+@pytest.mark.parametrize("angle", [0, 31])
+def test_boundary_click_attaches_to_clicked_polygon_with_contour_mode(canvas, monkeypatch, angle):
+    from open_garden_planner.core.object_types import ObjectType
+    from open_garden_planner.ui.canvas.items import RectangleItem
+
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    terrain._apply_rotation(angle)
+    pergola = RectangleItem(1400, 700, 100, 100, object_type=ObjectType.PERGOLA, name="Pergola")
+    scene.addItem(terrain)
+    scene.addItem(pergola)
+    pergola.setSelected(True)
+    click = terrain.mapToScene(QPointF(200, 510))
+
+    def accept(dialog):
+        assert dialog.findChild(QComboBox).currentData() == terrain.item_id
+        assert dialog.findChild(QCheckBox, "reference_point_on_contour").isChecked()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", accept)
+    assert reference_points.place_reference_point(view, click)
+    point = next(item for item in scene.items() if is_reference_point(item))
+    assert point.parent_bed_id == terrain.item_id
+    assert point.metadata["reference_point_on_contour"] is True
+    assert point.mapToScene(QPointF()) == click
+    assert not pergola.child_item_ids
+
+
+@pytest.mark.parametrize("angle", [0, 31])
+@pytest.mark.parametrize("target", ["point", "label"])
+def test_bound_point_slides_around_polygon_without_leaving_or_losing_grab(canvas, qtbot, monkeypatch,
+                                                                      tmp_path, angle, target):
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    terrain._apply_rotation(angle)
+    scene.addItem(terrain)
+    options = reference_points.PointProperties("Borne", terrain.item_id, on_contour=True)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: options)
+    origin = terrain.mapToScene(QPointF(200, 500))
+    assert reference_points.place_reference_point(view, origin)
+    point = next(item for item in scene.items() if is_reference_point(item))
+    view.resize(950, 750)
+    view._zoom_factor = 0.7
+    view._apply_transform()
+    view.centerOn(terrain.sceneBoundingRect().center())
+    view.show()
+    qtbot.wait(20)
+    start = view.mapFromScene(origin)
+    if target == "label":
+        label = point._label_item
+        start = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
+    press_offset = start - view.mapFromScene(origin)
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    for local_target, axis, value in [(QPointF(350, 560), "x", 200), (QPointF(350, 850), "y", 800)]:
+        if scene.mouseGrabberItem() is not None:
+            scene.mouseGrabberItem().ungrabMouse()
+        end = view.mapFromScene(terrain.mapToScene(local_target)) + press_offset
+        QApplication.sendEvent(view.viewport(), QMouseEvent(
+            QMouseEvent.Type.MouseMove, QPointF(end), QPointF(view.viewport().mapToGlobal(end)),
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        qtbot.wait(20)
+        actual_local = terrain.mapFromScene(point.mapToScene(QPointF()))
+        assert getattr(actual_local, axis)() == pytest.approx(value, abs=1e-6)
+    assert actual_local.x() == pytest.approx(350, abs=3)
+    assert terrain.pos() == QPointF()
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    destination = QPointF(point.pos())
+    view.command_manager.undo()
+    assert point.pos() == origin
+    view.command_manager.redo()
+    assert point.pos() == destination
+    path = tmp_path / "contour-point.ogp"
+    ProjectManager().save(scene, path)
+    other = CanvasScene()
+    other_view = CanvasView(other)
+    qtbot.addWidget(other_view)
+    ProjectManager().load(other, path)
+    restored = other.find_item_by_id(point.item_id)
+    assert restored.metadata["reference_point_on_contour"] is True
+    assert restored.parent_bed_id == terrain.item_id
+    assert restored.pos() == destination
+
+
+def test_edit_contour_mode_is_one_undo_including_projected_position(canvas, monkeypatch):
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    scene.addItem(terrain)
+    point = add_point(monkeypatch, scene, view, terrain)
+    point.setPos(500, 500)
+    options = reference_points.PointProperties("Borne", terrain.item_id, on_contour=True)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: options)
+    reference_points.edit_reference_point(point)
+    assert point.pos() == QPointF(500, 200)
+    assert point.metadata["reference_point_on_contour"] is True
+    view.command_manager.undo()
+    assert point.pos() == QPointF(500, 500)
+    assert point.metadata["reference_point_on_contour"] is False
+    view.command_manager.redo()
+    assert point.pos() == QPointF(500, 200)
+
+
+def test_keyboard_cannot_pull_bound_point_off_outline(canvas, monkeypatch):
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    scene.addItem(terrain)
+    options = reference_points.PointProperties("Borne", terrain.item_id, on_contour=True)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: options)
+    assert reference_points.place_reference_point(view, QPointF(200, 500))
+    point = next(item for item in scene.items() if is_reference_point(item))
+    QTest.keyClick(view.viewport(), Qt.Key.Key_Right)
+    assert point.pos() == QPointF(200, 500)
+    QTest.keyClick(view.viewport(), Qt.Key.Key_Up)
+    assert point.pos() == QPointF(200, 550)
+    view.command_manager.undo()
+    assert point.pos() == QPointF(200, 500)
+
+
+def test_keyboard_mixed_selection_keeps_contour_point_on_outline(canvas, monkeypatch):
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    scene.addItem(terrain)
+    options = reference_points.PointProperties("Borne", terrain.item_id, on_contour=True)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: options)
+    assert reference_points.place_reference_point(view, QPointF(200, 500))
+    point = next(item for item in scene.items() if is_reference_point(item))
+    other = CircleItem(1100, 500, 20)
+    scene.addItem(other)
+    other.setSelected(True)
+    QTest.keyClick(view.viewport(), Qt.Key.Key_Right)
+    assert point.pos() == QPointF(200, 500)
+    assert other.pos() == QPointF(50, 0)
+    view.command_manager.undo()
+    assert point.pos() == QPointF(200, 500)
+    assert other.pos() == QPointF()
+
+
+def test_contour_and_incompatible_distance_refuse_drag_without_breaking_either(canvas, qtbot, monkeypatch):
+    from PyQt6.QtCore import QLineF
+
+    from open_garden_planner.core.constraints import AnchorRef, ConstraintType
+
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    scene.addItem(terrain)
+    options = reference_points.PointProperties("Borne", terrain.item_id, on_contour=True)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: options)
+    assert reference_points.place_reference_point(view, QPointF(200, 500))
+    point = next(item for item in scene.items() if is_reference_point(item))
+    fixed = CircleItem(500, 500, 20)
+    scene.addItem(fixed)
+    a, b = AnchorRef(point.item_id, AnchorType.CENTER), AnchorRef(fixed.item_id, AnchorType.CENTER)
+    scene.constraint_graph.add_constraint(b, b, 0, constraint_type=ConstraintType.FIXED, target_x=0, target_y=0)
+    scene.constraint_graph.add_constraint(a, b, 300)
+    scene.set_constraints_visible(False)
+    view.resize(950, 750)
+    view._zoom_factor = 0.7
+    view._apply_transform()
+    view.centerOn(500, 500)
+    view.show()
+    qtbot.wait(20)
+    start = view.mapFromScene(point.pos())
+    end = start + QPoint(0, -35)
+    before_stack = len(view.command_manager._undo_stack)
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    QApplication.sendEvent(view.viewport(), QMouseEvent(
+        QMouseEvent.Type.MouseMove, QPointF(end), QPointF(view.viewport().mapToGlobal(end)),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    assert point.pos() == QPointF(200, 500)
+    assert QLineF(point.pos(), fixed.mapToScene(fixed.rect().center())).length() == pytest.approx(300)
+    assert fixed.pos() == QPointF()
+    assert len(view.command_manager._undo_stack) == before_stack
+    QTest.keyClick(view.viewport(), Qt.Key.Key_Up)
+    assert point.pos() == QPointF(200, 500)
+    assert len(view.command_manager._undo_stack) == before_stack
+
+
+def test_keyboard_propagation_cannot_pull_unselected_point_off_contour(canvas, monkeypatch):
+    from open_garden_planner.core.constraints import AnchorRef
+
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    scene.addItem(terrain)
+    options = reference_points.PointProperties("Borne", terrain.item_id, on_contour=True)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: options)
+    assert reference_points.place_reference_point(view, QPointF(200, 500))
+    point = next(item for item in scene.items() if is_reference_point(item))
+    other = CircleItem(500, 500, 20)
+    scene.addItem(other)
+    scene.constraint_graph.add_constraint(AnchorRef(point.item_id, AnchorType.CENTER),
+                                         AnchorRef(other.item_id, AnchorType.CENTER), 300)
+    scene.clearSelection()
+    other.setSelected(True)
+    before = len(view.command_manager._undo_stack)
+    QTest.keyClick(view.viewport(), Qt.Key.Key_Right)
+    assert point.pos() == QPointF(200, 500)
+    assert other.pos() == QPointF()
+    assert len(view.command_manager._undo_stack) == before
+
+
+def test_locked_terrain_can_anchor_a_movable_reference_on_editable_layer(canvas, monkeypatch):
+    from open_garden_planner.models.layer import Layer
+
+    scene, view = canvas
+    ground = scene.active_layer
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)],
+                          layer_id=ground.id)
+    scene.addItem(terrain)
+    scene.update_layer_lock(ground.id, True)
+    editable = Layer(name="Repères", z_order=max(layer.z_order for layer in scene.layers) + 1)
+    scene.add_layer(editable)
+    scene.set_active_layer(editable)
+
+    def accept(dialog):
+        assert dialog.findChild(QComboBox).currentData() == terrain.item_id
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", accept)
+    assert reference_points.place_reference_point(view, QPointF(200, 500))
+    point = next(item for item in scene.items() if is_reference_point(item))
+    assert point.parent_bed_id == terrain.item_id
+    assert point.layer_id == editable.id
+    assert point.flags() & point.GraphicsItemFlag.ItemIsMovable
+    assert point.flags() & point.GraphicsItemFlag.ItemIsSelectable
+    assert point.zValue() > terrain.zValue()
+    QTest.keyClick(view.viewport(), Qt.Key.Key_Up)
+    assert point.pos() == QPointF(200, 550)
+    view.command_manager.undo()
+    assert point.pos() == QPointF(200, 500)
+
+
+def test_full_window_boundary_placement_and_prolonged_drags(qtbot, monkeypatch, tmp_path):
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    view, scene = window.canvas_view, window.canvas_scene
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)],
+                          name="Terrain")
+    scene.addItem(terrain)
+    window.resize(1450, 900)
+    window.show()
+    qtbot.wait(700)  # Let startup fit and panel layout settle before the gesture.
+    view._zoom_factor = min(0.65, max(0.1, (view.viewport().width() - 100) / 650))
+    view._apply_transform()
+    view.centerOn(500, 500)
+    qtbot.wait(100)
+    monkeypatch.setattr(QDialog, "exec", lambda _dialog: QDialog.DialogCode.Accepted)
+    try:
+        for scene_position, attached in [(QPointF(200, 510), True), (QPointF(500, 500), False)]:
+            QTest.mouseClick(window.main_toolbar._buttons[ToolType.REFERENCE_POINT], Qt.MouseButton.LeftButton)
+            QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=view.mapFromScene(scene_position))
+            created = [item for item in scene.items() if is_reference_point(item)]
+            assert created, (view.mapFromScene(scene_position), view.viewport().rect(),
+                             view._tool_manager.active_tool_type, window.statusBar().currentMessage(),
+                             [(layer.name, layer.locked, layer.visible) for layer in scene.layers])
+            point = next(item for item in scene.selectedItems() if is_reference_point(item))
+            assert (point.parent_bed_id == terrain.item_id) == attached
+            assert point.metadata["reference_point_on_contour"] is attached
+            point.name = "Repère lié" if attached else "Repère indépendant"
+            original = QPointF(point.pos())
+            for target in ("point", "label"):
+                start = view.mapFromScene(point.pos())
+                if target == "label":
+                    label = point._label_item
+                    start = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
+                QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+                for dx in range(2, 43, 2):
+                    if scene.mouseGrabberItem() is not None:
+                        scene.mouseGrabberItem().ungrabMouse()
+                    end = start + QPoint(dx // 8 if attached else dx, -dx // 2)
+                    QApplication.sendEvent(view.viewport(), QMouseEvent(
+                        QMouseEvent.Type.MouseMove, QPointF(end), QPointF(view.viewport().mapToGlobal(end)),
+                        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+                    qtbot.wait(20)
+                    if attached:
+                        assert point.pos().x() == pytest.approx(200)
+                QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+                assert scene.mouseGrabberItem() is None, (attached, target, type(scene.mouseGrabberItem()).__name__)
+                expected = original + view.mapToScene(end) - view.mapToScene(start)
+                if attached:
+                    assert point.pos().y() == pytest.approx(expected.y(), abs=1)
+                else:
+                    assert point.pos().x() == pytest.approx(expected.x(), abs=1)
+                    assert point.pos().y() == pytest.approx(expected.y(), abs=1)
+                view.command_manager.undo()
+                assert point.pos() == original
+        assert terrain.pos() == QPointF()
+        window.grab().save(str(tmp_path / "reference-contour.png"))
+    finally:
+        window._project_manager.mark_clean()
+
+
+@pytest.mark.parametrize("target", ["point", "label"])
+def test_double_click_enabling_contour_keeps_intended_projection(canvas, qtbot, monkeypatch, target):
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    scene.addItem(terrain)
+    point = add_point(monkeypatch, scene, view)
+    point.setPos(500, 500)
+    options = reference_points.PointProperties("Borne", terrain.item_id, on_contour=True)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: options)
+    view.resize(850, 650)
+    view._zoom_factor = 0.6
+    view._apply_transform()
+    view.centerOn(point.pos())
+    view.show()
+    qtbot.wait(20)
+    start = view.mapFromScene(point.pos())
+    if target == "label":
+        label = point._label_item
+        start = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
+    QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    assert point.metadata["reference_point_on_contour"] is True
+    assert point.pos() == QPointF(500, 200)
+    view.command_manager.undo()
+    assert point.pos() == QPointF(500, 500)

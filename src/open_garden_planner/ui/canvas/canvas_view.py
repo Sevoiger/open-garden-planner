@@ -336,6 +336,8 @@ class CanvasView(QGraphicsView):
         self._child_drag_origins: dict[QGraphicsItem, QPointF] = {}
         # Active handle being dragged — used to re-grab if Qt silently drops it
         self._active_drag_handle: QGraphicsItem | None = None
+        self._reference_drag_origin: QPointF | None = None
+        self._contour_frame_positions: dict[QGraphicsItem, QPointF] = {}
 
         # Clipboard for copy/paste
         self._clipboard: list[dict] = []
@@ -2221,7 +2223,17 @@ class CanvasView(QGraphicsView):
         # between event dispatches, so we re-establish it ourselves in mouseMoveEvent.
         if event.button() == Qt.MouseButton.LeftButton:
             grabber = self.scene().mouseGrabberItem()
-            if isinstance(grabber, (ResizeHandle, RotationHandle, VertexHandle, RectCornerHandle, MidpointHandle, CurveControlHandle)):
+            from open_garden_planner.core.reference_points import is_reference_point
+            from open_garden_planner.ui.canvas.items.reference_point_label import (
+                ReferencePointLabel,
+            )
+            self._reference_drag_origin = (
+                self.mapToScene(event.position().toPoint())
+                if isinstance(grabber, ReferencePointLabel) or is_reference_point(grabber) else None
+            )
+            if (isinstance(grabber, (ResizeHandle, RotationHandle, VertexHandle, RectCornerHandle,
+                                     MidpointHandle, CurveControlHandle, ReferencePointLabel))
+                    or is_reference_point(grabber)):
                 self._active_drag_handle = grabber
                 # Block rotation for items that have an inter-object PARALLEL or
                 # PERPENDICULAR constraint — rotating would violate the constraint.
@@ -2328,12 +2340,36 @@ class CanvasView(QGraphicsView):
         from open_garden_planner.ui.canvas.items.resize_handle import _is_item_fixed
 
         movable_flag = QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        self._contour_frame_positions = {}
+        if self._drag_start_positions:
+            scene_items = self._canvas_scene.items()
+            if any(getattr(it, "metadata", {}).get("reference_point_on_contour")
+                   and getattr(it, "parent_bed_id", None) for it in scene_items):
+                self._contour_frame_positions = {it: QPointF(it.pos()) for it in scene_items
+                                                 if it.flags() & movable_flag}
         blocked_items = [item for item in self.scene().selectedItems()
                          if item.flags() & movable_flag and _is_item_fixed(item)]
         try:
             for item in blocked_items:
                 item.setFlag(movable_flag, False)
-            super().mouseMoveEvent(event)
+            if self._reference_drag_origin is not None and event.buttons() & Qt.MouseButton.LeftButton:
+                # Re-grabbing a screen-sized Qt item can reset Qt's internal
+                # drag origin. Keep the original pointer/item snapshot in the
+                # view so panel refreshes and lost grabs cannot rewind it.
+                for item, original in self._drag_start_positions.items():
+                    if not item.flags() & movable_flag or _is_item_fixed(item):
+                        continue
+                    ancestor = item.parentItem()
+                    while ancestor is not None and ancestor not in self._drag_start_positions:
+                        ancestor = ancestor.parentItem()
+                    if ancestor is not None:
+                        continue
+                    parent = item.parentItem()
+                    delta = (parent.mapFromScene(scene_pos) - parent.mapFromScene(self._reference_drag_origin)
+                             if parent else scene_pos - self._reference_drag_origin)
+                    item.setPos(original + delta)
+            else:
+                super().mouseMoveEvent(event)
         finally:
             for item in blocked_items:
                 item.setFlag(movable_flag, True)
@@ -2349,6 +2385,13 @@ class CanvasView(QGraphicsView):
         self._apply_object_snap_during_drag()
         self._clamp_dragged_items_to_canvas()
         self._enforce_point_on_edge_positions()
+        from open_garden_planner.ui.reference_points import reference_contour_position
+        for item in self._movable_drag_selection():
+            centre = item.mapToScene(QPointF())
+            projected = reference_contour_position(item, centre)
+            if projected != centre:
+                parent = item.parentItem()
+                item.setPos(parent.mapFromScene(projected) if parent else projected)
 
         # Propagate constraints to connected items during drag.
         # Skip during rotation — constraint solving doesn't apply while rotating.
@@ -2905,8 +2948,10 @@ class CanvasView(QGraphicsView):
                 )
 
         deformable_items, deformable_vertices = self._gather_deformable_info(item_map)
-        if self._active_drag_handle is None:
-            # Moving a body is a rigid translation. Vertex changes belong to
+        if not isinstance(self._active_drag_handle, (
+            ResizeHandle, RotationHandle, VertexHandle, RectCornerHandle, MidpointHandle, CurveControlHandle
+        )):
+            # Moving a body or reference label is a rigid translation. Vertex changes belong to
             # explicit handle edits and their separate geometry undo commands.
             deformable_items.difference_update(dragged_ids)
             for uid in dragged_ids:
@@ -2923,6 +2968,33 @@ class CanvasView(QGraphicsView):
             deformable_items=deformable_items,
             deformable_vertices=deformable_vertices,
         )
+
+        # The numerical solver must not undo a hard contour attachment. A
+        # conflicting frame is refused before any solver geometry is applied.
+        from open_garden_planner.ui.reference_points import reference_contour_position
+        contour_conflict = False
+        for uid, gitem in item_map.items():
+            if not getattr(gitem, "metadata", {}).get("reference_point_on_contour"):
+                continue
+            dx, dy = result.item_deltas.get(uid, (0.0, 0.0))
+            target = gitem.mapToScene(QPointF()) + QPointF(dx, dy)
+            permitted = reference_contour_position(gitem, target)
+            parent_id = getattr(gitem, "parent_bed_id", None)
+            parent_shift = result.item_deltas.get(parent_id, (0.0, 0.0)) if isinstance(parent_id, UUID) else (0.0, 0.0)
+            if ((target - permitted).manhattanLength() > 1e-6
+                    or abs(parent_shift[0]) + abs(parent_shift[1]) > 1e-6
+                    or any(key[0] == parent_id and abs(d[0]) + abs(d[1]) > 1e-6
+                           for key, d in result.vertex_deltas.items())):
+                contour_conflict = True
+                break
+        if contour_conflict:
+            previous_positions = self._contour_frame_positions or {
+                **self._drag_start_positions, **self._constraint_propagated_starts
+            }
+            for previous, position in previous_positions.items():
+                previous.setPos(position)
+            self.set_status_message(self.tr("Movement blocked: existing constraints conflict with the parent outline."))
+            return
 
         # Apply deltas (skip construction items — always pinned)
         for uid, (dx, dy) in result.item_deltas.items():
@@ -3005,8 +3077,11 @@ class CanvasView(QGraphicsView):
             self._deferring_vertex_undo = True
             self._deferred_vertex_move = None
 
+        reference_grabber = self._active_drag_handle if self._reference_drag_origin is not None else None
         # Clear the handle tracking regardless of what handles the release
         self._active_drag_handle = None
+        self._reference_drag_origin = None
+        self._contour_frame_positions.clear()
 
         # Delegate to active tool
         tool = self._tool_manager.active_tool
@@ -3014,6 +3089,8 @@ class CanvasView(QGraphicsView):
             scene_pos = self.mapToScene(event.position().toPoint())
             scene_pos = self._maybe_apply_anchor_snap(tool, scene_pos)
             if tool.mouse_release(event, scene_pos):
+                if reference_grabber is not None and self._canvas_scene.mouseGrabberItem() is reference_grabber:
+                    reference_grabber.ungrabMouse()
                 self.refresh_input_anchor()
                 event.accept()
                 self._drag_start_positions.clear()
@@ -3023,6 +3100,10 @@ class CanvasView(QGraphicsView):
                 return
 
         super().mouseReleaseEvent(event)
+        # grabMouse() above is explicit: Qt does not necessarily release it
+        # with the button. Never let it capture the next placement or gesture.
+        if reference_grabber is not None and self._canvas_scene.mouseGrabberItem() is reference_grabber:
+            reference_grabber.ungrabMouse()
 
         if was_vertex_drag:
             self._deferring_vertex_undo = False
@@ -3176,14 +3257,21 @@ class CanvasView(QGraphicsView):
         # (mousePressEventHandler), which can interact with ItemIsMovable and AnchorUnderMouse
         # under the Y-flip transform to produce spurious position jumps and view panning (issue #108).
         _pre_dbl = {item: item.pos() for item in self.scene().selectedItems()}
+        previous_command = self._command_manager._undo_stack[-1] if self._command_manager.can_undo else None
         _hbar = self.horizontalScrollBar().value()
         _vbar = self.verticalScrollBar().value()
 
         super().mouseDoubleClickEvent(event)
 
+        # An accepted reference edit may intentionally project its position.
+        # Preserve that command result; only undo Qt's uncommanded drift.
+        current_command = self._command_manager._undo_stack[-1] if self._command_manager.can_undo else None
+        edited_reference = (getattr(current_command, "_item", None)
+                            if current_command is not previous_command
+                            and getattr(current_command, "_property_name", None) == "Reference point" else None)
         # Restore any position that shifted during double-click processing.
         for item, pos in _pre_dbl.items():
-            if item.pos() != pos:
+            if item is not edited_reference and item.pos() != pos:
                 _log.warning(
                     "Double-click caused position drift on %s: %s → %s (zoom=%.2f) — restoring.",
                     type(item).__name__,
@@ -3917,8 +4005,29 @@ class CanvasView(QGraphicsView):
             dy = -distance  # Down arrow = negative Y (down in our flipped view)
 
         # Clamp delta to keep items inside the canvas
-        delta = self._clamp_delta_to_canvas(selected, QPointF(dx, dy))
+        delta = QPointF(dx, dy)
+        if len(selected) == 1:
+            from open_garden_planner.ui.reference_points import reference_contour_delta
+            delta = reference_contour_delta(selected[0], delta)
+        delta = self._clamp_delta_to_canvas(selected, delta)
         if delta.x() == 0 and delta.y() == 0:
+            return
+
+        from open_garden_planner.ui.reference_points import reference_contour_delta
+        selected_ids = {it.item_id for it in selected if isinstance(it, GardenItemMixin)}
+        item_deltas = [
+            (it, delta if getattr(it, "parent_bed_id", None) in selected_ids
+             else reference_contour_delta(it, delta)) for it in selected
+        ]
+        from open_garden_planner.ui.reference_points import contour_translation_allowed
+        if any(effective != delta for _it, effective in item_deltas):
+            if not contour_translation_allowed(self._canvas_scene, item_deltas):
+                self.set_status_message(self.tr("Movement blocked: existing constraints conflict with the parent outline."))
+                return
+            effective_moves = [(it, effective) for it, effective in item_deltas if not effective.isNull()]
+            if effective_moves:
+                self._command_manager.execute(AlignItemsCommand(
+                    effective_moves, QCoreApplication.translate("Commands", "Move item")))
             return
 
         # Check for constraint propagation
@@ -3934,6 +4043,9 @@ class CanvasView(QGraphicsView):
                     (item, delta) for item in selected
                 ]
                 all_deltas.extend(propagated_deltas)
+                if not contour_translation_allowed(self._canvas_scene, all_deltas):
+                    self.set_status_message(self.tr("Movement blocked: existing constraints conflict with the parent outline."))
+                    return
                 command = AlignItemsCommand(
                     all_deltas,
                     QCoreApplication.translate("Commands", "Move items (constrained)"),
@@ -3942,6 +4054,9 @@ class CanvasView(QGraphicsView):
                 return
 
         # Move with undo support (no constraints)
+        if not contour_translation_allowed(self._canvas_scene, [(it, delta) for it in selected]):
+            self.set_status_message(self.tr("Movement blocked: existing constraints conflict with the parent outline."))
+            return
         command = MoveItemsCommand(selected, delta)
         self._command_manager.execute(command)
 

@@ -392,6 +392,12 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         """
         rect = self.rect()
         if is_reference_point(self):
+            if getattr(self.scene(), "_rendering_minimap", False):
+                dot_pen = QPen(self.pen().color(), 2)
+                dot_pen.setCosmetic(True)
+                painter.setPen(dot_pen)
+                painter.drawPoint(rect.center())
+                return
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             color = self.pen().color()
             pen = QPen(color, self.pen().widthF())

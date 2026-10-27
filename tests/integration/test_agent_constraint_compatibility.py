@@ -19,6 +19,27 @@ from tests.integration.test_agent_api_writes import (
 )
 
 
+def test_reference_outline_projection_and_refused_normal_move_keep_undo(canvas: Any) -> None:
+    from open_garden_planner.ui.canvas.items import CircleItem, PolygonItem
+    from open_garden_planner.ui.reference_points import CreateReferencePointCommand
+
+    app = _APP_BY_VIEW[id(canvas)]
+    scene = canvas.scene()
+    terrain = PolygonItem([QPointF(200, 200), QPointF(800, 200), QPointF(800, 800), QPointF(200, 800)])
+    scene.addItem(terrain)
+    point = CircleItem(200, 500, 8, metadata={"reference_point": True, "reference_point_on_contour": True})
+    canvas.command_manager.execute(CreateReferencePointCommand(scene, point, terrain.item_id))
+    app._do_agent_move_object(str(point.item_id), 75, 50)
+    assert point.pos() == QPointF(200, 550)
+    canvas.command_manager.undo()
+    assert point.pos() == QPointF(200, 500)
+    before = len(canvas.command_manager._undo_stack)
+    with pytest.raises(ValueError, match="outline prevents"):
+        app._do_agent_move_object(str(point.item_id), 75, 0)
+    assert point.pos() == QPointF(200, 500)
+    assert len(canvas.command_manager._undo_stack) == before
+
+
 @pytest.mark.parametrize("angle", [0, 37])
 def test_rectangle_with_fixed_edge_size_can_translate_and_keep_undo(canvas: Any, angle: float) -> None:
     app = _APP_BY_VIEW[id(canvas)]
