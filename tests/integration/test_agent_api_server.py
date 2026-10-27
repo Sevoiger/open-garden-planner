@@ -119,7 +119,8 @@ def _unused(name: str) -> dict[str, Any]:
     raise AssertionError(f"{name} should not be called in a read-only test")
 
 
-def _drive(server: AgentApiServer, body: Callable[[Any], Any], result: dict[str, Any]) -> None:
+def _drive(server: AgentApiServer, body: Callable[[Any], Any], result: dict[str, Any], *,
+           url: str | None = None) -> None:
     """Run an MCP client session against ``server`` and call ``body(session)``."""
 
     async def run() -> None:
@@ -135,7 +136,7 @@ def _drive(server: AgentApiServer, body: Callable[[Any], Any], result: dict[str,
             )
 
         async with (
-            http_client(server.url) as (read, write, _),
+            http_client(url or server.url) as (read, write, _),
             ClientSession(read, write) as session,
         ):
             await session.initialize()
@@ -327,8 +328,14 @@ def test_resources_end_to_end(canvas: Any, qtbot: Any) -> None:
         species = await session.read_resource("garden://species")
         result["species"] = json.loads(species.contents[0].text)
 
-        plant_lists = await session.read_resource("garden://plant-lists")
-        result["plant_lists"] = json.loads(plant_lists.contents[0].text)
+        capabilities = await session.call_tool("get_capabilities", {})
+        result["capabilities"] = json.loads(capabilities.content[0].text)
+        try:
+            await session.read_resource("garden://plant-lists")
+        except Exception as exc:  # the compatibility URI is not registered in read-only mode
+            result["plant_lists_denied"] = str(exc)
+        else:
+            result["plant_lists_denied"] = None
 
     threading.Thread(
         target=_drive, args=(server, body, result), name="mcp-test-client"
@@ -343,9 +350,9 @@ def test_resources_end_to_end(canvas: Any, qtbot: Any) -> None:
             "garden://canvas.png",
             "garden://diagnostics",
             "garden://species",
-            "garden://plant-lists",
         }
-
+        assert "garden://plant-lists" not in result["capabilities"]["resources"]
+        assert result["plant_lists_denied"]
         assert result["plan"]["bed_count"] == 1
         assert result["plan"]["plant_count"] == 1
 
@@ -362,13 +369,58 @@ def test_resources_end_to_end(canvas: Any, qtbot: Any) -> None:
 
         assert len(result["species"]) == len(get_species_db())
         assert all("scientific_name" in s and "common_name" in s for s in result["species"])
-
-        assert isinstance(result["plant_lists"], list)
-        assert any(pl["id"] == "favorites" for pl in result["plant_lists"])
     finally:
         server.stop()
 
     assert server.is_running is False
+
+
+def test_plant_lists_resource_http_auth_and_compatibility_uri(canvas: Any, qtbot: Any) -> None:
+    from dataclasses import replace
+
+    calls: list[int] = []
+    synthetic_lists = [{
+        "id": "synthetic-list", "name": "Synthetic", "description": "", "entries": [],
+    }]
+
+    def get_lists() -> list[dict[str, Any]]:
+        calls.append(threading.get_ident())
+        return synthetic_lists
+
+    providers = replace(_providers(canvas.scene()), get_plant_lists=get_lists)
+    server = AgentApiServer(
+        providers, port=_free_port(), writes_enabled=True, write_token="test-token",
+    )
+    server.start()
+    assert server.is_running
+
+    denied: dict[str, Any] = {}
+
+    async def read_without_token(session: Any) -> None:
+        try:
+            await session.read_resource("garden://plant-lists")
+        except Exception as exc:  # the middleware has no presented token
+            denied["error"] = str(exc)
+        else:
+            denied["error"] = None
+
+    authorized: dict[str, Any] = {}
+
+    async def read_with_token(session: Any) -> None:
+        response = await session.read_resource("garden://plant-lists")
+        authorized["lists"] = json.loads(response.contents[0].text)
+
+    try:
+        _drive(server, read_without_token, denied)
+        assert denied.get("done") and denied.get("error")
+        assert calls == []
+
+        _drive(server, read_with_token, authorized, url=f"{server.url}?token=test-token")
+        assert authorized.get("done") and authorized.get("error") is None
+        assert authorized["lists"] == synthetic_lists
+        assert len(calls) == 1
+    finally:
+        server.stop()
 
 
 def test_prompts_end_to_end(canvas: Any, qtbot: Any) -> None:

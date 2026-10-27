@@ -774,7 +774,14 @@ class ProjectManager(QObject):
         current = getattr(self, "_document_ownership", None)
         ownership = current if current is not None and current.path == destination else DocumentOwnership(destination, gui=True)
         try:
-            if ownership is current:
+            # A caller may have released the lease while this manager still
+            # represents the same open document. Reacquiring a lease must not
+            # erase the disk-version precondition for that document.
+            same_document = (
+                self._current_file is not None
+                and self._current_file.resolve() == destination
+            )
+            if same_document:
                 check_disk_version(destination, self._document_disk_version)
             self._save_owned(scene, destination)
         except BaseException:
@@ -2036,6 +2043,14 @@ class ProjectManager(QObject):
         prep: tuple[list[QGraphicsItem], list[Layer] | None, Any, list[Any] | None],
     ) -> None:
         """Phase 2: Apply in-memory validated items and layers to the scene."""
+        # Preparation has succeeded; from here even a publication failure may
+        # replace scene objects. Commands retaining the former document must
+        # never be replayed against that new state. Prevalidation failures keep
+        # the original history because they never enter this phase.
+        get_history = getattr(scene, "get_command_manager", None)
+        history = get_history() if callable(get_history) else None
+        if history is not None:
+            history.clear()
         scene.north_angle_deg = data.north_angle_deg
         deserialized_items, parsed_layers, parsed_constraints, parsed_guides = prep
         if hasattr(scene, "reset_document_diagnostics"):

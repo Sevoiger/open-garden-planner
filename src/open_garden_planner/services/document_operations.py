@@ -184,7 +184,7 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
                                                 valid_bed_ids=_bed_ids(candidate), **fields)
             if change.after is None:
                 tasks.pop(change.task_id, None)
-            else:
+            elif not change.is_noop:
                 tasks[change.task_id] = deepcopy(change.after)
             results.append({"row": index + 1, "operation": name, "target_id": change.task_id,
                             "status": "unchanged" if change.is_noop else "prepared"})
@@ -342,6 +342,17 @@ class OperationSession:
         self._description = description
         self._media_check = media_check
         self._plans: OrderedDict[str, _Preparation] = OrderedDict()
+
+    def invalidate(self) -> None:
+        """Discard every prepared change when the host replaces its document.
+
+        Hosts serialize calls around this session. A live application may keep
+        the adapter object while its ProjectManager loads another project, so
+        its adapter must call this when advancing the document epoch. The new
+        epoch already makes stale plans unapplicable; clearing them also drops
+        their detached before/after data instead of retaining the old project.
+        """
+        self._plans.clear()
 
     def _receipts(self) -> dict[str, Any]:
         return validate_receipt_store(self._read())

@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
+from mcp.server.fastmcp.exceptions import ResourceError
 
 from open_garden_planner.agent_api.providers import AgentProviders
 from open_garden_planner.agent_api.server import (
@@ -357,35 +357,46 @@ def test_middleware_strips_query_token_even_when_header_present() -> None:
     assert "keep=1" in downstream
 
 
-def test_plant_lists_resource_default_store(tmp_path: Path) -> None:
-    """garden://plant-lists resource reads from global store when no provider callback is set."""
-    from open_garden_planner.models.plant_data import PlantSpeciesData
-    from open_garden_planner.models.plant_lists import (
-        get_plant_list_store,
-        reset_plant_list_store,
+def test_plant_lists_resource_is_omitted_when_writes_are_disabled(monkeypatch) -> None:
+    """The legacy URI is omitted before personal storage can be reached."""
+    from open_garden_planner.models import plant_lists
+
+    monkeypatch.setattr(
+        plant_lists,
+        "get_plant_list_store",
+        lambda *_a, **_k: pytest.fail("unauthenticated resource reached personal storage"),
     )
+    mcp = build_server(_stub_providers(), writes_enabled=False, write_token="tok")
 
-    reset_plant_list_store()
-    try:
-        store = get_plant_list_store(tmp_path / "test_api_lists.json")
-        sp = PlantSpeciesData(scientific_name="Malus domestica", common_name="Apple Tree")
-        store.add_entry(store.FAVORITES_ID, sp, note="Test note")
+    resources = asyncio.run(mcp.list_resources())
+    assert all(str(resource.uri) != "garden://plant-lists" for resource in resources)
+    with pytest.raises(ValueError, match="Unknown resource"):
+        asyncio.run(mcp.read_resource("garden://plant-lists"))
 
-        mcp = build_server(_stub_providers(), writes_enabled=False)
-        res = asyncio.run(mcp.read_resource("garden://plant-lists"))
-        assert len(res) == 1
-        data = json.loads(res[0].content)
-        assert any(pl["id"] == "favorites" for pl in data)
-        fav = next(pl for pl in data if pl["id"] == "favorites")
-        assert len(fav["entries"]) == 1
-        assert fav["entries"][0]["common_name"] == "Apple Tree"
-        assert fav["entries"][0]["note"] == "Test note"
-    finally:
-        reset_plant_list_store()
+
+def test_plant_lists_resource_is_omitted_without_provider_even_with_auth(monkeypatch) -> None:
+    from dataclasses import replace
+
+    from open_garden_planner.models import plant_lists
+
+    monkeypatch.setattr(
+        plant_lists,
+        "get_plant_list_store",
+        lambda *_a, **_k: pytest.fail("resource reached implicit personal storage"),
+    )
+    providers = replace(_stub_providers(), get_plant_lists=None)
+    mcp = build_server(providers, writes_enabled=True, write_token="tok")
+    capabilities = asyncio.run(mcp._tool_manager.get_tool("get_capabilities").fn())
+
+    assert all(str(resource.uri) != "garden://plant-lists" for resource in asyncio.run(mcp.list_resources()))
+    assert "garden://plant-lists" not in capabilities["resources"]
+    assert capabilities["personal_data"]["resources"]["garden://plant-lists"]["available"] is False
+    with pytest.raises(ValueError, match="Unknown resource"):
+        asyncio.run(mcp.read_resource("garden://plant-lists"))
 
 
 def test_plant_lists_resource_custom_provider() -> None:
-    """garden://plant-lists resource delegates to providers.get_plant_lists when provided."""
+    """The legacy URI stays available with the same authenticated provider."""
     import dataclasses
 
     custom_called: list[bool] = []
@@ -396,8 +407,25 @@ def test_plant_lists_resource_custom_provider() -> None:
 
     providers = dataclasses.replace(_stub_providers(), get_plant_lists=custom_provider)
 
-    mcp = build_server(providers, writes_enabled=False)
-    res = asyncio.run(mcp.read_resource("garden://plant-lists"))
+    disabled_mcp = build_server(providers, writes_enabled=False, write_token="tok")
+    with pytest.raises(ValueError, match="Unknown resource"):
+        asyncio.run(disabled_mcp.read_resource("garden://plant-lists"))
+    assert not custom_called
+
+    mcp = build_server(providers, writes_enabled=True, write_token="tok")
+    assert any(str(resource.uri) == "garden://plant-lists" for resource in asyncio.run(mcp.list_resources()))
+    capabilities = asyncio.run(mcp._tool_manager.get_tool("get_capabilities").fn())
+    assert "garden://plant-lists" in capabilities["resources"]
+    assert capabilities["personal_data"]["resources"]["garden://plant-lists"]["available"] is True
+    with pytest.raises(ResourceError, match="write token"):
+        asyncio.run(mcp.read_resource("garden://plant-lists"))
+    assert not custom_called
+
+    token = _presented_token.set("tok")
+    try:
+        res = asyncio.run(mcp.read_resource("garden://plant-lists"))
+    finally:
+        _presented_token.reset(token)
     assert len(res) == 1
     assert len(custom_called) == 1
     data = json.loads(res[0].content)
@@ -415,6 +443,12 @@ def test_capabilities_lists_the_actual_registered_tools(enabled: bool) -> None:
     tool_schemas = {item.name: item.inputSchema for item in registered}
     assert capabilities["writes_enabled"] is enabled
     assert capabilities["available_tools"] == sorted(tool_schemas)
+    assert "garden://plant-lists" not in capabilities["resources"]
+    assert capabilities["personal_data"]["resources"]["garden://plant-lists"] == {
+        "available": False,
+        "requires_write_token": True,
+        "scope": "global",
+    }
     assert capabilities["tool_input_schemas"] == tool_schemas
     assert ("set_planting_date" in capabilities["available_tools"]) is enabled
     assert ("remove_constraint" in capabilities["available_tools"]) is enabled
@@ -489,6 +523,25 @@ def test_capabilities_lists_the_actual_registered_tools(enabled: bool) -> None:
     assert retry_policy["persistent_request_key"] == expected_persistent
     assert "get_plant_lists" not in capabilities["available_tools"]
     json.dumps(capabilities, allow_nan=False)
+
+
+def test_autonomous_capabilities_do_not_advertise_personal_plant_list_resource() -> None:
+    from open_garden_planner.agent_api.document_tools import DomainProviders
+
+    mcp = build_server(
+        DomainProviders(lambda _action, _arguments: {}),
+        writes_enabled=True,
+        write_token="tok",
+    )
+    tool = mcp._tool_manager.get_tool("get_capabilities")
+    capabilities = asyncio.run(tool.fn())
+
+    assert capabilities["mode"] == "autonomous"
+    assert capabilities["personal_data"]["resources"]["garden://plant-lists"] == {
+        "available": False,
+        "requires_write_token": True,
+        "scope": "global",
+    }
 
 
 def test_capability_operation_examples_match_their_json_schemas() -> None:

@@ -345,6 +345,40 @@ class TestPlantListExport:
         assert count == 3
         assert file_path.exists()
 
+    @pytest.mark.parametrize("spread, expected", [(0, "0"), (None, ""), (12, "12")])
+    def test_csv_preserves_explicit_spread(self, tmp_path, qtbot, spread, expected):
+        """A legacy diameter must not replace an explicit zero or unknown spread."""
+        scene = CanvasScene(width_cm=1000, height_cm=500)
+        plant = CircleItem(0, 0, 20, object_type=ObjectType.TREE)
+        plant.metadata["plant_instance"] = {
+            "current_spread_cm": spread, "current_diameter_cm": 75,
+        }
+        scene.addItem(plant)
+        path = tmp_path / "spread.csv"
+        ExportService.export_plant_list_to_csv(scene, path)
+        with path.open(encoding="utf-8") as stream:
+            assert next(csv.DictReader(stream))["current_spread_cm"] == expected
+
+    def test_csv_uses_scene_position_for_grouped_plant(self, tmp_path, qtbot):
+        """Group transformations must not turn plan coordinates into local offsets."""
+        from PyQt6.QtWidgets import QGraphicsItemGroup
+
+        scene = CanvasScene(width_cm=1000, height_cm=500)
+        group = QGraphicsItemGroup()
+        scene.addItem(group)
+        plant = CircleItem(0, 0, 20, object_type=ObjectType.TREE)
+        scene.addItem(plant)
+        group.addToGroup(plant)
+        plant.setPos(20, 30)
+        group.setPos(200, 100)
+        group.setRotation(90)
+        path = tmp_path / "group.csv"
+        ExportService.export_plant_list_to_csv(scene, path)
+        with path.open(encoding="utf-8") as stream:
+            row = next(csv.DictReader(stream))
+        assert float(row["position_x_cm"]) == pytest.approx(170)
+        assert float(row["position_y_cm"]) == pytest.approx(120)
+
     def test_export_csv_string_path(self, scene_with_plants, tmp_path, qtbot) -> None:
         """Test CSV export with string path."""
         file_path = str(tmp_path / "plants_string.csv")

@@ -328,8 +328,10 @@ class GardenPlannerApp(QMainWindow):
 
     def _agent_snapshot(self) -> dict[str, Any]:
         """Read a snapshot of the live plan ON the Qt main thread (for the server)."""
+        from copy import deepcopy
+
         return self._agent_bridge.run_on_main(
-            lambda: self._project_manager.snapshot_dict(self.canvas_scene)
+            lambda: deepcopy(self._project_manager.snapshot_dict(self.canvas_scene))
         )
 
     def _agent_document_operation(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6234,7 +6236,6 @@ class GardenPlannerApp(QMainWindow):
             self._project_manager.save(self.canvas_scene, file_path)
             # Clear the auto-save file since we've saved manually
             self._autosave_manager.clear_autosave()
-            self._project_manager.release_document_ownership()
             self.statusBar().showMessage(self.tr("Saved: {path}").format(path=file_path))
         except Exception as e:
             QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to save file:\n{error}").format(error=self._plan_error_message(e)))
@@ -6576,6 +6577,9 @@ class GardenPlannerApp(QMainWindow):
         if self._confirm_discard_changes():
             # Stop the Agent API server first, while the scene/bridge still exist.
             self._stop_agent_api()
+            # A saved project stays leased for the lifetime of this window;
+            # release it only after an accepted close has stopped its writers.
+            self._project_manager.release_document_ownership()
             # Join a running heatmap worker — a QThread destroyed while
             # running aborts the process (the #230 class).
             self._sun_heatmap.shutdown()

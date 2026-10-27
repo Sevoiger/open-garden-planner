@@ -33,6 +33,7 @@ class LiveDocumentOperations:
 
     def _new_epoch(self, _path: Any) -> None:
         self.epoch = str(uuid4())
+        self.session.invalidate()
 
     def snapshot(self) -> dict[str, Any]:
         return deepcopy(self.project.snapshot_dict(self.window.canvas_scene))

@@ -44,6 +44,39 @@ def test_preview_batch_one_undo_and_durable_replay(tmp_path):
         assert read_plan(path)["future"] == original["future"]
 
 
+def test_unchanged_legacy_manual_task_is_not_normalized_or_undoable(tmp_path):
+    path = tmp_path / "legacy-task.ogp"
+    original = project(path)
+    original["manual_tasks"] = {
+        "task-legacy": {"id": "task-legacy", "title": "Arroser"}
+    }
+    write_plan(path, original)
+    operation = {
+        "operation": "edit_manual_task",
+        "target_id": "task-legacy",
+        "fields": {"title": "Arroser"},
+    }
+
+    with DocumentSession(path) as host:
+        preview = host.dispatch("prepare", {"operations": [operation]})
+        assert preview["results"] == [{
+            "row": 1,
+            "operation": "edit_manual_task",
+            "target_id": "task-legacy",
+            "status": "unchanged",
+        }]
+        assert preview["changes"] == []
+        applied = host.dispatch("apply", {
+            "preparation_id": preview["preparation_id"],
+            "request_key": "legacy-task-noop",
+        })
+
+        assert applied["status"] == "unchanged"
+        assert host.history.undo_depth == 0
+        assert host.snapshot()["manual_tasks"] == original["manual_tasks"]
+        assert read_plan(path)["manual_tasks"] == original["manual_tasks"]
+
+
 def test_invalid_row_and_failed_write_leave_document_and_history_unchanged(tmp_path, monkeypatch):
     path = tmp_path / "project.ogp"
     original = project(path)
@@ -85,6 +118,18 @@ def test_conflicts_expiration_and_key_mismatch(tmp_path):
         host.operations._clock = lambda: float("inf")
         with pytest.raises(ValueError, match="expired"):
             host.dispatch("apply", {"preparation_id": now["preparation_id"], "request_key": "expired"})
+
+
+def test_explicit_invalidation_discards_session_preparations(tmp_path):
+    path = tmp_path / "invalidate.ogp"
+    project(path)
+    with DocumentSession(path) as host:
+        preview = host.dispatch("prepare", {"operations": [addition()]})
+        host.operations.invalidate()
+        with pytest.raises(ValueError, match="expired or belongs to another session"):
+            host.dispatch("apply", {"preparation_id": preview["preparation_id"], "request_key": "invalidated"})
+        assert host.history.undo_depth == 0
+        assert read_plan(path).get("manual_tasks") is None
 
 
 def test_ownership_disk_conflict_and_closed_session(tmp_path):

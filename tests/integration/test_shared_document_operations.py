@@ -133,6 +133,107 @@ def test_live_preview_apply_undo_and_gui_conflict(qtbot, monkeypatch, tmp_path):
     window.close()
 
 
+def test_live_preparation_is_discarded_when_project_is_replaced(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    dispatch = window._build_agent_providers().document_operation
+    preview = dispatch("prepare", {"operations": [
+        {"operation": "add_manual_task", "fields": {"title": "Old project task"}}
+    ]})
+    old_epoch = window._domain_operations.epoch
+
+    window._new_project_document(width_cm=500, height_cm=500)
+
+    assert window._domain_operations.epoch != old_epoch
+    with pytest.raises(ValueError, match="expired or belongs to another session"):
+        dispatch("apply", {"preparation_id": preview["preparation_id"], "request_key": "old-project"})
+    assert not window._project_manager.manual_tasks
+    assert window.canvas_view.command_manager.undo_depth == 0
+    window.close()
+
+
+def test_manual_save_keeps_document_lease_and_refuses_external_overwrite(qtbot, monkeypatch, tmp_path):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    errors = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *_a, **_kw: errors.append(_a[-1]))
+
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    path = tmp_path / "manual-save.ogp"
+    try:
+        window._save_to_file(path)
+
+        # A second cooperating host must not take the file while this UI
+        # session still has the document open, even after an explicit save.
+        autonomous_error = None
+        try:
+            temporary_host = DocumentSession(path)
+        except ValueError as exc:
+            autonomous_error = str(exc)
+        else:
+            temporary_host.close()
+
+        # Simulate a caller releasing the lease and a non-cooperating external
+        # writer. The advisory lock cannot stop it, so reacquiring for the same
+        # open document must keep the disk-version precondition.
+        window._project_manager.release_document_ownership()
+        external = read_plan(path)
+        external["synthetic_external_write"] = {"preserve": True}
+        write_plan(path, external)
+        window._save_to_file(path)
+
+        checks = (
+            autonomous_error is not None and "already open" in autonomous_error,
+            read_plan(path) == external,
+            bool(errors) and "changed on disk" in errors[-1],
+        )
+        assert all(checks), f"lease_blocked, external_preserved, stale_save_refused={checks}"
+    finally:
+        window._project_manager.release_document_ownership()
+        window.close()
+
+
+def test_close_cancellation_keeps_document_lease_and_accepted_close_releases_it(
+    qtbot, monkeypatch, tmp_path
+):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    answer = {"value": QMessageBox.StandardButton.Cancel}
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: answer["value"])
+
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    path = tmp_path / "close-lease.ogp"
+    window._save_to_file(path)
+    window._project_manager.mark_dirty()
+
+    assert window.close() is False
+    with pytest.raises(ValueError, match="already open"):
+        DocumentSession(path)
+
+    answer["value"] = QMessageBox.StandardButton.Discard
+    assert window.close() is True
+    with DocumentSession(path):
+        pass
+
+
 def test_autonomous_http_auth_batch_retry_and_reopen(tmp_path):
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client as streamable_http_client
@@ -303,4 +404,44 @@ def test_live_read_captures_on_qt_and_projects_detached_data_on_worker(qtbot, mo
         assert future.result()["mode"] == "live"
     assert captures == [main]
     assert len(calculations) == 1 and calculations[0] != main
+    window.close()
+
+
+def test_agent_snapshot_detaches_nested_project_state_before_worker_returns(qtbot, monkeypatch):
+    import threading
+
+    from PyQt6.QtWidgets import QMessageBox
+
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    nested = {"events": ["captured"]}
+    window._project_manager._manual_tasks["synthetic"] = {
+        "id": "synthetic", "title": "Synthetic task", "extension": nested,
+    }
+
+    captured = threading.Event()
+    release_worker = threading.Event()
+    bridge = window._agent_bridge
+    original_run_on_main = bridge.run_on_main
+
+    def pause_worker_after_capture(fn, **kwargs):
+        snapshot = original_run_on_main(fn, **kwargs)
+        captured.set()
+        assert release_worker.wait(timeout=5.0)
+        return snapshot
+
+    monkeypatch.setattr(bridge, "run_on_main", pause_worker_after_capture)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(window._agent_snapshot)
+        qtbot.waitUntil(captured.is_set, timeout=10000)
+        nested["events"].append("mutated after capture")
+        release_worker.set()
+        snapshot = future.result(timeout=10.0)
+
+    assert snapshot["manual_tasks"]["synthetic"]["extension"]["events"] == ["captured"]
     window.close()

@@ -18,8 +18,9 @@ blocking call to a worker thread, e.g.::
         return await anyio.to_thread.run_sync(snapshot_provider)  # provider calls run_on_main
 
 That worker thread then blocks in :meth:`run_on_main` while the event loop stays
-free. :meth:`abort_pending` lets shutdown unblock any in-flight call immediately
-so closing the app never waits on a stalled main-thread hop.
+free. :meth:`abort_pending` lets shutdown unblock waiting workers immediately.
+Its error distinguishes a queued callable that will not run from one that
+already started and may still finish on Qt's thread.
 
 This bridge is the reusable, write-ready core: later phases route edits through
 ``run_on_main`` exactly the same way reads do.
@@ -42,7 +43,7 @@ DEFAULT_TIMEOUT_S = 5.0
 
 
 class BridgeClosedError(RuntimeError):
-    """Raised in a worker when its queued main-thread call is aborted (shutdown)."""
+    """Raised in a worker when shutdown aborts its main-thread call."""
 
 
 class MainThreadBridge(QObject):
@@ -98,18 +99,32 @@ class MainThreadBridge(QObject):
                 self._pending.discard(future)
 
     def abort_pending(self) -> None:
-        """Fail every in-flight :meth:`run_on_main` call immediately.
+        """Fail every waiting :meth:`run_on_main` call immediately.
 
         Called on shutdown so blocked worker threads return at once, letting the
         server's event loop process ``should_exit`` without waiting on the main
-        thread (which is busy tearing down). Safe to call repeatedly.
+        thread (which is busy tearing down). A callable still queued has not
+        run and is marked as cancelled. A callable already running cannot be
+        stopped; its worker is told to inspect current state or the operation
+        receipt before retrying. Safe to call repeatedly.
         """
         with self._lock:
             for future in self._pending:
                 if not future.done():
                     # Completion/cancellation can race with shutdown.
                     with contextlib.suppress(InvalidStateError):
-                        future.set_exception(BridgeClosedError("Agent API shutting down"))
+                        if future.running():
+                            message = (
+                                "Agent API shutting down: Qt operation already started and "
+                                "may have completed; inspect current state or its operation "
+                                "receipt before retrying"
+                            )
+                        else:
+                            message = (
+                                "Agent API shutting down: Qt operation cancelled before "
+                                "execution; no changes applied"
+                            )
+                        future.set_exception(BridgeClosedError(message))
 
     def _on_invoke(self, fn: Callable[[], Any], future: Future[Any]) -> None:
         """Run a queued callable on the main thread and resolve its future."""

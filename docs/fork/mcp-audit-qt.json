@@ -1,0 +1,98 @@
+{
+  "small_concurrency_1": {
+    "qt_queue": {
+      "median_ms": 0.02025000867433846,
+      "p95_ms": 0.22979197092354298
+    },
+    "qt_service": {
+      "median_ms": 0.2613749820739031,
+      "p95_ms": 0.6460000295192003
+    },
+    "worker_total": {
+      "median_ms": 0.34033297561109066,
+      "p95_ms": 1.731291995383799
+    },
+    "max_event_loop_gap_ms": 0.811500009149313,
+    "samples": 12
+  },
+  "small_concurrency_4": {
+    "qt_queue": {
+      "median_ms": 0.343708525178954,
+      "p95_ms": 0.9562919731251895
+    },
+    "qt_service": {
+      "median_ms": 0.25197904324159026,
+      "p95_ms": 0.3186250105500221
+    },
+    "worker_total": {
+      "median_ms": 0.9655205067247152,
+      "p95_ms": 1.3712079962715507
+    },
+    "max_event_loop_gap_ms": 1.0072080185636878,
+    "samples": 48
+  },
+  "many_concurrency_1": {
+    "qt_queue": {
+      "median_ms": 0.05624946788884699,
+      "p95_ms": 6.035749975126237
+    },
+    "qt_service": {
+      "median_ms": 38.096937496447936,
+      "p95_ms": 38.579875021241605
+    },
+    "worker_total": {
+      "median_ms": 41.868103988235816,
+      "p95_ms": 48.43991599045694
+    },
+    "max_event_loop_gap_ms": 48.094957950524986,
+    "samples": 12
+  },
+  "many_concurrency_4": {
+    "qt_queue": {
+      "median_ms": 60.082395997596905,
+      "p95_ms": 126.41150003764778
+    },
+    "qt_service": {
+      "median_ms": 38.52145851124078,
+      "p95_ms": 42.09220799384639
+    },
+    "worker_total": {
+      "median_ms": 111.48920850246213,
+      "p95_ms": 169.37929100822657
+    },
+    "max_event_loop_gap_ms": 168.66495803697035,
+    "samples": 48
+  },
+  "media_concurrency_1": {
+    "qt_queue": {
+      "median_ms": 0.06543748895637691,
+      "p95_ms": 0.11295895092189312
+    },
+    "qt_service": {
+      "median_ms": 0.36700000055134296,
+      "p95_ms": 0.46754098730161786
+    },
+    "worker_total": {
+      "median_ms": 16.959125001449138,
+      "p95_ms": 18.090958008542657
+    },
+    "max_event_loop_gap_ms": 15.058708959259093,
+    "samples": 12
+  },
+  "media_concurrency_4": {
+    "qt_queue": {
+      "median_ms": 13.650417007738724,
+      "p95_ms": 43.26825001044199
+    },
+    "qt_service": {
+      "median_ms": 0.37449997034855187,
+      "p95_ms": 0.48337498446926475
+    },
+    "worker_total": {
+      "median_ms": 58.881770994048566,
+      "p95_ms": 61.619209009222686
+    },
+    "max_event_loop_gap_ms": 44.14025001460686,
+    "samples": 48
+  }
+}

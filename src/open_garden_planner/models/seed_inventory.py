@@ -6,6 +6,8 @@ SeedInventoryStore for persisting the global (cross-project) inventory.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -284,6 +286,7 @@ class SeedInventoryStore:
     def __init__(self, storage_path: Path) -> None:
         self._path = storage_path
         self._packets: dict[str, SeedPacket] = {}
+        self._extra_fields: dict[str, dict[str, Any]] = {}
         self._load()
 
     # ── Persistence ───────────────────────────────────────────────────────────
@@ -297,6 +300,10 @@ class SeedInventoryStore:
             for item in raw:
                 packet = SeedPacket.from_dict(item)
                 self._packets[packet.id] = packet
+                known_fields = SeedPacket.__dataclass_fields__
+                self._extra_fields[packet.id] = {
+                    key: value for key, value in item.items() if key not in known_fields
+                }
         except Exception:  # noqa: BLE001
             pass  # Corrupt / missing file — start empty
 
@@ -306,8 +313,28 @@ class SeedInventoryStore:
         packets_list = sorted(
             self._packets.values(), key=lambda p: (p.species_name, p.id)
         )
-        with open(self._path, "w", encoding="utf-8") as fh:
-            json.dump([p.to_dict() for p in packets_list], fh, indent=2)
+        records = []
+        for packet in packets_list:
+            record = dict(self._extra_fields.get(packet.id, {}))
+            record.update(packet.to_dict())
+            records.append(record)
+
+        fd, temporary = tempfile.mkstemp(
+            dir=self._path.parent,
+            prefix=f".{self._path.name}.",
+            suffix=".tmp",
+        )
+        temporary_path = Path(temporary)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(records, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            if self._path.exists():
+                os.chmod(temporary_path, self._path.stat().st_mode & 0o777)
+            os.replace(temporary_path, self._path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -317,7 +344,10 @@ class SeedInventoryStore:
 
     def remove(self, packet_id: str) -> bool:
         """Remove a packet by ID.  Returns True if it existed."""
-        return self._packets.pop(packet_id, None) is not None
+        removed = self._packets.pop(packet_id, None) is not None
+        if removed:
+            self._extra_fields.pop(packet_id, None)
+        return removed
 
     def get(self, packet_id: str) -> SeedPacket | None:
         """Return packet by ID, or None."""
