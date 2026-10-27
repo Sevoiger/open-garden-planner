@@ -1142,10 +1142,18 @@ class PlantingCalendarView(QWidget):
     #: the US-C2 Tasks tab can reuse this single forecast (no second fetch).
     frost_alerts_ready = pyqtSignal(object)
 
-    def __init__(self, canvas_scene: Any, project_manager: Any, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        canvas_scene: Any,
+        project_manager: Any,
+        parent: QWidget | None = None,
+        *,
+        command_manager: Any | None = None,
+    ) -> None:
         super().__init__(parent)
         self._canvas_scene = canvas_scene
         self._project_manager = project_manager
+        self._command_manager = command_manager
         #: Latest frost alerts from the most recent weather fetch (US-C2).
         self._current_frost_alerts: list = []
         self._rows: list[_PlantRow] = []
@@ -1477,14 +1485,29 @@ class PlantingCalendarView(QWidget):
             self._detail.hide()
 
     def _on_task_toggled(self, task_id: str, done: bool) -> None:
-        """Persist task completion, then rebuild only the dashboard.
+        """Persist task completion as one undo step, then rebuild the dashboard.
 
         Rebuild the dashboard (not a full ``refresh()``) so toggling Done doesn't
         kick off a redundant weather fetch; the resulting ``task_states_changed``
         already schedules a (debounced) full refresh in the app.
         """
-        if hasattr(self._project_manager, "set_task_completion"):
-            self._project_manager.set_task_completion(task_id, done)
+        from open_garden_planner.core.commands import SetTaskStatusCommand  # noqa: PLC0415
+        from open_garden_planner.services.task_status import (  # noqa: PLC0415
+            prepare_task_status,
+        )
+
+        change = prepare_task_status(
+            self._project_manager.task_states,
+            task_id,
+            "done" if done else "open",
+            done_date=datetime.date.today().isoformat() if done else None,
+        )
+        if not change.is_noop:
+            command = SetTaskStatusCommand(self._project_manager, change)
+            if self._command_manager is None:
+                command.execute()
+            else:
+                self._command_manager.execute(command)
         self._rebuild_dashboard()
 
     def _on_propagation_toggled(self, checked: bool) -> None:

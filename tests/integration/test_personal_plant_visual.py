@@ -139,12 +139,15 @@ def test_remember_patches_only_art_and_preserves_unknown_data(qtbot, png):
     after = json.loads(path.read_bytes())
     expected = deepcopy(before)
     expected["plants"]["my-rose"]["raw_data"][VISUAL_KEY] = snapshot["raw_data"][VISUAL_KEY]
+    expected["_ogp_library_operations"]["record_versions"]["my-rose"] += 1
     assert after == expected
     assert next(path.parent.glob("*.before-visual-*.json")).read_bytes() == original
     assert offline_catalog()["my-rose"]["raw_data"][VISUAL_KEY] == snapshot["raw_data"][VISUAL_KEY]
     snapshot["raw_data"].pop(VISUAL_KEY)
     remember_visual(library, snapshot)
-    assert json.loads(path.read_bytes()) == before
+    after_remove = deepcopy(before)
+    after_remove["_ogp_library_operations"]["record_versions"]["my-rose"] += 2
+    assert json.loads(path.read_bytes()) == after_remove
 
 
 def test_remember_new_api_plant_preserves_source_identity(qtbot, png):

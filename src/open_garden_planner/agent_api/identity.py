@@ -7,7 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from open_garden_planner.services.update_checker import get_current_version
+from open_garden_planner.core.app_version import get_current_version
 
 API_CONTRACT_VERSION = "2"
 

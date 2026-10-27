@@ -89,7 +89,7 @@ from open_garden_planner.agent_api.mapping import (
     plan_summary_from_snapshot,
 )
 from open_garden_planner.agent_api.providers import AgentProviders
-from open_garden_planner.agent_api.render import DEFAULT_IMAGE_PX
+from open_garden_planner.agent_api.render_config import DEFAULT_IMAGE_PX
 from open_garden_planner.agent_api.schema import (
     AmendmentPlanView,
     CompanionSuggestion,
@@ -293,6 +293,156 @@ class PortInUseError(RuntimeError):
         self.port = port
 
 
+def _finalize_tool_schemas(mcp: Any) -> None:
+    """Refuse unknown top-level arguments on both host compositions."""
+    for tool in mcp._tool_manager.list_tools():
+        arguments = tool.fn_metadata.arg_model
+        arguments.model_config["extra"] = "forbid"
+        arguments.model_rebuild(force=True)
+        tool.parameters = arguments.model_json_schema(by_alias=True)
+
+
+def _capability_details(
+    tools: list[Any], *, mode: str, writes_active: bool,
+    global_seed_inventory_available: bool,
+) -> dict[str, Any]:
+    """Build schemas and retry guidance from the tools actually registered."""
+    from open_garden_planner.services.document_operation_contracts import (
+        document_operation_schemas,
+        plant_library_import_schema,
+    )
+    from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
+
+    names = {tool.name for tool in tools}
+    tool_schemas = {
+        tool.name: tool.inputSchema
+        for tool in tools
+        if isinstance(getattr(tool, "inputSchema", None), dict)
+    }
+    operation_schemas: dict[str, Any] = {}
+    if "prepare_document_operations" in names:
+        operation_schemas["document"] = {
+            "tool": "prepare_document_operations",
+            "batch": {
+                "field": "operations",
+                "type": "array",
+                "min_items": 1,
+                "max_items": 100,
+                "item_type": "object",
+                "item_required": ["operation"],
+                "item_fields": ["operation", "target_id", "fields"],
+                "example": {
+                    "operation": "set_planting_date",
+                    "target_id": "00000000-0000-4000-8000-000000000001",
+                    "fields": {"planting_date": "2025-04-12"},
+                },
+            },
+            "operations": document_operation_schemas(SUPPORTED_OPERATIONS),
+        }
+    if "prepare_plant_library_import" in names:
+        operation_schemas["plant_library_import"] = {
+            "tool": "prepare_plant_library_import",
+            "input_schema_scope": "canonical",
+            "batch": {
+                "field": "records",
+                "type": "array",
+                "min_items": 1,
+                "max_items": 100,
+                "item_type": "object",
+            },
+            "record": plant_library_import_schema(),
+            "compatibility": {
+                "canonical_input": "Use only the PlantSpeciesData fields in record; put new provider fields in raw_data.",
+                "omitted_legacy_fields": "Existing unknown top-level fields are preserved automatically when omitted from an update request.",
+                "legacy_echo": "Echoing an unchanged legacy top-level field is outside the canonical input schema and is not required or promised.",
+            },
+        }
+
+    persistent_keys = [name for name in (
+        "add_garden_intervention", "apply_document_operations", "apply_plant_library_import",
+    ) if name in names]
+    read_before_retry = [name for name in (
+        "create_object", "create_layer", "add_manual_task", "record_soil_test",
+        "move_object", "rotate_object", "add_vertex", "delete_vertex", "undo", "redo",
+    ) if name in names]
+    if mode == "autonomous":
+        document_receipt = "Document receipts commit to the explicit .ogp file with the mutation."
+    else:
+        document_receipt = "Live document receipts remain in memory until save_plan writes the .ogp file."
+    retry_policy = {
+        "persistent_request_key": persistent_keys,
+        "session_request_key": [name for name in (
+            "invoke_ui_action", "set_ui_value", "interact_ui",
+        ) if name in names],
+        "persistent_receipt_lookup": {
+            name: lookup for name, lookup in (
+                ("apply_document_operations", "get_document_operation"),
+                ("apply_plant_library_import", "get_plant_library_operation"),
+            ) if name in names and lookup in names
+        },
+        "read_before_retry": read_before_retry,
+        "durability": {
+            name: text for name, text in (
+                ("add_garden_intervention", "Intervention request keys are stored in the .ogp project; live edits become durable after save_plan."),
+                ("apply_document_operations", document_receipt),
+                ("apply_plant_library_import", "The botanical transaction and receipt are committed atomically to the personal library before success."),
+            ) if name in names
+        },
+        "guidance": (
+            "Only listed request-key tools deduplicate identical retries. Reuse the same key and intent; "
+            "use the receipt lookup when one is listed. UI request keys are process-local. "
+            "For other writes, read current state before retrying; prefer set_object_position to a repeated relative move."
+        ),
+    }
+    personal_tool_names = (
+        "get_custom_plant_library", "get_plant_lists", "get_plant_list", "get_seed_inventory",
+    )
+    personal_data = {
+        "read_only_tools": [name for name in personal_tool_names if name in names],
+        "sources": {
+            "plant_library": "Personal botanical records in custom_plants.json; separate from project snapshots.",
+            "plant_lists": "Cross-project personal plant lists in plant_lists.json.",
+            "seed_inventory": "Project-linked or cross-project seed packets, selected by scope.",
+        },
+        "read_policy": {
+            "get_custom_plant_library": {
+                "available": "get_custom_plant_library" in names,
+                "requires_write_token": True,
+                "scope": "global",
+            },
+            "get_plant_lists": {
+                "available": "get_plant_lists" in names,
+                "requires_write_token": True,
+                "scope": "global",
+            },
+            "get_plant_list": {
+                "available": "get_plant_list" in names,
+                "requires_write_token": True,
+                "scope": "global",
+            },
+            "get_seed_inventory": {
+                "available": "get_seed_inventory" in names,
+                "scopes": {
+                    "project": {"available": "get_seed_inventory" in names, "requires_write_token": False},
+                    "global": {
+                        "available": global_seed_inventory_available,
+                        "requires_write_token": True,
+                        "requires_writes_enabled": True,
+                    },
+                },
+            },
+        },
+        "global_reads_require_writes_enabled": writes_active,
+        "host_mode": mode,
+    }
+    return {
+        "tool_input_schemas": tool_schemas,
+        "operation_schemas": operation_schemas,
+        "personal_data": personal_data,
+        "retry_policy": retry_policy,
+    }
+
+
 def build_server(
     providers: AgentProviders,
     *,
@@ -420,6 +570,52 @@ def build_server(
     # otherwise advertises the SDK version as if it were the application's.
     mcp._mcp_server.version = identity["application_version"]
 
+    from open_garden_planner.agent_api.document_tools import DomainProviders
+
+    if isinstance(providers, DomainProviders):
+        from open_garden_planner.agent_api.document_tools import (
+            register_autonomous_history,
+            register_document_tools,
+        )
+
+        register_document_tools(mcp, providers.document_operation, writes_active=writes_active,
+                                authorize=lambda: _require_write_auth(write_token))
+        from open_garden_planner.agent_api.personal_catalog_tools import (
+            register_personal_catalog_tools,
+        )
+
+        register_personal_catalog_tools(
+            mcp, snapshot=lambda: providers.document_operation("snapshot", {})["document"],
+            writes_active=writes_active, authorize=lambda: _require_write_auth(write_token))
+        if providers.library_operation is not None:
+            from open_garden_planner.agent_api.document_tools import register_library_tools
+
+            register_library_tools(mcp, providers.library_operation, writes_active=writes_active,
+                                   authorize=lambda: _require_write_auth(write_token))
+        if writes_active:
+            register_autonomous_history(mcp, providers.document_operation,
+                                        authorize=lambda: _require_write_auth(write_token))
+
+        @mcp.tool(name="get_capabilities")
+        async def autonomous_capabilities() -> dict[str, Any]:
+            """Discover data operations available without Qt; no graphical tools."""
+            from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
+
+            tools = await mcp.list_tools()
+            return {"identity": identity, "mode": "autonomous", "writes_enabled": writes_active,
+                    "available_tools": sorted(tool.name for tool in tools),
+                    "storage": "explicit project file", "history": "session only",
+                    "durability": "data and receipt committed together before success",
+                    "preparation": "session only; expires after 300 seconds",
+                    "operations": list(SUPPORTED_OPERATIONS),
+                    **_capability_details(
+                        tools, mode="autonomous", writes_active=writes_active,
+                        global_seed_inventory_available=False,
+                    )}
+
+        _finalize_tool_schemas(mcp)
+        return mcp
+
     @mcp.tool()
     async def get_capabilities() -> dict[str, Any]:
         """Discover actual tools, garden workflows and remaining desktop-only features.
@@ -427,10 +623,22 @@ def build_server(
         This is a coverage inventory, not a promise that every GUI action has
         an MCP equivalent. Tool registration reflects the current write gate.
         """
-        names = sorted(tool.name for tool in await mcp.list_tools())
+        from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
+
+        tools = await mcp.list_tools()
+        names = sorted(tool.name for tool in tools)
+        details = _capability_details(
+            tools, mode="live", writes_active=writes_active,
+            global_seed_inventory_available=(writes_active and providers.get_seed_inventory is not None),
+        )
         return {
             "identity": identity,
             "writes_enabled": writes_active,
+            "shared_document_operations": {
+                "mode": "live", "operations": list(SUPPORTED_OPERATIONS),
+                "preparation_ttl_seconds": 300, "max_batch_size": 100,
+                "undo": "same global stack as Qt", "persisted_on_apply": False,
+            } if providers.document_operation is not None else None,
             "available_tools": names,
             "workflows": {key: value for key, value in {
                 "inspect_plan": ["list_objects", "get_object", "get_geometry"],
@@ -445,24 +653,15 @@ def build_server(
             }.items() if all(name in names for name in value)},
             "coverage_claim": "Tool availability only; desktop workflows require end-to-end verification.",
             "resources": ["garden://plan", "garden://plan/raw", "garden://species", "garden://plant-lists"],
+            "tool_input_schemas": details["tool_input_schemas"],
+            "operation_schemas": details["operation_schemas"],
+            "personal_data": details["personal_data"],
             "storage": {
                 "project": "Garden objects, interventions, tasks, harvests and journal: save_plan then open_plan.",
                 "global": "Seed packets, custom plants, plant lists and preferences use separate application storage; save_plan does not include them.",
-                "history": "Undo/redo and UI receipts are session-only; intervention request keys persist in .ogp.",
+                "history": "Undo/redo and UI receipts are session-only; project-operation and intervention receipts are stored in .ogp after save_plan; botanical import receipts are stored with the personal library.",
             },
-            "retry_policy": {
-                "persistent_request_key": [name for name in ["add_garden_intervention"] if name in names],
-                "session_request_key": [name for name in ["invoke_ui_action", "set_ui_value", "interact_ui"] if name in names],
-                "read_before_retry": [name for name in [
-                    "create_object", "create_layer", "add_manual_task", "record_soil_test",
-                    "move_object", "rotate_object", "add_vertex", "delete_vertex", "undo", "redo",
-                ] if name in names],
-                "guidance": "Only the listed request-key contracts deduplicate writes. "
-                    "After a lost reply for any other write, read current state before retrying. "
-                    "Prefer set_object_position to a repeated relative move. UI receipts do not survive "
-                    "server restart; persisted intervention keys require save_plan. "
-                    "A completed input receipt still requires business-state verification.",
-            },
+            "retry_policy": details["retry_policy"],
             "limitations": [
                 "Write workflows require writes_enabled and the write token.",
                 "Garden edits are in memory until save_plan. Dedicated tracking tools never infer dates; "
@@ -2952,11 +3151,23 @@ def build_server(
     # The SDK defaults to silently dropping unknown top-level arguments. A
     # misspelled filter could therefore read the wrong dates; a misspelled write
     # field could apply a default. Tighten THIS server's generated models only.
-    for tool in mcp._tool_manager.list_tools():
-        arguments = tool.fn_metadata.arg_model
-        arguments.model_config["extra"] = "forbid"
-        arguments.model_rebuild(force=True)
-        tool.parameters = arguments.model_json_schema(by_alias=True)
+    if providers.document_operation is not None:
+        from open_garden_planner.agent_api.document_tools import register_document_tools
+
+        register_document_tools(mcp, providers.document_operation, writes_active=writes_active,
+                                authorize=lambda: _require_write_auth(write_token))
+    if providers.library_operation is not None:
+        from open_garden_planner.agent_api.document_tools import register_library_tools
+
+        register_library_tools(mcp, providers.library_operation, writes_active=writes_active,
+                               authorize=lambda: _require_write_auth(write_token))
+    from open_garden_planner.agent_api.personal_catalog_tools import register_personal_catalog_tools
+
+    register_personal_catalog_tools(
+        mcp, snapshot=providers.snapshot, plant_lists=providers.get_plant_lists,
+        global_seeds=providers.get_seed_inventory, writes_active=writes_active,
+        authorize=lambda: _require_write_auth(write_token))
+    _finalize_tool_schemas(mcp)
     return mcp
 
 

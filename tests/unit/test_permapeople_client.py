@@ -128,7 +128,49 @@ class TestParseSpeciesNullSafety:
         result = client._parse_species(payload)
 
         assert result.family == "Testaceae"
+        assert result.edible is None
+        assert result.edible_parts == []
+
+    def test_missing_edibility_and_empty_parts_stay_unknown(self) -> None:
+        client = PermapeopleClient(key_id="id", key_secret="secret")
+        payload = {
+            "id": 1,
+            "name": "Test Plant",
+            "scientific_name": "Testus nullicus",
+            "data": [_data_item("Edible parts", "")],
+        }
+
+        result = client._parse_species(payload)
+
+        assert result.edible is None
+        assert result.edible_parts == []
+
+    def test_explicit_false_edibility_is_preserved(self) -> None:
+        client = PermapeopleClient(key_id="id", key_secret="secret")
+        payload = {
+            "id": 1,
+            "name": "Test Plant",
+            "scientific_name": "Testus nullicus",
+            "data": [_data_item("Edible", "false"), _data_item("Edible parts", "")],
+        }
+
+        result = client._parse_species(payload)
+
         assert result.edible is False
+        assert result.edible_parts == []
+
+    def test_explicit_true_string_edibility_is_preserved(self) -> None:
+        client = PermapeopleClient(key_id="id", key_secret="secret")
+        payload = {
+            "id": 1,
+            "name": "Test Plant",
+            "scientific_name": "Testus nullicus",
+            "data": [_data_item("Edible", " TRUE ")],
+        }
+
+        result = client._parse_species(payload)
+
+        assert result.edible is True
 
     def test_missing_name_and_scientific_name_fall_back_to_unknown(self) -> None:
         client = PermapeopleClient(key_id="id", key_secret="secret")

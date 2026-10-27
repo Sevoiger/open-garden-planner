@@ -9,6 +9,8 @@ lifecycle read "Annual"). Worse, saving then wrote that wrong concrete value bac
 """
 # ruff: noqa: ARG002
 
+from PyQt6.QtCore import Qt
+
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.models.plant_data import PlantCycle, PlantSpeciesData
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
@@ -55,6 +57,24 @@ class TestUnknownEnumRendersDash:
 
         assert panel.cycle_combo.currentData() == PlantCycle.PERENNIAL.value
         assert panel.cycle_combo.currentText() != "—"
+
+
+def test_missing_edibility_remains_unknown_when_another_plant_field_is_saved(qtbot):
+    panel = PlantDatabasePanel()
+    qtbot.addWidget(panel)
+    item = _plant(
+        PlantSpeciesData(scientific_name="Prunus domestica", common_name="Plum")
+    )
+
+    panel.set_selected_items([item])
+
+    assert panel.edible_checkbox.isTristate()
+    assert panel.edible_checkbox.checkState() == Qt.CheckState.PartiallyChecked
+    panel.common_edit.setText("Prune")
+    panel._on_field_changed()
+
+    assert panel._current_plant_data.edible is None
+    assert item.metadata["plant_species"]["edible"] is None
 
 
 def test_selecting_unidentified_plant_clears_previous_profile(qtbot):

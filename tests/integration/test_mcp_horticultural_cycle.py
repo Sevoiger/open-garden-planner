@@ -243,7 +243,13 @@ def test_discovery_and_explicit_refusals_over_mcp(ui_window, qtbot, tmp_path):  
         assert capabilities["identity"]["application_version"] == __version__
         assert capabilities["identity"]["mcp_sdk_version"] != ""
         assert capabilities["identity"]["source_sha256_at_server_build"]
-        assert capabilities["retry_policy"]["persistent_request_key"] == ["add_garden_intervention"]
+        assert set(capabilities["retry_policy"]["persistent_request_key"]) == {
+            "add_garden_intervention", "apply_document_operations", "apply_plant_library_import",
+        }
+        assert capabilities["retry_policy"]["persistent_receipt_lookup"] == {
+            "apply_document_operations": "get_document_operation",
+            "apply_plant_library_import": "get_plant_library_operation",
+        }
         assert "move_object" in capabilities["retry_policy"]["read_before_retry"]
         tools = {t.name: t for t in (await d.client.list_tools()).tools}
         assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools.values())

@@ -7,11 +7,12 @@ from unittest.mock import patch
 import pytest
 
 from open_garden_planner.models.plant_lists import PlantListStore
-from open_garden_planner.services import plant_library
+from open_garden_planner.services import local_plant_import, plant_library
 from open_garden_planner.services.french_plant_catalog import (
     french_collections,
     localize_classic_lists,
 )
+from open_garden_planner.services.library_operations import LibraryConflictError
 from open_garden_planner.services.local_plant_import import install_collections, read_sheets
 from open_garden_planner.services.species_catalog import offline_catalog, search_offline
 
@@ -123,6 +124,35 @@ def test_interrupted_two_store_import_is_completed_by_replay(monkeypatch, tmp_pa
     result = install_collections(app_data, collections)
     assert result["added_to_search"] == 0
     assert result["collections"] == [{"name": "Mes plantes", "count": 1}]
+
+
+def test_library_import_cas_preserves_a_concurrent_external_edit(monkeypatch, tmp_path):
+    source = tmp_path / "sources"
+    _sheet(source)
+    app_data = tmp_path / "data"
+    library_path = app_data / "custom_plants.json"
+    app_data.mkdir()
+    library_path.write_text(json.dumps({"version": "1.0", "plants": {}}))
+    collection = [("batch", "Collection", read_sheets(source))]
+    real_commit = local_plant_import.commit_library_document
+
+    def concurrent_edit(path, document, *, expected_fingerprint):
+        external = json.loads(path.read_text(encoding="utf-8"))
+        external["external_edit"] = {"preserve": True}
+        path.write_text(json.dumps(external), encoding="utf-8")
+        return real_commit(
+            path,
+            document,
+            expected_fingerprint=expected_fingerprint,
+        )
+
+    monkeypatch.setattr(local_plant_import, "commit_library_document", concurrent_edit)
+    with pytest.raises(LibraryConflictError, match="changed before commit"):
+        install_collections(app_data, collection)
+
+    after = json.loads(library_path.read_text(encoding="utf-8"))
+    assert after["external_edit"] == {"preserve": True}
+    assert after["plants"] == {}
 
 
 def test_completed_batch_does_not_restore_deleted_custom_species_or_add_new_content(tmp_path):

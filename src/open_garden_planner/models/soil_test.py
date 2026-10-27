@@ -16,6 +16,7 @@ or the literal string ``"global"`` for the project-wide default.
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,10 +58,12 @@ class SoilTestRecord:
     # None = unknown, no structural picks.
     soil_texture: str | None = None  # "sandy" | "loamy" | "clayey" | "compacted"
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict, omitting None / empty optionals."""
-        d: dict[str, Any] = {"id": self.id, "date": self.date}
+        d: dict[str, Any] = deepcopy(self.extra_fields)
+        d.update({"id": self.id, "date": self.date})
         for key in (
             "ph",
             "n_level", "p_level", "k_level",
@@ -70,14 +73,14 @@ class SoilTestRecord:
         ):
             value = getattr(self, key)
             if value is not None:
-                d[key] = value
+                d[key] = deepcopy(value)
         if self.notes:
-            d["notes"] = self.notes
+            d["notes"] = deepcopy(self.notes)
         # Only emit non-default mode to keep diffs minimal for legacy records.
         if self.mode and self.mode != "kit":
-            d["mode"] = self.mode
+            d["mode"] = deepcopy(self.mode)
         if self.soil_texture is not None:
-            d["soil_texture"] = self.soil_texture
+            d["soil_texture"] = deepcopy(self.soil_texture)
         return d
 
     @classmethod
@@ -102,6 +105,19 @@ class SoilTestRecord:
             notes=data.get("notes", ""),
             mode=data.get("mode", "kit"),
             soil_texture=data.get("soil_texture"),
+            extra_fields=deepcopy(
+                {
+                    key: value
+                    for key, value in data.items()
+                    if key
+                    not in {
+                        "id", "date", "ph", "n_level", "p_level", "k_level",
+                        "ca_level", "mg_level", "s_level", "n_ppm", "p_ppm",
+                        "k_ppm", "ca_ppm", "mg_ppm", "s_ppm", "notes",
+                        "mode", "soil_texture",
+                    }
+                }
+            ),
         )
 
 
@@ -111,6 +127,7 @@ class SoilTestHistory:
 
     target_id: str
     records: list[SoilTestRecord] = field(default_factory=list)
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
     def latest(self) -> SoilTestRecord | None:
@@ -132,10 +149,12 @@ class SoilTestHistory:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict."""
-        return {
+        result = deepcopy(self.extra_fields)
+        result.update({
             "target_id": self.target_id,
             "records": [r.to_dict() for r in self.records],
-        }
+        })
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SoilTestHistory:
@@ -143,4 +162,7 @@ class SoilTestHistory:
         return cls(
             target_id=data.get("target_id", ""),
             records=[SoilTestRecord.from_dict(r) for r in data.get("records", [])],
+            extra_fields=deepcopy(
+                {key: value for key, value in data.items() if key not in {"target_id", "records"}}
+            ),
         )

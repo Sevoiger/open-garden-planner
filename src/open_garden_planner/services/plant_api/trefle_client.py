@@ -270,8 +270,11 @@ class TrefleClient(PlantAPIClient):
         foliage_color = ", ".join(foliage_color_raw) if isinstance(foliage_color_raw, list) else ""
         foliage_texture = foliage.get("texture") or ""
 
-        # Edible information
-        edible = data.get("edible") or False
+        # Preserve missing/null as unknown: it is not evidence that a plant
+        # cannot be eaten. The parts list is independent and may also be empty
+        # simply because the source has no parts data.
+        edible_value = data.get("edible")
+        edible = edible_value if isinstance(edible_value, bool) else None
         edible_part_list = data.get("edible_part", []) or []
         edible_parts = [part for part in edible_part_list if part]
 
@@ -284,6 +287,8 @@ class TrefleClient(PlantAPIClient):
         flower_color_raw = flower.get("color")
         if isinstance(flower_color_raw, list) and flower_color_raw:
             flower_color = ", ".join(flower_color_raw)
+        flowering_value = flower.get("conspicuous")
+        flowering = flowering_value if isinstance(flowering_value, bool) else None
 
         # Description from observations or growth description. `or ""` on
         # both, not just the combining `or` below: if BOTH keys are present
@@ -314,11 +319,7 @@ class TrefleClient(PlantAPIClient):
             description=description,
             edible=edible,
             edible_parts=edible_parts,
-            # `.get(key, False)`'s default only applies when the key is
-            # ABSENT -- `flower.conspicuous` is null in 33/42 live-sampled
-            # records (round 6), which slipped through as `flowering=None`
-            # on a field declared `bool`.
-            flowering=flower.get("conspicuous") or False,
+            flowering=flowering,
             flower_color=flower_color,
             foliage_color=foliage_color,
             foliage_texture=foliage_texture,

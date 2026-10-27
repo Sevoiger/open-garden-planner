@@ -378,8 +378,19 @@ class PermapeopleClient(PlantAPIClient):
         ph_min = ph_numbers[0] if len(ph_numbers) > 1 else None
         ph_max = ph_numbers[-1] if len(ph_numbers) > 1 else None
 
-        # Check if edible
-        edible = data_dict.get("edible", "").lower() == "true"
+        # Only an explicit true/false value is evidence. Missing, null, and
+        # unrecognized values stay unknown; an empty parts list is not proof
+        # that the plant is inedible.
+        edible_value = data_dict.get("edible")
+        if isinstance(edible_value, bool):
+            edible = edible_value
+        elif isinstance(edible_value, str) and edible_value.strip().casefold() in {
+            "true",
+            "false",
+        }:
+            edible = edible_value.strip().casefold() == "true"
+        else:
+            edible = None
         edible_parts_str = data_dict.get("edible parts", "")
         edible_parts = [part.strip() for part in edible_parts_str.split(",")] if edible_parts_str else []
 

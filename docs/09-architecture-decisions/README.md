@@ -3001,3 +3001,13 @@ retain their embedded snapshot. PNG decoding has byte/pixel limits and bounded c
 invalid embedded images fall back to standard art. Preserve aspect and alpha, with
 Y-flip compensation only in the canvas painter, including scene-based exports.
 Owner artwork stays private, outside the shipped asset/provenance registry.
+
+## ADR-065: Shared document operations and explicit hosts
+
+**Status: Accepted for the personal macOS fork (2026-10-26).** Keep document-domain validation and candidate preparation in Qt-free services. The live application and an explicit-path autonomous host call the same supported operations; adapters own thread, storage and media access.
+
+The live adapter publishes each effective batch as one command through the existing Qt <code>CommandManager</code>, backed by the pure <code>CommandHistory</code> engine. Live data remains in memory until the user saves the project. The autonomous <code>DocumentSession</code> uses the same history engine for its process-local undo/redo and atomically writes each successful mutation with its receipt. Its history is not restored after restart.
+
+Preparation is session-local, bounded and expires after five minutes; application revalidates the document revision. Persist request receipts additively in the <code>.ogp</code> document so a saved receipt survives undo and later deletion of the affected record. Receipt lookup reports the current before/after field effect; it does not establish that an undo caused that effect. The explicit library port owns a separate transaction and receipt history, and never propagates library changes into embedded project snapshots.
+
+Coordinate cooperating OGP writers with an advisory file lease and disk-version check. An external writer that ignores the advisory lock remains outside this guarantee. Canvas construction, drawing, rendering and graphical exports remain Qt capabilities; journal pin creation/removal stays in the canvas adapter. No file-version bump is required for additive receipts.

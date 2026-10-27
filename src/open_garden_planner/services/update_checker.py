@@ -9,7 +9,6 @@ import contextlib
 import json
 import logging
 import re
-import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from typing import Any
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from open_garden_planner.core.app_version import get_current_version as get_current_version
 from open_garden_planner.core.worker_lifecycle import retain_worker_until_finished
 from open_garden_planner.services.verified_update import validate_release_asset
 
@@ -102,23 +102,6 @@ def parse_release_info(data: dict[str, Any]) -> ReleaseInfo:
     return ReleaseInfo(tag_name, body, download_url, html_url, filename, size, checksum_url)
 
 
-def get_current_version() -> str:
-    """Return the running application version string.
-
-    When running from a PyInstaller bundle (``sys.frozen``), reads from the
-    ``_version`` module written at build time.  Otherwise falls back to the
-    package ``__version__``.
-    """
-    if getattr(sys, "frozen", False):
-        try:
-            from open_garden_planner import _version
-
-            return str(_version.__version__)
-        except ImportError:
-            pass
-    from open_garden_planner import __version__
-
-    return __version__
 
 
 class UpdateChecker(QThread):

@@ -13,6 +13,7 @@ page can iterate them without scanning the scene.
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,16 +34,19 @@ class JournalNote:
     # by the harvest log (US-C1). Empty for ordinary user notes.
     tags: list[str] = field(default_factory=list)
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # Keep fields written by newer versions when an older client edits a note.
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict, omitting empty optional fields."""
-        d: dict[str, Any] = {
+        d: dict[str, Any] = deepcopy(self.extra_fields)
+        d.update({
             "id": self.id,
             "date": self.date,
             "text": self.text,
             "scene_x": self.scene_x,
             "scene_y": self.scene_y,
-        }
+        })
         if self.photo_path is not None:
             d["photo_path"] = self.photo_path
         if self.tags:
@@ -60,6 +64,12 @@ class JournalNote:
             scene_x=float(data.get("scene_x", 0.0)),
             scene_y=float(data.get("scene_y", 0.0)),
             tags=list(data.get("tags", [])),
+            extra_fields=deepcopy({
+                key: value for key, value in data.items()
+                if key not in {
+                    "id", "date", "text", "photo_path", "scene_x", "scene_y", "tags",
+                }
+            }),
         )
 
 

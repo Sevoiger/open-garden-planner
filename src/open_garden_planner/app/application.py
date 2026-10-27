@@ -332,6 +332,33 @@ class GardenPlannerApp(QMainWindow):
             lambda: self._project_manager.snapshot_dict(self.canvas_scene)
         )
 
+    def _agent_document_operation(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        def run() -> dict[str, Any]:
+            from open_garden_planner.app.domain_adapter import LiveDocumentOperations
+
+            if getattr(self, "_domain_operations", None) is None:
+                self._domain_operations = LiveDocumentOperations(self)
+            return self._domain_operations.dispatch(action, arguments)
+
+        return self._agent_bridge.run_on_main(run)
+
+    def _agent_library_operation(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        def run() -> dict[str, Any]:
+            from open_garden_planner.services import plant_library
+            from open_garden_planner.services.library_port import LibraryPort
+
+            if getattr(self, "_library_operations", None) is None:
+                path = plant_library._default_app_data_dir() / plant_library.PlantLibrary.LIBRARY_FILENAME
+                self._library_operations = LibraryPort(path)
+            result = self._library_operations.dispatch(action, arguments)
+            if action in {"apply", "undo"}:
+                if plant_library._library_instance is not None:
+                    plant_library._library_instance._load()
+                self._update_plant_database_panel()
+            return result
+
+        return self._agent_bridge.run_on_main(run)
+
     def _agent_diagnostics(self) -> list[dict[str, Any]]:
         """Harvest the plan's current warnings ON the Qt main thread (for the server)."""
         return self._agent_bridge.run_on_main(
@@ -1882,55 +1909,25 @@ class GardenPlannerApp(QMainWindow):
         touches ``ProjectManager.manual_tasks`` and never pushes onto the undo
         stack. One command either way, so one call is exactly one undo step.
         """
-        import datetime  # noqa: PLC0415 - local, as elsewhere in this module
-
         from open_garden_planner.agent_api.schema import ManualTaskResult
-        from open_garden_planner.core.commands import (
-            AddManualTaskCommand,
-            EditManualTaskCommand,
-        )
-        from open_garden_planner.models.task import ManualTask
-
-        clean_title = (title or "").strip()
-        if not clean_title:
-            raise ValueError("title is required and must not be empty.")
-
-        resolved_date = ""
-        if date:
-            resolved_date = _parse_agent_date(
-                date, datetime.date.today(), "date"
-            ).isoformat()
+        from open_garden_planner.core.commands import AddManualTaskCommand, EditManualTaskCommand
+        from open_garden_planner.services.task_operations import prepare_manual_task_change
 
         if bed_id is not None:
             self._agent_resolve_soil_bed(bed_id)
-
-        if not adding:
-            if not task_id:
-                raise ValueError("task_id is required to edit a task.")
-            if task_id not in self._project_manager.manual_tasks:
-                self._agent_refuse_generated_task(task_id)
-
-        task = ManualTask(
-            date=resolved_date,
-            title=clean_title,
-            notes=notes or "",
-            bed_id=bed_id,
+        if not adding and task_id not in self._project_manager.manual_tasks:
+            self._agent_refuse_generated_task(task_id or "")
+        change = prepare_manual_task_change(
+            self._project_manager.manual_tasks,
+            operation="add" if adding else "edit", task_id=task_id,
+            date=date, title=title, notes=notes, bed_id=bed_id,
         )
-        if task_id:
-            task.id = task_id
-
-        cmd = (
-            AddManualTaskCommand(self._project_manager, task)
-            if adding
-            else EditManualTaskCommand(self._project_manager, task)
-        )
-        self.canvas_view.command_manager.execute(cmd)
-        self.tasks_view.schedule_refresh()
-        return ManualTaskResult(
-            task_id=task.id,
-            title=task.title,
-            date=task.date,
-        ).model_dump()
+        if not change.is_noop:
+            command_type = AddManualTaskCommand if adding else EditManualTaskCommand
+            self.canvas_view.command_manager.execute(command_type(self._project_manager, change))
+            self.tasks_view.schedule_refresh()
+        task = change.task
+        return ManualTaskResult(task_id=task.id, title=task.title, date=task.date).model_dump()
 
     def _agent_refuse_generated_task(self, task_id: str) -> None:
         """Refuse a non-manual task id, naming why (US-D3.3).
@@ -2274,6 +2271,14 @@ class GardenPlannerApp(QMainWindow):
     def _agent_get_plant_lists(self) -> list[dict[str, Any]]:
         """Get plant lists and favorites catalog ON the Qt main thread (US-G4)."""
         return self._agent_bridge.run_on_main(self._do_agent_get_plant_lists)
+
+    def _agent_get_seed_inventory(self) -> list[dict[str, Any]]:
+        """Read the same global store as the Seed Inventory tab on Qt's thread."""
+        def read():
+            from open_garden_planner.models.seed_inventory import get_seed_inventory
+
+            return [packet.to_dict() for packet in get_seed_inventory().all()]
+        return self._agent_bridge.run_on_main(read)
 
     def _do_agent_get_plant_lists(self) -> list[dict[str, Any]]:
         from open_garden_planner.models.plant_lists import get_plant_list_store
@@ -3744,6 +3749,8 @@ class GardenPlannerApp(QMainWindow):
         return AgentProviders(
             snapshot=self._agent_snapshot,
             application_ui=self._agent_application_ui,
+            document_operation=self._agent_document_operation,
+            library_operation=self._agent_library_operation,
             garden_write=self._agent_garden_write,
             diagnostics=self._agent_diagnostics,
             render=self._agent_render,
@@ -3795,6 +3802,7 @@ class GardenPlannerApp(QMainWindow):
             get_soil_mismatches=self._agent_get_soil_mismatches,
             record_soil_test=self._agent_record_soil_test,
             get_plant_lists=self._agent_get_plant_lists,
+            get_seed_inventory=self._agent_get_seed_inventory,
         )
 
     def _stop_agent_api(self) -> None:
@@ -5125,7 +5133,10 @@ class GardenPlannerApp(QMainWindow):
         self._set_tab_icon(splitter, "tab_plan")
 
         # Tab 1: Planting Calendar (US-8.5)
-        self.calendar_view = PlantingCalendarView(self.canvas_scene, self._project_manager)
+        self.calendar_view = PlantingCalendarView(
+            self.canvas_scene, self._project_manager,
+            command_manager=self.canvas_view.command_manager,
+        )
         # The planting-calendar tab carries its own status messages (a refused
         # propagation date, #415). It shares the canvas's scene, but a tab
         # message should come from the tab rather than from the canvas view.
@@ -6219,6 +6230,7 @@ class GardenPlannerApp(QMainWindow):
             self._project_manager.save(self.canvas_scene, file_path)
             # Clear the auto-save file since we've saved manually
             self._autosave_manager.clear_autosave()
+            self._project_manager.release_document_ownership()
             self.statusBar().showMessage(self.tr("Saved: {path}").format(path=file_path))
         except Exception as e:
             QMessageBox.critical(self, self.tr("Error"), self.tr("Failed to save file:\n{error}").format(error=self._plan_error_message(e)))

@@ -15,6 +15,7 @@ forgiving (missing keys fall back to defaults).
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,18 +29,20 @@ class ManualTask:
     title: str = ""
     notes: str = ""
     bed_id: str | None = None        # optional link to a bed UUID
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict, omitting empty optional fields."""
-        d: dict[str, Any] = {
+        d: dict[str, Any] = deepcopy(self.extra_fields)
+        d.update({
             "id": self.id,
             "date": self.date,
             "title": self.title,
-        }
+        })
         if self.notes:
-            d["notes"] = self.notes
+            d["notes"] = deepcopy(self.notes)
         if self.bed_id is not None:
-            d["bed_id"] = self.bed_id
+            d["bed_id"] = deepcopy(self.bed_id)
         return d
 
     @classmethod
@@ -51,4 +54,8 @@ class ManualTask:
             title=data.get("title", ""),
             notes=data.get("notes", ""),
             bed_id=data.get("bed_id"),
+            extra_fields=deepcopy(
+                {key: value for key, value in data.items()
+                 if key not in {"id", "date", "title", "notes", "bed_id"}}
+            ),
         )

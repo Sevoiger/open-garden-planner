@@ -1,18 +1,142 @@
 # Progression — fork personnel macOS
 
-## Plan du métier partagé Qt / MCP — 26 octobre 2026
+## Lecture MCP des textures personnelles de structures — 27 octobre 2026
 
-Le [plan d’implémentation](PLAN_METIER_PARTAGE.md) distingue les opérations
-métier sans dialogue et l’exécution autonome sans import de Qt. Il prévoit
-une migration par familles, d’abord les tâches manuelles, puis le suivi et
-les interventions, avec aperçu, lots, conflits de version et reçus de rejeu.
-La bibliothèque botanique globale demande un durcissement de sa persistance
-avant les imports par lot. Les données personnelles restent hors périmètre.
+Une texture est persistée dans `metadata.personal_fill_pattern.png`. Ce champ
+base64 échappait au filtre média : une seule maison ou pergola pouvait encore
+dépasser le plafond de 512 000 octets de `get_document_state`, sans solution par
+réduction de la taille de page. La projection reconnaît désormais ce champ
+dans son contexte, le place dans le manifeste et permet sa lecture par
+fragments au chemin source. Les autres métadonnées, dont la largeur de texture
+et les champs `png` métier hors de cette enveloppe, restent visibles.
 
-Cette étape est documentaire : audits délégués à trois agents Luna avec effort
-maximal, constats structurants recoupés dans le code et diagnostic d’import en
-sous-processus. Aucune nouvelle capacité métier ou MCP n’est implémentée.
-Le plan porte les critères de preuve et de revue des futurs lots.
+Reproduction rouge avant correction sur données synthétiques, puis 17 tests
+réussis : projection, HTTP MCP réel, sérialiseur Qt maison/pergola et hôte sans
+Qt. La lecture globale et les pages unitaires des positions 2 à 5 réussissent
+avec des textures de 1 Mo, sans modification des fichiers ni de l’historique.
+Les fragments renvoyés correspondent à chaque texture d’origine. Ruff passe.
+Le parcours du sérialiseur réel passe aussi sous Cocoa natif. Revue senior
+indépendante Luna effort maximal du diff et des raccords : aucun défaut
+actionnable relevé ; le reviewer n’a pas répété les tests.
+Aucun plan ou visuel personnel n’a été utilisé.
+
+Livraison dans la [draft PR #25](https://github.com/Sevoiger/open-garden-planner/pull/25).
+
+## Audit MCP : lectures bornées et faits botaniques inconnus — 27 octobre 2026
+
+Les lectures documentaires et botaniques renvoient désormais des pages sans
+médias intégrés par défaut : filtres métier, recherche botanique, identifiant,
+révision vérifiée et fragments de médias séparés. Le plafond des réponses
+document/bibliothèque est de 512 000 octets ; les fragments font au plus
+65 536 octets de texte encodé. Le manifeste conserve les indices du document
+source, y compris après pagination.
+
+La préparation botanique refuse les bornes et types incohérents et les nouveaux
+champs inconnus hors `raw_data`. Les valeurs `edible`/`flowering` absentes restent
+inconnues dans le modèle, le stockage, l’éditeur et les parseurs API concernés.
+Les anciens booléens négatifs ne sont pas requalifiés sans preuve.
+
+`get_capabilities` fournit les champs, types, obligations et exemples des
+opérations, ainsi que les clés de rejeu persistantes documentaires/botaniques.
+Des outils dédiés lisent les listes personnelles et les stocks de graines ;
+leurs mutations globales restent dans les parcours Qt.
+
+Vérifications du responsable sur données temporaires : 67 tests botanique,
+éditeur et catalogues ; 105 tests projection, document, hôte sans Qt,
+authentification et parseurs ; cinq parcours intégrés HTTP/Qt ; 19 cas sous
+Cocoa natif. Les runs se recouvrent et ne sont pas additionnés. Le test HTTP
+utilise une bibliothèque avec 70 Mo de média et un plan avec 17 Mo d’image :
+les lectures/préparations restent sous le plafond et les fichiers restent
+identiques. Les parcours appliqués vérifient lot, undo/redo, sauvegarde et
+réouverture ; les contrôles de persistance incluent échec et conflit externe.
+Ruff, traductions compilées et contrôle du contexte agent passent.
+Après revue, les pages de catalogues vérifient aussi leur révision, la reprise
+de médias de tailles différentes reste possible et le schéma canonique
+explicite la conservation des extensions historiques. Dernier contrôle :
+87 tests ciblés et deux parcours HTTP réussis, recouvrant les runs précédents.
+Revue senior indépendante Luna effort maximal et relecture des corrections :
+aucun P0/P1/P2 actionnable restant ; les tests n’ont pas été répétés par le reviewer.
+
+Contrat détaillé : [METIER_PARTAGE.md](METIER_PARTAGE.md).
+Livraison dans la [draft PR #25](https://github.com/Sevoiger/open-garden-planner/pull/25).
+
+## Concurrence entre import MCP et éditeur botanique — 27 octobre 2026
+
+Le dernier contrôle du paquet métier a reproduit une perte de mise à jour :
+après import MCP et rechargement du cache, le panneau d’une plante pouvait
+réenregistrer son ancien snapshot en modifiant un autre champ. L’éditeur
+conserve désormais sa révision de lecture jusqu’au contrôle CAS sous verrou.
+Une resélection ne réarme pas un snapshot périmé : la fiche affichée doit
+correspondre à la fiche canonique, ou être rechargée explicitement depuis la
+bibliothèque. Aucune propagation automatique au projet n’est ajoutée.
+
+Les écritures refusées ou échouées gardent le modèle et les métadonnées du
+canevas intacts et affichent une explication dans le panneau. Deux éditions
+normales successives restent possibles. Vérification par le responsable :
+72 tests ciblés passent, dont le parcours MCP réel, et les sept cas dédiés
+passent aussi sous Cocoa natif. Les runs se recouvrent. Les traductions
+EN/DE/FR sont compilées et contrôlées (2 801 clés), Ruff et diff-check passent.
+Revue senior indépendante du correctif et de son garde de resélection : aucun
+P0/P1/P2 actionnable restant. Le reviewer n’a pas répété les tests.
+
+Livraison dans la [draft PR #25](https://github.com/Sevoiger/open-garden-planner/pull/25).
+
+## Opérations métier partagées Qt / MCP — 26 octobre 2026
+
+Depuis la base 9217bf9, les frontières de données pures, les préparateurs
+documentaires et l’hôte MCP autonome sont implémentés sur la branche
+`feat/shared-domain-operations`.
+Le plan [PLAN_METIER_PARTAGE.md](PLAN_METIER_PARTAGE.md) décrit l’état de chaque
+lot ; le parcours utilisateur est dans le [guide métier partagé](METIER_PARTAGE.md).
+
+Les outils documentaires lisent un snapshot, préparent un lot jusqu’à 100
+opérations avec expiration de cinq minutes, puis l’appliquent après revalidation.
+Dans OGP ouvert, l’application utilise la même pile d’undo Qt et la sauvegarde
+reste explicite. En mode autonome, le fichier projet doit être donné sur la
+commande ; chaque mutation réussie est écrite avec son reçu. Le moteur
+CommandHistory est commun, mais l’historique autonome disparaît au redémarrage.
+
+Les transactions de bibliothèque sont distinctes du projet et de la pile du
+canevas. L’hôte autonome n’ouvre une bibliothèque que si son chemin est fourni
+avec --library. Il ne construit pas de canevas, et n’offre pas le dessin, le
+rendu ou les exports graphiques.
+
+Limites maintenues : création/suppression des épingles de journal par Qt, aucune
+écriture documentaire sur les statuts des tâches générées, et politique MCP de
+succession plus stricte que le parcours d’avertissement du dialogue Qt. Les
+snapshots botaniques des projets ne sont pas réécrits par les imports de
+bibliothèque.
+
+Preuves sur données et réglages temporaires :
+
+- Régression élargie de 540 cas : 539 réussis ; son unique défaut de schéma MCP
+  a été corrigé, puis le parcours concerné, les nouveaux outils HTTP et les
+  contrôles d’authentification passent ensemble (33 cas).
+- Compléments statuts, successions, catalogue, isolation, persistance et
+  traduction : 179 cas réussis. Les runs se recouvrent et ne sont pas additionnés.
+- Préparation/applications et hôte dans un processus interdisant Qt : 9 cas
+  réussis au dernier contrôle de ces modules. Les scénarios incluent échec
+  d’écriture puis reprise, refus de suppression implicite d’une succession et
+  contrôle d’identité avant undo après réordonnancement.
+- Cocoa natif : cinq parcours de tâches/statuts/convergence réussis, puis un
+  parcours multi-domaines supplémentaire réussit après correction de la
+  mutation en place des métadonnées Qt. Il applique tâche, suivi, récolte,
+  maladie, journal, sol et succession en une commande, puis undo/redo,
+  sauvegarde et réouverture. Cela ne certifie pas une qualité visuelle globale.
+- Bibliothèque sur transport HTTP réel : aperçu de 30 fiches homonymes à IDs
+  distincts sans écriture, import atomique, rejeu, annulation de transaction et
+  absence de résurrection. Les tests de stockage couvrent inconnus, conflits,
+  écriture échouée et autres écrivains coopératifs.
+- Ruff, contrôle de contexte agent, contrôles de formats et traductions
+  compilées EN/DE/FR passent (2 799 clés actives).
+
+Revue indépendante `senior-reviewer` Luna effort maximal du diff source exact
+et des corrections : aucun P0/P1/P2 actionnable restant. La revue a identifié
+l’omission dangereuse de `entries`, corrigée et protégée par une régression ;
+le dernier contrôle natif a révélé le setter Qt inexistant, également corrigé,
+testé et relu. Les tests HTTP/Cocoa n’ont pas été répétés par le reviewer.
+Les coupures testées sont des erreurs injectées et des reprises de session ;
+aucune résistance à une panne matérielle n’est déduite.
 
 ## Lisibilité de l’interface — 23 octobre 2026
 

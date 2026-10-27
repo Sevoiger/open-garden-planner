@@ -134,3 +134,26 @@ class TestPlantSpeciesDataRoundTrip:
         assert revived.p_demand is None
         assert revived.k_demand is None
         assert revived.nutrient_demand == "heavy"
+
+    def test_absent_edibility_and_flowering_remain_unknown(self) -> None:
+        legacy = {"scientific_name": "X", "common_name": "X"}
+
+        revived = PlantSpeciesData.from_dict(legacy)
+
+        assert revived.edible is None
+        assert revived.flowering is None
+        assert revived.to_dict()["edible"] is None
+        assert revived.to_dict()["flowering"] is None
+
+    def test_explicit_false_edibility_and_flowering_stay_false(self) -> None:
+        known_false = {
+            "scientific_name": "X",
+            "common_name": "X",
+            "edible": False,
+            "flowering": False,
+        }
+
+        revived = PlantSpeciesData.from_dict(known_false)
+
+        assert revived.edible is False
+        assert revived.flowering is False

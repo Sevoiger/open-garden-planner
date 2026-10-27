@@ -211,6 +211,13 @@
       "symbol": "_WMO_CODE_MAP",
       "selector": "first",
       "scope": ""
+    },
+    "soil_mismatch_reasons": {
+      "file": "services/soil_assessment.py",
+      "context": "SoilService",
+      "symbol": "",
+      "selector": "call:_mismatch_reason:1",
+      "scope": ""
     }
   },
   "lookups": [
@@ -519,6 +526,15 @@
       "context": "WeatherConditions",
       "sources": [
         "weather_conditions"
+      ]
+    },
+    {
+      "file": "services/soil_service.py",
+      "scope": "SoilService.get_mismatch_details",
+      "expression": "reason.translation_key",
+      "context": "SoilService",
+      "sources": [
+        "soil_mismatch_reasons"
       ]
     }
   ],

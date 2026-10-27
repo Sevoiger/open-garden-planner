@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -192,19 +193,21 @@ class SuccessionEntry:
     start_date: str = ""        # ISO date "YYYY-MM-DD"
     end_date: str = ""          # ISO date "YYYY-MM-DD"
     notes: str = ""
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
+        d: dict[str, Any] = deepcopy(self.extra_fields)
+        d.update({
             "id": self.id,
             "species_key": self.species_key,
             "common_name": self.common_name,
             "start_date": self.start_date,
             "end_date": self.end_date,
-        }
+        })
         if self.scientific_name:
-            d["scientific_name"] = self.scientific_name
+            d["scientific_name"] = deepcopy(self.scientific_name)
         if self.notes:
-            d["notes"] = self.notes
+            d["notes"] = deepcopy(self.notes)
         return d
 
     @classmethod
@@ -217,6 +220,17 @@ class SuccessionEntry:
             start_date=data.get("start_date", ""),
             end_date=data.get("end_date", ""),
             notes=data.get("notes", ""),
+            extra_fields=deepcopy(
+                {
+                    key: value
+                    for key, value in data.items()
+                    if key
+                    not in {
+                        "id", "species_key", "common_name", "scientific_name",
+                        "start_date", "end_date", "notes",
+                    }
+                }
+            ),
         )
 
 
@@ -227,6 +241,7 @@ class SuccessionPlan:
     bed_id: str
     year: int
     entries: list[SuccessionEntry] = field(default_factory=list)
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def entries_sorted(self) -> list[SuccessionEntry]:
         """Return entries sorted ascending by start_date (invalid dates last)."""
@@ -263,11 +278,13 @@ class SuccessionPlan:
         return None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = deepcopy(self.extra_fields)
+        result.update({
             "bed_id": self.bed_id,
             "year": self.year,
             "entries": [e.to_dict() for e in self.entries],
-        }
+        })
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SuccessionPlan:
@@ -275,4 +292,7 @@ class SuccessionPlan:
             bed_id=data.get("bed_id", ""),
             year=data.get("year", datetime.date.today().year),
             entries=[SuccessionEntry.from_dict(e) for e in data.get("entries", [])],
+            extra_fields=deepcopy(
+                {key: value for key, value in data.items() if key not in {"bed_id", "year", "entries"}}
+            ),
         )

@@ -25,15 +25,15 @@ from PyQt6.QtCore import QBuffer, QIODevice, QRectF, Qt
 from PyQt6.QtGui import QImage, QPainter
 from PyQt6.QtWidgets import QGraphicsScene
 
+from open_garden_planner.agent_api.render_config import (
+    DEFAULT_IMAGE_PX as DEFAULT_IMAGE_PX,
+)
+from open_garden_planner.agent_api.render_config import MAX_IMAGE_PX, MIN_IMAGE_PX
 from open_garden_planner.services.export_service import ExportService
 from open_garden_planner.services.scene_rendering import (
     compute_export_font_size,
     render_scene_region,
 )
-
-MIN_IMAGE_PX = 128
-MAX_IMAGE_PX = 2048
-DEFAULT_IMAGE_PX = 1024
 
 
 def resolve_image_pixel_size(

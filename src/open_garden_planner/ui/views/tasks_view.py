@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -291,7 +292,9 @@ class TasksView(QWidget):
 
         if snoozed:
             unsnooze = QPushButton(self.tr("Un-snooze"))
-            unsnooze.clicked.connect(lambda _=False, t=task: self._pm.clear_task_status(t.task_id))
+            unsnooze.clicked.connect(
+                lambda _=False, t=task: self._set_task_status(t.task_id, "open")
+            )
             layout.addWidget(unsnooze)
             return row
 
@@ -316,12 +319,16 @@ class TasksView(QWidget):
             elif task.dismissible:
                 dismiss_btn = QPushButton(self.tr("Dismiss"))
                 dismiss_btn.clicked.connect(
-                    lambda _=False, t=task: self._pm.set_task_status(t.task_id, "dismissed")
+                    lambda _=False, t=task: self._set_task_status(
+                        t.task_id, "dismissed"
+                    )
                 )
                 layout.addWidget(dismiss_btn)
         else:
             reopen = QPushButton(self.tr("Reopen"))
-            reopen.clicked.connect(lambda _=False, t=task: self._pm.clear_task_status(t.task_id))
+            reopen.clicked.connect(
+                lambda _=False, t=task: self._set_task_status(t.task_id, "open")
+            )
             layout.addWidget(reopen)
         return row
 
@@ -340,9 +347,40 @@ class TasksView(QWidget):
             self.navigate_to_species.emit(task.species_key)
 
     def _mark_done(self, task: Task) -> None:
-        self._pm.set_task_status(
-            task.task_id, "done", done_date=datetime.date.today().isoformat()
+        self._set_task_status(
+            task.task_id,
+            "done",
+            done_date=datetime.date.today().isoformat(),
         )
+
+    def _set_task_status(
+        self,
+        task_id: str,
+        status: str,
+        *,
+        done_date: str | None = None,
+        snooze_until: str | None = None,
+    ) -> None:
+        """Prepare a task-status change and commit it as one undo step."""
+        from open_garden_planner.core.commands import SetTaskStatusCommand  # noqa: PLC0415
+        from open_garden_planner.services.task_status import (  # noqa: PLC0415
+            prepare_task_status,
+        )
+
+        change = prepare_task_status(
+            self._pm.task_states,
+            task_id,
+            status,
+            done_date=done_date,
+            snooze_until=snooze_until,
+        )
+        if change.is_noop:
+            return
+        command = SetTaskStatusCommand(self._pm, change)
+        if self._cmd is None:
+            command.execute()
+        else:
+            self._cmd.execute(command)
 
     def _snooze_menu(self, task: Task, anchor: QWidget) -> None:
         from PyQt6.QtCore import Qt  # noqa: PLC0415
@@ -359,7 +397,7 @@ class TasksView(QWidget):
             act = menu.addAction(label)
             until = (today + datetime.timedelta(days=days)).isoformat()
             act.triggered.connect(
-                lambda _=False, t=task, u=until: self._pm.set_task_status(
+                lambda _=False, t=task, u=until: self._set_task_status(
                     t.task_id, "open", snooze_until=u
                 )
             )
@@ -383,11 +421,24 @@ class TasksView(QWidget):
             self._commit_manual(dialog.result_task(), edit=True)
 
     def _delete_manual(self, task: Task) -> None:
-        from open_garden_planner.core.commands import (  # noqa: PLC0415
-            DeleteManualTaskCommand,
+        from open_garden_planner.core.commands import DeleteManualTaskCommand  # noqa: PLC0415
+        from open_garden_planner.services.task_operations import (  # noqa: PLC0415
+            prepare_manual_task_change,
         )
 
-        cmd = DeleteManualTaskCommand(self._pm, task.task_id)
+        try:
+            change = prepare_manual_task_change(
+                self._pm.manual_tasks,
+                operation="delete",
+                task_id=task.task_id,
+            )
+        except ValueError:
+            # The row may have gone stale between refresh and the menu action.
+            self.schedule_refresh()
+            return
+        if change.is_noop:
+            return
+        cmd = DeleteManualTaskCommand(self._pm, change)
         if self._cmd is not None:
             self._cmd.execute(cmd)
         else:
@@ -398,11 +449,43 @@ class TasksView(QWidget):
             AddManualTaskCommand,
             EditManualTaskCommand,
         )
+        from open_garden_planner.core.object_types import is_bed_type  # noqa: PLC0415
+        from open_garden_planner.services.task_operations import (  # noqa: PLC0415
+            prepare_manual_task_change,
+        )
+
+        valid_bed_ids = {
+            str(item.item_id)
+            for item in self._scene.items()
+            if is_bed_type(getattr(item, "object_type", None))
+            and getattr(item, "item_id", None) is not None
+        }
+        operation = "edit" if edit else "add"
+        try:
+            change = prepare_manual_task_change(
+                self._pm.manual_tasks,
+                operation=operation,
+                task_id=task.id if edit else task.id,
+                date=task.date,
+                title=task.title,
+                notes=task.notes,
+                bed_id=task.bed_id,
+                valid_bed_ids=valid_bed_ids,
+            )
+        except ValueError:
+            QMessageBox.warning(
+                self,
+                self.tr("Tasks"),
+                self.tr("The task could not be saved. Check the title, date, and linked bed."),
+            )
+            return
+        if change.is_noop:
+            return
 
         cmd = (
-            EditManualTaskCommand(self._pm, task)
+            EditManualTaskCommand(self._pm, change)
             if edit
-            else AddManualTaskCommand(self._pm, task)
+            else AddManualTaskCommand(self._pm, change)
         )
         if self._cmd is not None:
             self._cmd.execute(cmd)

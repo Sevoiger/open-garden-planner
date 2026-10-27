@@ -74,6 +74,8 @@ def _stub_providers() -> AgentProviders:
         find_compatible_sets=_boom,
         find_sets_for_bed=_boom,
         check_placement=_boom,
+        document_operation=_boom,
+        library_operation=_boom,
     )
 
 
@@ -165,6 +167,12 @@ WRITE_TOOL_NAMES = frozenset(
         "add_garden_intervention",
         "edit_garden_intervention",
         "delete_garden_intervention",
+        "apply_document_operations",
+        "get_custom_plant_library",
+        "prepare_plant_library_import",
+        "apply_plant_library_import",
+        "get_plant_library_operation",
+        "undo_plant_library_import",
     }
 )
 
@@ -403,7 +411,95 @@ def test_capabilities_lists_the_actual_registered_tools(enabled: bool) -> None:
     tool = mcp._tool_manager.get_tool("get_capabilities")
     assert tool is not None
     capabilities = asyncio.run(tool.fn())
+    registered = asyncio.run(mcp.list_tools())
+    tool_schemas = {item.name: item.inputSchema for item in registered}
     assert capabilities["writes_enabled"] is enabled
-    assert capabilities["available_tools"] == sorted(_tool_names(mcp))
+    assert capabilities["available_tools"] == sorted(tool_schemas)
+    assert capabilities["tool_input_schemas"] == tool_schemas
     assert ("set_planting_date" in capabilities["available_tools"]) is enabled
     assert ("remove_constraint" in capabilities["available_tools"]) is enabled
+
+    document_contract = capabilities["operation_schemas"]["document"]
+    assert document_contract["batch"]["field"] == "operations"
+    assert document_contract["batch"]["min_items"] == 1
+    assert document_contract["batch"]["max_items"] == 100
+    operation_schemas = document_contract["operations"]
+    from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
+
+    assert list(operation_schemas) == list(SUPPORTED_OPERATIONS)
+    planting_date = operation_schemas["set_planting_date"]
+    assert planting_date["required"] == ["operation", "target_id", "fields"]
+    assert planting_date["properties"]["fields"]["required"] == ["planting_date"]
+    assert planting_date["properties"]["fields"]["properties"]["planting_date"]["type"] == [
+        "object", "string", "null",
+    ]
+    harvest = operation_schemas["add_harvest_record"]["properties"]["fields"]
+    assert harvest["required"] == ["quantity"]
+    assert harvest["properties"]["quantity"]["type"] == "number"
+    assert operation_schemas["record_soil_test"]["properties"]["fields"]["anyOf"]
+    soil_fields = operation_schemas["record_soil_test"]["properties"]["fields"]["properties"]
+    assert soil_fields["ph"]["minimum"] == 0 and soil_fields["ph"]["maximum"] == 14
+    assert soil_fields["k_level"]["minimum"] == 1 and soil_fields["k_level"]["maximum"] == 4
+    assert operation_schemas["set_succession_plan"]["properties"]["fields"]["required"] == [
+        "entries", "year",
+    ]
+    assert operation_schemas["add_harvest_record"]["properties"]["fields"]["additionalProperties"] is True
+    assert operation_schemas["set_garden_card"]["properties"]["fields"]["additionalProperties"] is False
+    period_schema = operation_schemas["set_garden_card"]["properties"]["fields"]["properties"]["period"]
+    assert period_schema["properties"]["label"]["type"] == "string"
+    edit_intervention_fields = operation_schemas["edit_garden_intervention"]["properties"]["fields"]["properties"]
+    assert edit_intervention_fields["quantity"]["minimum"] == 0
+
+    retry_policy = capabilities["retry_policy"]
+    expected_persistent = ["add_garden_intervention"] if enabled else []
+    if enabled:
+        expected_persistent.extend(["apply_document_operations", "apply_plant_library_import"])
+        assert retry_policy["persistent_receipt_lookup"] == {
+            "apply_document_operations": "get_document_operation",
+            "apply_plant_library_import": "get_plant_library_operation",
+        }
+        assert "apply_document_operations" in retry_policy["durability"]
+        assert "apply_plant_library_import" in retry_policy["durability"]
+        library_contract = capabilities["operation_schemas"]["plant_library_import"]
+        assert library_contract["input_schema_scope"] == "canonical"
+        assert "preserved automatically" in library_contract["compatibility"]["omitted_legacy_fields"]
+        assert "outside the canonical input schema" in library_contract["compatibility"]["legacy_echo"]
+        library_record = library_contract["record"]
+        assert library_record["required"] == ["scientific_name", "common_name"]
+        assert library_record["anyOf"] == [
+            {"required": ["source_id"]}, {"required": ["id"]},
+        ]
+        assert library_record["additionalProperties"] is False
+        assert library_record["properties"]["cycle"]["enum"]
+        assert library_record["properties"]["frost_tolerance"]["enum"] == [
+            "half-hardy", "hardy", "tender", None,
+        ]
+        assert library_record["properties"]["ph_min"]["minimum"] == 0
+        assert library_record["properties"]["ph_min"]["maximum"] == 14
+        assert library_record["properties"]["min_height_cm"]["minimum"] == 0
+        assert "max_height_cm" in library_record["properties"]["min_height_cm"]["description"]
+        assert library_record["properties"]["edible"]["type"] == ["boolean", "null"]
+        assert library_record["properties"]["raw_data"]["additionalProperties"] is True
+        assert library_record["example"]["source_id"]
+        assert "echoed unchanged" not in library_record["description"]
+        assert "get_custom_plant_library" in capabilities["personal_data"]["read_only_tools"]
+        seed_access = capabilities["personal_data"]["read_policy"]["get_seed_inventory"]["scopes"]
+        assert seed_access["project"] == {"available": True, "requires_write_token": False}
+        assert seed_access["global"]["available"] is False
+    assert retry_policy["persistent_request_key"] == expected_persistent
+    assert "get_plant_lists" not in capabilities["available_tools"]
+    json.dumps(capabilities, allow_nan=False)
+
+
+def test_capability_operation_examples_match_their_json_schemas() -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    mcp = build_server(_stub_providers(), writes_enabled=True, write_token="tok")
+    capabilities = asyncio.run(mcp._tool_manager.get_tool("get_capabilities").fn())
+
+    for schema in capabilities["operation_schemas"]["document"]["operations"].values():
+        jsonschema.Draft202012Validator.check_schema(schema)
+        jsonschema.Draft202012Validator(schema).validate(schema["example"])
+
+    plant_record = capabilities["operation_schemas"]["plant_library_import"]["record"]
+    jsonschema.Draft202012Validator.check_schema(plant_record)
+    jsonschema.Draft202012Validator(plant_record).validate(plant_record["example"])

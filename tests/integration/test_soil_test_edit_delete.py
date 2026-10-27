@@ -68,6 +68,52 @@ class TestEditSoilTestCommand:
 
         assert pm.soil_tests[bed_id] == before
 
+    def test_dialog_edit_preserves_extensions_and_undo_restores_raw_history(self, qtbot) -> None:
+        bed_id = "bed-A"
+        original = {
+            "target_id": bed_id,
+            "future_history": {"revision": 7},
+            "records": [
+                {
+                    "id": "r1",
+                    "date": "2026-04-01",
+                    "ph": 6.5,
+                    "mode": "kit",
+                    "future_record": {"method": "newer-app"},
+                }
+            ],
+        }
+        pm = ProjectManager()
+        pm.restore_soil_test_history(bed_id, original)
+        existing = SoilTestRecord.from_dict(original["records"][0])
+
+        from open_garden_planner.ui.dialogs.soil_test_dialog import SoilTestDialog
+
+        dialog = SoilTestDialog(
+            target_id=bed_id,
+            target_name="Bed A",
+            existing_latest=existing,
+            edit_mode=True,
+        )
+        qtbot.addWidget(dialog)
+        dialog._ph_spin.setValue(6.8)
+        updated = dialog.result_record()
+        assert updated.extra_fields == {}
+
+        command = EditSoilTestCommand(pm, bed_id, updated)
+        command.execute()
+        changed = pm.soil_tests[bed_id]
+        assert changed["future_history"] == {"revision": 7}
+        assert changed["records"][0]["future_record"] == {"method": "newer-app"}
+        assert changed["records"][0]["ph"] == 6.8
+
+        command.undo()
+        assert pm.soil_tests[bed_id] == original
+        command.execute()
+        assert pm.soil_tests[bed_id]["records"][0]["future_record"] == {
+            "method": "newer-app"
+        }
+
 
 class TestDeleteSoilTestCommand:
     def test_execute_removes_record(self) -> None:
@@ -119,6 +165,43 @@ class TestDeleteSoilTestCommand:
         records = SoilTestHistory.from_dict(pm.soil_tests[bed_id]).records
         assert len(records) == 1
         assert records[0].id == new_rec.id
+
+    def test_add_delete_commands_preserve_extensions_across_undo_redo(self) -> None:
+        bed_id = "bed-A"
+        original = {
+            "target_id": bed_id,
+            "future_history": {"revision": 3},
+            "records": [
+                {
+                    "id": "r1",
+                    "date": "2026-04-01",
+                    "ph": 5.5,
+                    "future_record": {"source": "lab-v2"},
+                }
+            ],
+        }
+        pm = ProjectManager()
+        pm.restore_soil_test_history(bed_id, original)
+        added = SoilTestRecord(id="r2", date="2026-05-01", n_level=2)
+
+        add_command = AddSoilTestCommand(pm, bed_id, added)
+        add_command.execute()
+        assert pm.soil_tests[bed_id]["future_history"] == {"revision": 3}
+        assert pm.soil_tests[bed_id]["records"][0]["future_record"] == {
+            "source": "lab-v2"
+        }
+        add_command.undo()
+        assert pm.soil_tests[bed_id] == original
+        add_command.execute()
+
+        delete_command = DeleteSoilTestCommand(pm, bed_id, "r1")
+        delete_command.execute()
+        assert pm.soil_tests[bed_id]["future_history"] == {"revision": 3}
+        assert [record["id"] for record in pm.soil_tests[bed_id]["records"]] == ["r2"]
+        delete_command.undo()
+        assert pm.soil_tests[bed_id]["records"][0]["future_record"] == {
+            "source": "lab-v2"
+        }
 
 
 class TestEditViaHistoryDuplicateGuard:

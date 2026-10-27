@@ -14,6 +14,7 @@ item is deleted or carried into a new season without its objects.
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,15 +35,18 @@ class HarvestRecord:
     # (US-C1 journal link). ``None`` when no linked note exists.
     journal_note_id: str | None = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # Keep fields written by newer versions when an older client edits a record.
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict, omitting empty optional fields."""
-        d: dict[str, Any] = {
+        d: dict[str, Any] = deepcopy(self.extra_fields)
+        d.update({
             "id": self.id,
             "date": self.date,
             "quantity": self.quantity,
             "unit": self.unit,
-        }
+        })
         if self.quality:
             d["quality"] = self.quality
         if self.notes:
@@ -69,6 +73,13 @@ class HarvestRecord:
             notes=data.get("notes", ""),
             photo_path=data.get("photo_path"),
             journal_note_id=data.get("journal_note_id"),
+            extra_fields=deepcopy({
+                key: value for key, value in data.items()
+                if key not in {
+                    "id", "date", "quantity", "unit", "quality", "notes",
+                    "photo_path", "journal_note_id",
+                }
+            }),
         )
 
 
@@ -84,13 +95,15 @@ class HarvestHistory:
     records: list[HarvestRecord] = field(default_factory=list)
     species_key: str = ""
     species_name: str = ""
+    extra_fields: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serialisable dict, omitting empty cache fields."""
-        d: dict[str, Any] = {
+        d: dict[str, Any] = deepcopy(self.extra_fields)
+        d.update({
             "target_id": self.target_id,
             "records": [r.to_dict() for r in self.records],
-        }
+        })
         if self.species_key:
             d["species_key"] = self.species_key
         if self.species_name:
@@ -105,6 +118,10 @@ class HarvestHistory:
             records=[HarvestRecord.from_dict(r) for r in data.get("records", [])],
             species_key=data.get("species_key", ""),
             species_name=data.get("species_name", ""),
+            extra_fields=deepcopy({
+                key: value for key, value in data.items()
+                if key not in {"target_id", "records", "species_key", "species_name"}
+            }),
         )
 
 

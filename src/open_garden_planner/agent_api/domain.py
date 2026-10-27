@@ -11,7 +11,6 @@ The actual service instances are injected by the provider callables in
 from __future__ import annotations
 
 import datetime
-import math
 from typing import Any
 
 from open_garden_planner.agent_api.schema import (
@@ -50,6 +49,18 @@ from open_garden_planner.services.companion_planting_service import (
 from open_garden_planner.services.companion_sets import (
     find_compatible_sets,
     suggest_companions,
+)
+from open_garden_planner.services.soil_assessment import (
+    SoilTestError as SoilTestError,
+)
+from open_garden_planner.services.soil_assessment import (
+    build_soil_record_for_agent as build_soil_record_for_agent,
+)
+from open_garden_planner.services.succession_operations import (
+    SuccessionPlanError as SuccessionPlanError,
+)
+from open_garden_planner.services.succession_operations import (
+    build_succession_plan_for_agent as build_succession_plan_for_agent,
 )
 from open_garden_planner.services.task_generator import classify_urgency
 from open_garden_planner.services.task_status import effective_status
@@ -605,118 +616,6 @@ def _reasons(
     return reasons
 
 
-class SuccessionPlanError(ValueError):
-    """A refusal from ``build_succession_plan_for_agent``.
-
-    A ValueError subclass so the server layer can catch the refusal and turn it
-    into a tool error, while every distinct message stays greppable in tests.
-    """
-
-
-def build_succession_plan_for_agent(
-    entries: list[dict] | None,
-    bed_id: str,
-    year: int,
-    *,
-    known_species_keys: set[str] | None = None,
-) -> SuccessionPlan | None:
-    """Validate agent-supplied entries into a ``SuccessionPlan``.
-
-    Returns ``None`` when the plan should be DELETED (``entries`` empty/None),
-    which is what ``SetSuccessionPlanCommand`` expects for removal.
-
-    Every refusal happens before anything is constructed, so a rejected call
-    leaves the caller's plan state untouched (the caller only builds the command
-    on success).
-
-    Args:
-        entries: ``[{species_key, common_name, start_date, end_date, notes}]``.
-        bed_id: Target bed.
-        year: Plan year.
-        known_species_keys: When supplied, any ``species_key`` outside this set
-            is refused. Omit to skip that check.
-
-    Raises:
-        SuccessionPlanError: On an unknown species, a malformed or non-ISO date,
-            an end before its start, or two entries whose ranges overlap.
-    """
-    if not entries:
-        return None
-
-    parsed: list[tuple[int, datetime.date, datetime.date, str, dict]] = []
-    for index, raw in enumerate(entries):
-        if not isinstance(raw, dict):
-            raise SuccessionPlanError(f"Entry {index} is not an object")
-
-        raw_key = str(raw.get("species_key", "") or "").strip()
-        if not raw_key:
-            raise SuccessionPlanError(
-                f"Entry {index} has no species_key; succession slots must name a "
-                "species so rotation and companion checks can be made"
-            )
-        # Canonicalise before validating AND before storing. The roster is
-        # canonical (species_key lowercases the scientific name), so an exact
-        # membership test refused "Allium sativum" and "Garlic" while the
-        # sibling tools `set_species` and `suggest_succession`'s `candidates`
-        # both accept them - three tools disagreeing on the same string. Storing
-        # the canonical form also keeps the persisted plan comparable with every
-        # other per-species surface.
-        species_key = raw_key.lower()
-        if known_species_keys is not None and species_key not in known_species_keys:
-            raise SuccessionPlanError(
-                f"Unknown species_key {raw_key!r}. A species key is the canonical "
-                "lowercased form (ADR-016), which for a bundled plant is its "
-                "scientific name - 'allium sativum', not 'Garlic'. Read the "
-                "garden://species resource for the names this plan knows about."
-            )
-
-        start = parse_iso_date(str(raw.get("start_date", "") or ""))
-        if start is None:
-            raise SuccessionPlanError(
-                f"Entry {index} ({species_key}) has a missing or non-ISO "
-                f"start_date: {raw.get('start_date')!r}. Use YYYY-MM-DD."
-            )
-        end = parse_iso_date(str(raw.get("end_date", "") or ""))
-        if end is None:
-            raise SuccessionPlanError(
-                f"Entry {index} ({species_key}) has a missing or non-ISO "
-                f"end_date: {raw.get('end_date')!r}. Use YYYY-MM-DD."
-            )
-        if end < start:
-            raise SuccessionPlanError(
-                f"Entry {index} ({species_key}) ends {end} before it starts "
-                f"{start}."
-            )
-        parsed.append((index, start, end, species_key, raw))
-
-    parsed.sort(key=lambda row: (row[1], row[2], row[0]))
-    for (prev_i, _prev_start, prev_end, _pk, prev_raw), (i, start, _end, _k, _raw) in zip(
-        parsed, parsed[1:], strict=False
-    ):
-        if start <= prev_end:
-            prev_name = prev_raw.get("common_name") or prev_raw.get("species_key")
-            raise SuccessionPlanError(
-                f"Entries {prev_i} and {i} overlap: {prev_name!r} runs to "
-                f"{prev_end} but the next entry starts {start}. One bed cannot "
-                "grow two crops on the same days."
-            )
-
-    plan = SuccessionPlan(
-        bed_id=bed_id,
-        year=year,
-        entries=[
-            SuccessionEntry(
-                species_key=canonical_key,
-                common_name=str(raw.get("common_name", "") or "").strip(),
-                scientific_name=str(raw.get("scientific_name", "") or "").strip(),
-                start_date=start.isoformat(),
-                end_date=end.isoformat(),
-                notes=str(raw.get("notes", "") or ""),
-            )
-            for _index, start, end, canonical_key, raw in parsed
-        ],
-    )
-    return plan
 
 
 # --- US-D3.3 (issue #332): calendar & task tools ------------------------------
@@ -1157,132 +1056,3 @@ RAPITEST_LEVEL_RANGES: dict[str, tuple[int, int]] = {
 
 #: The soil textures ``SoilTestRecord.soil_texture`` accepts.
 SOIL_TEXTURES: tuple[str, ...] = ("sandy", "loamy", "clayey", "compacted")
-
-
-class SoilTestError(ValueError):
-    """A refusal from ``build_soil_record_for_agent``.
-
-    A ``ValueError`` subclass so the server layer can turn it into a tool error
-    while every distinct message stays greppable in tests — the same shape as
-    :class:`SuccessionPlanError`.
-    """
-
-
-def _check_level(name: str, value: Any) -> int:
-    """Validate one kit level against its own nutrient's range."""
-    low, high = RAPITEST_LEVEL_RANGES[name]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise SoilTestError(
-            f"{name}_level={value!r} must be a whole number on the Rapitest "
-            f"kit scale ({low}-{high}), not a lab reading. This tool takes the "
-            "categorical kit scale; the soil dialog records lab ppm values."
-        )
-    if not low <= value <= high:
-        raise SoilTestError(
-            f"{name}_level={value} is outside the Rapitest kit scale "
-            f"({low}-{high}) for {name}. Pass the categorical kit reading, not "
-            "a lab value in ppm — a ppm number here would be read as a kit "
-            "level and would silently change every recommendation."
-        )
-    return value
-
-
-def build_soil_record_for_agent(
-    *,
-    ph: float | None = None,
-    n_level: int | None = None,
-    p_level: int | None = None,
-    k_level: int | None = None,
-    ca_level: int | None = None,
-    mg_level: int | None = None,
-    s_level: int | None = None,
-    soil_texture: str | None = None,
-    test_date: str | None = None,
-    notes: str | None = None,
-    today: datetime.date | None = None,
-) -> Any:
-    """Validate agent-supplied readings into a ``SoilTestRecord``.
-
-    The target bed is resolved by the caller, not here: ``AddSoilTestCommand``
-    takes the ``target_id`` and the record separately, so a record carries no
-    bed of its own.
-
-    Every refusal raises :class:`SoilTestError` BEFORE a record is built, so a
-    refused call cannot reach ``AddSoilTestCommand`` and therefore cannot touch
-    ``ProjectManager.soil_tests`` or the undo stack.
-
-    The kit scale only, deliberately. The record model also carries optional
-    ``*_ppm`` lab floats, but nothing in ``services/`` reads them —
-    ``health_level``, ``calculate_amendments`` and ``get_mismatched_plants`` all
-    read the ``*_level`` fields — and no code converts between the two scales
-    (that is US-12.10c). So a record written from ppm alone would report
-    UNKNOWN health, no recommendations and no mismatches while still looking
-    complete to the caller. Refusing is the honest answer; the ppm path stays
-    with the dialog until the conversion exists.
-    """
-    from open_garden_planner.models.soil_test import SoilTestRecord
-
-    reference = today or datetime.date.today()
-
-    if ph is not None:
-        if isinstance(ph, bool) or not isinstance(ph, (int, float)):
-            raise SoilTestError(f"ph={ph!r} must be a number.")
-        if not math.isfinite(float(ph)):
-            raise SoilTestError(f"ph={ph!r} is not a finite number.")
-        if not 0.0 <= float(ph) <= 14.0:
-            raise SoilTestError(
-                f"ph={ph} is outside 0.0-14.0. Pass the measured pH value."
-            )
-
-    levels: dict[str, int | None] = {}
-    for name, value in (
-        ("n", n_level),
-        ("p", p_level),
-        ("k", k_level),
-        ("ca", ca_level),
-        ("mg", mg_level),
-        ("s", s_level),
-    ):
-        levels[name] = None if value is None else _check_level(name, value)
-
-    if soil_texture is not None and soil_texture not in SOIL_TEXTURES:
-        raise SoilTestError(
-            f"soil_texture={soil_texture!r} is not one of "
-            f"{', '.join(SOIL_TEXTURES)}."
-        )
-
-    resolved_date = reference
-    if test_date:
-        parsed = parse_iso_date(test_date)
-        if parsed is None:
-            raise SoilTestError(
-                f"test_date={test_date!r} is not an ISO date. Use YYYY-MM-DD."
-            )
-        if parsed > reference:
-            raise SoilTestError(
-                f"test_date={test_date} is in the future (today is "
-                f"{reference.isoformat()}). A test cannot have been taken yet."
-            )
-        resolved_date = parsed
-
-    if ph is None and all(value is None for value in levels.values()):
-        raise SoilTestError(
-            "A soil test with no readings is noise. Pass at least one of ph, "
-            "n_level, p_level, k_level, ca_level, mg_level or s_level."
-        )
-
-    return SoilTestRecord(
-        date=resolved_date.isoformat(),
-        ph=float(ph) if ph is not None else None,
-        n_level=levels["n"],
-        p_level=levels["p"],
-        k_level=levels["k"],
-        ca_level=levels["ca"],
-        mg_level=levels["mg"],
-        s_level=levels["s"],
-        notes=notes or "",
-        # Kit scale only — see the docstring. Persisted so the dialog reopens in
-        # the mode the record was actually entered in.
-        mode="kit",
-        soil_texture=soil_texture,
-    )

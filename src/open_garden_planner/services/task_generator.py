@@ -17,9 +17,9 @@ sources:
 Each generator is a pure function ``(PlanState) -> list[Task]``. They take no
 Qt *widgets*, perform no I/O, and never reach back into services — the soil
 recommendations, frost alerts and propagation plans are all handed in via the
-snapshot. (The module does import ``QCoreApplication`` purely to translate
-synthesized labels; ``.translate()`` is safe with no running ``QApplication``.)
-This keeps the engine trivially unit-testable and importable without a GUI.
+snapshot. Translated labels use Qt only when the UI has already loaded QtCore;
+in a headless process they fall back to their source text. This keeps the engine
+trivially unit-testable and importable without a GUI.
 
 Urgency is *not* stored on a :class:`Task`; it is recomputed at render time via
 :func:`classify_urgency`, mirroring the planting-calendar view's logic.
@@ -27,11 +27,10 @@ Urgency is *not* stored on a :class:`Task`; it is recomputed at render time via
 from __future__ import annotations
 
 import datetime
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-
-from PyQt6.QtCore import QCoreApplication
 
 from open_garden_planner.core.frost_dates import parse_frost
 from open_garden_planner.models.propagation import PropagationPlan, compute_propagation_plan
@@ -197,6 +196,14 @@ _CALENDAR_TASK_DEFS: tuple[tuple[str, str, str], ...] = (
 _PROPAGATION_STEP_IDS: tuple[str, ...] = ("prick_out", "harden_off")
 
 
+def _translate_task_label(source_text: str) -> str:
+    """Translate a label only when QtCore is already loaded by the UI."""
+    qt_core = sys.modules.get("PyQt6.QtCore")
+    if qt_core is None:
+        return source_text
+    return qt_core.QCoreApplication.translate("Tasks", source_text)
+
+
 def make_calendar_task_id(species_key: str, task_type: str, year: int) -> str:
     """Canonical ``task_id`` for a calendar / propagation task.
 
@@ -339,8 +346,8 @@ def generate_soil_mismatch_tasks(state: PlanState) -> list[Task]:
     for bed in state.beds:
         if not bed.mismatch_plants:
             continue
-        title = QCoreApplication.translate(
-            "Tasks", "Soil mismatch in {bed}: {plants}"
+        title = _translate_task_label(
+            "Soil mismatch in {bed}: {plants}"
         ).format(bed=bed.name, plants=", ".join(bed.mismatch_plants))
         tasks.append(Task(
             task_id=f"soil_mismatch:{bed.bed_id}",
@@ -367,9 +374,9 @@ def generate_frost_tasks(state: PlanState) -> list[Task]:
         task_type = (
             "frost_alert_red" if alert.severity == "red" else "frost_alert_orange"
         )
-        title = QCoreApplication.translate(
-            "Tasks", "Frost {temp}°C"
-        ).format(temp=f"{alert.min_temp:.1f}")
+        title = _translate_task_label("Frost {temp}°C").format(
+            temp=f"{alert.min_temp:.1f}"
+        )
         tasks.append(Task(
             task_id=f"frost:{alert.date}:{alert.severity}",
             source="frost",
