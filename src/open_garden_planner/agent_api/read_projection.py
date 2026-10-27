@@ -114,11 +114,19 @@ def _slice_text_by_bytes(value: str, *, offset: int, size: int, label: str) -> t
     raise ValueError(f"{label} byte limit is too small to include the next UTF-8 character")
 
 
-def _is_media_key(key: object) -> bool:
+def _is_media_key(key: object, *, parent_path: tuple[str | int, ...] = ()) -> bool:
     if not isinstance(key, str):
         return False
     normalized = key.casefold()
-    return normalized in _MEDIA_KEYS or normalized.endswith(("_base64", "_bytes"))
+    parent = parent_path[-1].casefold() if parent_path and isinstance(parent_path[-1], str) else ""
+    # Personal fill patterns are stored as metadata records with a plain `png`
+    # field rather than a generic image/media key. Restrict this exception to
+    # the owning record so unrelated business fields named `png` are retained.
+    return (
+        normalized in _MEDIA_KEYS
+        or normalized.endswith(("_base64", "_bytes"))
+        or (normalized == "png" and parent == "personal_fill_pattern")
+    )
 
 
 def _is_data_uri(value: Any) -> bool:
@@ -139,7 +147,9 @@ def _walk_media(value: Any, *, scope: str, path: tuple[str | int, ...] = ()) -> 
     if isinstance(value, Mapping):
         for key, child in value.items():
             child_path = (*path, str(key))
-            if isinstance(child, str) and (_is_media_key(key) or _is_data_uri(child)):
+            if isinstance(child, str) and (
+                _is_media_key(key, parent_path=path) or _is_data_uri(child)
+            ):
                 assets.append(
                     {
                         "media_id": _media_id(scope, child_path),
@@ -147,8 +157,8 @@ def _walk_media(value: Any, *, scope: str, path: tuple[str | int, ...] = ()) -> 
                         "path_parts": child_path,
                         "field": str(key),
                         "encoding": "data-uri" if _is_data_uri(child) else (
-                            "base64" if str(key).casefold() in _MEDIA_KEYS
-                            or str(key).casefold().endswith("_base64") else "opaque"
+                            "base64" if _is_base64_media_key(key, parent_path=path)
+                            else "opaque"
                         ),
                         "encoded_bytes": len(child.encode("utf-8")),
                     }
@@ -161,15 +171,37 @@ def _walk_media(value: Any, *, scope: str, path: tuple[str | int, ...] = ()) -> 
     return assets
 
 
-def _strip_media(value: Any) -> Any:
+def _is_base64_media_key(
+    key: object, *, parent_path: tuple[str | int, ...] = ()
+) -> bool:
+    if not isinstance(key, str):
+        return False
+    normalized = key.casefold()
+    return (
+        normalized in _MEDIA_KEYS
+        or normalized.endswith("_base64")
+        or (
+            normalized == "png"
+            and bool(parent_path)
+            and isinstance(parent_path[-1], str)
+            and parent_path[-1].casefold() == "personal_fill_pattern"
+        )
+    )
+
+
+def _strip_media(value: Any, *, path: tuple[str | int, ...] = ()) -> Any:
     if isinstance(value, Mapping):
         return {
-            str(key): _strip_media(child)
+            str(key): _strip_media(child, path=(*path, str(key)))
             for key, child in value.items()
-            if not _is_media_key(key) and not _is_data_uri(child)
+            if not _is_media_key(key, parent_path=path) and not _is_data_uri(child)
         }
     if isinstance(value, list):
-        return [_strip_media(child) for child in value if not _is_data_uri(child)]
+        return [
+            _strip_media(child, path=(*path, index))
+            for index, child in enumerate(value)
+            if not _is_data_uri(child)
+        ]
     if _is_data_uri(value):
         return None
     return deepcopy(value)
@@ -188,7 +220,7 @@ def _object_summary(item: Any) -> Any:
         if name == "children":
             result[name] = _object_summary(value)
         else:
-            result[name] = _strip_media(value)
+            result[name] = _strip_media(value, path=(name,))
     return result
 
 

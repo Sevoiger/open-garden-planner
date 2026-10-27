@@ -1,5 +1,27 @@
 # Progression — fork personnel macOS
 
+## Lecture MCP des textures personnelles de structures — 27 octobre 2026
+
+Une texture est persistée dans `metadata.personal_fill_pattern.png`. Ce champ
+base64 échappait au filtre média : une seule maison ou pergola pouvait encore
+dépasser le plafond de 512 000 octets de `get_document_state`, sans solution par
+réduction de la taille de page. La projection reconnaît désormais ce champ
+dans son contexte, le place dans le manifeste et permet sa lecture par
+fragments au chemin source. Les autres métadonnées, dont la largeur de texture
+et les champs `png` métier hors de cette enveloppe, restent visibles.
+
+Reproduction rouge avant correction sur données synthétiques, puis 17 tests
+réussis : projection, HTTP MCP réel, sérialiseur Qt maison/pergola et hôte sans
+Qt. La lecture globale et les pages unitaires des positions 2 à 5 réussissent
+avec des textures de 1 Mo, sans modification des fichiers ni de l’historique.
+Les fragments renvoyés correspondent à chaque texture d’origine. Ruff passe.
+Le parcours du sérialiseur réel passe aussi sous Cocoa natif. Revue senior
+indépendante Luna effort maximal du diff et des raccords : aucun défaut
+actionnable relevé ; le reviewer n’a pas répété les tests.
+Aucun plan ou visuel personnel n’a été utilisé.
+
+Livraison dans la [draft PR #25](https://github.com/Sevoiger/open-garden-planner/pull/25).
+
 ## Audit MCP : lectures bornées et faits botaniques inconnus — 27 octobre 2026
 
 Les lectures documentaires et botaniques renvoient désormais des pages sans

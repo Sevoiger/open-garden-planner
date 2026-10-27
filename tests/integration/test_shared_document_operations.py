@@ -3,6 +3,7 @@
 import asyncio
 import socket
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 
 import pytest
 
@@ -10,6 +11,57 @@ from open_garden_planner.agent_api.document_tools import DomainProviders
 from open_garden_planner.agent_api.server import AgentApiServer
 from open_garden_planner.core.document_session import DocumentSession
 from open_garden_planner.core.plan_io import read_plan, write_plan
+
+
+def test_live_house_and_pergola_nested_textures_are_readable_without_mutation(qtbot, monkeypatch):
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtWidgets import QMessageBox
+
+    from open_garden_planner.app.application import GardenPlannerApp
+    from open_garden_planner.core.object_types import ObjectType
+    from open_garden_planner.ui.canvas.items import PolygonItem
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    textures = {}
+    for kind, content in [(ObjectType.HOUSE, "H"), (ObjectType.PERGOLA, "P")]:
+        item = PolygonItem([QPointF(0, 0), QPointF(40, 0), QPointF(40, 30)], object_type=kind)
+        # This is the exact envelope persisted by the texture import control;
+        # assign after construction to test serialization without decoding a fake PNG.
+        item.metadata["personal_fill_pattern"] = {"png": content * 600_000, "width_cm": 40}
+        item.metadata["synthetic_note"] = "Keep this business metadata"
+        window.canvas_scene.addItem(item)
+        textures[str(item.item_id)] = content
+    pm = window._project_manager
+    original = deepcopy(pm.snapshot_dict(window.canvas_scene))
+    dirty, depth = pm.is_dirty, window.canvas_view.command_manager.undo_depth
+    dispatch = window._build_agent_providers().document_operation
+    state = dispatch("read", {})
+    assert state["media"]["total"] == 2
+    for offset, raw in enumerate(original["objects"]):
+        assert len(raw["metadata"]["personal_fill_pattern"]["png"]) == 600_000
+        page = dispatch("read", {"domains": ["objects"], "offset": offset, "limit": 1,
+                                 "expected_revision": state["revision"]})
+        item = page["document"]["objects"][0]
+        assert item["item_id"] == raw["item_id"]
+        assert item["metadata"]["personal_fill_pattern"] == {"width_cm": 40}
+        assert item["metadata"]["synthetic_note"] == "Keep this business metadata"
+        media = page["media"]["items"][0]
+        assert media["path"] == f"objects/{offset}/metadata/personal_fill_pattern/png"
+        chunk = dispatch("media", {"media_id": media["media_id"], "expected_revision": state["revision"],
+                                   "offset": 11, "max_bytes": 17})
+        assert chunk["data"] == textures[raw["item_id"]] * 17
+    current = pm.snapshot_dict(window.canvas_scene)
+    # ProjectData.to_dict stamps a detached snapshot with the current time.
+    # Compare persisted business values separately from that generated timestamp.
+    original["metadata"].pop("modified", None)
+    current["metadata"].pop("modified", None)
+    assert current == original
+    assert pm.is_dirty == dirty and window.canvas_view.command_manager.undo_depth == depth
+    window.close()
 
 
 def test_personal_catalog_providers_read_ui_stores_on_main_thread(qtbot, monkeypatch):

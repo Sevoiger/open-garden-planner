@@ -23,6 +23,10 @@ Les médias embarqués sont décrits par un manifeste ; leurs données se lisent
 séparément avec `get_document_media`, par fragments de 65 536 octets maximum,
 en fournissant la révision attendue. Les champs inconnus du fichier sont
 conservés sur disque, même lorsqu’ils ne font pas partie de cette projection.
+Cela comprend le PNG des textures personnelles imbriqué dans
+`metadata.personal_fill_pattern.png`, notamment pour les maisons et pergolas.
+La largeur de texture et les autres métadonnées restent dans la projection ;
+un champ métier `png` situé ailleurs n’est pas retiré pour ce seul nom.
 Les offsets de médias comptent les octets UTF-8 du texte encodé ; pour du
 base64 ASCII, un octet correspond à un caractère. Le fragment ne coupe pas un
 caractère UTF-8.

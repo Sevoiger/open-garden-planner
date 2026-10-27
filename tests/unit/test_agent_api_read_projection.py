@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from open_garden_planner.agent_api.read_projection import (
+    MAX_DOCUMENT_STATE_BYTES,
     project_document_state,
     project_library_page,
     project_library_snapshot,
@@ -131,6 +134,60 @@ def test_data_uri_payloads_are_removed_from_known_and_arbitrary_media_fields() -
             snapshot, media_id=item["media_id"], revision="r1", expected_revision="r1",
         )
         assert chunk["data"] == data_uri
+
+
+def test_personal_fill_pngs_are_paged_as_media_at_their_original_object_paths() -> None:
+    # This is the persisted format written by ProjectManager._serialize_item_core:
+    # PolygonItem.metadata contains the personal fill record consumed by
+    # personal_pattern_brush(). Use synthetic base64 text so no user texture is read.
+    blob_size = 700_000
+    snapshot = {
+        "version": "1.4",
+        "objects": [
+            {"item_id": f"object-{index}", "type": "polygon", "metadata": {
+                "owner_note": f"keep-{index}",
+                "custom_extension": {"png": f"business-value-{index}"},
+                "personal_fill_pattern": {
+                    "png": chr(ord("A") + index) * blob_size,
+                    "width_cm": 256.0,
+                },
+            }}
+            for index in range(6)
+        ],
+    }
+
+    media_ids: set[str] = set()
+    for object_index in range(2, 6):
+        page = project_document_state(
+            snapshot, revision="r1", mode="autonomous", domains=["objects"],
+            offset=object_index, limit=1,
+        )
+
+        assert len(json.dumps(page).encode("utf-8")) <= MAX_DOCUMENT_STATE_BYTES
+        selected = page["document"]["objects"][0]
+        assert selected["metadata"]["owner_note"] == f"keep-{object_index}"
+        assert selected["metadata"]["custom_extension"]["png"] == f"business-value-{object_index}"
+        assert selected["metadata"]["personal_fill_pattern"] == {"width_cm": 256.0}
+        assert chr(ord("A") + object_index) * 128 not in str(page["document"])
+
+        manifest = page["media"]["items"]
+        assert len(manifest) == 1
+        asset = manifest[0]
+        assert asset["path"] == f"objects/{object_index}/metadata/personal_fill_pattern/png"
+        assert asset["field"] == "png"
+        assert asset["encoding"] == "base64"
+        assert asset["encoded_bytes"] == blob_size
+        media_ids.add(asset["media_id"])
+
+        chunk = read_document_media(
+            snapshot, media_id=asset["media_id"], revision="r1", expected_revision="r1",
+            offset=0, max_bytes=32,
+        )
+        assert chunk["data"] == chr(ord("A") + object_index) * 32
+        assert chunk["encoded_bytes"] == blob_size
+        assert chunk["next_offset"] == 32
+
+    assert len(media_ids) == 4
 
 
 def test_library_search_pages_exact_id_and_returns_media_separately() -> None:

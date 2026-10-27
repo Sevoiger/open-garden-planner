@@ -17,8 +17,16 @@ from open_garden_planner.services.library_port import LibraryPort
 
 def test_large_library_and_plan_read_over_http_without_mutation(tmp_path):
     plan, library_path = tmp_path / "synthetic.ogp", tmp_path / "library.json"
+    structures = [
+        {"type": "polygon", "item_id": f"structure-{index}", "object_type": kind,
+         "name": f"Synthetic {kind}", "points": [[0, 0], [400, 0], [400, 300], [0, 300]],
+         "metadata": {"personal_fill_pattern": {"png": str(index) * 1_000_000, "width_cm": 40},
+                      "garden_tracking": {"notes": "Synthetic structure"}}}
+        for index, kind in enumerate(["HOUSE", "PERGOLA", "HOUSE", "PERGOLA"], start=2)
+    ]
     write_plan(plan, {"version": "1.4", "canvas": {"width": 500, "height": 500},
-                      "objects": [{"type": "image", "item_id": "background", "image_data": "A" * 17_000_000}],
+                      "objects": [{"type": "image", "item_id": "background", "image_data": "A" * 17_000_000},
+                                  {"type": "rectangle", "item_id": "simple"}, *structures],
                       "manual_tasks": {"task": {"title": "Synthetic task"}}})
     library_path.write_text(json.dumps({"version": "1.0", "plants": {
         "alpha": {"source_id": "alpha", "common_name": "Alpha", "scientific_name": "Fictitia alpha",
@@ -48,10 +56,24 @@ def test_large_library_and_plan_read_over_http_without_mutation(tmp_path):
 
                 state = await call("get_document_state")
                 assert "image_data" not in str(state["document"])
-                assert state["media"]["total"] == 1
+                assert state["media"]["total"] == 5
                 fragment = await call("get_document_media", media_id=state["media"]["items"][0]["media_id"],
                                       expected_revision=state["revision"], max_bytes=17)
                 assert fragment["data"] == "A" * 17
+                for index in range(2, 6):
+                    page = await call("get_document_state", domains=["objects"], offset=index, limit=1,
+                                      expected_revision=state["revision"])
+                    assert len(page["document"]["objects"]) == 1
+                    item = page["document"]["objects"][0]
+                    assert item["item_id"] == f"structure-{index}"
+                    assert item["metadata"]["personal_fill_pattern"] == {"width_cm": 40}
+                    assert item["metadata"]["garden_tracking"]["notes"] == "Synthetic structure"
+                    assert page["media"]["total"] == 1
+                    asset = page["media"]["items"][0]
+                    assert asset["path"] == f"objects/{index}/metadata/personal_fill_pattern/png"
+                    texture = await call("get_document_media", media_id=asset["media_id"],
+                                         expected_revision=state["revision"], offset=23, max_bytes=17)
+                    assert texture["data"] == str(index) * 17
                 tasks = await call("get_document_state", domains=["tasks"], expected_revision=state["revision"])
                 assert "objects" not in tasks["document"] and "task" in tasks["document"]["manual_tasks"]
                 first = await call("get_custom_plant_library", limit=1)
