@@ -231,6 +231,22 @@ class PerenualClient(PlantAPIClient):
         # Perenual doesn't provide structured dimensions in free tier
         # Would need detailed endpoint or premium tier for accurate measurements
 
+        flowers_value = data.get("flowers")
+        flowering_season = data.get("flowering_season")
+        has_flowering_season = (
+            isinstance(flowering_season, str) and bool(flowering_season.strip())
+        ) or (isinstance(flowering_season, list) and bool(flowering_season))
+        if isinstance(flowers_value, bool):
+            # The API's explicit `flowers` boolean carries both positive and
+            # negative evidence when it is present.
+            flowering = flowers_value
+        elif has_flowering_season:
+            flowering = True
+        else:
+            # Missing, null, and empty season data are unknown, not evidence
+            # that the species does not flower.
+            flowering = None
+
         return PlantSpeciesData(
             scientific_name=scientific_name,
             common_name=common_name,
@@ -245,6 +261,6 @@ class PerenualClient(PlantAPIClient):
             data_source="perenual",
             source_id=str(data.get("id") or ""),
             description=data.get("description") or "",
-            flowering=data.get("flowering_season") is not None,
+            flowering=flowering,
             raw_data=data,
         )

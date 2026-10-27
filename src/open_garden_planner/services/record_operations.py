@@ -17,22 +17,19 @@ from typing import Any
 from open_garden_planner.models.harvest_log import HarvestHistory, HarvestRecord
 from open_garden_planner.models.journal_note import JournalNote
 from open_garden_planner.models.pest_log import PestLogHistory, PestLogRecord
+from open_garden_planner.services.document_operation_contracts import (
+    HARVEST_RECORD_FIELDS,
+    JOURNAL_NOTE_FIELDS,
+    PEST_LOG_FIELDS,
+)
 
 _PLANT_TYPES = frozenset({"TREE", "SHRUB", "PERENNIAL"})
 _BED_TYPES = frozenset({
     "GARDEN_BED", "RAISED_BED", "CONTAINER", "CONTAINER_ROUND", "WALL_PLANTER",
 })
-_HARVEST_FIELDS = frozenset({
-    "id", "date", "quantity", "unit", "quality", "notes", "photo_path",
-    "journal_note_id",
-})
-_PEST_FIELDS = frozenset({
-    "id", "date", "entry_type", "name", "severity", "treatment", "notes",
-    "photo_path", "resolved",
-})
-_NOTE_FIELDS = frozenset({
-    "id", "date", "text", "photo_path", "scene_x", "scene_y", "tags",
-})
+_HARVEST_FIELDS = HARVEST_RECORD_FIELDS
+_PEST_FIELDS = PEST_LOG_FIELDS
+_NOTE_FIELDS = JOURNAL_NOTE_FIELDS
 _POSITION_FIELDS = frozenset({"scene_x", "scene_y", "position", "layer_id"})
 _INTERNAL_RECORD_FIELDS = frozenset({
     "record_id", "species_key", "species_name", "journal_note_text",

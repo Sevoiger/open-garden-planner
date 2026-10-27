@@ -8,16 +8,44 @@ les utilisent derrière des adaptateurs distincts.
 
 ## Outils documentaires
 
+### Lectures bornées
+
+`get_document_state` renvoie une projection métier, et non le fichier `.ogp`
+brut. `domains` filtre les familles (plan, objects, tasks, soil, harvest,
+pests, journal, succession, inventory, shopping, garden_memory). Les collections
+possèdent leur pagination `offset`/`limit` et leur `next_offset` ; conserver la
+révision entre les lectures. La réponse est plafonnée à 512 000 octets JSON.
+Un dépassement demande de réduire les domaines ou la taille de page et ne
+renvoie pas un résultat tronqué en silence. La géométrie détaillée reste
+accessible avec les outils graphiques du serveur en direct.
+
+Les médias embarqués sont décrits par un manifeste ; leurs données se lisent
+séparément avec `get_document_media`, par fragments de 65 536 octets maximum,
+en fournissant la révision attendue. Les champs inconnus du fichier sont
+conservés sur disque, même lorsqu’ils ne font pas partie de cette projection.
+Les offsets de médias comptent les octets UTF-8 du texte encodé ; pour du
+base64 ASCII, un octet correspond à un caractère. Le fragment ne coupe pas un
+caractère UTF-8.
+
+### Préparation et application
+
 Les outils sont enregistrés par le serveur MCP et apparaissent dans
 <code>get_capabilities</code> lorsqu'ils sont disponibles.
 
 | Outil | Usage |
 | --- | --- |
-| <code>get_document_state</code> | Lire un instantané détaché du projet et sa révision opaque. |
+| <code>get_document_state</code> | Lire un instantané métier paginé, sans géométrie ni médias intégrés, et sa révision opaque. |
+| <code>get_document_media</code> | Lire séparément un fragment de média embarqué à une révision donnée. |
 | <code>prepare_document_operations</code> | Préparer de 1 à 100 opérations atomiques sans écrire ni modifier l'historique. Retourne un identifiant temporaire, les résultats et les champs avant/après. |
 | <code>apply_document_operations</code> | Appliquer une préparation encore valide avec une clé de requête stable. Exige l'activation des écritures et le jeton MCP. |
 | <code>get_document_operation</code> | Relire le reçu associé à une clé, notamment après une réponse perdue ou un redémarrage. |
 | <code>assess_document_soil</code> | Lire l'état du sol et des conseils calculés ; n'enregistre ni relevé ni intervention. La surface, si fournie, est en mètres carrés ; zéro ne produit pas de dosage. |
+
+`get_capabilities` publie les schémas des opérations, les champs obligatoires,
+leurs types et des exemples, ainsi que les schémas des outils réellement
+enregistrés. Les listes de noms seules ne constituent plus le contrat de saisie.
+`retry_policy` inclut les applications documentaires et botaniques à clé
+persistante ; la durabilité du document en direct exige toujours `save_plan`.
 
 La liste des noms admis est publiée par
 <code>services/document_operations.SUPPORTED_OPERATIONS</code> :
@@ -40,6 +68,19 @@ requête. Une erreur de validation ou un conflit empêche l'application du lot
 entier. Les aperçus expirent après cinq minutes ; le cache est borné à 128
 préparations et appartient au processus courant. Une expiration, une éviction
 ou un redémarrage impose de préparer à nouveau.
+
+`get_capabilities` publie les `inputSchema` des outils réellement enregistrés,
+puis `operation_schemas.document.operations` décrit les champs, les types, les
+champs requis et un exemple pour chaque opération générique. Le contrat botanique
+`operation_schemas.plant_library_import.record` expose le modèle d'une fiche et
+un exemple d'import. Son schéma canonique est fermé ; toute nouvelle extension
+botanique doit se trouver dans `raw_data`. Lors d'une mise à jour, une extension
+historique de premier niveau omise de la requête est conservée automatiquement.
+La renvoyer sans changement est hors du schéma canonique et n'est pas nécessaire.
+Les opérations récolte, ravageurs et notes conservent les champs d'extension ;
+les positions gérées par Qt restent refusées pour les notes. Les opérations
+documentaires strictes signalent leurs champs supplémentaires comme refusés,
+sauf les extensions explicitement préservées par ces enregistrements.
 
 Les règles distinguent les champs absents, inconnus et nuls. Une quantité
 inconnue ne devient pas zéro. Pour une plantation, une date nulle conserve
@@ -65,6 +106,14 @@ tâches générées restent dérivées et ne sont pas exposées en écriture.
    <code>get_document_operation(request_key)</code>. Le même contenu avec la
    même clé renvoie le reçu sans répéter la mutation ; réutiliser cette clé
    pour un autre contenu est refusé.
+
+La politique est également publiée dans `get_capabilities.retry_policy` :
+`apply_document_operations` et `apply_plant_library_import` ont chacun un outil
+de lecture de reçu. Dans l'application ouverte, le reçu documentaire devient
+durable lorsque le projet est sauvegardé ; l'import botanique et son reçu sont
+commis ensemble dans la bibliothèque. Pour une intervention directe, répéter
+`add_garden_intervention` avec la même clé et le même contenu rejoue l'identifiant
+initial ; sa clé devient durable avec le projet sauvegardé.
 
 Exemple de forme de requête (UUID et date à remplacer par les valeurs relues
 dans le projet) :
@@ -141,6 +190,39 @@ compris pour la lecture et l'aperçu. Les imports utilisent des identifiants de
 source explicites, préparent jusqu'à 100 fiches et publient une transaction
 atomique avec reçu persistant.
 
+`get_custom_plant_library` accepte `query`, `plant_id`, `offset` et `limit`
+(100 fiches maximum). Par défaut, les médias embarqués sont exclus. Conserver
+la `revision` et la fournir en `expected_revision` aux lectures suivantes.
+Une fiche trop volumineuse devient un résumé explicitement signalé dans
+`truncated_records` ; la réponse entière est plafonnée à 512 000 octets.
+Les fragments de médias se demandent explicitement pour une seule fiche.
+Le `media_manifest` décrit les médias sans contenu. `media_id` permet d’en
+sélectionner un avec `plant_id` et `include_media=true`. Sans sélecteur, les
+médias déjà terminés renvoient un fragment vide marqué `finished` ; ils
+n’empêchent pas de poursuivre la lecture d’un média plus long.
+
+La préparation refuse les champs inconnus au premier niveau. Les extensions
+se placent dans l’objet `raw_data` ; les anciennes extensions déjà stockées
+restent conservées. Les bornes pH, dimensions, rusticité et durées doivent être
+cohérentes, les nombres finis et les dimensions/durées positives ou nulles.
+Les offsets du calendrier peuvent traverser l’ancrage annuel et ne sont pas
+assimilés à des durées min/max. Le modèle n’a qu’un seuil minimal de
+température de germination : aucun maximum n’est inventé.
+Le schéma publié décrit la saisie canonique : omettre les anciennes extensions
+de premier niveau lors d’une mise à jour, elles sont conservées par le service.
+L’écho inchangé d’une extension historique est toléré pour compatibilité par
+le validateur, en dehors de ce schéma canonique ; il ne permet pas d’ajouter
+ou de modifier un champ inconnu.
+
+Pour une fiche incomplète, `edible` et `flowering` absents ou nuls restent
+`null` (inconnus) ; `false` signifie une réponse négative explicite. Les valeurs
+`false` historiques sont conservées : leur provenance ne permet pas de les
+requalifier automatiquement. L’éditeur Qt affiche l’état comestible inconnu
+avec une case intermédiaire et le conserve si un autre champ est modifié.
+Les parseurs Trefle, Permapeople et Perenual conservent également l’absence
+comme inconnue ; une liste vide de parties comestibles ne prouve pas qu’une
+plante soit non comestible. Un booléen négatif explicite reste négatif.
+
 Le panneau botanique conserve la révision de la fiche qu’il édite. Si un import
 MCP ou un autre écrivain a modifié la bibliothèque, la sauvegarde de l’ancien
 panneau est refusée et expliquée dans le panneau ; le modèle et le canevas
@@ -158,6 +240,28 @@ n'écrit de bibliothèque personnelle. L'annulation d'un import utilise son
 <code>transaction_id</code> dans cette bibliothèque et n'utilise pas l'historique
 du document ou du canevas. Une modification de bibliothèque ne propage pas ses
 fiches vers les instantanés botaniques déjà intégrés dans les projets.
+
+## Listes personnelles et graines
+
+La bibliothèque botanique ne constitue pas la liste de plantes à placer.
+En direct, `get_plant_lists` lit des résumés de listes personnelles ;
+`get_plant_list(list_id)` lit leurs entrées paginées et leurs identités
+botaniques, sans placement. Ces outils globaux exigent le jeton et
+l’activation des écritures, bien qu’ils soient en lecture seule.
+
+`get_seed_inventory` filtre par `scope` (`project` par défaut ou `global`),
+`packet_id` ou `query`, avec `offset`/`limit` (25 par défaut, maximum 100).
+Le stock projet est dans le `.ogp`. Le stock global correspond à l’onglet
+Inventaire de graines, exige le jeton et n’est disponible qu’en direct.
+Les médias sont exclus et les longs textes limités à 2 000 caractères.
+Chaque lecture renvoie une `revision` de sa projection ; fournir
+`expected_revision` pour poursuivre ses pages. Les résumés de listes, les
+entrées de chaque liste et chaque scope de graines ont leur propre révision.
+Une insertion, suppression ou édition visible invalide la continuation :
+reprendre alors à la première page.
+Les listes et stocks globaux ne sont jamais ouverts implicitement par l’hôte
+autonome. Aucun outil d’écriture dédié de ces deux stockages n’est ajouté ici ;
+leurs modifications restent accessibles par les parcours Qt existants.
 
 ## Limites graphiques et métier
 

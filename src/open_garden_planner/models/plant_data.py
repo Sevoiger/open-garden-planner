@@ -143,9 +143,11 @@ class PlantSpeciesData:
     ph_max: float | None = None
 
     # Additional attributes
-    edible: bool = False
+    # ``None`` means the source did not establish edibility.  It must not be
+    # collapsed to ``False`` because absence is not evidence of inedibility.
+    edible: bool | None = None
     edible_parts: list[str] = field(default_factory=list)
-    flowering: bool = False
+    flowering: bool | None = None
     flower_color: str = ""
     foliage_color: str = ""
     foliage_texture: str = ""
@@ -327,9 +329,9 @@ class PlantSpeciesData:
             soil_type=data.get("soil_type", ""),
             ph_min=data.get("ph_min"),
             ph_max=data.get("ph_max"),
-            edible=data.get("edible", False),
+            edible=data.get("edible"),
             edible_parts=data.get("edible_parts", []),
-            flowering=data.get("flowering", False),
+            flowering=data.get("flowering"),
             flower_color=data.get("flower_color", ""),
             foliage_color=data.get("foliage_color", ""),
             foliage_texture=data.get("foliage_texture", ""),

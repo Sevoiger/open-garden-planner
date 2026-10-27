@@ -10,6 +10,7 @@ def test_autonomous_operations_and_mcp_builder_without_qt(tmp_path):
     path = tmp_path / "pure.ogp"
     write_plan(path, {"version": "1.4", "canvas": {"width": 500, "height": 500}, "objects": []})
     code = r'''
+import asyncio
 import importlib.abc
 import sys
 from pathlib import Path
@@ -24,6 +25,11 @@ from open_garden_planner.agent_api.server import build_server
 from open_garden_planner.services.document_analysis import assess_document_soil
 with DocumentSession(Path(sys.argv[1])) as host:
     mcp = build_server(DomainProviders(host.dispatch), writes_enabled=True, write_token='synthetic')
+    capability_tool = mcp._tool_manager.get_tool('get_capabilities')
+    capabilities = asyncio.run(capability_tool.fn())
+    assert capabilities['mode'] == 'autonomous'
+    assert 'set_planting_date' in capabilities['operation_schemas']['document']['operations']
+    assert capabilities['retry_policy']['persistent_request_key'] == ['apply_document_operations']
     preview = host.dispatch('prepare', {'operations': [{'operation': 'add_manual_task', 'fields': {'title': 'Pure task'}}]})
     assert not host.snapshot().get('manual_tasks')
     host.dispatch('apply', {'preparation_id': preview['preparation_id'], 'request_key': 'pure-1'})

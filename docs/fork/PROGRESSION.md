@@ -1,5 +1,43 @@
 # Progression — fork personnel macOS
 
+## Audit MCP : lectures bornées et faits botaniques inconnus — 27 octobre 2026
+
+Les lectures documentaires et botaniques renvoient désormais des pages sans
+médias intégrés par défaut : filtres métier, recherche botanique, identifiant,
+révision vérifiée et fragments de médias séparés. Le plafond des réponses
+document/bibliothèque est de 512 000 octets ; les fragments font au plus
+65 536 octets de texte encodé. Le manifeste conserve les indices du document
+source, y compris après pagination.
+
+La préparation botanique refuse les bornes et types incohérents et les nouveaux
+champs inconnus hors `raw_data`. Les valeurs `edible`/`flowering` absentes restent
+inconnues dans le modèle, le stockage, l’éditeur et les parseurs API concernés.
+Les anciens booléens négatifs ne sont pas requalifiés sans preuve.
+
+`get_capabilities` fournit les champs, types, obligations et exemples des
+opérations, ainsi que les clés de rejeu persistantes documentaires/botaniques.
+Des outils dédiés lisent les listes personnelles et les stocks de graines ;
+leurs mutations globales restent dans les parcours Qt.
+
+Vérifications du responsable sur données temporaires : 67 tests botanique,
+éditeur et catalogues ; 105 tests projection, document, hôte sans Qt,
+authentification et parseurs ; cinq parcours intégrés HTTP/Qt ; 19 cas sous
+Cocoa natif. Les runs se recouvrent et ne sont pas additionnés. Le test HTTP
+utilise une bibliothèque avec 70 Mo de média et un plan avec 17 Mo d’image :
+les lectures/préparations restent sous le plafond et les fichiers restent
+identiques. Les parcours appliqués vérifient lot, undo/redo, sauvegarde et
+réouverture ; les contrôles de persistance incluent échec et conflit externe.
+Ruff, traductions compilées et contrôle du contexte agent passent.
+Après revue, les pages de catalogues vérifient aussi leur révision, la reprise
+de médias de tailles différentes reste possible et le schéma canonique
+explicite la conservation des extensions historiques. Dernier contrôle :
+87 tests ciblés et deux parcours HTTP réussis, recouvrant les runs précédents.
+Revue senior indépendante Luna effort maximal et relecture des corrections :
+aucun P0/P1/P2 actionnable restant ; les tests n’ont pas été répétés par le reviewer.
+
+Contrat détaillé : [METIER_PARTAGE.md](METIER_PARTAGE.md).
+Livraison dans la [draft PR #25](https://github.com/Sevoiger/open-garden-planner/pull/25).
+
 ## Concurrence entre import MCP et éditeur botanique — 27 octobre 2026
 
 Le dernier contrôle du paquet métier a reproduit une perte de mise à jour :

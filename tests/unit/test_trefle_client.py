@@ -178,13 +178,37 @@ class TestFoliageMapping:
 
 
 class TestEdibleNullSafety:
-    def test_null_edible_does_not_crash_and_is_falsy(self) -> None:
+    def test_missing_or_null_edibility_stays_unknown_even_with_no_parts(self) -> None:
         client = TrefleClient(api_token="token")
-        payload = {"id": 1, "common_name": "Test", "scientific_name": "Testus", "edible": None}
+        for extra in ({}, {"edible": None}):
+            payload = {
+                "id": 1,
+                "common_name": "Test",
+                "scientific_name": "Testus",
+                "edible_part": [],
+                **extra,
+            }
 
-        result = client._parse_species(payload)
+            result = client._parse_species(payload)
 
-        assert result.edible is False
+            assert result.edible is None
+            assert result.edible_parts == []
+
+    def test_explicit_true_and_false_edibility_are_preserved(self) -> None:
+        client = TrefleClient(api_token="token")
+        for value in (True, False):
+            result = client._parse_species(
+                {
+                    "id": 1,
+                    "common_name": "Test",
+                    "scientific_name": "Testus",
+                    "edible": value,
+                    "edible_part": [],
+                }
+            )
+
+            assert result.edible is value
+            assert result.edible_parts == []
 
 
 class TestSourceIdNullSafety:
@@ -275,16 +299,12 @@ class TestMainSpeciesNullSafety:
 
         assert isinstance(raised, PlantDetailUnavailableError)
 
-    def test_no_none_leaks_into_non_optional_fields_when_growth_fields_are_null(self) -> None:
+    def test_null_description_is_normalized_and_null_flowering_stays_unknown(self) -> None:
         """Regression pin (#297 senior-review round 6): a live sweep of 42
         real Trefle detail records found `growth.description` null in
-        42/42, `flower.conspicuous` null in 33/42, and `observations` null
-        in 1/42 -- all three previously used the two-arg `data.get(key,
-        default)` form, whose default only applies when the key is ABSENT,
-        so a present null passed straight through as `None` into fields
-        declared `str`/`bool` (not `Optional`). A round-5 comment claiming
-        "every lookup below" used the None-safe `or` idiom was wrong; this
-        pins the sweep round 6 actually completed.
+        42/42 and `flower.conspicuous` null in 33/42. Description is a string
+        field and stays normalized to an empty string; flowering is optional,
+        so the source's null remains unknown rather than becoming false.
         """
         client = TrefleClient(api_token="token")
         payload = {
@@ -299,5 +319,23 @@ class TestMainSpeciesNullSafety:
         result = client._parse_species(payload)
 
         assert result.description == ""
-        assert result.flowering is False
+        assert result.flowering is None
         assert result.flower_color == ""
+
+    def test_missing_and_explicit_flowering_booleans_are_distinguished(self) -> None:
+        client = TrefleClient(api_token="token")
+        missing = client._parse_species(
+            {"id": 1, "common_name": "Test", "scientific_name": "Testus"}
+        )
+        assert missing.flowering is None
+
+        for value in (True, False):
+            result = client._parse_species(
+                {
+                    "id": 1,
+                    "common_name": "Test",
+                    "scientific_name": "Testus",
+                    "flower": {"conspicuous": value},
+                }
+            )
+            assert result.flowering is value

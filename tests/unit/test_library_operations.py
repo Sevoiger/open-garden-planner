@@ -167,6 +167,29 @@ def test_preview_contains_detached_before_after_values_including_unknown_fields(
     assert operations.snapshot()["rose"]["common_name"] == "Rosier modifié"
 
 
+def test_canonical_update_omitting_legacy_extensions_preserves_stored_values(tmp_path):
+    path = tmp_path / "custom_plants.json"
+    legacy = _record("rose", "Rosier")
+    legacy["future_trait"] = {"grade": [1, 2]}
+    legacy["raw_data"] = {"provider_extension": {"source": "legacy"}}
+    _write_document(path, {"rose": legacy})
+    operations = LibraryOperations(path)
+
+    canonical_update = _record("rose", "Rosier modifié")
+    assert "future_trait" not in canonical_update
+    preview = operations.prepare([canonical_update])
+
+    assert preview["can_apply"] is True
+    assert preview["entries"][0]["status"] == "update"
+    assert preview["entries"][0]["after"]["future_trait"] == legacy["future_trait"]
+    assert preview["entries"][0]["after"]["raw_data"] == legacy["raw_data"]
+    operations.apply(preview["token"], "canonical-update")
+    stored = operations.snapshot()["rose"]
+    assert stored["common_name"] == "Rosier modifié"
+    assert stored["future_trait"] == legacy["future_trait"]
+    assert stored["raw_data"] == legacy["raw_data"]
+
+
 def test_identity_is_exact_source_id_and_never_a_botanical_name_match(tmp_path):
     path = tmp_path / "custom_plants.json"
     original = _record("first-id", "Tomate", data_source="custom")
@@ -195,6 +218,89 @@ def test_source_collision_and_non_json_record_data_are_reported_as_conflicts(tmp
     ])
     assert [row["status"] for row in preview["entries"]] == ["conflict", "conflict"]
     assert preview["can_apply"] is False
+
+
+@pytest.mark.parametrize(
+    ("field_values", "expected_field"),
+    [
+        ({"ph_min": 10, "ph_max": 2}, "ph_min"),
+        ({"min_height_cm": 200, "max_height_cm": 100}, "min_height_cm"),
+        ({"min_spread_cm": 80, "max_spread_cm": 20}, "min_spread_cm"),
+        ({"min_height_cm": -1}, "min_height_cm"),
+        ({"ph_max": 14.1}, "ph_max"),
+        ({"days_to_germination_min": 12, "days_to_germination_max": 5},
+         "days_to_germination_min"),
+        ({"prick_out_after_days": -1}, "prick_out_after_days"),
+        ({"min_germination_temp_c": True}, "min_germination_temp_c"),
+        ({"min_germination_temp_c": -274}, "min_germination_temp_c"),
+        ({"max_spread_cm": "20"}, "max_spread_cm"),
+        ({"days_to_maturity_min": True}, "days_to_maturity_min"),
+        ({"edible": "false"}, "edible"),
+        ({"edible_parts": "fruit"}, "edible_parts"),
+    ],
+)
+def test_prepare_rejects_incoherent_or_mistyped_botanical_values(
+    tmp_path, field_values, expected_field
+):
+    operations = LibraryOperations(tmp_path / "custom_plants.json")
+    row = {**_record("invalid", "Invalidée"), **field_values}
+
+    preview = operations.prepare([row])
+
+    assert preview["can_apply"] is False
+    assert preview["entries"][0]["status"] == "conflict"
+    assert expected_field in preview["entries"][0]["error"]
+    assert not (tmp_path / "custom_plants.json").exists()
+
+
+def test_prepare_keeps_calendar_offsets_that_cross_the_frost_anchor(tmp_path):
+    operations = LibraryOperations(tmp_path / "custom_plants.json")
+    row = {
+        **_record("wrap", "Calendrier"),
+        "direct_sow_start": 10,
+        "direct_sow_end": 2,
+    }
+
+    preview = operations.prepare([row])
+
+    assert preview["can_apply"] is True
+    assert preview["entries"][0]["after"]["direct_sow_start"] == 10
+    assert preview["entries"][0]["after"]["direct_sow_end"] == 2
+
+
+def test_prepare_rejects_new_top_level_fields_but_allows_raw_data_extensions(tmp_path):
+    operations = LibraryOperations(tmp_path / "custom_plants.json")
+    invented = {**_record("invented", "Inventée"), "leaf_shape_guess": "heart"}
+
+    preview = operations.prepare([invented])
+
+    assert preview["can_apply"] is False
+    assert preview["entries"][0]["status"] == "conflict"
+    assert "leaf_shape_guess" in preview["entries"][0]["error"]
+
+    extension = {
+        **_record("extension", "Étendue"),
+        "raw_data": {"provider_extension": {"leaf_shape": "heart"}},
+    }
+    accepted = operations.prepare([extension])
+    assert accepted["can_apply"] is True
+    assert accepted["entries"][0]["after"]["raw_data"] == extension["raw_data"]
+
+
+def test_new_record_keeps_absent_edible_and_flowering_unknown(tmp_path):
+    operations = LibraryOperations(tmp_path / "custom_plants.json")
+    row = _record("sparse", "Inconnue")
+
+    preview = operations.prepare([row])
+
+    assert preview["can_apply"] is True
+    after = preview["entries"][0]["after"]
+    assert after["edible"] is None
+    assert after["flowering"] is None
+    operations.apply(preview["token"], "sparse-create")
+    stored = operations.snapshot()["sparse"]
+    assert stored["edible"] is None
+    assert stored["flowering"] is None
 
 
 def test_batch_size_is_bounded(tmp_path):

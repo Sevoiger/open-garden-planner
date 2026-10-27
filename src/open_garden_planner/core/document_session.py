@@ -91,6 +91,28 @@ class DocumentSession:
         with self._mutex:
             self._require_open()
             check_disk_version(self.path, self._disk_version)
+            if action in {"read", "media"}:
+                from open_garden_planner.agent_api.read_projection import (
+                    project_document_state,
+                    read_document_media,
+                )
+
+                revision = self.revision()
+                if action == "read":
+                    return project_document_state(
+                        self._document,
+                        revision=revision,
+                        mode="autonomous",
+                        **arguments,
+                    )
+                return read_document_media(
+                    self._document,
+                    media_id=arguments["media_id"],
+                    revision=revision,
+                    expected_revision=arguments["expected_revision"],
+                    offset=arguments.get("offset", 0),
+                    max_bytes=arguments.get("max_bytes", 65536),
+                )
             if action == "snapshot":
                 return {"revision": self.revision(), "document": self.snapshot(), "mode": "autonomous"}
             if action == "prepare":

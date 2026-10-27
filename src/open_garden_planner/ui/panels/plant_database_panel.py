@@ -625,6 +625,7 @@ class PlantDatabasePanel(QWidget):
 
         # Edible (simple checkbox)
         self.edible_checkbox = QCheckBox()
+        self.edible_checkbox.setTristate(True)
         self.edible_checkbox.stateChanged.connect(self._on_field_changed)
         self.details_form.addRow(self.tr("Edible:"), self.edible_checkbox)
 
@@ -876,8 +877,13 @@ class PlantDatabasePanel(QWidget):
             int(hardiness_max) if hardiness_max > 0 else None
         )
 
-        # Boolean from checkbox
-        edited_plant.edible = self.edible_checkbox.isChecked()
+        # A partially-checked checkbox represents an unknown source value;
+        # saving an unrelated field must not turn that absence into False.
+        edible_state = self.edible_checkbox.checkState()
+        if edible_state == Qt.CheckState.PartiallyChecked:
+            edited_plant.edible = None
+        else:
+            edited_plant.edible = edible_state == Qt.CheckState.Checked
 
         # Edible parts (comma-separated list)
         edible_parts_str = self.edible_parts_edit.text().strip()
@@ -1674,7 +1680,12 @@ class PlantDatabasePanel(QWidget):
 
         # Edible checkbox
         self.edible_checkbox.blockSignals(True)
-        self.edible_checkbox.setChecked(plant_data.edible)
+        if plant_data.edible is None:
+            self.edible_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
+        else:
+            self.edible_checkbox.setCheckState(
+                Qt.CheckState.Checked if plant_data.edible else Qt.CheckState.Unchecked
+            )
         self.edible_checkbox.blockSignals(False)
 
         # Edible parts

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 import tempfile
@@ -17,11 +18,22 @@ import unicodedata
 import uuid
 from collections import OrderedDict
 from copy import deepcopy
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 from open_garden_planner.core.file_lock import ProcessFileLock
-from open_garden_planner.models.plant_data import PlantSpeciesData
+from open_garden_planner.models.plant_data import (
+    FlowerType,
+    GrowthRate,
+    PermacultureLayer,
+    PlantCycle,
+    PlantFunction,
+    PlantSpeciesData,
+    PollinationType,
+    SunRequirement,
+    WaterNeeds,
+)
 
 _MISSING_FINGERPRINT = hashlib.sha256(b"ogp:missing-library-file").hexdigest()
 _OPERATIONS_KEY = "_ogp_library_operations"
@@ -34,6 +46,96 @@ _MAX_PREVIEW_BYTES = 2_000_000
 _MAX_RECEIPTS = 10_000
 _MAX_TRANSACTIONS = 10_000
 _MAX_OPERATION_HISTORY_BYTES = 8_000_000
+
+_SPECIES_FIELDS = frozenset(field.name for field in fields(PlantSpeciesData))
+_SPECIES_FIELDS_WITH_ID_ALIAS = _SPECIES_FIELDS | {"id"}
+_ENUM_FIELDS = {
+    "cycle": PlantCycle,
+    "growth_rate": GrowthRate,
+    "permaculture_layer": PermacultureLayer,
+    "flower_type": FlowerType,
+    "pollination_type": PollinationType,
+    "sun_requirement": SunRequirement,
+    "water_needs": WaterNeeds,
+}
+_STRING_FIELDS = frozenset(
+    {
+        "scientific_name",
+        "common_name",
+        "family",
+        "genus",
+        "soil_type",
+        "flower_color",
+        "foliage_color",
+        "foliage_texture",
+        "image_url",
+        "thumbnail_url",
+        "data_source",
+        "source_id",
+        "slug",
+        "description",
+    }
+)
+_OPTIONAL_STRING_VALUES = {
+    "frost_tolerance": frozenset({"hardy", "half-hardy", "tender"}),
+    "nutrient_demand": frozenset({"heavy", "medium", "light", "fixer"}),
+    "n_demand": frozenset({"high", "medium", "low", "fixer"}),
+    "p_demand": frozenset({"high", "medium", "low", "fixer"}),
+    "k_demand": frozenset({"high", "medium", "low", "fixer"}),
+}
+_NUMBER_FIELDS = frozenset(
+    {
+        "min_height_cm",
+        "max_height_cm",
+        "min_spread_cm",
+        "max_spread_cm",
+        "ph_min",
+        "ph_max",
+        "min_germination_temp_c",
+        "seed_depth_cm",
+    }
+)
+_INTEGER_FIELDS = frozenset(
+    {
+        "hardiness_zone_min",
+        "hardiness_zone_max",
+        "indoor_sow_start",
+        "indoor_sow_end",
+        "direct_sow_start",
+        "direct_sow_end",
+        "transplant_start",
+        "transplant_end",
+        "harvest_start",
+        "harvest_end",
+        "days_to_germination_min",
+        "days_to_germination_max",
+        "days_to_maturity_min",
+        "days_to_maturity_max",
+        "prick_out_after_days",
+        "harden_off_days",
+    }
+)
+_RANGE_PAIRS = (
+    ("min_height_cm", "max_height_cm"),
+    ("min_spread_cm", "max_spread_cm"),
+    ("ph_min", "ph_max"),
+    ("hardiness_zone_min", "hardiness_zone_max"),
+    ("days_to_germination_min", "days_to_germination_max"),
+    ("days_to_maturity_min", "days_to_maturity_max"),
+)
+_VALIDATED_SPECIES_FIELDS = (
+    set(_ENUM_FIELDS)
+    | _STRING_FIELDS
+    | set(_OPTIONAL_STRING_VALUES)
+    | _NUMBER_FIELDS
+    | _INTEGER_FIELDS
+    | {"edible", "flowering", "functions", "edible_parts", "raw_data"}
+)
+if _SPECIES_FIELDS != _VALIDATED_SPECIES_FIELDS:
+    raise RuntimeError(
+        "LibraryOperations botanical validation must cover every PlantSpeciesData field; "
+        f"uncovered fields: {sorted(_SPECIES_FIELDS ^ _VALIDATED_SPECIES_FIELDS)}"
+    )
 
 
 class LibraryOperationError(RuntimeError):
@@ -349,6 +451,104 @@ def _record_value(record: Any) -> Any:
     return normalized
 
 
+def _validate_species_input(
+    record: dict[str, Any],
+    *,
+    existing: Any = None,
+) -> None:
+    """Validate the botanical schema accepted by a prepared library write.
+
+    Historical top-level extensions remain readable and are preserved by the
+    merge path. An update may pass one through unchanged, but new or changed
+    extension keys belong in the explicit ``raw_data`` object.
+    """
+    for key, value in record.items():
+        if key in _SPECIES_FIELDS_WITH_ID_ALIAS:
+            continue
+        if not isinstance(existing, dict) or key not in existing:
+            raise ValueError(
+                f"unrecognized field {key!r}; place provider extensions in raw_data"
+            )
+        if _canonical_json(value) != _canonical_json(existing[key]):
+            raise ValueError(
+                f"stored extension field {key!r} cannot be changed; use raw_data"
+            )
+
+    for field, enum_type in _ENUM_FIELDS.items():
+        value = record.get(field)
+        if field in record and (
+            not isinstance(value, str) or value not in {member.value for member in enum_type}
+        ):
+            raise ValueError(f"{field} must be a supported {field} value")
+
+    for field in _STRING_FIELDS:
+        if field in record and not isinstance(record[field], str):
+            raise ValueError(f"{field} must be a string")
+
+    for field, allowed_values in _OPTIONAL_STRING_VALUES.items():
+        value = record.get(field)
+        if field in record and value is not None and (
+            not isinstance(value, str) or value not in allowed_values
+        ):
+            allowed = ", ".join(sorted(allowed_values))
+            raise ValueError(f"{field} must be one of {allowed} or null")
+
+    for field in _NUMBER_FIELDS:
+        value = record.get(field)
+        if field not in record or value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} must be a finite number or null")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{field} must be a finite number or null")
+        if field.startswith(("min_height_", "max_height_", "min_spread_", "max_spread_")):
+            if value < 0:
+                raise ValueError(f"{field} must be non-negative")
+        elif field in {"ph_min", "ph_max"} and not 0 <= value <= 14:
+            raise ValueError(f"{field} must be between 0 and 14")
+        elif field == "min_germination_temp_c" and value < -273.15:
+            raise ValueError(f"{field} cannot be below absolute zero")
+        elif field == "seed_depth_cm" and value < 0:
+            raise ValueError(f"{field} must be non-negative")
+
+    for field in _INTEGER_FIELDS:
+        value = record.get(field)
+        if field not in record or value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{field} must be an integer or null")
+        if field.startswith("hardiness_zone_"):
+            if not 0 <= value <= 13:
+                raise ValueError(f"{field} must be between 0 and 13")
+        elif field.startswith(("days_to_", "prick_out_", "harden_off_")) and value < 0:
+            raise ValueError(f"{field} must be non-negative")
+
+    for field in ("edible", "flowering"):
+        value = record.get(field)
+        if field in record and value is not None and not isinstance(value, bool):
+            raise ValueError(f"{field} must be a boolean or null")
+
+    for field in ("functions", "edible_parts"):
+        value = record.get(field)
+        if field not in record:
+            continue
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError(f"{field} must be a list of strings")
+        if field == "functions":
+            allowed = {member.value for member in PlantFunction}
+            if any(item not in allowed for item in value):
+                raise ValueError("functions contains an unsupported plant function")
+
+    if "raw_data" in record and not isinstance(record["raw_data"], dict):
+        raise ValueError("raw_data must be an object")
+
+    for start_field, end_field in _RANGE_PAIRS:
+        start = record.get(start_field)
+        end = record.get(end_field)
+        if start is not None and end is not None and start > end:
+            raise ValueError(f"{start_field} must not exceed {end_field}")
+
+
 def _parse_species(record: dict[str, Any]) -> PlantSpeciesData:
     if not isinstance(record, dict):
         raise ValueError("plant record must be an object")
@@ -495,13 +695,14 @@ class LibraryOperations:
                     assert isinstance(raw, dict)
                     input_record = deepcopy(raw)
                     input_record["source_id"] = plant_id
-                    if not input_record.get("data_source"):
+                    if "data_source" not in input_record or input_record["data_source"] == "":
                         input_record["data_source"] = "custom"
+                    existing = current_plants.get(plant_id)
+                    _validate_species_input(input_record, existing=existing)
                     species = _parse_species(input_record)
                     normalized_input = serialize_species_record(species, supplied=input_record)
                     _canonical_json(normalized_input)
 
-                    existing = current_plants.get(plant_id)
                     if existing is None:
                         public.update(status="create", before=None, after=deepcopy(normalized_input))
                         internal.update(status="create", record=normalized_input)

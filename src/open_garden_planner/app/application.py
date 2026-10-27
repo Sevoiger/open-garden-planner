@@ -2272,6 +2272,14 @@ class GardenPlannerApp(QMainWindow):
         """Get plant lists and favorites catalog ON the Qt main thread (US-G4)."""
         return self._agent_bridge.run_on_main(self._do_agent_get_plant_lists)
 
+    def _agent_get_seed_inventory(self) -> list[dict[str, Any]]:
+        """Read the same global store as the Seed Inventory tab on Qt's thread."""
+        def read():
+            from open_garden_planner.models.seed_inventory import get_seed_inventory
+
+            return [packet.to_dict() for packet in get_seed_inventory().all()]
+        return self._agent_bridge.run_on_main(read)
+
     def _do_agent_get_plant_lists(self) -> list[dict[str, Any]]:
         from open_garden_planner.models.plant_lists import get_plant_list_store
 
@@ -3794,6 +3802,7 @@ class GardenPlannerApp(QMainWindow):
             get_soil_mismatches=self._agent_get_soil_mismatches,
             record_soil_test=self._agent_record_soil_test,
             get_plant_lists=self._agent_get_plant_lists,
+            get_seed_inventory=self._agent_get_seed_inventory,
         )
 
     def _stop_agent_api(self) -> None:

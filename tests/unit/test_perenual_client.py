@@ -89,6 +89,36 @@ class TestParseSpeciesNullSafety:
         assert result.sun_requirement == SunRequirement.UNKNOWN
 
 
+class TestFloweringEvidence:
+    def test_missing_null_and_empty_seasons_stay_unknown(self) -> None:
+        client = PerenualClient(api_key="key")
+        payloads = (
+            {"id": 1},
+            {"id": 1, "flowering_season": None},
+            {"id": 1, "flowering_season": ""},
+            {"id": 1, "flowering_season": []},
+        )
+
+        for payload in payloads:
+            result = client._parse_species(payload)
+
+            assert result.flowering is None
+
+    def test_nonempty_season_text_or_list_means_flowering(self) -> None:
+        client = PerenualClient(api_key="key")
+        for value in ("Spring", ["Spring"]):
+            result = client._parse_species({"id": 1, "flowering_season": value})
+
+            assert result.flowering is True
+
+    def test_explicit_flowers_boolean_is_preserved(self) -> None:
+        client = PerenualClient(api_key="key")
+        for value in (True, False):
+            result = client._parse_species({"id": 1, "flowers": value})
+
+            assert result.flowering is value
+
+
 class TestParseSpeciesPositiveControl:
     def test_well_formed_payload_parses_correctly(self) -> None:
         client = PerenualClient(api_key="key")

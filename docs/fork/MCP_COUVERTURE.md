@@ -22,8 +22,8 @@ PID, heure de construction du serveur et empreinte des sources à cet instant.
 `initialize.serverInfo.version` annonce également OGP. L’empreinte ne certifie pas
 du code remplacé à chaud : reconstruire le serveur après modification des sources.
 Les workflows annoncés ne référencent que les outils effectivement enregistrés.
-`retry_policy` distingue les clés persistantes d’interventions, les reçus Qt de
-session et les écritures à relire avant toute nouvelle tentative après réponse
+`retry_policy` distingue les clés persistantes d’interventions et d’applications
+documentaires/botaniques, les reçus Qt de session et les écritures à relire avant toute nouvelle tentative après réponse
 perdue. Créer un objet ou une tâche métier, déplacer relativement ou annuler
 n’est pas automatiquement dédupliqué. Préférer une position absolue si possible.
 
@@ -32,6 +32,19 @@ n’est pas automatiquement dédupliqué. Préférer une position absolue si pos
 Lorsque le fournisseur de document est disponible, MCP expose
 <code>get_document_state</code>, <code>prepare_document_operations</code>,
 <code>get_document_operation</code> et <code>assess_document_soil</code>.
+Les lectures documentaires sont paginées et filtrables par domaine, sans médias
+embarqués ; `get_document_media` fournit des fragments sur une révision vérifiée.
+La bibliothèque personnelle est recherchable, paginée et lisible par identifiant
+avec `get_custom_plant_library`, sans médias par défaut. Les réponses métier
+document/bibliothèque sont plafonnées à 512 000 octets, les fragments à 65 536.
+`get_capabilities` expose les schémas détaillés des opérations et des outils.
+
+Les outils de lecture `get_plant_lists` et `get_plant_list` distinguent les listes
+personnelles à placer du catalogue botanique. `get_seed_inventory` distingue
+explicitement stock projet et stock global. Leurs accès globaux exigent le jeton ;
+ces outils n’ajoutent pas de mutations dédiées des listes ou stocks. Voir le
+[contrat de lecture et ses limites](METIER_PARTAGE.md#listes-personnelles-et-graines).
+
 <code>apply_document_operations</code> est enregistré seulement si les
 écritures sont activées avec un jeton valide. Ces outils emploient les services
 de préparation communs à l’interface ; un lot de 1 à 100 opérations est préparé

@@ -17,19 +17,15 @@ from typing import Any
 from uuid import uuid4
 
 from open_garden_planner.core.command_history import Command
+from open_garden_planner.services.document_operation_contracts import (
+    DOCUMENT_OPERATION_CONTRACTS,
+    document_operation_field_names,
+)
 
 RECEIPTS_KEY = "operation_receipts"
 MAX_OPERATIONS = 100
 MAX_REQUEST_BYTES = 1_000_000
-SUPPORTED_OPERATIONS = (
-    "add_manual_task", "edit_manual_task", "delete_manual_task", "set_garden_card",
-    "set_planting_date", "add_garden_intervention", "edit_garden_intervention",
-    "delete_garden_intervention", "record_soil_test",
-    "add_harvest_record", "edit_harvest_record", "delete_harvest_record",
-    "add_pest_log", "edit_pest_log", "delete_pest_log",
-    "add_journal_note", "edit_journal_note", "delete_journal_note",
-    "set_manual_task_status", "set_succession_plan",
-)
+SUPPORTED_OPERATIONS = tuple(DOCUMENT_OPERATION_CONTRACTS)
 
 
 def fingerprint(value: Any) -> str:
@@ -177,7 +173,7 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
         if not isinstance(fields, dict):
             raise ValueError(f"Invalid fields at row {index + 1}")
         if name in {"add_manual_task", "edit_manual_task", "delete_manual_task"}:
-            if set(fields) - {"title", "date", "notes", "bed_id"}:
+            if set(fields) - document_operation_field_names(name):
                 raise ValueError("Unknown manual task field")
             action = str(name).split("_", 1)[0]
             tasks = candidate.setdefault("manual_tasks", {})
@@ -215,8 +211,7 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
             target = "global" if target_id is None else target_id
             if target != "global" and target not in _bed_ids(candidate):
                 raise ValueError("A soil test requires an existing soil-capable bed")
-            if set(fields) - {"ph", "n_level", "p_level", "k_level", "ca_level", "mg_level",
-                              "s_level", "soil_texture", "test_date", "notes"}:
+            if set(fields) - document_operation_field_names(name):
                 raise ValueError("Unknown soil-test field; kit levels and ppm are separate units")
             if not isinstance(fields.get("test_date"), str) or not fields["test_date"]:
                 raise ValueError("An explicit measured test_date is required; an unknown date must not become today")
@@ -240,7 +235,7 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
             task_id = operation.get("target_id")
             if task_id not in candidate.get("manual_tasks", {}):
                 raise ValueError("Status operations require an existing manual task; generated tasks remain derived")
-            if set(fields) - {"status", "done_date", "snooze_until"} or "status" not in fields:
+            if set(fields) - document_operation_field_names(name) or "status" not in fields:
                 raise ValueError("Provide status and optional done_date/snooze_until")
             states = candidate.setdefault("task_states", {})
             change = prepare_task_status(states, task_id, **fields)
@@ -270,7 +265,7 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
             bed_id = operation.get("target_id")
             if bed_id not in _bed_ids(candidate):
                 raise ValueError("Succession requires an existing soil-capable bed")
-            if (set(fields) - {"entries", "year"} or not isinstance(fields.get("entries"), list)
+            if (set(fields) - document_operation_field_names(name) or not isinstance(fields.get("entries"), list)
                     or not isinstance(fields.get("year"), int) or isinstance(fields.get("year"), bool)):
                 raise ValueError("Provide entries and an explicit integer year")
             if not 1 <= fields["year"] <= 9998:

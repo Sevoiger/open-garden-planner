@@ -8,6 +8,8 @@ from typing import Any
 
 import anyio
 
+from open_garden_planner.agent_api.read_projection import project_library_snapshot
+
 
 @dataclass
 class DomainProviders:
@@ -20,9 +22,33 @@ class DomainProviders:
 def register_document_tools(mcp: Any, provider: Callable[..., dict[str, Any]], *,
                             writes_active: bool, authorize: Callable[[], None]) -> None:
     @mcp.tool(structured_output=False)
-    async def get_document_state() -> dict[str, Any]:
-        """Read the document and opaque revision for shared business operations."""
-        return await anyio.to_thread.run_sync(lambda: provider("snapshot", {}))
+    async def get_document_state(domains: list[str] | None = None, offset: int = 0,
+                                 limit: int = 100, media_offset: int = 0,
+                                 media_limit: int = 100,
+                                 expected_revision: str | None = None) -> dict[str, Any]:
+        """Read a bounded page of business state, excluding geometry and embedded image bytes.
+
+        Domains: plan, objects, tasks, soil, harvest, pests, journal, succession,
+        inventory, shopping and garden_memory. Collections use offset/limit;
+        media is a separate manifest page. Continue all pages with the returned
+        revision as expected_revision so one response cannot mix document states.
+        """
+        arguments = {"domains": domains, "offset": offset, "limit": limit,
+                     "media_offset": media_offset, "media_limit": media_limit,
+                     "expected_revision": expected_revision}
+        return await anyio.to_thread.run_sync(lambda: provider("read", arguments))
+
+    @mcp.tool(structured_output=False)
+    async def get_document_media(media_id: str, expected_revision: str, offset: int = 0,
+                                 max_bytes: int = 65536) -> dict[str, Any]:
+        """Read one embedded media string in a bounded UTF-8 byte chunk.
+
+        Use a media_id and revision from get_document_state. Base64 content is
+        ASCII, so its encoded-text byte offsets equal character offsets.
+        """
+        arguments = {"media_id": media_id, "expected_revision": expected_revision,
+                     "offset": offset, "max_bytes": max_bytes}
+        return await anyio.to_thread.run_sync(lambda: provider("media", arguments))
 
     @mcp.tool(structured_output=False)
     async def prepare_document_operations(operations: list[dict[str, Any]],
@@ -94,10 +120,30 @@ def register_library_tools(mcp: Any, provider: Callable[..., dict[str, Any]], *,
         return
 
     @mcp.tool(structured_output=False)
-    async def get_custom_plant_library() -> dict[str, Any]:
-        """Read personal botanical sheets; distinct from embedded project plants."""
+    async def get_custom_plant_library(query: str | None = None, offset: int = 0,
+                                       limit: int = 100, plant_id: str | None = None,
+                                       include_media: bool = False, media_id: str | None = None,
+                                       media_offset: int = 0,
+                                       media_limit_bytes: int = 65536,
+                                       expected_revision: str | None = None) -> dict[str, Any]:
+        """Search/page personal plants or read one by exact ID, without inline media.
+
+        Pages contain at most 100 plants. Search covers record ID and botanical
+        identity fields. Pin subsequent pages with expected_revision. Embedded
+        manifest IDs are returned without the bytes. Media is opt-in, requires
+        plant_id, and is returned as separate bounded chunks. Select one asset
+        with media_id; offsets count UTF-8 bytes in encoded text (base64 is ASCII).
+        """
         authorize()
-        return await anyio.to_thread.run_sync(lambda: provider("snapshot", {}))
+        arguments = {"query": query, "offset": offset, "limit": limit,
+                     "plant_id": plant_id, "include_media": include_media,
+                     "media_id": media_id,
+                     "media_offset": media_offset,
+                     "media_limit_bytes": media_limit_bytes,
+                     "expected_revision": expected_revision}
+        return await anyio.to_thread.run_sync(
+            lambda: project_library_snapshot(provider("snapshot", {}), **arguments)
+        )
 
     @mcp.tool(structured_output=False)
     async def prepare_plant_library_import(records: list[dict[str, Any]]) -> dict[str, Any]:

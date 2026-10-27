@@ -12,6 +12,35 @@ from open_garden_planner.core.document_session import DocumentSession
 from open_garden_planner.core.plan_io import read_plan, write_plan
 
 
+def test_personal_catalog_providers_read_ui_stores_on_main_thread(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from open_garden_planner.app.application import GardenPlannerApp
+    from open_garden_planner.models.plant_data import PlantSpeciesData
+    from open_garden_planner.models.plant_lists import get_plant_list_store
+    from open_garden_planner.models.seed_inventory import SeedPacket, get_seed_inventory
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    store = get_plant_list_store()
+    planting_list = store.create_list("Synthetic planting list")
+    store.add_entry(planting_list.id, PlantSpeciesData("Fictitia example", "Synthetic"))
+    get_seed_inventory().add(SeedPacket(id="global-packet", species_name="Synthetic", quantity=4))
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    providers = window._build_agent_providers()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(lambda: (providers.get_plant_lists(), providers.get_seed_inventory()))
+        qtbot.waitUntil(future.done, timeout=10000)
+        lists, seeds = future.result()
+    assert next(row for row in lists if row["id"] == planting_list.id)["entries"][0]["common_name"] == "Synthetic"
+    assert seeds[0]["id"] == "global-packet" and seeds[0]["quantity"] == 4
+    assert not window._project_manager.seed_inventory
+    assert not window._project_manager.is_dirty
+    window.close()
+
+
 def test_live_preview_apply_undo_and_gui_conflict(qtbot, monkeypatch, tmp_path):
     from PyQt6.QtWidgets import QMessageBox
 
