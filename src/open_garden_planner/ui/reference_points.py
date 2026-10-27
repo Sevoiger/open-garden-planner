@@ -1,11 +1,16 @@
 """Placement and editing of named surveying references using existing commands."""
 
-from PyQt6.QtCore import QCoreApplication
+from typing import TYPE_CHECKING, cast
+from uuid import UUID
+
+from PyQt6.QtCore import QCoreApplication, QPointF
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGraphicsItem,
+    QGraphicsScene,
     QLineEdit,
 )
 
@@ -17,24 +22,27 @@ from open_garden_planner.core.commands import (
 from open_garden_planner.core.reference_points import is_reference_point
 from open_garden_planner.ui.canvas.items import CircleItem, GardenItemMixin
 
+if TYPE_CHECKING:
+    from open_garden_planner.ui.canvas.canvas_view import CanvasView
+
 
 class CreateReferencePointCommand(CreateItemCommand):
     """Keep the explicit parent across undo/redo of point placement."""
 
-    def __init__(self, scene, item, parent_id):
+    def __init__(self, scene: QGraphicsScene, item: CircleItem, parent_id: UUID | None) -> None:
         super().__init__(scene, item)
         self._parent_id = parent_id
 
     @property
-    def description(self):
+    def description(self) -> str:
         return QCoreApplication.translate("ReferencePoints", "Create reference point")
 
-    def execute(self):
+    def execute(self) -> None:
         super().execute()
         SetParentBedCommand(self._scene, self._item, None, self._parent_id).execute()
 
 
-def point_dialog(view, item=None):
+def point_dialog(view: "CanvasView", item: CircleItem | None = None) -> tuple[str, UUID | None] | None:
     """Choose a name and an explicit parent; never infer ownership by overlap."""
     dialog = QDialog(view)
     dialog.setWindowTitle(QCoreApplication.translate("ReferencePoints", "Reference point"))
@@ -44,8 +52,8 @@ def point_dialog(view, item=None):
     parents = QComboBox(dialog)
     parents.addItem(QCoreApplication.translate("ReferencePoints", "Independent point"), None)
     candidates = [
-        obj for obj in view.scene().items()
-        if isinstance(obj, GardenItemMixin) and obj is not item
+        obj for obj in view._canvas_scene.items()
+        if isinstance(obj, GardenItemMixin) and isinstance(obj, QGraphicsItem) and (item is None or obj.item_id != item.item_id)
         and (
             (item is not None and obj.item_id == item.parent_bed_id)
             or (
@@ -54,7 +62,7 @@ def point_dialog(view, item=None):
             )
         )
     ]
-    selected = set(view.scene().selectedItems())
+    selected = set(view._canvas_scene.selectedItems())
     for obj in sorted(candidates, key=lambda obj: (obj.name, str(obj.item_id))):
         parents.addItem(obj.name or str(obj.item_id)[:8], obj.item_id)
     parent_id = item.parent_bed_id if item else None
@@ -75,17 +83,17 @@ def point_dialog(view, item=None):
     name.setFocus()
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
-    return name.text().strip(), parents.currentData()
+    return name.text().strip(), cast(UUID | None, parents.currentData())
 
 
-def place_reference_point(view, position):
+def place_reference_point(view: "CanvasView", position: QPointF) -> bool:
     result = point_dialog(view)
     if result is None:
         return False
     name, parent_id = result
-    scene = view.scene()
+    scene = view._canvas_scene
     parent = scene.find_item_by_id(parent_id) if parent_id else None
-    layer_id = parent.layer_id if parent else (scene.active_layer.id if scene.active_layer else None)
+    layer_id = parent.layer_id if isinstance(parent, GardenItemMixin) else (scene.active_layer.id if scene.active_layer else None)
     item = CircleItem(
         position.x(), position.y(), 8.0, name=name,
         metadata={"reference_point": True}, layer_id=layer_id,
@@ -96,11 +104,11 @@ def place_reference_point(view, position):
     return True
 
 
-def edit_reference_point(item):
+def edit_reference_point(item: CircleItem) -> None:
     scene = item.scene()
     if scene is None or not scene.views():
         return
-    view = scene.views()[0]
+    view = cast("CanvasView", scene.views()[0])
     result = point_dialog(view, item)
     if result is None:
         return
@@ -110,7 +118,7 @@ def edit_reference_point(item):
     if old == new:
         return
 
-    def apply(point, value):
+    def apply(point: CircleItem, value: tuple[str, UUID | None]) -> None:
         point.name = value[0]
         SetParentBedCommand(scene, point, point.parent_bed_id, value[1]).execute()
 

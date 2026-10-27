@@ -306,8 +306,10 @@ class CreateItemsCommand(Command):
         self._items = list(items)  # Copy the list
         self._item_type = item_type
         from open_garden_planner.core.reference_points import is_reference_point
+        from open_garden_planner.ui.canvas.items import CircleItem
         self._reference_parents = [
-            (item, item.parent_bed_id) for item in self._items if is_reference_point(item)
+            (item, item.parent_bed_id) for item in self._items
+            if isinstance(item, CircleItem) and is_reference_point(item)
         ]
 
     @property
