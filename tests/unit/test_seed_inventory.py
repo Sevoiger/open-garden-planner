@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from open_garden_planner.models import seed_inventory as seed_inventory_module
 from open_garden_planner.models.seed_inventory import (
     SeedInventoryStore,
     SeedPacket,
@@ -330,6 +331,83 @@ class TestSeedInventoryStore:
         assert restored is not None
         assert restored.species_name == "Tomato"
         assert restored.variety == "Brandywine"
+
+    def test_partial_serialization_failure_preserves_existing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "inv.json"
+        path.write_text('[{"id":"old","species_name":"Ancienne"}]', encoding="utf-8")
+        store = SeedInventoryStore(path)
+        store.add(SeedPacket(id="new", species_name="Nouvelle"))
+        original = path.read_bytes()
+
+        def partial_dump(_value: object, stream: object, **_kwargs: object) -> None:
+            stream.write("[")  # type: ignore[attr-defined]
+            raise OSError("injected serialization failure")
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(seed_inventory_module.json, "dump", partial_dump)
+            with pytest.raises(OSError, match="injected serialization failure"):
+                store.save()
+
+        assert path.read_bytes() == original
+        assert not list(tmp_path.glob(".inv.json.*.tmp"))
+
+    def test_replace_failure_preserves_existing_file_and_cleans_temporary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "inv.json"
+        path.write_text('[{"id":"old","species_name":"Ancienne"}]', encoding="utf-8")
+        store = SeedInventoryStore(path)
+        store.add(SeedPacket(id="new", species_name="Nouvelle"))
+        original = path.read_bytes()
+        real_replace = seed_inventory_module.os.replace
+
+        def fail_replace(source: str | Path, destination: str | Path) -> None:
+            if Path(destination) == path:
+                raise OSError("injected replace failure")
+            real_replace(source, destination)
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(seed_inventory_module.os, "replace", fail_replace)
+            with pytest.raises(OSError, match="injected replace failure"):
+                store.save()
+
+        assert path.read_bytes() == original
+        assert not list(tmp_path.glob(".inv.json.*.tmp"))
+
+    def test_save_preserves_unknown_historical_fields_until_record_removal(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "inv.json"
+        path.write_text(json.dumps([{
+            "id": "legacy",
+            "species_name": "Legacy seed",
+            "purchase_year": 2020,
+            "quantity": 2,
+            "quantity_unit": "seeds",
+            "cold_stratification": False,
+            "future_trait": {"provider": "archive", "enabled": False},
+        }]), encoding="utf-8")
+
+        store = SeedInventoryStore(path)
+        packet = store.get("legacy")
+        assert packet is not None
+        packet.quantity = 5
+        store.save()
+
+        reopened = SeedInventoryStore(path)
+        updated = json.loads(path.read_text(encoding="utf-8"))[0]
+        assert updated["quantity"] == 5
+        assert updated["future_trait"] == {"provider": "archive", "enabled": False}
+        assert reopened.get("legacy") is not None
+
+        assert reopened.remove("legacy")
+        reopened.add(SeedPacket(id="legacy", species_name="Replacement"))
+        reopened.save()
+        replacement = json.loads(path.read_text(encoding="utf-8"))[0]
+        assert replacement["species_name"] == "Replacement"
+        assert "future_trait" not in replacement
 
     def test_corrupt_file_starts_empty(self, tmp_path: Path) -> None:
         path = tmp_path / "inv.json"

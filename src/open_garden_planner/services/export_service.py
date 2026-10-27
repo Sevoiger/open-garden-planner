@@ -707,7 +707,9 @@ class ExportService:
             data["type"] = ""
 
         # Get position
-        pos = item.pos()
+        # Export in the plan frame even when a plant belongs to a Qt group.
+        # Preserve the historical origin convention (rather than its centre).
+        pos = item.scenePos()
         data["position_x_cm"] = round(pos.x(), 2)
         data["position_y_cm"] = round(pos.y(), 2)
 
@@ -717,7 +719,10 @@ class ExportService:
 
         data["variety_cultivar"] = plant_instance.get("variety_cultivar", "")
         data["planting_date"] = plant_instance.get("planting_date", "")
-        data["current_spread_cm"] = plant_instance.get("current_spread_cm") or plant_instance.get("current_diameter_cm", "")
+        # Only an absent canonical field falls back to the legacy diameter.
+        data["current_spread_cm"] = plant_instance.get(
+            "current_spread_cm", plant_instance.get("current_diameter_cm", "")
+        )
         data["current_height_cm"] = plant_instance.get("current_height_cm", "")
         data["notes"] = plant_instance.get("notes", "")
 

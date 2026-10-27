@@ -160,7 +160,7 @@ Pre-defined object types for common property elements:
 - **FR-LIB-04**: Drag species from list to canvas to create instances with auto-parenting to underlying beds, proper sizing, today's planting date stamped, and single-step undo.
 - **FR-LIB-05**: "Update from plan" allows user-confirmed, explicit snapshot refresh from placed plants (no silent automatic overwrites).
 - **FR-LIB-06**: Import/export plant lists as standalone JSON files for sharing.
-- **FR-LIB-07**: Read-only Agent API (MCP) resource `garden://plant-lists` exposes catalogs of lists and entries to AI assistants.
+- **FR-LIB-07**: The authenticated, read-only Agent API (MCP) resource `garden://plant-lists` exposes catalogs of lists and entries to AI assistants when writes are enabled and a write token is configured. The URI is registered under the same name for compatibility when available; without the gate it is not advertised or registered, and direct reads fail before accessing personal storage.
 
 ## FR-9: File Operations
 

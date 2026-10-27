@@ -6,6 +6,9 @@ de l'appliquer après relecture. Les règles de préparation résident dans des
 services Python sans dépendance Qt ; l'application ouverte et l'hôte autonome
 les utilisent derrière des adaptateurs distincts.
 
+La [revue transversale du 27 octobre 2026](REVUE_TRANSVERSALE_METIER.md)
+cartographie les appels, invariants vérifiés, défauts corrigés et limites de couverture.
+
 ## Outils documentaires
 
 ### Lectures bornées
@@ -85,6 +88,10 @@ requête. Une erreur de validation ou un conflit empêche l'application du lot
 entier. Les aperçus expirent après cinq minutes ; le cache est borné à 128
 préparations et appartient au processus courant. Une expiration, une éviction
 ou un redémarrage impose de préparer à nouveau.
+
+En direct, un changement d'epoch invalide et retire les préparations du cache.
+Cela comprend le remplacement du projet et, comme auparavant, la notification
+de sauvegarde : préparer à nouveau après une sauvegarde intermédiaire.
 
 `get_capabilities` publie les `inputSchema` des outils réellement enregistrés,
 puis `operation_schemas.document.operations` décrit les champs, les types, les
@@ -195,6 +202,13 @@ encore modifier le fichier et créer une course avec une écriture. Une différe
 de version détectée fait refuser l'écriture pour éviter d'écraser silencieusement
 le travail concurrent.
 
+Le document Qt conserve aussi son bail après une sauvegarde, jusqu'au changement
+de document ou à la fermeture acceptée. Annuler la fermeture conserve le bail.
+Réacquérir un bail pour le même document ne supprime pas le contrôle de version
+disque. Un chargement refusé en prévalidation conserve la scène et son historique ;
+dès que commence le remplacement de la scène, les anciennes commandes undo/redo
+sont supprimées, y compris si la publication échoue ensuite.
+
 ## Bibliothèque botanique
 
 La bibliothèque est un stockage distinct du projet et du canevas. Les outils
@@ -265,6 +279,14 @@ En direct, `get_plant_lists` lit des résumés de listes personnelles ;
 `get_plant_list(list_id)` lit leurs entrées paginées et leurs identités
 botaniques, sans placement. Ces outils globaux exigent le jeton et
 l’activation des écritures, bien qu’ils soient en lecture seule.
+L’URI historique `garden://plant-lists` est conservée pour compatibilité,
+mais l’hôte live ne l’enregistre, ne l’annonce et ne la lit que si les écritures
+sont activées avec un jeton et que son fournisseur Qt est présent. Le handler
+valide ce jeton à chaque requête avant d’appeler le fournisseur. Sans cette configuration, les clients ne
+voient pas cette URI dans `list_resources` ni `get_capabilities.resources` ; une
+ancienne requête directe reçoit « ressource inconnue ». Les clients qui lisaient
+auparavant cette URI sans jeton doivent activer les écritures et transmettre le
+jeton (de préférence dans `?token=`, ou dans l’en-tête `Authorization: Bearer`).
 
 `get_seed_inventory` filtre par `scope` (`project` par défaut ou `global`),
 `packet_id` ou `query`, avec `offset`/`limit` (25 par défaut, maximum 100).
@@ -279,6 +301,13 @@ reprendre alors à la première page.
 Les listes et stocks globaux ne sont jamais ouverts implicitement par l’hôte
 autonome. Aucun outil d’écriture dédié de ces deux stockages n’est ajouté ici ;
 leurs modifications restent accessibles par les parcours Qt existants.
+
+La sauvegarde du stock global de graines utilise un temporaire dans le même
+dossier puis un remplacement atomique : un échec de sérialisation ou de
+publication conserve l'ancien fichier. Les extensions inconnues des paquets
+chargés sont conservées après édition ; supprimer un paquet retire aussi ses
+extensions. Cela ne crée pas d'undo, de reçu ou de contrôle de concurrence entre
+éditeurs globaux : ces garanties restent propres aux ports qui les annoncent.
 
 ## Limites graphiques et métier
 

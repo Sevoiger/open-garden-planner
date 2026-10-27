@@ -446,6 +446,13 @@ def _cached_capability_details(
                 },
             },
         },
+        "resources": {
+            "garden://plant-lists": {
+                "available": writes_active and mode == "live" and "get_plant_lists" in names,
+                "requires_write_token": True,
+                "scope": "global",
+            },
+        },
         "global_reads_require_writes_enabled": writes_active,
         "host_mode": mode,
     }
@@ -733,6 +740,9 @@ def build_server(
             tools, mode="live", writes_active=writes_active,
             global_seed_inventory_available=(writes_active and providers.get_seed_inventory is not None),
         ), detail=detail, schema_domain=schema_domain, schema_operation=schema_operation)
+        resource_uris = ["garden://plan", "garden://plan/raw", "garden://species"]
+        if "get_plant_lists" in names:
+            resource_uris.append("garden://plant-lists")
         return {
             "identity": identity,
             "writes_enabled": writes_active,
@@ -754,7 +764,7 @@ def build_server(
                     "interact_ui", "read_ui_model", "get_ui_operation", "render_ui_image"],
             }.items() if all(name in names for name in value)},
             "coverage_claim": "Tool availability only; desktop workflows require end-to-end verification.",
-            "resources": ["garden://plan", "garden://plan/raw", "garden://species", "garden://plant-lists"],
+            "resources": resource_uris,
             "schema_catalog": details["schema_catalog"],
             "tool_input_schemas": details["tool_input_schemas"],
             "operation_schemas": details["operation_schemas"],
@@ -3021,46 +3031,12 @@ def build_server(
         """
         return await anyio.to_thread.run_sync(lambda: list(get_species_db().values()))
 
-    @mcp.resource("garden://plant-lists", mime_type="application/json")
-    async def plant_lists_resource() -> list[dict[str, Any]]:
-        """User-defined plant lists and favorites catalog (US-G4)."""
-        get_lists_fn = providers.get_plant_lists
-        if get_lists_fn is not None:
-            return await anyio.to_thread.run_sync(get_lists_fn)
-
-        def _get_lists() -> list[dict[str, Any]]:
-            from open_garden_planner.models.plant_lists import (  # noqa: PLC0415
-                get_plant_list_store,
-            )
-
-            store = get_plant_list_store()
-            result: list[dict[str, Any]] = []
-            for pl in store.all_lists():
-                result.append(
-                    {
-                        "id": pl.id,
-                        "name": pl.name,
-                        "description": pl.description,
-                        "entries": [
-                            {
-                                "id": entry.id,
-                                "species_key": entry.species_key,
-                                "common_name": entry.species.common_name
-                                if entry.species
-                                else "",
-                                "scientific_name": entry.species.scientific_name
-                                if entry.species
-                                else "",
-                                "note": entry.note,
-                                "added_at": entry.added_at,
-                            }
-                            for entry in pl.entries
-                        ],
-                    }
-                )
-            return result
-
-        return await anyio.to_thread.run_sync(_get_lists)
+    if writes_active and providers.get_plant_lists is not None:
+        @mcp.resource("garden://plant-lists", mime_type="application/json")
+        async def plant_lists_resource() -> list[dict[str, Any]]:
+            """Authenticated user-defined plant lists and favorites catalog (US-G4)."""
+            _require_write_auth(write_token)
+            return await anyio.to_thread.run_sync(providers.get_plant_lists)
 
     @mcp.prompt(name="audit-plan")
     async def audit_plan() -> str:
