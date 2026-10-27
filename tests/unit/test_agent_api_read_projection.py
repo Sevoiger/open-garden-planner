@@ -277,3 +277,61 @@ def test_library_media_manifest_selects_blob_and_multi_blob_resume_skips_finishe
         project_library_page(
             plants, revision="r1", plant_id="plant-a", media_id=assets["long_base64"]["media_id"],
         )
+
+
+def test_light_page_never_visits_unselected_media_and_ascii_never_encodes():
+    class NoEncode(str):
+        def encode(self, *args, **kwargs):
+            raise AssertionError("ASCII media should not allocate its byte representation")
+
+    class Unvisited(dict):
+        def items(self):
+            raise AssertionError("Unselected page must not be visited")
+
+    snapshot = {"objects": [{"item_id": "one", "metadata": {"image_data": NoEncode("A" * 1_000_000)}},
+                            Unvisited({"image_data": "B"})], "manual_tasks": {"t": {"title": "Task"}}}
+    tasks = project_document_state(snapshot, revision="r", mode="live", domains=["tasks"])
+    assert tasks["media"]["total"] == 0
+    page = project_document_state(snapshot, revision="r", mode="live", domains=["objects"], limit=1)
+    assert page["media"]["items"][0]["encoded_bytes"] == 1_000_000
+    # Returned business data is detached even though selection uses borrowed records.
+    page["document"]["objects"][0]["metadata"]["new"] = True
+    assert "new" not in snapshot["objects"][0]["metadata"]
+
+
+def test_library_projection_source_opt_in_fields_and_omissions():
+    plants = {"p": {"scientific_name": "Fictitia", "common_name": None, "height": 0,
+                    "edible": False, "raw_data": {"html": "X" * 100_000}}}
+    detail = project_library_page(plants, revision="r")
+    assert detail["plants"]["p"] == {"scientific_name": "Fictitia", "common_name": None, "height": 0, "edible": False}
+    assert detail["omitted_fields"]["p"] == ["raw_data"]
+    selected = project_library_page(plants, revision="r", fields=["common_name", "height", "edible", "absent"])
+    assert selected["plants"]["p"] == {"common_name": None, "height": 0, "edible": False}
+    with pytest.raises(ValueError, match="include_source"):
+        project_library_page(plants, revision="r", fields=["raw_data"])
+    source = project_library_page({"p": {"raw_data": {"html": "short"}}}, revision="r", include_source=True)
+    assert source["plants"]["p"]["raw_data"] == {"html": "short"}
+    summary = project_library_page(plants, revision="r", view="summary")
+    assert summary["next_offset"] is None and summary["plants"]["p"]["scientific_name"] == "Fictitia"
+
+
+def test_oversized_object_can_always_progress_with_explicit_field_projection():
+    raw = {"objects": [{"item_id": "big", "name": "Big", "type": "plant", "metadata": {"notes": "X" * 600_000}},
+                       {"item_id": "next", "name": "Next"}]}
+    with pytest.raises(ValueError, match="object_fields"):
+        project_document_state(raw, revision="r", mode="live", limit=1)
+    page = project_document_state(raw, revision="r", mode="live", limit=1, object_fields=["item_id", "name"])
+    assert page["document"]["objects"] == [{"item_id": "big", "name": "Big"}]
+    assert page["pagination"]["objects"]["next_offset"] == 1
+    assert page["omitted_object_fields"]["big"] == ["metadata", "type"]
+    next_page = project_document_state(raw, revision="r", mode="live", offset=1, limit=1,
+                                       expected_revision="r", object_fields=["item_id"])
+    assert next_page["document"]["objects"] == [{"item_id": "next"}]
+
+
+def test_truncation_does_not_add_unrequested_fields():
+    result = project_library_page({"p": {"scientific_name": "Fictitia", "description": "X" * 40_000}},
+                                  revision="r", fields=["description"])
+    assert result["plants"]["p"] == {}
+    assert result["truncated_records"] == ["p"]
+    assert result["omitted_fields"]["p"] == ["description", "scientific_name"]

@@ -57,12 +57,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import hashlib
+import json
 import logging
 import secrets
 import socket
 import threading
 import time
 import urllib.parse
+from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
 
@@ -302,23 +305,34 @@ def _finalize_tool_schemas(mcp: Any) -> None:
         tool.parameters = arguments.model_json_schema(by_alias=True)
 
 
-def _capability_details(
-    tools: list[Any], *, mode: str, writes_active: bool,
+def _canonical_json(value: Any) -> str:
+    """Serialize a JSON value deterministically for cache keys and fingerprints."""
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+    )
+
+
+@lru_cache(maxsize=8)
+def _cached_capability_details(
+    tool_schemas_json: str,
+    mode: str,
+    writes_active: bool,
     global_seed_inventory_available: bool,
-) -> dict[str, Any]:
-    """Build schemas and retry guidance from the tools actually registered."""
+) -> str:
+    """Build an immutable, bounded cache entry for one registered tool catalog.
+
+    The cached value is JSON text rather than a nested dict: each caller parses
+    its own mutable result, so an MCP response (or caller) cannot mutate the
+    catalog seen by a later request.
+    """
+    tool_schemas = json.loads(tool_schemas_json)
+    names = set(tool_schemas)
     from open_garden_planner.services.document_operation_contracts import (
         document_operation_schemas,
         plant_library_import_schema,
     )
     from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
 
-    names = {tool.name for tool in tools}
-    tool_schemas = {
-        tool.name: tool.inputSchema
-        for tool in tools
-        if isinstance(getattr(tool, "inputSchema", None), dict)
-    }
     operation_schemas: dict[str, Any] = {}
     if "prepare_document_operations" in names:
         operation_schemas["document"] = {
@@ -435,12 +449,90 @@ def _capability_details(
         "global_reads_require_writes_enabled": writes_active,
         "host_mode": mode,
     }
-    return {
+    fingerprint_catalog = {
+        "tool_input_schemas": tool_schemas,
+        "operation_schemas": operation_schemas,
+    }
+    fingerprint = hashlib.sha256(_canonical_json(fingerprint_catalog).encode("utf-8")).hexdigest()
+    schema_domains: dict[str, Any] = {
+        "tools": {"schema_count": len(tool_schemas)},
+    }
+    if "document" in operation_schemas:
+        schema_domains["document"] = {
+            "operations": list(operation_schemas["document"]["operations"]),
+        }
+    if "plant_library_import" in operation_schemas:
+        schema_domains["plant_library_import"] = {"schemas": ["record"]}
+
+    return json.dumps({
         "tool_input_schemas": tool_schemas,
         "operation_schemas": operation_schemas,
         "personal_data": personal_data,
         "retry_policy": retry_policy,
+        "schema_catalog": {
+            "fingerprint": fingerprint,
+            "domains": schema_domains,
+        },
+    })
+
+
+def _capability_details(
+    tools: list[Any], *, mode: str, writes_active: bool,
+    global_seed_inventory_available: bool,
+) -> dict[str, Any]:
+    """Build schemas and retry guidance from the tools actually registered."""
+    tool_schemas = {
+        tool.name: tool.inputSchema
+        for tool in sorted(tools, key=lambda item: item.name)
+        if isinstance(getattr(tool, "inputSchema", None), dict)
     }
+    return json.loads(_cached_capability_details(
+        _canonical_json(tool_schemas), mode, writes_active, global_seed_inventory_available,
+    ))
+
+
+def _select_capability_schemas(
+    details: dict[str, Any],
+    *,
+    detail: Literal["full", "summary"],
+    schema_domain: Literal["tools", "document", "plant_library_import"] | None,
+    schema_operation: str | None,
+) -> dict[str, Any]:
+    """Return all schemas for legacy calls or a requested discovery slice."""
+    if detail == "summary":
+        if schema_domain is not None or schema_operation is not None:
+            raise ValueError("schema_domain and schema_operation require detail='full'")
+        details["tool_input_schemas"] = {}
+        details["operation_schemas"] = {}
+        return details
+
+    selected_domain = schema_domain or ("document" if schema_operation is not None else None)
+    if selected_domain is None:
+        return details
+
+    if selected_domain == "tools":
+        if schema_operation is not None:
+            if schema_operation not in details["tool_input_schemas"]:
+                raise ValueError(f"Unknown tool {schema_operation!r}")
+            details["tool_input_schemas"] = {schema_operation: details["tool_input_schemas"][schema_operation]}
+        details["operation_schemas"] = {}
+        return details
+
+    if selected_domain not in details["operation_schemas"]:
+        raise ValueError(f"Schema domain {selected_domain!r} is not available on this server")
+
+    selected_schema = details["operation_schemas"][selected_domain]
+    if schema_operation is not None:
+        if selected_domain != "document":
+            raise ValueError("schema_operation is only available for the document domain")
+        operations = selected_schema["operations"]
+        if schema_operation not in operations:
+            raise ValueError(f"Unknown document operation {schema_operation!r}")
+        selected_schema = {**selected_schema, "operations": {schema_operation: operations[schema_operation]}}
+
+    details["tool_input_schemas"] = {}
+    details["operation_schemas"] = {selected_domain: selected_schema}
+    return details
 
 
 def build_server(
@@ -597,7 +689,11 @@ def build_server(
                                         authorize=lambda: _require_write_auth(write_token))
 
         @mcp.tool(name="get_capabilities")
-        async def autonomous_capabilities() -> dict[str, Any]:
+        async def autonomous_capabilities(
+            detail: Literal["full", "summary"] = "full",
+            schema_domain: Literal["tools", "document", "plant_library_import"] | None = None,
+            schema_operation: str | None = None,
+        ) -> dict[str, Any]:
             """Discover data operations available without Qt; no graphical tools."""
             from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
 
@@ -608,29 +704,35 @@ def build_server(
                     "durability": "data and receipt committed together before success",
                     "preparation": "session only; expires after 300 seconds",
                     "operations": list(SUPPORTED_OPERATIONS),
-                    **_capability_details(
+                    **_select_capability_schemas(_capability_details(
                         tools, mode="autonomous", writes_active=writes_active,
                         global_seed_inventory_available=False,
-                    )}
+                    ), detail=detail, schema_domain=schema_domain, schema_operation=schema_operation)}
 
         _finalize_tool_schemas(mcp)
         return mcp
 
     @mcp.tool()
-    async def get_capabilities() -> dict[str, Any]:
+    async def get_capabilities(
+        detail: Literal["full", "summary"] = "full",
+        schema_domain: Literal["tools", "document", "plant_library_import"] | None = None,
+        schema_operation: str | None = None,
+    ) -> dict[str, Any]:
         """Discover actual tools, garden workflows and remaining desktop-only features.
 
         This is a coverage inventory, not a promise that every GUI action has
         an MCP equivalent. Tool registration reflects the current write gate.
+        Use detail="summary" for compact discovery; fetch one schema with
+        schema_domain and schema_operation. Full is the compatibility default.
         """
         from open_garden_planner.services.document_operations import SUPPORTED_OPERATIONS
 
         tools = await mcp.list_tools()
         names = sorted(tool.name for tool in tools)
-        details = _capability_details(
+        details = _select_capability_schemas(_capability_details(
             tools, mode="live", writes_active=writes_active,
             global_seed_inventory_available=(writes_active and providers.get_seed_inventory is not None),
-        )
+        ), detail=detail, schema_domain=schema_domain, schema_operation=schema_operation)
         return {
             "identity": identity,
             "writes_enabled": writes_active,
@@ -653,6 +755,7 @@ def build_server(
             }.items() if all(name in names for name in value)},
             "coverage_claim": "Tool availability only; desktop workflows require end-to-end verification.",
             "resources": ["garden://plan", "garden://plan/raw", "garden://species", "garden://plant-lists"],
+            "schema_catalog": details["schema_catalog"],
             "tool_input_schemas": details["tool_input_schemas"],
             "operation_schemas": details["operation_schemas"],
             "personal_data": details["personal_data"],

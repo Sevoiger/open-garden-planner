@@ -189,3 +189,48 @@ def test_compact_object_patch_checks_identity_before_undo():
     with pytest.raises(ValueError, match="changed since preparation"):
         apply_patches(reordered, [p.inverse() for p in reversed(patches)])
     assert reordered["objects"][0]["item_id"] == "two"
+
+
+def test_revision_cache_invalidates_writes_undo_redo_and_rejects_external_change(tmp_path, monkeypatch):
+    import open_garden_planner.core.document_session as module
+
+    path = tmp_path / "cached.ogp"
+    project(path)
+    calls = []
+    original = module.document_fingerprint
+    monkeypatch.setattr(module, "document_fingerprint", lambda data: (calls.append(1), original(data))[1])
+    with DocumentSession(path) as host:
+        first = host.dispatch("read", {"domains": ["tasks"]})["revision"]
+        assert host.dispatch("read", {"domains": ["objects"]})["revision"] == first
+        assert len(calls) == 1
+        preview = host.dispatch("prepare", {"operations": [addition()], "expected_revision": first})
+        host.dispatch("apply", {"preparation_id": preview["preparation_id"], "request_key": "cache"})
+        after = host.dispatch("read", {})["revision"]
+        assert after != first and len(calls) == 2
+        host.dispatch("undo", {})
+        undone = host.dispatch("read", {})["revision"]
+        assert undone != after and len(calls) == 3
+        host.dispatch("redo", {})
+        assert host.dispatch("read", {})["revision"] != undone and len(calls) == 4
+        changed = read_plan(path)
+        changed["future"] = {"external": True}
+        write_plan(path, changed)
+        with pytest.raises(ValueError, match="changed on disk"):
+            host.dispatch("read", {})
+        with pytest.raises(ValueError, match="changed on disk"):
+            host.dispatch("prepare", {"operations": [addition()]})
+
+
+def test_document_fingerprint_preserves_old_bytes_without_copying_receipts():
+    from open_garden_planner.services.document_operations import document_fingerprint, fingerprint
+
+    class NoCopy(dict):
+        def __deepcopy__(self, memo):
+            raise AssertionError("Excluded receipts must not be copied")
+
+    raw = {"metadata": {"modified": "now", "created": None}, "objects": [{"image_data": "AAA"}],
+           "future": {"false": False, "zero": 0}, "operation_receipts": NoCopy({"old": {}}),
+           "agent_meta": {"dirty": True}}
+    expected = {"metadata": {"created": None}, "objects": raw["objects"], "future": raw["future"]}
+    assert document_fingerprint(raw) == fingerprint(expected)
+    assert raw["metadata"]["modified"] == "now"

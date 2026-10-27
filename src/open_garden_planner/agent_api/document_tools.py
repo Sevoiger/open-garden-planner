@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 
@@ -25,16 +25,19 @@ def register_document_tools(mcp: Any, provider: Callable[..., dict[str, Any]], *
     async def get_document_state(domains: list[str] | None = None, offset: int = 0,
                                  limit: int = 100, media_offset: int = 0,
                                  media_limit: int = 100,
+                                 object_fields: list[str] | None = None,
                                  expected_revision: str | None = None) -> dict[str, Any]:
         """Read a bounded page of business state, excluding geometry and embedded image bytes.
 
         Domains: plan, objects, tasks, soil, harvest, pests, journal, succession,
         inventory, shopping and garden_memory. Collections use offset/limit;
-        media is a separate manifest page. Continue all pages with the returned
+        media is a separate manifest page. Use object_fields=["item_id","name","type"]
+        for compact object summaries, including oversized records. Continue all pages with the returned
         revision as expected_revision so one response cannot mix document states.
         """
         arguments = {"domains": domains, "offset": offset, "limit": limit,
                      "media_offset": media_offset, "media_limit": media_limit,
+                     "object_fields": object_fields,
                      "expected_revision": expected_revision}
         return await anyio.to_thread.run_sync(lambda: provider("read", arguments))
 
@@ -125,9 +128,15 @@ def register_library_tools(mcp: Any, provider: Callable[..., dict[str, Any]], *,
                                        include_media: bool = False, media_id: str | None = None,
                                        media_offset: int = 0,
                                        media_limit_bytes: int = 65536,
-                                       expected_revision: str | None = None) -> dict[str, Any]:
+                                       expected_revision: str | None = None,
+                                       view: Literal["summary", "detail"] = "detail",
+                                       fields: list[str] | None = None,
+                                       include_source: bool = False) -> dict[str, Any]:
         """Search/page personal plants or read one by exact ID, without inline media.
 
+        view="summary" returns identity; fields selects top-level fields.
+        Source raw_data/provider_data/html require include_source=true; media
+        remains separate. Omitted fields are listed explicitly.
         Pages contain at most 100 plants. Search covers record ID and botanical
         identity fields. Pin subsequent pages with expected_revision. Embedded
         manifest IDs are returned without the bytes. Media is opt-in, requires
@@ -137,6 +146,7 @@ def register_library_tools(mcp: Any, provider: Callable[..., dict[str, Any]], *,
         authorize()
         arguments = {"query": query, "offset": offset, "limit": limit,
                      "plant_id": plant_id, "include_media": include_media,
+                     "view": view, "fields": fields, "include_source": include_source,
                      "media_id": media_id,
                      "media_offset": media_offset,
                      "media_limit_bytes": media_limit_bytes,

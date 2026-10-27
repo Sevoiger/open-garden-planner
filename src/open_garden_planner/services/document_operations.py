@@ -35,11 +35,13 @@ def fingerprint(value: Any) -> str:
 
 
 def document_fingerprint(document: dict[str, Any]) -> str:
-    value = deepcopy(document)
-    value.pop("agent_meta", None)
-    value.pop(RECEIPTS_KEY, None)
+    # Hash a read-only view: copying receipts only to discard them makes the
+    # cost grow with historical operations rather than current document state.
+    value = {key: child for key, child in document.items()
+             if key not in {"agent_meta", RECEIPTS_KEY}}
     if isinstance(value.get("metadata"), dict):
-        value["metadata"].pop("modified", None)
+        value["metadata"] = {key: child for key, child in value["metadata"].items()
+                             if key != "modified"}
     return fingerprint(value)
 
 

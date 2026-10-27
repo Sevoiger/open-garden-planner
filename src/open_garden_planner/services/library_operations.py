@@ -224,8 +224,9 @@ def read_library_document(path: Path) -> tuple[dict[str, Any], bytes | None, str
         raise LibraryFileError("Plant library 'plants' value must be an object")
     # A missing plants key is accepted as an old empty document, but every
     # other top-level key remains byte-for-byte equivalent at the value level.
-    document = deepcopy(document)
-    document["plants"] = deepcopy(plants)
+    # json.loads owns this entire tree. No caller or store can hold aliases to
+    # it yet, so cloning the document and then its plants duplicates work.
+    document["plants"] = plants
     _read_operations(document)
     return document, raw, _fingerprint(raw)
 
@@ -634,7 +635,7 @@ class LibraryOperations:
     def snapshot(self) -> dict[str, Any]:
         """Return a detached mapping of stored plant IDs to raw records."""
         document, _, _ = read_library_document(self.path)
-        return deepcopy(document["plants"])
+        return document["plants"]
 
     def prepare(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         """Validate a batch and return a no-write preview with one opaque token."""

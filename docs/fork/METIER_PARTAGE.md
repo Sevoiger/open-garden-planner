@@ -48,6 +48,19 @@ Les outils sont enregistrés par le serveur MCP et apparaissent dans
 `get_capabilities` publie les schémas des opérations, les champs obligatoires,
 leurs types et des exemples, ainsi que les schémas des outils réellement
 enregistrés. Les listes de noms seules ne constituent plus le contrat de saisie.
+Pour limiter la découverte, `get_capabilities(detail="summary")` publie l’index
+et `schema_catalog.fingerprint` ; charger ensuite un schéma avec `schema_domain`
+et éventuellement `schema_operation`. Le défaut complet reste compatible.
+Les clés de cache, mesures et limites figurent dans le
+[profil de performance MCP](MCP_PERFORMANCE.md).
+
+Les lectures botaniques acceptent `view="summary"|"detail"` et `fields`
+(champs de premier niveau). `raw_data`, `provider_data` et `html` de premier
+niveau nécessitent désormais `include_source=true` ; les médias restent séparés.
+`omitted_fields` explicite les exclusions. Pour un objet volumineux,
+`get_document_state(object_fields=["item_id","name","type"])` rend une page
+compacte et publie `omitted_object_fields`. Aucun champ absent n’est remplacé
+par null, zéro ou faux.
 `retry_policy` inclut les applications documentaires et botaniques à clé
 persistante ; la durabilité du document en direct exige toujours `save_plan`.
 

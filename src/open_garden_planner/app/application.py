@@ -333,14 +333,19 @@ class GardenPlannerApp(QMainWindow):
         )
 
     def _agent_document_operation(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        def run() -> dict[str, Any]:
+        def host() -> Any:
             from open_garden_planner.app.domain_adapter import LiveDocumentOperations
 
             if getattr(self, "_domain_operations", None) is None:
                 self._domain_operations = LiveDocumentOperations(self)
-            return self._domain_operations.dispatch(action, arguments)
+            return self._domain_operations
 
-        return self._agent_bridge.run_on_main(run)
+        if action in {"read", "media"}:
+            from open_garden_planner.app.domain_adapter import project_captured_read
+
+            capture = self._agent_bridge.run_on_main(lambda: host().capture_read())
+            return project_captured_read(capture, action, arguments)
+        return self._agent_bridge.run_on_main(lambda: host().dispatch(action, arguments))
 
     def _agent_library_operation(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
         def run() -> dict[str, Any]:
