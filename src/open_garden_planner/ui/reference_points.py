@@ -126,14 +126,9 @@ def point_dialog(view: "CanvasView", item: CircleItem | None = None,
             )
         )
     ]
-    selected = set(view._canvas_scene.selectedItems())
     for obj in sorted(candidates, key=lambda obj: (obj.name, str(obj.item_id))):
         parents.addItem(parent_name(obj), obj.item_id)
     parent_id = item.parent_bed_id if item else None
-    if item is None:
-        selected_parents = [obj for obj in candidates if obj in selected]
-        if len(selected_parents) == 1:
-            parent_id = selected_parents[0].item_id
     index = parents.findData(parent_id)
     parents.setCurrentIndex(max(0, index))
     form.addRow(QCoreApplication.translate("ReferencePoints", "Attached to"), parents)

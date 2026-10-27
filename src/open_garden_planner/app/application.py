@@ -837,6 +837,7 @@ class GardenPlannerApp(QMainWindow):
         inside.
         """
         from open_garden_planner.core.canvas_bounds import clamp_shift_within_canvas
+        from open_garden_planner.core.snapping import movement_bounds
         from open_garden_planner.ui.canvas.items import BackgroundImageItem
 
         clampable = [i for i in items if not isinstance(i, BackgroundImageItem)]
@@ -845,12 +846,9 @@ class GardenPlannerApp(QMainWindow):
         canvas = self.canvas_scene.canvas_rect
         rects = [
             (
-                bounded.sceneBoundingRect().left(),
-                bounded.sceneBoundingRect().top(),
-                bounded.sceneBoundingRect().right(),
-                bounded.sceneBoundingRect().bottom(),
+                rect.left(), rect.top(), rect.right(), rect.bottom(),
             )
-            for bounded in clampable
+            for rect in (movement_bounds(bounded) for bounded in clampable)
         ]
         dx, dy = clamp_shift_within_canvas(rects, canvas.width(), canvas.height())
         if dx != 0 or dy != 0:
@@ -959,18 +957,16 @@ class GardenPlannerApp(QMainWindow):
         from PyQt6.QtCore import QPointF as _QPointF
 
         from open_garden_planner.core.canvas_bounds import clamp_delta_within_canvas
+        from open_garden_planner.core.snapping import movement_bounds
         from open_garden_planner.ui.canvas.items import BackgroundImageItem
 
         canvas = self.canvas_scene.canvas_rect
         clampable_rects = [
             (
-                moved_item.sceneBoundingRect().left(),
-                moved_item.sceneBoundingRect().top(),
-                moved_item.sceneBoundingRect().right(),
-                moved_item.sceneBoundingRect().bottom(),
+                rect.left(), rect.top(), rect.right(), rect.bottom(),
             )
-            for moved_item, _ in item_deltas
-            if not isinstance(moved_item, BackgroundImageItem)
+            for rect in (movement_bounds(moved_item) for moved_item, _ in item_deltas
+                         if not isinstance(moved_item, BackgroundImageItem))
         ]
         clamped_dx, clamped_dy = clamp_delta_within_canvas(
             clampable_rects,

@@ -664,9 +664,10 @@ pas son glissement le long d’une référence fixe ; ses dimensions restent ide
 L’icône en forme de cible avec une croix, près de l’outil de mesure dans la barre
 principale, active **Point de référence**. Cliquer sur le plan ou saisir une
 coordonnée, puis donner un nom (par exemple « Poteau nord » ou « Borne OGE »).
-Choisir **Point indépendant** ou un objet dans **Rattaché à** ; un unique objet
-sélectionné est proposé comme parent. Le rattachement est explicite et ne dépend
-pas du fait de cliquer à l’intérieur d’un polygone.
+Le dialogue propose toujours **Point indépendant** au départ. Choisir un objet
+dans **Rattaché à** pour créer un lien ; une ancienne sélection (par exemple une
+pergola) ne crée aucun rattachement. Cliquer sur un polygone ne suffit pas à en
+faire le parent : le rattachement se choisit explicitement dans le dialogue.
 
 La croix garde sa taille à l’écran ; son centre est la position exacte utilisée
 par les mesures et l’accrochage. Le point ne représente aucune surface. Il se
@@ -675,6 +676,9 @@ sélection visible. Un double-clic, le menu contextuel ou le bouton du panneau
 **Propriétés** ouvre ses réglages : nom, rattachement, taille du symbole en pixels,
 couleur et épaisseur du trait. La taille ne change pas la coordonnée du repère.
 Les opérations, y compris l’apparence, sont annulables et sauvegardées.
+L’accrochage pendant le glissement utilise le centre exact et les ancrages réels
+des autres objets, sans attirer le contour du symbole ou son halo. Seul le centre
+doit rester dans le canevas : un repère peut donc atteindre exactement son bord.
 
 Le dialogue montre l’objet parent proposé par un contour et un lien pointillés ;
 **Point indépendant** ne crée aucun lien. Après placement, un badge en maillons

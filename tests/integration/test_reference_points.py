@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt
 from PyQt6.QtGui import QAction, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
@@ -143,21 +143,21 @@ def test_edit_name_and_detach_is_one_undo(canvas, monkeypatch):
     assert point.parent_bed_id == parent.item_id
 
 
-def test_dialog_defaults_to_selected_parent_and_cancel_is_inert(canvas, monkeypatch):
+def test_dialog_does_not_attach_to_previous_selection_and_cancel_is_inert(canvas, monkeypatch):
     scene, view = canvas
     parent = CircleItem(250, 250, 100, name="Clôture")
     scene.addItem(parent)
     parent.setSelected(True)
 
     def accept(dialog):
-        assert dialog.findChild(QComboBox).currentData() == parent.item_id
+        assert dialog.findChild(QComboBox).currentData() is None
         dialog.findChild(QLineEdit).setText("Poteau nord")
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(QDialog, "exec", accept)
     result = reference_points.point_dialog(view)
     assert result.name == "Poteau nord"
-    assert result.parent_id == parent.item_id
+    assert result.parent_id is None
     monkeypatch.setattr(QDialog, "exec", lambda _dialog: QDialog.DialogCode.Rejected)
     assert not reference_points.place_reference_point(view, QPointF(250, 250))
     assert not view.command_manager.can_undo
@@ -306,6 +306,9 @@ def test_dialog_appearance_and_attachment_preview(canvas, monkeypatch):
 
         from open_garden_planner.ui.dialogs.properties_dialog import ColorButton
 
+        parents = dialog.findChild(QComboBox)
+        assert parents.currentData() is None
+        parents.setCurrentIndex(parents.findData(parent.item_id))
         assert any("Clôture" in label.text() for label in dialog.findChildren(QLabel))
         assert set(scene.items()) - before
         dialog.findChild(QSpinBox, "reference_point_size").setValue(32)
@@ -404,3 +407,138 @@ def test_reference_label_respects_movement_protection(canvas, qtbot, monkeypatch
         monkeypatch.setattr(reference_points, "edit_reference_point", edits.append)
         QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
         assert not edits
+
+
+@pytest.mark.parametrize("target", ["point", "label"])
+def test_continuous_reference_drag_with_default_snapping(canvas, qtbot, monkeypatch, target):
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(0, 0), QPointF(2000, 0), QPointF(2000, 1200), QPointF(0, 1200)])
+    scene.addItem(terrain)
+    point = add_point(monkeypatch, scene, view)
+    point.setPos(500, 400)
+    view.resize(850, 600)
+    view._zoom_factor = 0.4
+    view._apply_transform()
+    view.centerOn(point.pos())
+    view.show()
+    qtbot.wait(40)
+    start = view.mapFromScene(point.pos())
+    if target == "label":
+        label = point._label_item
+        start = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
+    original = QPointF(point.pos())
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    qtbot.wait(30)
+    trace = []
+    for offset in (QPoint(3, -1), QPoint(8, -3), QPoint(15, -7), QPoint(31, -16), QPoint(53, -29)):
+        end = start + offset
+        QApplication.sendEvent(view.viewport(), QMouseEvent(
+            QMouseEvent.Type.MouseMove, QPointF(end), QPointF(view.viewport().mapToGlobal(end)),
+            Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+        qtbot.wait(30)
+        trace.append((point.pos().x(), point.pos().y(), type(scene.mouseGrabberItem()).__name__))
+    expected = original + view.mapToScene(end) - view.mapToScene(start)
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    assert point.pos().x() == pytest.approx(expected.x(), abs=1), trace
+    assert point.pos().y() == pytest.approx(expected.y(), abs=1), trace
+    assert terrain.pos() == QPointF()
+
+
+@pytest.mark.parametrize("attached", [False, True])
+@pytest.mark.parametrize("offset,expected_xy", [
+    (QPoint(42, -42), (584, 584)),
+    (QPoint(50, -50), (600, 600)),
+    (QPoint(49, -49), (600, 600)),
+])
+def test_reference_drag_snaps_only_its_centre_to_geometry(canvas, qtbot, monkeypatch, attached, offset, expected_xy):
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(600, 600), QPointF(1000, 600), QPointF(1000, 1000)])
+    scene.addItem(terrain)
+    point = add_point(monkeypatch, scene, view, terrain if attached else None)
+    point.setPos(500, 500)
+    view.resize(850, 600)
+    view._zoom_factor = 0.5
+    view._apply_transform()
+    view.centerOn(point.pos())
+    view.show()
+    qtbot.wait(20)
+    start = view.mapFromScene(point.pos())
+    end = start + offset
+    expected = QPointF(*expected_xy)
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    QApplication.sendEvent(view.viewport(), QMouseEvent(
+        QMouseEvent.Type.MouseMove, QPointF(end), QPointF(view.viewport().mapToGlobal(end)),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    assert point.pos().x() == pytest.approx(expected.x(), abs=0.01)
+    assert point.pos().y() == pytest.approx(expected.y(), abs=0.01)
+
+
+def test_reference_centre_can_reach_canvas_border(canvas, qtbot, monkeypatch):
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    point.setPos(50, 500)
+    view.resize(850, 600)
+    view._zoom_factor = 1
+    view._apply_transform()
+    view.centerOn(point.pos())
+    view.show()
+    qtbot.wait(20)
+    start = view.mapFromScene(point.pos())
+    end = start + QPoint(-50, 0)
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    QApplication.sendEvent(view.viewport(), QMouseEvent(
+        QMouseEvent.Type.MouseMove, QPointF(end), QPointF(view.viewport().mapToGlobal(end)),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    assert point.pos().x() == pytest.approx(0, abs=0.01)
+
+
+def test_reference_as_snap_target_does_not_depend_on_symbol_size(canvas, monkeypatch):
+    from open_garden_planner.core.snapping import ObjectSnapper
+
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    point.setPos(500, 500)
+    for radius in (8, 32):
+        point.set_radius_centered(radius)
+        result = ObjectSnapper().snap(QRectF(490, 490, 10, 10), [point])
+        assert result.snapped_pos == QPointF()
+
+
+def test_api_clamp_and_keyboard_bounds_use_reference_centre(canvas, monkeypatch):
+    from types import SimpleNamespace
+
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    point.setPos(0, 500)
+    GardenPlannerApp._clamp_agent_items_to_canvas(SimpleNamespace(canvas_scene=scene), [point])
+    assert point.pos() == QPointF(0, 500)
+    assert view._clamp_delta_to_canvas([point], QPointF(-10, 0)) == QPointF()
+    assert view._clamp_delta_to_canvas([point], QPointF(10, 0)) == QPointF(10, 0)
+
+
+def test_placing_on_terrain_never_inherits_selected_pergola(canvas, monkeypatch):
+    from open_garden_planner.core.object_types import ObjectType
+    from open_garden_planner.ui.canvas.items import RectangleItem
+
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(0, 0), QPointF(2000, 0), QPointF(2000, 1200), QPointF(0, 1200)])
+    pergola = RectangleItem(1400, 700, 100, 100, object_type=ObjectType.PERGOLA, name="Pergola")
+    scene.addItem(terrain)
+    scene.addItem(pergola)
+    pergola.setSelected(True)
+
+    def accept(dialog):
+        assert dialog.findChild(QComboBox).currentData() is None
+        dialog.findChild(QLineEdit).setText("Borne terrain")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", accept)
+    assert reference_points.place_reference_point(view, QPointF(300, 500))
+    point = next(item for item in scene.items() if is_reference_point(item))
+    assert point.parent_bed_id is None
+    assert not pergola.child_item_ids
+    assert not terrain.child_item_ids

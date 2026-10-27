@@ -11,6 +11,16 @@ from dataclasses import dataclass, field
 from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtWidgets import QGraphicsItem
 
+from open_garden_planner.core.reference_points import is_reference_point
+
+
+def movement_bounds(item: QGraphicsItem) -> QRectF:
+    """Reference glyphs have screen extents, but only their origin is on-plan."""
+    if is_reference_point(item):
+        centre = item.mapToScene(QPointF())
+        return QRectF(centre, centre)
+    return item.sceneBoundingRect()
+
 
 @dataclass
 class SnapGuide:
@@ -69,7 +79,7 @@ class ObjectSnapper:
         Returns:
             Tuple of (x_values, y_values) in scene coordinates.
         """
-        rect = item.sceneBoundingRect()
+        rect = movement_bounds(item)
         x_vals = [rect.left(), rect.center().x(), rect.right()]
         y_vals = [rect.top(), rect.center().y(), rect.bottom()]
         return x_vals, y_vals

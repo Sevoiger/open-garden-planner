@@ -70,7 +70,7 @@ from open_garden_planner.core.snap.providers import (
     PerpendicularSnapProvider,
     TangentSnapProvider,
 )
-from open_garden_planner.core.snapping import ObjectSnapper, SnapGuide
+from open_garden_planner.core.snapping import ObjectSnapper, SnapGuide, movement_bounds
 from open_garden_planner.core.stacking import ArrangeMode, ArrangeOutcome
 from open_garden_planner.core.tools import (
     AngleConstraintTool,
@@ -1689,7 +1689,7 @@ class CanvasView(QGraphicsView):
         canvas = self._canvas_scene.canvas_rect
         rects = [
             (r.left(), r.top(), r.right(), r.bottom())
-            for r in (item.sceneBoundingRect() for item in clampable)
+            for r in (movement_bounds(item) for item in clampable)
         ]
         dx, dy = clamp_shift_within_canvas(rects, canvas.width(), canvas.height())
 
@@ -1721,7 +1721,7 @@ class CanvasView(QGraphicsView):
         canvas = self._canvas_scene.canvas_rect
         rects = [
             (r.left(), r.top(), r.right(), r.bottom())
-            for r in (item.sceneBoundingRect() for item in clampable)
+            for r in (movement_bounds(item) for item in clampable)
         ]
         dx, dy = clamp_delta_within_canvas(
             rects, delta.x(), delta.y(), canvas.width(), canvas.height()
@@ -2403,10 +2403,31 @@ class CanvasView(QGraphicsView):
             self._snap_guides = []
             return
 
+        from open_garden_planner.core.reference_points import is_reference_point
+        if len(selected) == 1 and is_reference_point(selected[0]):
+            # Snap the surveying coordinate to actual geometry, never the
+            # screen glyph or the decorated bounding box of its target.
+            point = selected[0]
+            centre = point.mapToScene(QPointF())
+            self._ensure_snap_index()
+            hit = self._point_snapper.snap(
+                centre, threshold=self._object_snapper.threshold, exclude={point}
+            )
+            if hit is not None:
+                delta = hit.point - centre
+                point.moveBy(delta.x(), delta.y())
+            self._snap_guides = []
+            self._set_current_snap(hit)
+            return
+
         # Compute combined bounding rect of all selected items
-        combined = selected[0].sceneBoundingRect()
-        for item in selected[1:]:
-            combined = combined.united(item.sceneBoundingRect())
+        # A point has zero geometric extent; QRectF.united() discards null
+        # rectangles, so take the extrema explicitly for mixed selections.
+        bounds = [movement_bounds(item) for item in selected]
+        combined = QRectF(
+            QPointF(min(r.left() for r in bounds), min(r.top() for r in bounds)),
+            QPointF(max(r.right() for r in bounds), max(r.bottom() for r in bounds)),
+        )
 
         # Compute snap against other items (exclude background images as targets)
         exclude = set(selected)
