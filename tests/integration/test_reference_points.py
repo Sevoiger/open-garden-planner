@@ -3,8 +3,8 @@
 import json
 
 import pytest
-from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt
-from PyQt6.QtGui import QAction, QMouseEvent
+from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtGui import QAction, QContextMenuEvent, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSpinBox,
 )
@@ -865,3 +866,134 @@ def test_double_click_enabling_contour_keeps_intended_projection(canvas, qtbot, 
     assert point.pos() == QPointF(500, 200)
     view.command_manager.undo()
     assert point.pos() == QPointF(500, 500)
+
+
+def test_reference_context_actions_lock_delete_and_restore_everything_once(canvas, monkeypatch):
+    from open_garden_planner.core.constraints import ConstraintType
+
+    scene, view = canvas
+    terrain = PolygonItem([QPointF(0, 0), QPointF(600, 0), QPointF(600, 600)])
+    scene.addItem(terrain)
+    point = add_point(monkeypatch, scene, view, terrain)
+    scene.clearSelection()
+    terrain.setSelected(True)
+    menu = reference_points.reference_context_menu(point)
+    actions = {action.objectName(): action for action in menu.actions()}
+    assert {"reference_edit", "reference_copy", "reference_duplicate", "reference_delete",
+            "toggle_position_lock"} <= actions.keys()
+    assert "split_shape" not in actions
+    assert scene.selectedItems() == [point]
+    actions["toggle_position_lock"].trigger()
+    fixed = next(c for c in scene.constraint_graph.constraints.values() if c.constraint_type == ConstraintType.FIXED)
+    assert fixed.anchor_a.item_id == point.item_id
+    original = QPointF(point.pos())
+    QTest.keyClick(view.viewport(), Qt.Key.Key_Right)
+    assert point.pos() == original
+    locked_menu = reference_points.reference_context_menu(point)
+    unlock = next(a for a in locked_menu.actions() if a.objectName() == "toggle_position_lock")
+    assert unlock.text() == "Unlock position"
+    unlock.trigger()
+    assert not scene.constraint_graph.constraints
+    view.command_manager.undo()
+    assert fixed.constraint_id in scene.constraint_graph.constraints
+    before = len(view.command_manager._undo_stack)
+    actions["reference_delete"].trigger()
+    assert point.scene() is None
+    assert terrain.scene() is scene
+    assert not scene.constraint_graph.constraints
+    assert point.item_id not in terrain.child_item_ids
+    assert len(view.command_manager._undo_stack) == before + 1
+    view.command_manager.undo()
+    assert point.scene() is scene
+    assert point.parent_bed_id == terrain.item_id
+    assert point.item_id in terrain.child_item_ids
+    assert fixed.constraint_id in scene.constraint_graph.constraints
+    view.command_manager.redo()
+    assert point.scene() is None
+    assert not scene.constraint_graph.constraints
+
+
+def test_reference_context_duplicate_and_layer_use_existing_undo(canvas, monkeypatch):
+    from open_garden_planner.models.layer import Layer
+
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    menu = reference_points.reference_context_menu(point)
+    next(a for a in menu.actions() if a.objectName() == "reference_duplicate").trigger()
+    assert len([it for it in scene.items() if is_reference_point(it)]) == 2
+    view.command_manager.undo()
+    assert len([it for it in scene.items() if is_reference_point(it)]) == 1
+    old_layer = point.layer_id
+    layer = Layer(name="Repères", z_order=5)
+    scene.add_layer(layer)
+    menu = reference_points.reference_context_menu(point)
+    layer_menu = next(a.menu() for a in menu.actions() if a.menu() and a.menu().title() == "Move to Layer")
+    next(a for a in layer_menu.actions() if a.data() == layer.id).trigger()
+    assert point.layer_id == layer.id
+    view.command_manager.undo()
+    assert point.layer_id == old_layer
+
+
+@pytest.mark.parametrize("target", ["point", "label"])
+@pytest.mark.parametrize("zoom", [0.2, 0.9])
+def test_reference_context_menu_opens_from_viewport(canvas, qtbot, monkeypatch, target, zoom):
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    view.resize(850, 650)
+    view._zoom_factor = zoom
+    view._apply_transform()
+    view.centerOn(point.pos())
+    view.show()
+    qtbot.wait(20)
+    position = view.mapFromScene(point.pos())
+    if target == "label":
+        label = point._label_item
+        position = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
+    opened = []
+
+    def capture(menu, *_args):
+        opened.append({a.objectName() for a in menu.actions()})
+        return None
+
+    monkeypatch.setattr(QMenu, "exec", capture)
+    QApplication.sendEvent(view.viewport(), QContextMenuEvent(QContextMenuEvent.Reason.Mouse, position,
+                                                             view.viewport().mapToGlobal(position)))
+    assert opened and "reference_delete" in opened[0]
+    assert "toggle_position_lock" in opened[0]
+
+
+def test_popup_reference_menu_can_lock_then_delete_with_one_undo(canvas, qtbot, monkeypatch, tmp_path):
+    from open_garden_planner.core.constraints import ConstraintType
+
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    view.resize(850, 650)
+    view._zoom_factor = 0.5
+    view._apply_transform()
+    view.centerOn(point.pos())
+    view.show()
+    qtbot.wait(20)
+    activated = []
+    for name in ("toggle_position_lock", "reference_delete"):
+        def choose(action_name=name):
+            menu = QApplication.activePopupWidget()
+            assert isinstance(menu, QMenu)
+            menu.grab().save(str(tmp_path / f"{action_name}.png"))
+            action = next(a for a in menu.actions() if a.objectName() == action_name)
+            assert action.isEnabled()
+            activated.append(action_name)
+            action.trigger()
+            menu.close()
+
+        QTimer.singleShot(60, choose)
+        position = view.mapFromScene(point.pos())
+        QApplication.sendEvent(view.viewport(), QContextMenuEvent(QContextMenuEvent.Reason.Mouse, position,
+                                                                 view.viewport().mapToGlobal(position)))
+        if name == "toggle_position_lock":
+            assert any(c.constraint_type == ConstraintType.FIXED for c in scene.constraint_graph.constraints.values())
+    assert activated == ["toggle_position_lock", "reference_delete"]
+    assert point.scene() is None
+    assert not scene.constraint_graph.constraints
+    view.command_manager.undo()
+    assert point.scene() is scene
+    assert any(c.constraint_type == ConstraintType.FIXED for c in scene.constraint_graph.constraints.values())

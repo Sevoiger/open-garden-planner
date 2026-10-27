@@ -980,11 +980,12 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
         """Show context menu on right-click."""
         if is_reference_point(self):
-            from open_garden_planner.ui.reference_points import edit_reference_point
-            menu = QMenu()
-            edit = menu.addAction(QCoreApplication.translate("ReferencePoints", "Edit reference point…"))
-            if menu.exec(event.screenPos()) == edit:
-                edit_reference_point(self)
+            from open_garden_planner.ui.reference_points import reference_context_menu
+            menu = reference_context_menu(self)
+            try:
+                menu.exec(event.screenPos())
+            finally:
+                menu.deleteLater()
             return
         # Select this item if not already selected
         if not self.isSelected():

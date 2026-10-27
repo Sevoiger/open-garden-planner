@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QGraphicsScene,
     QLabel,
     QLineEdit,
+    QMenu,
     QSpinBox,
 )
 
@@ -405,3 +406,46 @@ def apply_appearance(item: CircleItem, options: PointProperties) -> None:
     pen.setWidthF(options.stroke_width)
     item.setPen(pen)
     item.update()
+
+
+def reference_context_menu(item: CircleItem) -> QMenu:
+    """The usual object actions, routed through the existing view commands."""
+    scene = item.scene()
+    menu = QMenu()
+    if scene is None or not scene.views():
+        return menu
+    view = cast("CanvasView", scene.views()[0])
+    layer = view._canvas_scene.get_layer_by_id(item.layer_id) if item.layer_id else None
+    editable = layer is not None and not layer.locked
+    if editable and not item.isSelected():
+        scene.clearSelection()
+        item.setSelected(True)
+    edit = menu.addAction(QCoreApplication.translate("ReferencePoints", "Edit reference point…"))
+    assert edit is not None
+    edit.setObjectName("reference_edit")
+    edit.setEnabled(editable)
+    edit.triggered.connect(lambda: edit_reference_point(item))
+    layer_menu = item._build_move_to_layer_menu(menu)
+    if layer_menu is not None:
+        layer_menu.setEnabled(editable)
+        layer_menu.triggered.connect(lambda action: item._dispatch_move_to_layer(action.data()))
+    arrange_menu = item._build_arrange_menu(menu, supports_split=False)
+    arrange_menu.setEnabled(editable)
+    arrange_menu.triggered.connect(lambda action: item._dispatch_arrange(action.data()))
+    menu.addSeparator()
+    copy = menu.addAction(QCoreApplication.translate("GardenPlannerApp", "&Copy"))
+    assert copy is not None
+    copy.setObjectName("reference_copy")
+    copy.setEnabled(editable)
+    copy.triggered.connect(view.copy_selected)
+    duplicate = menu.addAction(QCoreApplication.translate("CircleItem", "Duplicate"))
+    assert duplicate is not None
+    duplicate.setObjectName("reference_duplicate")
+    duplicate.setEnabled(editable)
+    duplicate.triggered.connect(view.duplicate_selected)
+    delete = menu.addAction(QCoreApplication.translate("CircleItem", "Delete"))
+    assert delete is not None
+    delete.setObjectName("reference_delete")
+    delete.setEnabled(editable)
+    delete.triggered.connect(view._delete_selected_items)
+    return menu

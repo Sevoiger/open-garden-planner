@@ -351,6 +351,8 @@ class DeleteItemsCommand(Command):
         self,
         scene: QGraphicsScene,
         items: list[QGraphicsItem],
+        *,
+        constraints_to_remove: list["Constraint"] | None = None,
     ) -> None:
         """Initialize the delete command.
 
@@ -362,6 +364,12 @@ class DeleteItemsCommand(Command):
 
         self._scene = scene
         self._items = list(items)  # Copy the list
+        graph = getattr(scene, "constraint_graph", None)
+        if constraints_to_remove and graph is None:
+            raise ValueError("Deleting constraints requires a scene constraint graph")
+        self._constraint_commands = ([RemoveConstraintCommand(graph, constraint)
+                                      for constraint in constraints_to_remove or []]
+                                     if graph is not None else [])
 
         # Snapshot parent-child relationships for undo restoration.
         # bed UUID → list of child UUIDs
@@ -409,6 +417,9 @@ class DeleteItemsCommand(Command):
                             changes[survivor] = None
             self._guild_dissolution = GuildMembershipCommand(list(changes.items()))
         self._guild_dissolution.execute()
+
+        for command in self._constraint_commands:
+            command.execute()
 
         # Detach parent-child links before removing items
         for item in self._items:
@@ -479,6 +490,9 @@ class DeleteItemsCommand(Command):
             refresh_all = getattr(self._scene, "_update_items_z_order", None)
             if callable(refresh_all):
                 refresh_all()
+        for command in reversed(self._constraint_commands):
+            command.undo()
+
 
 
 class MoveItemsCommand(Command):

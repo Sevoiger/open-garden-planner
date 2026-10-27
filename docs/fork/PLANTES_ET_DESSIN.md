@@ -683,6 +683,11 @@ sélection visible. Un double-clic, le menu contextuel ou le bouton du panneau
 **Propriétés** ouvre ses réglages : nom, rattachement, taille du symbole en pixels,
 couleur et épaisseur du trait. La taille ne change pas la coordonnée du repère.
 Les opérations, y compris l’apparence, sont annulables et sauvegardées.
+Un clic droit sur la croix ou son nom donne accès au verrouillage de position,
+à la suppression, à la copie, à la duplication et aux menus de calque et
+d’organisation. **Verrouiller la position** empêche le déplacement ; la même
+action permet ensuite de déverrouiller le repère. Annuler une suppression
+restaure en une fois le point, son rattachement et ses contraintes.
 La mini-carte conserve la sélection et la visibilité des repères pendant ses
 rafraîchissements ; elle les représente par de petits points dans sa vignette.
 Le maintien de la prise souris couvre le symbole et son nom : une perte de prise
@@ -712,6 +717,11 @@ repères gardent leur rattachement simple tant que cette option n’est pas acti
 
 
 ### Masquer les cotes de contraintes
+
+L’outil de longueur de côté accepte un clic sur toute la longueur du segment,
+y compris sur un côté tourné ou celui qui ferme un polygone. Le côté visé est
+mis en évidence au survol. Les objets masqués ou sur un calque verrouillé ne
+sont pas proposés.
 
 Le bouton **Afficher/masquer les cotes de contraintes** de la barre principale
 (icône de cotation, après les outils d’annotation) bascule l’affichage des marqueurs

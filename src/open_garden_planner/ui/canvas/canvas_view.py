@@ -2121,10 +2121,11 @@ class CanvasView(QGraphicsView):
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         """Show context menu on empty-canvas right-click."""
-        scene_pos = self.mapToScene(event.pos())
+        from open_garden_planner.core.reference_points import is_reference_point
         items_at = [
-            i for i in self.scene().items(scene_pos)
-            if i.isVisible() and i.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            i for i in self.items(event.pos())
+            if i.isVisible() and (i.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                                  or is_reference_point(i.parentItem()))
         ]
         if items_at:
             super().contextMenuEvent(event)
@@ -3904,29 +3905,23 @@ class CanvasView(QGraphicsView):
                     if constraint not in constraints_to_remove:
                         constraints_to_remove.append(constraint)
 
-        # Remove constraints first (before items are removed from scene)
-        for constraint in constraints_to_remove:
-            cmd = RemoveConstraintCommand(graph, constraint)
-            self._command_manager.execute(cmd)
+        from open_garden_planner.ui.canvas.items.journal_pin_item import JournalPinItem
 
-        # Split journal pins off so each goes through DeleteJournalNoteCommand,
-        # which also prunes the matching note dict from ProjectData. Otherwise
-        # the keyboard-Delete path would orphan the note (the right-click
-        # "Delete" menu already routes correctly via the view signal).
-        from open_garden_planner.ui.canvas.items.journal_pin_item import (  # noqa: PLC0415
-            JournalPinItem,
-        )
-
-        journal_pin_ids = [
-            i.note_id for i in selected if isinstance(i, JournalPinItem)
-        ]
+        journal_pin_ids = [i.note_id for i in selected if isinstance(i, JournalPinItem)]
         regular_items = [i for i in selected if not isinstance(i, JournalPinItem)]
-
+        regular_ids = {getattr(i, "item_id", None) for i in regular_items}
+        regular_constraints = [c for c in constraints_to_remove
+                               if any(ref.item_id in regular_ids for ref in (c.anchor_a, c.anchor_b, c.anchor_c)
+                                      if ref is not None)]
+        # Journal pins keep their dedicated note-store deletion path.
+        for constraint in constraints_to_remove:
+            if constraint not in regular_constraints:
+                self._command_manager.execute(RemoveConstraintCommand(graph, constraint))
         if journal_pin_ids:
             self.journal_notes_batch_delete_requested.emit(journal_pin_ids)
-
         if regular_items:
-            command = DeleteItemsCommand(self.scene(), regular_items)
+            command = DeleteItemsCommand(self._canvas_scene, regular_items,
+                                         constraints_to_remove=regular_constraints)
             self._command_manager.execute(command)
 
     def _move_selected_items(self, event: QKeyEvent) -> None:

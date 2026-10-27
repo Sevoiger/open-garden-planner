@@ -4,6 +4,7 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import (
     QGraphicsItem,
+    QGraphicsSceneContextMenuEvent,
     QGraphicsSceneMouseEvent,
     QGraphicsSimpleTextItem,
     QStyleOptionGraphicsItem,
@@ -65,6 +66,14 @@ class ReferencePointLabel(QGraphicsSimpleTextItem):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         if event is not None:
             event.accept()
+
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent | None) -> None:
+        parent = self.parentItem()
+        if parent is not None and event is not None:
+            parent.contextMenuEvent(event)
+            event.accept()
+            return
+        super().contextMenuEvent(event)
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent | None) -> None:
         parent = self.parentItem()

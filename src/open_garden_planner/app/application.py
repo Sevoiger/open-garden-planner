@@ -1134,7 +1134,7 @@ class GardenPlannerApp(QMainWindow):
         GUI's "Keep plants" choice — the only sensible default for a
         single-object programmatic delete, which can't prompt.
         """
-        from open_garden_planner.core.commands import DeleteItemsCommand, RemoveConstraintCommand
+        from open_garden_planner.core.commands import DeleteItemsCommand
 
         item = self._resolve_agent_item(item_id)
         linked_ridge = self._agent_linked_roof_ridge(item)
@@ -1145,12 +1145,7 @@ class GardenPlannerApp(QMainWindow):
         }
 
         constraints = self._agent_item_constraints(item)
-        for constraint in constraints:
-            self.canvas_view.command_manager.execute(
-                RemoveConstraintCommand(self.canvas_scene.constraint_graph, constraint)
-            )
-
-        cmd = DeleteItemsCommand(self.canvas_scene, targets)
+        cmd = DeleteItemsCommand(self.canvas_scene, targets, constraints_to_remove=constraints)
         self.canvas_view.command_manager.execute(cmd)
         # The response is a completion receipt, not merely a command queued on
         # the main thread.  Check every serialized UUID, not just the Python
