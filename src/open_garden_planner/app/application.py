@@ -4499,7 +4499,7 @@ class GardenPlannerApp(QMainWindow):
         self._constraints_action.setChecked(True)  # Updated from settings in _setup_central_widget
         self._constraints_action.setStatusTip(self.tr("Toggle constraint dimension lines on the canvas"))
         self._constraints_action.triggered.connect(self._on_toggle_constraints)
-        self._set_action_icon(self._constraints_action, "constraints_overlay")
+        self._set_action_icon(self._constraints_action, "dimension_visibility")
         overlays_menu.addAction(self._constraints_action)
 
         # Toggle Construction Geometry
@@ -4864,6 +4864,7 @@ class GardenPlannerApp(QMainWindow):
 
         # Drawing and CAD tools precede the three palettes at the right edge.
         self.main_toolbar = MainToolbar(self)
+        self.main_toolbar.set_constraints_action(self._constraints_action)
         self.addToolBar(self.main_toolbar)
 
         self.constraint_toolbar = ConstraintToolbar(self)

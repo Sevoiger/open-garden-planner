@@ -224,3 +224,5 @@ moves, chevrons indicating the step:
   (Send to Back)
 
 `reference_point.svg` : dessin original du fork, cible et croix sur grille 24 × 24.
+
+`dimension_visibility.svg` : dessin original du fork, œil et cote sur grille 24 × 24.

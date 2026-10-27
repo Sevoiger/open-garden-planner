@@ -3,9 +3,19 @@
 import json
 
 import pytest
-from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtGui import QAction, QMouseEvent
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QComboBox, QDialog, QLineEdit
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+)
 
 from open_garden_planner.core.commands import DeleteItemsCommand, GroupCommand
 from open_garden_planner.core.measure_snapper import AnchorType, get_anchor_points
@@ -31,7 +41,7 @@ def canvas(qtbot):
 
 
 def add_point(monkeypatch, scene, view, parent=None):
-    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: (
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: reference_points.PointProperties(
         "Borne OGE", parent.item_id if parent else None,
     ))
     assert reference_points.place_reference_point(view, QPointF(240, 180))
@@ -123,7 +133,7 @@ def test_edit_name_and_detach_is_one_undo(canvas, monkeypatch):
     parent = PolygonItem([QPointF(0, 0), QPointF(500, 0), QPointF(500, 500)])
     scene.addItem(parent)
     point = add_point(monkeypatch, scene, view, parent)
-    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: ("Poteau 1", None))
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: reference_points.PointProperties("Poteau 1"))
     reference_points.edit_reference_point(point)
     assert point.name == "Poteau 1"
     assert point.parent_bed_id is None
@@ -145,7 +155,9 @@ def test_dialog_defaults_to_selected_parent_and_cancel_is_inert(canvas, monkeypa
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(QDialog, "exec", accept)
-    assert reference_points.point_dialog(view) == ("Poteau nord", parent.item_id)
+    result = reference_points.point_dialog(view)
+    assert result.name == "Poteau nord"
+    assert result.parent_id == parent.item_id
     monkeypatch.setattr(QDialog, "exec", lambda _dialog: QDialog.DialogCode.Rejected)
     assert not reference_points.place_reference_point(view, QPointF(250, 250))
     assert not view.command_manager.can_undo
@@ -156,7 +168,7 @@ def test_toolbar_placement_through_viewport(canvas, qtbot, monkeypatch):
     toolbar = MainToolbar(view)
     qtbot.addWidget(toolbar)
     toolbar.tool_selected.connect(view.set_active_tool)
-    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: ("Poteau", None))
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: reference_points.PointProperties("Poteau"))
     view.resize(900, 600)
     view.show()
     view.centerOn(500, 500)
@@ -217,3 +229,178 @@ def test_api_translation_includes_polygon_references(canvas, monkeypatch):
     delta = QPointF(20, 30)
     pairs = GardenPlannerApp._agent_move_item_deltas(SimpleNamespace(canvas_scene=scene), parent, delta)
     assert pairs == [(parent, delta), (point, delta)]
+
+
+@pytest.mark.parametrize("zoom", [0.2, 0.65, 2.0])
+@pytest.mark.parametrize("target", ["halo", "label"])
+@pytest.mark.parametrize("attached", [False, True])
+def test_drag_reference_through_viewport(canvas, qtbot, monkeypatch, zoom, target, attached):
+    scene, view = canvas
+    parent = PolygonItem([QPointF(100, 100), QPointF(500, 100), QPointF(500, 500)])
+    scene.addItem(parent)
+    point = add_point(monkeypatch, scene, view, parent if attached else None)
+    view.resize(850, 600)
+    view._zoom_factor = zoom
+    view._apply_transform()
+    view.centerOn(point.pos())
+    view._object_snap_enabled = False
+    view._guides_visible = False
+    view.show()
+    qtbot.wait(15)
+    start = view.mapFromScene(point.pos())
+    if target == "label":
+        label = point._label_item
+        start = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
+    else:
+        start += QPoint(10, 0)
+    end = start + QPoint(50, -30)
+    expected = view.mapToScene(end) - view.mapToScene(start)
+    original = QPointF(point.pos())
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    event = QMouseEvent(QMouseEvent.Type.MouseMove, QPointF(end),
+                        QPointF(view.viewport().mapToGlobal(end)), Qt.MouseButton.NoButton,
+                        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(view.viewport(), event)
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    assert point.pos().x() == pytest.approx((original + expected).x(), abs=1)
+    assert point.pos().y() == pytest.approx((original + expected).y(), abs=1)
+    assert parent.pos() == QPointF()
+    view.command_manager.undo()
+    assert point.pos() == original
+
+
+def test_edit_appearance_keeps_exact_centre_and_roundtrips(canvas, qtbot, monkeypatch, tmp_path):
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    point.setPos(341.5, 227.25)
+    original = reference_points.PointProperties.from_item(point)
+    changed = reference_points.PointProperties("Borne rouge", None, 36, "#ffd5283a", 4)
+    monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: changed)
+    reference_points.edit_reference_point(point)
+    assert point.mapToScene(point.rect().center()) == QPointF(341.5, 227.25)
+    assert reference_points.PointProperties.from_item(point) == changed
+    view.command_manager.undo()
+    assert reference_points.PointProperties.from_item(point) == original
+    view.command_manager.redo()
+    assert reference_points.PointProperties.from_item(point) == changed
+    path = tmp_path / "point-style.ogp"
+    ProjectManager().save(scene, path)
+    other = CanvasScene()
+    other_view = CanvasView(other)
+    qtbot.addWidget(other_view)
+    ProjectManager().load(other, path)
+    restored = other.find_item_by_id(point.item_id)
+    assert reference_points.PointProperties.from_item(restored) == changed
+    assert restored.mapToScene(restored.rect().center()) == QPointF(341.5, 227.25)
+
+
+def test_dialog_appearance_and_attachment_preview(canvas, monkeypatch):
+    scene, view = canvas
+    parent = PolygonItem([QPointF(100, 100), QPointF(500, 100), QPointF(500, 500)], name="Clôture")
+    scene.addItem(parent)
+    parent.setSelected(True)
+    before = set(scene.items())
+
+    def accept(dialog):
+        from PyQt6.QtGui import QColor
+
+        from open_garden_planner.ui.dialogs.properties_dialog import ColorButton
+
+        assert any("Clôture" in label.text() for label in dialog.findChildren(QLabel))
+        assert set(scene.items()) - before
+        dialog.findChild(QSpinBox, "reference_point_size").setValue(32)
+        dialog.findChild(QDoubleSpinBox, "reference_point_width").setValue(3.5)
+        dialog.findChild(ColorButton, "reference_point_color").set_color(QColor("#ff8800"))
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", accept)
+    result = reference_points.point_dialog(view, None, QPointF(300, 200))
+    assert result == reference_points.PointProperties("", parent.item_id, 32, "#ffff8800", 3.5)
+    assert set(scene.items()) == before
+
+
+def test_reference_properties_panel_exposes_edit_and_link(canvas, qtbot, monkeypatch):
+    from open_garden_planner.ui.panels.properties_panel import PropertiesPanel
+
+    scene, view = canvas
+    parent = PolygonItem([QPointF(100, 100), QPointF(500, 100), QPointF(500, 500)], name="Clôture")
+    scene.addItem(parent)
+    point = add_point(monkeypatch, scene, view, parent)
+    panel = PropertiesPanel()
+    qtbot.addWidget(panel)
+    panel.set_selected_items([point])
+    assert any("Clôture" in label.text() for label in panel.findChildren(QLabel))
+    assert any("Edit reference point" in button.text() for button in panel.findChildren(QPushButton))
+
+
+def test_constraint_dimensions_toggle_keeps_constraints_and_tool(canvas, qtbot):
+    from types import SimpleNamespace
+
+    from open_garden_planner.app.application import GardenPlannerApp
+    from open_garden_planner.app.settings import get_settings
+    from open_garden_planner.core.constraints import AnchorRef
+
+    scene, view = canvas
+    parent = PolygonItem([QPointF(100, 100), QPointF(500, 100), QPointF(500, 500)])
+    scene.addItem(parent)
+    a = AnchorRef(parent.item_id, AnchorType.CORNER, 0)
+    b = AnchorRef(parent.item_id, AnchorType.CORNER, 1)
+    constraint = scene.constraint_graph.add_constraint(a, b, 400)
+    scene.update_dimension_lines()
+    toolbar = MainToolbar(view)
+    qtbot.addWidget(toolbar)
+    action = QAction("Dimensions", toolbar)
+    action.setCheckable(True)
+    action.setChecked(True)
+    action.triggered.connect(lambda checked: GardenPlannerApp._on_toggle_constraints(
+        SimpleNamespace(canvas_view=view), checked))
+    toolbar.set_constraints_action(action)
+    view.set_active_tool(ToolType.MEASURE)
+    toolbar._constraints_button.click()
+    assert not scene.constraints_visible
+    assert not get_settings().show_constraints
+    assert constraint.constraint_id in scene.constraint_graph.constraints
+    assert all(not item.isVisible() for group in scene.dimension_line_manager._groups.values() for item in group.items)
+    assert view._tool_manager.active_tool_type == ToolType.MEASURE
+    toolbar._constraints_button.click()
+    assert scene.constraints_visible
+    assert get_settings().show_constraints
+    assert scene.dimension_line_manager._groups[constraint.constraint_id].items
+
+
+@pytest.mark.parametrize("protection", ["locked", "fixed"])
+def test_reference_label_respects_movement_protection(canvas, qtbot, monkeypatch, protection):
+    from open_garden_planner.core.constraints import AnchorRef, ConstraintType
+
+    scene, view = canvas
+    point = add_point(monkeypatch, scene, view)
+    original = QPointF(point.pos())
+    if protection == "locked":
+        point.setFlag(point.GraphicsItemFlag.ItemIsSelectable, False)
+        point.setFlag(point.GraphicsItemFlag.ItemIsMovable, False)
+    else:
+        anchor = AnchorRef(point.item_id, AnchorType.CENTER)
+        scene.constraint_graph.add_constraint(anchor, anchor, 0, constraint_type=ConstraintType.FIXED,
+                                             target_x=original.x(), target_y=original.y())
+    view.resize(850, 600)
+    view._zoom_factor = 0.65
+    view._apply_transform()
+    view.centerOn(original)
+    view._object_snap_enabled = False
+    view._guides_visible = False
+    view.show()
+    qtbot.wait(15)
+    label = point._label_item
+    start = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
+    end = start + QPoint(50, -30)
+    QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    QApplication.sendEvent(view.viewport(), QMouseEvent(
+        QMouseEvent.Type.MouseMove, QPointF(end), QPointF(view.viewport().mapToGlobal(end)),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=end)
+    assert point.pos() == original
+    if protection == "locked":
+        edits = []
+        monkeypatch.setattr(reference_points, "edit_reference_point", edits.append)
+        QTest.mouseDClick(view.viewport(), Qt.MouseButton.LeftButton, pos=start)
+        assert not edits

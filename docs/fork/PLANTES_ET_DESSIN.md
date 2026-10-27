@@ -669,9 +669,20 @@ sélectionné est proposé comme parent. Le rattachement est explicite et ne dé
 pas du fait de cliquer à l’intérieur d’un polygone.
 
 La croix garde sa taille à l’écran ; son centre est la position exacte utilisée
-par les mesures et l’accrochage. Le point ne représente aucune surface. Un
-double-clic, ou le menu contextuel, permet de le renommer, le rattacher ou le
-détacher. Les opérations sont annulables. Un point rattaché accompagne les
+par les mesures et l’accrochage. Le point ne représente aucune surface. Il se
+déplace en tirant la croix, sa zone de prise élargie ou son nom ; un halo rend la
+sélection visible. Un double-clic, le menu contextuel ou le bouton du panneau
+**Propriétés** ouvre ses réglages : nom, rattachement, taille du symbole en pixels,
+couleur et épaisseur du trait. La taille ne change pas la coordonnée du repère.
+Les opérations, y compris l’apparence, sont annulables et sauvegardées.
+
+Le dialogue montre l’objet parent proposé par un contour et un lien pointillés ;
+**Point indépendant** ne crée aucun lien. Après placement, un badge en maillons
+signale le rattachement. Sélectionner le point montre le lien vers son parent et
+son contour ; le nom du parent apparaît dans le panneau Propriétés et l’infobulle.
+Les aperçus sont transitoires : ils ne font pas partie des objets du plan.
+
+Un point rattaché accompagne les
 translations de son parent, par glissement, clavier ou API, et sa copie ; il ne
 recalcule pas sa position lors d’une modification des sommets ou d’une rotation.
 Supprimer le parent d’un repère le laisse indépendant à sa dernière position.
@@ -681,3 +692,13 @@ Le format `.ogp` conserve le point comme cercle avec l’indicateur additif
 (`parent_bed_id` / `child_item_ids`, également utilisés pour ces repères). Une
 ancienne version peut donc le lire comme un petit cercle. La bibliothèque
 personnelle n’intervient pas dans ce stockage.
+
+
+### Masquer les cotes de contraintes
+
+Le bouton **Afficher/masquer les cotes de contraintes** de la barre principale
+(icône de cotation, après les outils d’annotation) bascule l’affichage des marqueurs
+et des longueurs. Le même réglage existe dans **Affichage → Superpositions →
+Afficher les contraintes**. Les longueurs fixées et les autres contraintes restent
+actives lorsque leurs marqueurs sont masqués. L’état est conservé entre les lancements
+et ce bouton ne change pas l’outil de dessin actif.

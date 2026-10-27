@@ -5,11 +5,12 @@ from datetime import date
 from typing import Any
 
 from PyQt6.QtCore import QCoreApplication, QPointF, QRectF, Qt
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
     QGraphicsSceneContextMenuEvent,
+    QGraphicsSceneHoverEvent,
     QGraphicsSceneMouseEvent,
     QMenu,
     QStyleOptionGraphicsItem,
@@ -191,18 +192,38 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         self._diameter_label: AnnotationLabel | None = None
         self._center_label: AnnotationLabel | None = None
 
+        if is_reference_point(self):
+            self.stroke_color = QColor("#168c9e")
+            self.stroke_width = 1.8
         self._setup_styling()
         self._setup_flags()
         if is_reference_point(self):
             self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
             self.setPos(center_x, center_y)
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.initialize_label()
+
+    def _create_label(self) -> None:
+        if not is_reference_point(self):
+            super()._create_label()
+            return
+        if self._label_item is None and self._get_display_label_text():
+            from .reference_point_label import ReferencePointLabel
+            self._label_item = ReferencePointLabel(self._get_display_label_text(), self)
+            font = QFont("Arial", 10)
+            font.setBold(True)
+            self._label_item.setFont(font)
+            self._label_item.setBrush(QColor("#000000"))
+            self._label_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            self._position_label()
 
     def _position_label(self) -> None:
         if is_reference_point(self) and self._label_item is not None:
             # Both the point and label have screen-sized coordinates. Leave
             # the surveying centre visible and clickable beside its name.
-            self._label_item.setPos(self.rect().right() + 5, -self._label_item.boundingRect().height() / 2)
+            self._label_item.setPos(
+                self.rect().right() + 10, -self._label_item.boundingRect().height() - self.radius - 6
+            )
             return
         super()._position_label()
 
@@ -279,6 +300,9 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
 
     def boundingRect(self) -> QRectF:
         """Return bounding rect, expanded for plant SVG overflow, shadow, and companion ring."""
+        if is_reference_point(self):
+            radius = max(14.0, self.rect().width() / 2 + 8 + self.pen().widthF() / 2)
+            return QRectF(-radius, -radius, radius * 2, radius * 2)
         base = super().boundingRect()
         if is_plant_type(self.object_type):
             rect = self.rect()
@@ -323,6 +347,13 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
                 base = base.adjusted(-extra, -extra, extra, extra)
         return base
 
+    def shape(self) -> QPainterPath:
+        if is_reference_point(self):
+            path = QPainterPath()
+            path.addEllipse(self.boundingRect())
+            return path
+        return super().shape()
+
     def _visual_plant_diameter_cm(self, footprint_diameter: float) -> float:
         """The diameter (cm) the plant's SVG icon should render at today.
 
@@ -362,15 +393,31 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         rect = self.rect()
         if is_reference_point(self):
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            pen = QPen(QColor("#168c9e") if not self.isSelected() else QColor("#0078d7"), 1.8)
+            color = self.pen().color()
+            pen = QPen(color, self.pen().widthF())
             pen.setCosmetic(True)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
             center = rect.center()
             radius = rect.width() / 2
+            if self.isSelected():
+                halo = QColor(color)
+                halo.setAlpha(40)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(halo)
+                painter.drawEllipse(self.boundingRect())
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(center, radius * 0.55, radius * 0.55)
             painter.drawLine(QPointF(center.x() - radius, center.y()), QPointF(center.x() + radius, center.y()))
             painter.drawLine(QPointF(center.x(), center.y() - radius), QPointF(center.x(), center.y() + radius))
+            if self.parent_bed_id is not None:
+                # Chain badge distinguishes an attached reference even unselected.
+                painter.drawEllipse(QRectF(radius - 2, -radius - 1, 5, 3))
+                painter.drawEllipse(QRectF(radius + 1, -radius - 3, 5, 3))
+            if self.isSelected():
+                selected_pen = QPen(QColor("#0078d7"), 1, Qt.PenStyle.DashLine)
+                selected_pen.setCosmetic(True)
+                painter.setPen(selected_pen)
+                painter.drawEllipse(self.boundingRect().adjusted(1, 1, -1, -1))
             return
         is_plant = is_plant_type(self.object_type)
         # Resolved once and reused by both the decorative drop-shadow below
@@ -604,6 +651,15 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         centre.
         """
         if new_radius <= 0 or abs(new_radius - self._radius) < 1e-6:
+            return
+        if is_reference_point(self):
+            self.prepareGeometryChange()
+            self.setRect(-new_radius, -new_radius, new_radius * 2, new_radius * 2)
+            self._radius = new_radius
+            self._center = QPointF()
+            self.setTransformOriginPoint(QPointF())
+            self._position_label()
+            self.update()
             return
         # Scene-space centre of the current circle (correct under any rotation).
         scene_center = self.mapToScene(self.rect().center())
@@ -885,6 +941,22 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
 
         # Add to undo stack without executing (rotation already applied)
         command_manager.register_applied(command)
+
+    def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent | None) -> None:
+        if is_reference_point(self):
+            from open_garden_planner.ui.reference_points import reference_summary
+            self.setToolTip(reference_summary(self))
+        super().hoverEnterEvent(event)
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent | None) -> None:
+        if is_reference_point(self):
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent | None) -> None:
+        if is_reference_point(self):
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+        super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         """Handle double-click to edit label inline."""

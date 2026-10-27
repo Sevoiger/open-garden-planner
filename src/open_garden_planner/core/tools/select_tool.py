@@ -49,7 +49,7 @@ class SelectTool(BaseTool):
             return False
 
         # Check if clicking on an item
-        item = self._view.scene().itemAt(scene_pos, self._view.transform())
+        item = self._view.scene().itemAt(scene_pos, self._view.viewportTransform())
 
         if item is not None:
             # Handle Shift+click for multi-select toggle

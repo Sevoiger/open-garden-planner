@@ -4116,6 +4116,9 @@ class CanvasView(QGraphicsView):
         if self._guides_visible and self._canvas_scene.guide_lines:
             self._draw_guide_lines(painter, rect)
 
+        from open_garden_planner.ui.reference_points import draw_reference_links
+        draw_reference_links(self, painter)
+
     def _draw_canvas_border(self, painter: QPainter) -> None:
         """Draw a border around the canvas area."""
         # Get the actual canvas rect (not the padded scene rect)
