@@ -119,12 +119,34 @@ class PlantLibrary:
             raise LibraryFileError("Plant library state has not been loaded")
         return self._disk_fingerprint
 
-    def _commit(self, document: dict[str, Any]) -> None:
-        expected = self._ensure_writable()
+    @property
+    def revision(self) -> str:
+        """Fingerprint of the library state currently loaded by this instance."""
+        return self._ensure_writable()
+
+    def _commit(
+        self,
+        document: dict[str, Any],
+        *,
+        expected_revision: str | None = None,
+    ) -> None:
+        loaded_revision = self._ensure_writable()
+        if expected_revision is not None and expected_revision != loaded_revision:
+            raise LibraryConflictError(
+                "Plant library revision changed since this record was opened"
+            )
+        expected = expected_revision if expected_revision is not None else loaded_revision
         previous_plants = self._raw_document.get("plants", {})
         candidate_plants = document.get("plants", {})
         changed_ids = changed_library_record_ids(previous_plants, candidate_plants)
         if not changed_ids and document == self._raw_document:
+            if expected_revision is not None:
+                with ProcessFileLock(_lock_path(self._library_path)):
+                    _, _, current_revision = read_library_document(self._library_path)
+                    if current_revision != expected:
+                        raise LibraryConflictError(
+                            "Plant library changed before this edit could be checked"
+                        )
             return
         if changed_ids:
             bump_record_versions(document, changed_ids)
@@ -187,13 +209,23 @@ class PlantLibrary:
         plant.source_id = plant_id
         return plant_id
 
-    def update_plant(self, plant_id: str, plant: PlantSpeciesData) -> bool:
+    def update_plant(
+        self,
+        plant_id: str,
+        plant: PlantSpeciesData,
+        *,
+        expected_revision: str | None = None,
+    ) -> bool:
         """Update an existing typed entry; return False when it is absent."""
-        if plant_id not in self._plants:
-            return False
         if not isinstance(plant, PlantSpeciesData):
             raise TypeError("plant must be PlantSpeciesData")
-        self._ensure_writable()
+        loaded_revision = self._ensure_writable()
+        if expected_revision is not None and expected_revision != loaded_revision:
+            raise LibraryConflictError(
+                "Plant library revision changed since this record was opened"
+            )
+        if plant_id not in self._plants:
+            return False
         stored = deepcopy(plant)
         stored.data_source = "custom"
         stored.source_id = plant_id
@@ -204,7 +236,7 @@ class PlantLibrary:
         if not isinstance(previous, dict):
             raise LibraryConflictError(f"Plant record {plant_id!r} is no longer writable")
         raw_plants[plant_id] = serialize_species_record(stored, existing=previous)
-        self._commit(document)
+        self._commit(document, expected_revision=expected_revision)
         plant.data_source = "custom"
         plant.source_id = plant_id
         return True

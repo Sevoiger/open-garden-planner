@@ -119,7 +119,8 @@ boucle locale. Sans <code>--write</code>, les outils de mutation ne sont pas
 enregistrés. Les capacités de lecture et de préparation peuvent rester
 disponibles sans autoriser l'application.
 
-L'ouverture en écriture prend un verrou de fichier coopératif et les
+L'hôte autonome détient le projet pendant sa session, même sans
+<code>--write</code>. Son ouverture prend un verrou de fichier coopératif et les
 publications comparent la version du fichier avec celle lue au départ. Les
 instances OGP qui respectent ces mécanismes se coordonnent ; en cas de fichier
 déjà détenu, fermer son propriétaire ou utiliser le serveur MCP de l'application
@@ -139,6 +140,14 @@ La bibliothèque est un stockage distinct du projet et du canevas. Les outils
 compris pour la lecture et l'aperçu. Les imports utilisent des identifiants de
 source explicites, préparent jusqu'à 100 fiches et publient une transaction
 atomique avec reçu persistant.
+
+Le panneau botanique conserve la révision de la fiche qu’il édite. Si un import
+MCP ou un autre écrivain a modifié la bibliothèque, la sauvegarde de l’ancien
+panneau est refusée et expliquée dans le panneau ; le modèle et le canevas
+restent intacts. Désélectionner puis resélectionner la plante ne transforme pas
+son ancien snapshot en fiche actuelle. Charger explicitement l’espèce courante
+depuis la bibliothèque permet de reprendre l’édition. Ce chargement est une
+action explicite ; les placements existants ne sont pas actualisés en silence.
 
 Parcours d’import : appeler <code>get_custom_plant_library</code> pour lire la base, préparer avec <code>prepare_plant_library_import</code>, examiner les correspondances par identifiant de source et le rapport par ligne, puis appliquer avec une <code>request_key</code> stable via <code>apply_plant_library_import</code>. En cas de réponse perdue, lire d’abord <code>get_plant_library_operation</code> ; <code>undo_plant_library_import(transaction_id)</code> annule une transaction si les fiches touchées n’ont pas changé. Cet historique reste indépendant de l’historique du projet et du canevas.
 

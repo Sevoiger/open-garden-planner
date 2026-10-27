@@ -1,5 +1,26 @@
 # Progression — fork personnel macOS
 
+## Concurrence entre import MCP et éditeur botanique — 27 octobre 2026
+
+Le dernier contrôle du paquet métier a reproduit une perte de mise à jour :
+après import MCP et rechargement du cache, le panneau d’une plante pouvait
+réenregistrer son ancien snapshot en modifiant un autre champ. L’éditeur
+conserve désormais sa révision de lecture jusqu’au contrôle CAS sous verrou.
+Une resélection ne réarme pas un snapshot périmé : la fiche affichée doit
+correspondre à la fiche canonique, ou être rechargée explicitement depuis la
+bibliothèque. Aucune propagation automatique au projet n’est ajoutée.
+
+Les écritures refusées ou échouées gardent le modèle et les métadonnées du
+canevas intacts et affichent une explication dans le panneau. Deux éditions
+normales successives restent possibles. Vérification par le responsable :
+72 tests ciblés passent, dont le parcours MCP réel, et les sept cas dédiés
+passent aussi sous Cocoa natif. Les runs se recouvrent. Les traductions
+EN/DE/FR sont compilées et contrôlées (2 801 clés), Ruff et diff-check passent.
+Revue senior indépendante du correctif et de son garde de resélection : aucun
+P0/P1/P2 actionnable restant. Le reviewer n’a pas répété les tests.
+
+Livraison dans la [draft PR #25](https://github.com/Sevoiger/open-garden-planner/pull/25).
+
 ## Opérations métier partagées Qt / MCP — 26 octobre 2026
 
 Depuis la base 9217bf9, les frontières de données pures, les préparateurs

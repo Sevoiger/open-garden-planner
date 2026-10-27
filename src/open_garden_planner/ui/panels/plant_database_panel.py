@@ -47,6 +47,10 @@ from open_garden_planner.models.plant_data import (
 )
 from open_garden_planner.services import get_plant_library
 from open_garden_planner.services.bundled_species_db import merge_calendar_data
+from open_garden_planner.services.library_operations import (
+    LibraryConflictError,
+    LibraryOperationError,
+)
 from open_garden_planner.ui.plant_species_assignment import (
     apply_species_to_item,
     confirm_apply_database_values,
@@ -226,6 +230,9 @@ class PlantDatabasePanel(QWidget):
         """
         super().__init__(parent)
         self._current_plant_data: PlantSpeciesData | None = None
+        self._current_plant_revision: str | None = None
+        self._plant_revision_conflict = False
+        self._plant_revision_target: tuple[QGraphicsItem, str, str] | None = None
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._current_plant_item: QGraphicsItem | None = None
 
@@ -370,6 +377,12 @@ class PlantDatabasePanel(QWidget):
         self.no_selection_label.setProperty("secondary", True)
         self.no_selection_label.setStyleSheet("font-style: italic;")
         self.info_layout.addWidget(self.no_selection_label)
+
+        self._library_edit_status = QLabel()
+        self._library_edit_status.setWordWrap(True)
+        self._library_edit_status.setProperty("error", True)
+        self._library_edit_status.hide()
+        self.info_layout.addWidget(self._library_edit_status)
 
         # Form layout for plant details (hidden initially)
         self.details_form = QFormLayout()
@@ -816,72 +829,74 @@ class PlantDatabasePanel(QWidget):
         if not self._current_plant_item or not self._current_plant_data:
             return
 
-        # Update the PlantSpeciesData object
-        self._current_plant_data.common_name = self.common_edit.text().strip() or ""
-        self._current_plant_data.scientific_name = (
+        # Edit a detached candidate. A failed library write must leave both the
+        # displayed model and the canvas metadata at their previous values.
+        edited_plant = deepcopy(self._current_plant_data)
+        edited_plant.common_name = self.common_edit.text().strip() or ""
+        edited_plant.scientific_name = (
             self.scientific_edit.text().strip() or "Unknown"
         )
-        self._current_plant_data.family = self.family_edit.text().strip() or ""
+        edited_plant.family = self.family_edit.text().strip() or ""
 
         # Enums from combo boxes
         cycle_val = self.cycle_combo.currentData()
         if cycle_val:
-            self._current_plant_data.cycle = PlantCycle(cycle_val)
+            edited_plant.cycle = PlantCycle(cycle_val)
 
         flower_type_val = self.flower_type_combo.currentData()
         if flower_type_val:
-            self._current_plant_data.flower_type = FlowerType(flower_type_val)
+            edited_plant.flower_type = FlowerType(flower_type_val)
 
         pollination_val = self.pollination_combo.currentData()
         if pollination_val:
-            self._current_plant_data.pollination_type = PollinationType(pollination_val)
+            edited_plant.pollination_type = PollinationType(pollination_val)
 
         sun_val = self.sun_combo.currentData()
         if sun_val:
-            self._current_plant_data.sun_requirement = SunRequirement(sun_val)
+            edited_plant.sun_requirement = SunRequirement(sun_val)
 
         water_val = self.water_combo.currentData()
         if water_val:
-            self._current_plant_data.water_needs = WaterNeeds(water_val)
+            edited_plant.water_needs = WaterNeeds(water_val)
 
         # Numbers from spinboxes
         max_height = self.max_height_spin.value()
-        self._current_plant_data.max_height_cm = max_height if max_height > 0 else None
+        edited_plant.max_height_cm = max_height if max_height > 0 else None
 
         max_spread = self.max_spread_spin.value()
-        self._current_plant_data.max_spread_cm = max_spread if max_spread > 0 else None
+        edited_plant.max_spread_cm = max_spread if max_spread > 0 else None
 
         hardiness_min = self.hardiness_min_spin.value()
-        self._current_plant_data.hardiness_zone_min = (
+        edited_plant.hardiness_zone_min = (
             int(hardiness_min) if hardiness_min > 0 else None
         )
 
         hardiness_max = self.hardiness_max_spin.value()
-        self._current_plant_data.hardiness_zone_max = (
+        edited_plant.hardiness_zone_max = (
             int(hardiness_max) if hardiness_max > 0 else None
         )
 
         # Boolean from checkbox
-        self._current_plant_data.edible = self.edible_checkbox.isChecked()
+        edited_plant.edible = self.edible_checkbox.isChecked()
 
         # Edible parts (comma-separated list)
         edible_parts_str = self.edible_parts_edit.text().strip()
         if edible_parts_str:
-            self._current_plant_data.edible_parts = [
+            edited_plant.edible_parts = [
                 p.strip() for p in edible_parts_str.split(",") if p.strip()
             ]
         else:
-            self._current_plant_data.edible_parts = []
+            edited_plant.edible_parts = []
 
         # Soil requirements (US-12.10d)
         ph_min_val = self.ph_min_spin.value()
-        self._current_plant_data.ph_min = ph_min_val if ph_min_val > 0.0 else None
+        edited_plant.ph_min = ph_min_val if ph_min_val > 0.0 else None
         ph_max_val = self.ph_max_spin.value()
-        self._current_plant_data.ph_max = ph_max_val if ph_max_val > 0.0 else None
-        self._current_plant_data.n_demand = self.n_demand_combo.currentData()
-        self._current_plant_data.p_demand = self.p_demand_combo.currentData()
-        self._current_plant_data.k_demand = self.k_demand_combo.currentData()
-        self._current_plant_data.nutrient_demand = (
+        edited_plant.ph_max = ph_max_val if ph_max_val > 0.0 else None
+        edited_plant.n_demand = self.n_demand_combo.currentData()
+        edited_plant.p_demand = self.p_demand_combo.currentData()
+        edited_plant.k_demand = self.k_demand_combo.currentData()
+        edited_plant.nutrient_demand = (
             self.nutrient_demand_combo.currentData()
         )
 
@@ -889,36 +904,73 @@ class PlantDatabasePanel(QWidget):
         # read-only property backed by a dict that's always present, so there's
         # nothing to initialize — the old `metadata = {}` write here would have
         # raised AttributeError on an item with empty metadata.)
-        if hasattr(self._current_plant_item, "metadata"):
+        plant_item = self._current_plant_item
+        if hasattr(plant_item, "metadata"):
             library = get_plant_library()
 
-            if self._current_plant_data.data_source == "custom":
-                # Already a custom plant - update it in the library
-                plant_id = self._current_plant_data.source_id
-                if plant_id:
-                    library.update_plant(plant_id, self._current_plant_data)
-            else:
-                # API-sourced plant being modified - convert to custom
-                self._current_plant_data.data_source = "custom"
-                plant_id = library.add_plant(self._current_plant_data)
-                self._current_plant_data.source_id = plant_id
+            try:
+                if edited_plant.data_source == "custom":
+                    # Already a custom plant - update it in the library.
+                    plant_id = edited_plant.source_id
+                    if plant_id:
+                        if self._current_plant_revision is None:
+                            if self._plant_revision_conflict:
+                                raise LibraryConflictError(
+                                    "Displayed plant differs from the current library record"
+                                )
+                            raise LibraryOperationError(
+                                "No readable library revision was captured"
+                            )
+                        updated = library.update_plant(
+                            plant_id,
+                            edited_plant,
+                            expected_revision=self._current_plant_revision,
+                        )
+                        if not updated:
+                            raise LibraryConflictError(
+                                f"Plant {plant_id!r} is no longer in the library"
+                            )
+                else:
+                    # API-sourced plant being modified - convert to custom.
+                    edited_plant.data_source = "custom"
+                    plant_id = library.add_plant(edited_plant)
+                    edited_plant.source_id = plant_id
+            except LibraryConflictError:
+                self._show_library_edit_error(conflict=True)
+                return
+            except (LibraryOperationError, OSError):
+                self._show_library_edit_error(conflict=False)
+                return
+
+            if edited_plant.data_source == "custom" and edited_plant.source_id:
+                self._current_plant_revision = library.revision
+                self._plant_revision_conflict = False
+                self._plant_revision_target = (
+                    plant_item,
+                    edited_plant.data_source,
+                    edited_plant.source_id,
+                )
+
+            self._library_edit_status.clear()
+            self._library_edit_status.hide()
 
             # Save updated data to item metadata (merge local calendar DB data).
             # Live field edits are intentionally NOT wrapped in a command (that
             # would create one undo entry per keystroke — see #210); species
             # *assignment* goes through _apply_species_to_item instead.
-            self._current_plant_item.metadata["plant_species"] = merge_calendar_data(
-                self._current_plant_data.to_dict()
+            self._current_plant_data = edited_plant
+            plant_item.metadata["plant_species"] = merge_calendar_data(
+                edited_plant.to_dict()
             )
 
             # Repaint so the spacing circle reflects a live max_spread edit.
-            if hasattr(self._current_plant_item, "prepareGeometryChange"):
-                self._current_plant_item.prepareGeometryChange()
-            if hasattr(self._current_plant_item, "update"):
-                self._current_plant_item.update()
+            if hasattr(plant_item, "prepareGeometryChange"):
+                plant_item.prepareGeometryChange()
+            if hasattr(plant_item, "update"):
+                plant_item.update()
 
             # Mark project as dirty + refresh soil-mismatch borders (US-12.10d)
-            scene = self._current_plant_item.scene()
+            scene = plant_item.scene()
             if scene and hasattr(scene, "views"):
                 for view in scene.views():
                     if hasattr(view, "window"):
@@ -927,6 +979,23 @@ class PlantDatabasePanel(QWidget):
                             window._project_manager.mark_dirty()
                     if hasattr(view, "refresh_soil_mismatches"):
                         view.refresh_soil_mismatches()
+        else:
+            self._current_plant_data = edited_plant
+
+    def _show_library_edit_error(self, *, conflict: bool) -> None:
+        if conflict:
+            message = self.tr(
+                "The plant library changed since this record was opened. "
+                "Your edit was not saved. Select the current species from the "
+                "library before editing it."
+            )
+        else:
+            message = self.tr(
+                "Could not save changes to the plant library. "
+                "The plant and canvas data were left unchanged."
+            )
+        self._library_edit_status.setText(message)
+        self._library_edit_status.show()
 
     def _on_instance_field_changed(self) -> None:
         """Handle variety field change."""
@@ -1368,6 +1437,11 @@ class PlantDatabasePanel(QWidget):
         """Hide plant details and show 'no selection' message."""
         self._current_plant_data = None
         self._current_plant_item = None
+        self._current_plant_revision = None
+        self._plant_revision_conflict = False
+        self._plant_revision_target = None
+        self._library_edit_status.clear()
+        self._library_edit_status.hide()
         self._clear_profile_header()
         self._visual_controls.hide()
         self._update_favorite_button()
@@ -1405,6 +1479,11 @@ class PlantDatabasePanel(QWidget):
         # Keep the plant item reference so Create Custom can use it
         # self._current_plant_item is set by set_selected_items
         self._current_plant_data = None
+        self._current_plant_revision = None
+        self._plant_revision_conflict = False
+        self._plant_revision_target = None
+        self._library_edit_status.clear()
+        self._library_edit_status.hide()
         self._clear_profile_header()
         self._visual_controls.hide()
         self._update_favorite_button()
@@ -1453,7 +1532,11 @@ class PlantDatabasePanel(QWidget):
             parent = parent.parent()
 
     def _show_plant_data(
-        self, plant_data: PlantSpeciesData, plant_item: QGraphicsItem
+        self,
+        plant_data: PlantSpeciesData,
+        plant_item: QGraphicsItem,
+        *,
+        force_revision_refresh: bool = False,
     ) -> None:
         """Display plant species data.
 
@@ -1461,6 +1544,30 @@ class PlantDatabasePanel(QWidget):
             plant_data: Plant species data to display
             plant_item: The graphics item this data belongs to
         """
+        target = (plant_item, plant_data.data_source, plant_data.source_id)
+        if force_revision_refresh or target != self._plant_revision_target:
+            self._current_plant_revision = None
+            self._plant_revision_conflict = False
+            if plant_data.data_source == "custom" and plant_data.source_id:
+                try:
+                    library = get_plant_library()
+                    current_plant = library.get_plant(plant_data.source_id)
+                    if current_plant is None:
+                        self._plant_revision_conflict = True
+                    elif merge_calendar_data(plant_data.to_dict()) == merge_calendar_data(
+                        current_plant.to_dict()
+                    ):
+                        self._current_plant_revision = library.revision
+                    else:
+                        self._plant_revision_conflict = True
+                except (LibraryOperationError, OSError):
+                    # Keep edits disabled for an unreadable library; update_plant
+                    # also fails closed if the library becomes readable later.
+                    self._current_plant_revision = None
+            self._plant_revision_target = target
+            self._library_edit_status.clear()
+            self._library_edit_status.hide()
+
         self._current_plant_data = plant_data
         self._current_plant_item = plant_item
         self._visual_controls.show()
@@ -1963,7 +2070,11 @@ class PlantDatabasePanel(QWidget):
             )
 
             # Show the plant data for editing
-            self._show_plant_data(dialog.selected_plant, plant_item)
+            self._show_plant_data(
+                dialog.selected_plant,
+                plant_item,
+                force_revision_refresh=True,
+            )
 
     def _on_create_custom_plant(self) -> None:
         """Handle Create Custom Plant button click."""
