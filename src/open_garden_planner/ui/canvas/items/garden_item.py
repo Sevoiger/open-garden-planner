@@ -1342,7 +1342,7 @@ class GardenItemMixin:
     # Stacking-order helpers (shared by all item context menus, issue #338)
     # ------------------------------------------------------------------
 
-    def _build_arrange_menu(self, parent_menu: "QMenu") -> "QMenu":
+    def _build_arrange_menu(self, parent_menu: "QMenu", *, supports_split: bool = True) -> "QMenu":
         """Append an 'Arrange' submenu to *parent_menu* and return it.
 
         Unlike ``_build_move_to_layer_menu`` this is always built — stacking
@@ -1355,7 +1355,8 @@ class GardenItemMixin:
 
         # All object context menus pass through this shared builder.
         self._build_position_lock_action(parent_menu)
-        self._build_split_action(parent_menu)
+        if supports_split:
+            self._build_split_action(parent_menu)
         label = QCoreApplication.translate("ArrangeActions", "Arrange")
         arrange_menu: QMenu = parent_menu.addMenu(label)
         submenu_icon = get_icon("arrange")

@@ -536,6 +536,23 @@ class PropertiesPanel(QWidget):
             self._updating = False
             return
 
+        from open_garden_planner.core.reference_points import is_reference_point
+        if isinstance(item, CircleItem) and is_reference_point(item):
+            from open_garden_planner.ui.reference_points import (
+                edit_reference_point,
+                reference_summary,
+            )
+            summary = QLabel(reference_summary(item))
+            summary.setWordWrap(True)
+            self._form_layout.addRow(summary)
+            self._register_refresh(summary, lambda: summary.setText(reference_summary(item)))
+            edit = QPushButton(QCoreApplication.translate("ReferencePoints", "Edit reference point…"))
+            edit.clicked.connect(lambda: edit_reference_point(item))
+            self._form_layout.addRow(edit)
+            self._add_arrange_section([item])
+            self._updating = False
+            return
+
         # Object Type (if applicable)
         if hasattr(item, 'object_type'):
             type_combo = QComboBox()

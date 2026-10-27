@@ -222,3 +222,7 @@ moves, chevrons indicating the step:
   down (Send Backward)
 - `arrange_back.svg` — back square accented, double chevron pointing down
   (Send to Back)
+
+`reference_point.svg` : dessin original du fork, cible et croix sur grille 24 × 24.
+
+`dimension_visibility.svg` : dessin original du fork, œil et cote sur grille 24 × 24.

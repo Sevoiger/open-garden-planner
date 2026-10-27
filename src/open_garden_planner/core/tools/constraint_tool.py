@@ -923,7 +923,8 @@ def _find_nearest_circle_edge(
     return best
 
 
-def _find_nearest_edge(scene_pos: QPointF, scene_items) -> _EdgeResult | None:
+def _find_nearest_edge(scene_pos: QPointF, scene_items, *,
+                       threshold: float = _EDGE_SNAP_THRESHOLD) -> _EdgeResult | None:
     """Find the nearest edge to *scene_pos* within the snap threshold.
 
     Handles PolygonItem (CORNER vertices), PolylineItem (ENDPOINT vertices),
@@ -950,7 +951,7 @@ def _find_nearest_edge(scene_pos: QPointF, scene_items) -> _EdgeResult | None:
             p2.x(),
             p2.y(),
         )
-        if d < _EDGE_SNAP_THRESHOLD and (best is None or d < best.dist):
+        if d < threshold and (best is None or d < best.dist):
             best = _EdgeResult(
                 item=item,
                 p1_scene=p1,
@@ -2248,7 +2249,7 @@ class EdgeLengthConstraintTool(BaseTool):
         self._selected_marker = None
         self._preview_line = None
         self._preview_text = None
-        self._current_edge = None
+        self._current_edge: AnchorPoint | None = None
 
     @property
     def tool_type(self) -> ToolType:
@@ -2296,6 +2297,23 @@ class EdgeLengthConstraintTool(BaseTool):
         self._preview_line = None
         self._preview_text = None
 
+    def _pick_edge(self, scene_pos: QPointF) -> AnchorPoint | None:
+        scene = self._view.scene()
+        if scene is None:
+            return None
+        threshold = 8.0 / max(abs(self._view.transform().m11()), 0.01)
+        candidates = [item for item in scene.items() if item.isVisible()
+                      and item.flags() & item.GraphicsItemFlag.ItemIsSelectable]
+        edge = _find_nearest_edge(scene_pos, candidates, threshold=threshold)
+        if edge is None:
+            return None
+        midpoint = (edge.p1_scene + edge.p2_scene) / 2
+        edge_types = {AnchorType.EDGE_TOP, AnchorType.EDGE_BOTTOM,
+                      AnchorType.EDGE_LEFT, AnchorType.EDGE_RIGHT}
+        return next((anchor for anchor in get_anchor_points(edge.item)
+                     if anchor.anchor_type in edge_types
+                     and QLineF(anchor.point, midpoint).length() < 1e-6), None)
+
     def _show_edge_indicators(self, scene_pos: QPointF) -> None:
         scene = self._view.scene()
         if not scene:
@@ -2305,8 +2323,9 @@ class EdgeLengthConstraintTool(BaseTool):
                 scene.removeItem(item)
         self._edge_indicators.clear()
 
-        hovered_edge = _find_nearest_edge_anchor(scene_pos, scene.items())
+        hovered_edge = self._pick_edge(scene_pos)
         if hovered_edge is None:
+            self._reset()
             return
         self._current_edge = hovered_edge
         r = ANCHOR_INDICATOR_RADIUS
@@ -2356,7 +2375,7 @@ class EdgeLengthConstraintTool(BaseTool):
         scene = self._view.scene()
         if not scene:
             return True
-        edge = _find_nearest_edge_anchor(scene_pos, scene.items())
+        edge = self._pick_edge(scene_pos)
         if edge is None:
             return True
         endpoints = _edge_anchor_to_endpoints(edge)

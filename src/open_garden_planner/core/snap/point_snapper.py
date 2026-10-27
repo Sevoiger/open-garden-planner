@@ -54,6 +54,7 @@ class PointSnapper:
         scene_pos: QPointF,
         threshold: float = DEFAULT_THRESHOLD,
         reference_point: QPointF | None = None,
+        exclude: set[QGraphicsItem] | None = None,
     ) -> SnapCandidate | None:
         if not self._items or self._index is None:
             return None
@@ -67,6 +68,8 @@ class PointSnapper:
             margin * 2,
         )
         candidates = self._index.query(region)
+        if exclude:
+            candidates = [item for item in candidates if item not in exclude]
         if not candidates:
             return None
         return self._registry.best(

@@ -111,6 +111,7 @@ class CanvasScene(QGraphicsScene):
 
         # Layer management
         self._layers: list[Layer] = create_default_layers()
+        self._rendering_minimap = False
         self._active_layer: Layer | None = self._layers[0] if self._layers else None  # Default to first layer
 
         # Command manager reference (set by CanvasView after construction)

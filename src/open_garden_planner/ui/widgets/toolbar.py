@@ -5,7 +5,7 @@ the drawing tools and CAD constraints on the same row.
 """
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QToolBar,
@@ -56,6 +56,10 @@ class MainToolbar(QToolBar):
             self.tr("Measure distances between two points"), "M",
         )
         self._add_tool_button(
+            ToolType.REFERENCE_POINT, "reference_point", self.tr("Reference point"),
+            self.tr("Place a named reference point, independent or attached to an object"), "",
+        )
+        self._add_tool_button(
             ToolType.TEXT, "text_annotation", self.tr("Text"),
             self.tr("Place a text annotation"), "",
         )
@@ -69,6 +73,16 @@ class MainToolbar(QToolBar):
         )
 
         self._buttons[ToolType.SELECT].setChecked(True)
+
+    def set_constraints_action(self, action: QAction) -> None:
+        """Expose the existing persisted menu toggle without changing tools."""
+        self._constraints_button = QToolButton(self)
+        self._constraints_button.setObjectName("toggle_constraint_dimensions")
+        self._constraints_button.setDefaultAction(action)
+        self._constraints_button.setToolTip(self.tr("Show/hide constraint dimensions (constraints stay active)"))
+        self._constraints_button.setFixedSize(36, 36)
+        self.addSeparator()
+        self.addWidget(self._constraints_button)
 
     def _add_tool_button(
         self,

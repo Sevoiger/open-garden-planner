@@ -657,3 +657,75 @@ Les exports JSON, CSV et sauvegardes portables utilisent toujours le plan comple
 Une liaison **Sur le côté** reste prioritaire sur le magnétisme visuel et le
 recalage au bord du canevas. Les longueurs internes d’un rectangle ne désactivent
 pas son glissement le long d’une référence fixe ; ses dimensions restent identiques.
+
+
+## Points de référence sur le plan
+
+L’icône en forme de cible avec une croix, près de l’outil de mesure dans la barre
+principale, active **Point de référence**. Cliquer sur le plan ou saisir une
+coordonnée, puis donner un nom (par exemple « Poteau nord » ou « Borne OGE »).
+Un clic sur ou près de la frontière d’un polygone propose ce polygone comme
+parent et coche **Rester sur le contour du parent**. La position est projetée sur
+le trait exact. Une ancienne sélection (par exemple une pergola) n’intervient pas
+dans ce choix. Hors frontière, le dialogue propose **Point indépendant**.
+
+Un point lié au contour peut coulisser sur tous les côtés et passer un sommet,
+y compris le côté qui ferme le polygone ; le tirer vers l’intérieur ou l’extérieur
+ne le fait pas quitter le trait. Le mode est sauvegardé avec le point. Pour un
+repère existant, choisir le parent et cocher **Rester sur le contour du parent**
+dans son dialogue. Décocher cette option conserve un simple rattachement qui suit
+les déplacements du parent ; choisir **Point indépendant** supprime le lien.
+
+La croix garde sa taille à l’écran ; son centre est la position exacte utilisée
+par les mesures et l’accrochage. Le point ne représente aucune surface. Il se
+déplace en tirant la croix, sa zone de prise élargie ou son nom ; un halo rend la
+sélection visible. Un double-clic, le menu contextuel ou le bouton du panneau
+**Propriétés** ouvre ses réglages : nom, rattachement, taille du symbole en pixels,
+couleur et épaisseur du trait. La taille ne change pas la coordonnée du repère.
+Les opérations, y compris l’apparence, sont annulables et sauvegardées.
+Un clic droit sur la croix ou son nom donne accès au verrouillage de position,
+à la suppression, à la copie, à la duplication et aux menus de calque et
+d’organisation. **Verrouiller la position** empêche le déplacement ; la même
+action permet ensuite de déverrouiller le repère. Annuler une suppression
+restaure en une fois le point, son rattachement et ses contraintes.
+La mini-carte conserve la sélection et la visibilité des repères pendant ses
+rafraîchissements ; elle les représente par de petits points dans sa vignette.
+Le maintien de la prise souris couvre le symbole et son nom : une perte de prise
+Qt entre deux événements ne termine pas le glissement ni ne ramène le point en arrière.
+L’accrochage pendant le glissement utilise le centre exact et les ancrages réels
+des autres objets, sans attirer le contour du symbole ou son halo. Seul le centre
+doit rester dans le canevas : un repère peut donc atteindre exactement son bord.
+
+Le dialogue montre l’objet parent proposé par un contour et un lien pointillés ;
+**Point indépendant** ne crée aucun lien. Après placement, un badge en maillons
+signale le rattachement. Sélectionner le point montre le lien vers son parent et
+son contour ; le nom du parent apparaît dans le panneau Propriétés et l’infobulle.
+Les aperçus sont transitoires : ils ne font pas partie des objets du plan.
+
+Un point rattaché accompagne les
+translations de son parent, par glissement, clavier ou API, et sa copie ; il ne
+recalcule pas sa position lors d’une modification des sommets ou d’une rotation.
+Supprimer le parent d’un repère le laisse indépendant à sa dernière position.
+
+Le format `.ogp` conserve le point comme cercle avec l’indicateur additif
+`metadata.reference_point`, son nom, son calque et les liens d’objets existants
+(`parent_bed_id` / `child_item_ids`, également utilisés pour ces repères). Une
+ancienne version peut donc le lire comme un petit cercle. La bibliothèque
+personnelle n’intervient pas dans ce stockage. L’indicateur additif
+`metadata.reference_point_on_contour` mémorise le mode de coulissement. Les anciens
+repères gardent leur rattachement simple tant que cette option n’est pas activée.
+
+
+### Masquer les cotes de contraintes
+
+L’outil de longueur de côté accepte un clic sur toute la longueur du segment,
+y compris sur un côté tourné ou celui qui ferme un polygone. Le côté visé est
+mis en évidence au survol. Les objets masqués ou sur un calque verrouillé ne
+sont pas proposés.
+
+Le bouton **Afficher/masquer les cotes de contraintes** de la barre principale
+(icône de cotation, après les outils d’annotation) bascule l’affichage des marqueurs
+et des longueurs. Le même réglage existe dans **Affichage → Superpositions →
+Afficher les contraintes**. Les longueurs fixées et les autres contraintes restent
+actives lorsque leurs marqueurs sont masqués. L’état est conservé entre les lancements
+et ce bouton ne change pas l’outil de dessin actif.

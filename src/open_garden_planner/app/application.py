@@ -837,6 +837,7 @@ class GardenPlannerApp(QMainWindow):
         inside.
         """
         from open_garden_planner.core.canvas_bounds import clamp_shift_within_canvas
+        from open_garden_planner.core.snapping import movement_bounds
         from open_garden_planner.ui.canvas.items import BackgroundImageItem
 
         clampable = [i for i in items if not isinstance(i, BackgroundImageItem)]
@@ -845,12 +846,9 @@ class GardenPlannerApp(QMainWindow):
         canvas = self.canvas_scene.canvas_rect
         rects = [
             (
-                bounded.sceneBoundingRect().left(),
-                bounded.sceneBoundingRect().top(),
-                bounded.sceneBoundingRect().right(),
-                bounded.sceneBoundingRect().bottom(),
+                rect.left(), rect.top(), rect.right(), rect.bottom(),
             )
-            for bounded in clampable
+            for rect in (movement_bounds(bounded) for bounded in clampable)
         ]
         dx, dy = clamp_shift_within_canvas(rects, canvas.width(), canvas.height())
         if dx != 0 or dy != 0:
@@ -952,6 +950,12 @@ class GardenPlannerApp(QMainWindow):
         if item_deltas is None:
             item_deltas = self._agent_move_item_deltas(item, delta)
 
+        requested_delta = delta
+        if len(item_deltas) == 1:
+            from open_garden_planner.ui.reference_points import reference_contour_delta
+            delta = reference_contour_delta(item, delta)
+            item_deltas = [(item, delta)]
+
         # Clamp the move so the whole group stays on the canvas (issue #380) —
         # the GUI clamps drags and nudges; the agent path did not, so it could
         # push an object entirely off-plan in one call. Shared math with the GUI
@@ -959,18 +963,16 @@ class GardenPlannerApp(QMainWindow):
         from PyQt6.QtCore import QPointF as _QPointF
 
         from open_garden_planner.core.canvas_bounds import clamp_delta_within_canvas
+        from open_garden_planner.core.snapping import movement_bounds
         from open_garden_planner.ui.canvas.items import BackgroundImageItem
 
         canvas = self.canvas_scene.canvas_rect
         clampable_rects = [
             (
-                moved_item.sceneBoundingRect().left(),
-                moved_item.sceneBoundingRect().top(),
-                moved_item.sceneBoundingRect().right(),
-                moved_item.sceneBoundingRect().bottom(),
+                rect.left(), rect.top(), rect.right(), rect.bottom(),
             )
-            for moved_item, _ in item_deltas
-            if not isinstance(moved_item, BackgroundImageItem)
+            for rect in (movement_bounds(moved_item) for moved_item, _ in item_deltas
+                         if not isinstance(moved_item, BackgroundImageItem))
         ]
         clamped_dx, clamped_dy = clamp_delta_within_canvas(
             clampable_rects,
@@ -995,14 +997,16 @@ class GardenPlannerApp(QMainWindow):
         )
 
         requested_was_nonzero = (
-            abs(delta.x()) > GEOMETRY_ROUNDTRIP_EPS_CM
-            or abs(delta.y()) > GEOMETRY_ROUNDTRIP_EPS_CM
+            abs(requested_delta.x()) > GEOMETRY_ROUNDTRIP_EPS_CM
+            or abs(requested_delta.y()) > GEOMETRY_ROUNDTRIP_EPS_CM
         )
         clamp_erased_the_move = (
             abs(clamped_dx) <= GEOMETRY_ROUNDTRIP_EPS_CM
             and abs(clamped_dy) <= GEOMETRY_ROUNDTRIP_EPS_CM
         )
         if requested_was_nonzero and clamp_erased_the_move:
+            if delta != requested_delta:
+                raise ValueError(f"{item_id}: the parent outline prevents this move. Nothing to change.")
             raise ValueError(
                 f"{item_id} (with anything it carries) is already at the canvas "
                 "edge; the requested move was clamped to no displacement. "
@@ -1053,11 +1057,10 @@ class GardenPlannerApp(QMainWindow):
         plant, uniformly offset — the release-time equivalent of
         ``CanvasView._propagate_bed_children_during_drag``. A plain plant/shape
         with no children returns just itself."""
-        from open_garden_planner.core.object_types import is_plant_parent_type
         from open_garden_planner.ui.canvas.items import GardenItemMixin
 
         item_deltas: list[tuple[Any, Any]] = [(item, delta)]
-        if isinstance(item, GardenItemMixin) and is_plant_parent_type(item.object_type):
+        if isinstance(item, GardenItemMixin) and item.has_children:
             for child_id in item.child_item_ids:
                 child = self.canvas_scene.find_item_by_id(child_id)
                 if child is not None:
@@ -1131,7 +1134,7 @@ class GardenPlannerApp(QMainWindow):
         GUI's "Keep plants" choice — the only sensible default for a
         single-object programmatic delete, which can't prompt.
         """
-        from open_garden_planner.core.commands import DeleteItemsCommand, RemoveConstraintCommand
+        from open_garden_planner.core.commands import DeleteItemsCommand
 
         item = self._resolve_agent_item(item_id)
         linked_ridge = self._agent_linked_roof_ridge(item)
@@ -1142,12 +1145,7 @@ class GardenPlannerApp(QMainWindow):
         }
 
         constraints = self._agent_item_constraints(item)
-        for constraint in constraints:
-            self.canvas_view.command_manager.execute(
-                RemoveConstraintCommand(self.canvas_scene.constraint_graph, constraint)
-            )
-
-        cmd = DeleteItemsCommand(self.canvas_scene, targets)
+        cmd = DeleteItemsCommand(self.canvas_scene, targets, constraints_to_remove=constraints)
         self.canvas_view.command_manager.execute(cmd)
         # The response is a completion receipt, not merely a command queued on
         # the main thread.  Check every serialized UUID, not just the Python
@@ -4500,7 +4498,7 @@ class GardenPlannerApp(QMainWindow):
         self._constraints_action.setChecked(True)  # Updated from settings in _setup_central_widget
         self._constraints_action.setStatusTip(self.tr("Toggle constraint dimension lines on the canvas"))
         self._constraints_action.triggered.connect(self._on_toggle_constraints)
-        self._set_action_icon(self._constraints_action, "constraints_overlay")
+        self._set_action_icon(self._constraints_action, "dimension_visibility")
         overlays_menu.addAction(self._constraints_action)
 
         # Toggle Construction Geometry
@@ -4865,6 +4863,7 @@ class GardenPlannerApp(QMainWindow):
 
         # Drawing and CAD tools precede the three palettes at the right edge.
         self.main_toolbar = MainToolbar(self)
+        self.main_toolbar.set_constraints_action(self._constraints_action)
         self.addToolBar(self.main_toolbar)
 
         self.constraint_toolbar = ConstraintToolbar(self)
