@@ -503,3 +503,25 @@ def test_capability_operation_examples_match_their_json_schemas() -> None:
     plant_record = capabilities["operation_schemas"]["plant_library_import"]["record"]
     jsonschema.Draft202012Validator.check_schema(plant_record)
     jsonschema.Draft202012Validator(plant_record).validate(plant_record["example"])
+
+
+def test_compact_capabilities_targeted_schemas_fingerprint_and_gate_isolation():
+    mcp = build_server(_stub_providers(), writes_enabled=True, write_token="token")
+    tool = mcp._tool_manager.get_tool("get_capabilities")
+    full = asyncio.run(tool.fn())
+    summary = asyncio.run(tool.fn(detail="summary"))
+    assert len(json.dumps(summary)) < len(json.dumps(full)) / 3
+    assert not summary["tool_input_schemas"] and not summary["operation_schemas"]
+    assert summary["schema_catalog"]["fingerprint"] == full["schema_catalog"]["fingerprint"]
+    selected = asyncio.run(tool.fn(schema_domain="document", schema_operation="add_manual_task"))
+    assert list(selected["operation_schemas"]["document"]["operations"]) == ["add_manual_task"]
+    single_tool = asyncio.run(tool.fn(schema_domain="tools", schema_operation="get_document_state"))
+    assert list(single_tool["tool_input_schemas"]) == ["get_document_state"]
+    full["operation_schemas"].clear()
+    assert asyncio.run(tool.fn())["operation_schemas"]
+    readonly = build_server(_stub_providers(), writes_enabled=False)
+    other = asyncio.run(readonly._tool_manager.get_tool("get_capabilities").fn(detail="summary"))
+    assert other["schema_catalog"]["fingerprint"] != summary["schema_catalog"]["fingerprint"]
+    assert "apply_document_operations" not in other["available_tools"]
+    with pytest.raises(ValueError):
+        asyncio.run(tool.fn(schema_domain="tools", schema_operation="unknown"))

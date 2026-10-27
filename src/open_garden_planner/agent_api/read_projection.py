@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 
 MAX_DOCUMENT_STATE_BYTES = 512_000
 MAX_DOCUMENT_PAGE_SIZE = 1_000
@@ -96,7 +96,17 @@ def _plants_revision(plants: dict[str, Any]) -> str:
     return digest.hexdigest()
 
 
+def _encoded_size(value: str) -> int:
+    # CPython keeps the ASCII flag on strings; base64 length needs no allocation.
+    return len(value) if value.isascii() else len(value.encode("utf-8"))
+
+
 def _slice_text_by_bytes(value: str, *, offset: int, size: int, label: str) -> tuple[str, int]:
+    if value.isascii():
+        if offset > len(value):
+            raise ValueError(f"{label} exceeds media size")
+        chunk = value[offset : offset + size]
+        return chunk, len(chunk)
     encoded = value.encode("utf-8")
     if offset > len(encoded):
         raise ValueError(f"{label} exceeds media size")
@@ -160,7 +170,7 @@ def _walk_media(value: Any, *, scope: str, path: tuple[str | int, ...] = ()) -> 
                             "base64" if _is_base64_media_key(key, parent_path=path)
                             else "opaque"
                         ),
-                        "encoded_bytes": len(child.encode("utf-8")),
+                        "encoded_bytes": _encoded_size(child),
                     }
                 )
             else:
@@ -227,7 +237,7 @@ def _object_summary(item: Any) -> Any:
 def _collection_page(value: Any, *, offset: int, limit: int) -> tuple[Any, dict[str, Any] | None]:
     if isinstance(value, list):
         total = len(value)
-        return deepcopy(value[offset : offset + limit]), {
+        return value[offset : offset + limit], {
             "total": total,
             "offset": offset,
             "limit": limit,
@@ -237,13 +247,13 @@ def _collection_page(value: Any, *, offset: int, limit: int) -> tuple[Any, dict[
         keys = sorted(value, key=lambda item: str(item))
         total = len(keys)
         selected = keys[offset : offset + limit]
-        return {str(key): deepcopy(value[key]) for key in selected}, {
+        return {str(key): value[key] for key in selected}, {
             "total": total,
             "offset": offset,
             "limit": limit,
             "next_offset": min(offset + limit, total) if offset + limit < total else None,
         }
-    return deepcopy(value), None
+    return value, None
 
 
 def _project_field_page(
@@ -255,7 +265,7 @@ def _project_field_page(
         return {"version": value.get("version", 1), "events": events}, page
     if field in _PAGED_FIELDS:
         return _collection_page(value, offset=offset, limit=limit)
-    return deepcopy(value), None
+    return value, None
 
 
 def project_document_state(
@@ -268,6 +278,7 @@ def project_document_state(
     limit: int = 100,
     media_offset: int = 0,
     media_limit: int = 100,
+    object_fields: list[str] | None = None,
     expected_revision: str | None = None,
 ) -> dict[str, Any]:
     """Return a paged business-data view without canvas geometry or image blobs."""
@@ -290,6 +301,12 @@ def project_document_state(
     if expected_revision is not None and expected_revision != revision:
         raise ValueError("Document revision changed; restart pagination at the returned revision")
 
+    if object_fields is not None and (not isinstance(object_fields, list) or len(object_fields) > 32
+                                      or any(not isinstance(field, str) or not field or len(field) > 100
+                                             for field in object_fields)
+                                      or len(set(object_fields)) != len(object_fields)):
+        raise ValueError("object_fields must contain at most 32 distinct top-level field names")
+    omitted_object_fields: dict[str, list[str]] = {}
     fields: list[str] = []
     for domain in selected:
         for field in _DOMAIN_FIELDS[domain]:
@@ -299,6 +316,15 @@ def project_document_state(
     pagination: dict[str, Any] = {}
     if "objects" in fields:
         objects, page = _collection_page(snapshot.get("objects", []), offset=offset, limit=limit)
+        if object_fields is not None and isinstance(objects, list):
+            requested = set(object_fields)
+            filtered = []
+            for index, item in enumerate(objects, start=offset):
+                if isinstance(item, Mapping):
+                    omitted_object_fields[str(item.get("item_id", index))] = sorted(str(key) for key in item if key not in requested)
+                    item = {key: value for key, value in item.items() if key in requested}
+                filtered.append(item)
+            objects = filtered
         document["objects"] = _object_summary(objects)
         if page is not None:
             pagination["objects"] = page
@@ -313,42 +339,25 @@ def project_document_state(
 
     # Media manifest entries refer only to records present in this page. The
     # media bytes are fetched separately with the same revision.
-    media_source: dict[str, Any] = {}
-    for field in fields:
-        if field in snapshot:
-            media_source[field], _ = _project_field_page(
-                snapshot, field, offset=offset, limit=limit
-            )
-    if "objects" in selected and "objects" in snapshot:
-        media_source["objects"], _ = _project_field_page(
-            snapshot, "objects", offset=offset, limit=limit
-        )
-    selected_fields = set(media_source)
     assets = []
-    for asset in _walk_media(snapshot, scope="document"):
-        parts = asset["path_parts"]
-        if not parts or str(parts[0]) not in selected_fields:
+    for field in (field for domain in selected for field in _DOMAIN_FIELDS[domain]):
+        if field not in snapshot:
             continue
-        top_field = str(parts[0])
-        if top_field == "garden_memory":
-            if len(parts) < 3 or parts[1] != "events":
+        value = snapshot[field]
+        path: tuple[str | int, ...] = (field,)
+        if field == "garden_memory" and isinstance(value, Mapping):
+            value = value.get("events", {})
+            path = (field, "events")
+        if field in _PAGED_FIELDS or field == "garden_memory":
+            if isinstance(value, list):
+                for index in range(offset, min(offset + limit, len(value))):
+                    assets.extend(_walk_media(value[index], scope="document", path=(*path, index)))
                 continue
-            raw_events = (snapshot.get("garden_memory") or {}).get("events", {})
-            event_ids = sorted(raw_events, key=lambda item: str(item)) if isinstance(raw_events, Mapping) else []
-            selected_events = {str(item) for item in event_ids[offset : offset + limit]}
-            if str(parts[2]) not in selected_events:
+            if isinstance(value, Mapping):
+                for key in sorted(value, key=lambda item: str(item))[offset : offset + limit]:
+                    assets.extend(_walk_media(value[key], scope="document", path=(*path, str(key))))
                 continue
-        elif top_field in _PAGED_FIELDS and len(parts) > 1:
-            collection = snapshot.get(top_field)
-            if isinstance(collection, list):
-                if not isinstance(parts[1], int) or not offset <= parts[1] < offset + limit:
-                    continue
-            elif isinstance(collection, Mapping):
-                keys = sorted(collection, key=lambda item: str(item))
-                selected_keys = {str(item) for item in keys[offset : offset + limit]}
-                if str(parts[1]) not in selected_keys:
-                    continue
-        assets.append(asset)
+        assets.extend(_walk_media({field: value}, scope="document"))
     media_page = assets[media_offset : media_offset + media_limit]
     public_media = [{key: value for key, value in asset.items() if key != "path_parts"} for asset in media_page]
 
@@ -369,10 +378,13 @@ def project_document_state(
         },
         "omitted": ["object_geometry", "embedded_media_bytes", "unknown_top_level_fields"],
     }
+    if object_fields is not None:
+        result["omitted_object_fields"] = omitted_object_fields
     if _json_size(result) > MAX_DOCUMENT_STATE_BYTES:
         raise ValueError(
             f"Document state exceeds {MAX_DOCUMENT_STATE_BYTES} JSON bytes; "
-            "request fewer domains or a smaller limit, then follow next_offset."
+            "request fewer domains or a smaller limit, then follow next_offset. "
+            "For one oversized object select object_fields=['item_id','name','type']."
         )
     return result
 
@@ -403,7 +415,7 @@ def read_document_media(
     value: Any = snapshot
     for part in path_parts:
         value = value[int(part)] if isinstance(value, list) else value[str(part)]
-    encoded_bytes = len(value.encode("utf-8"))
+    encoded_bytes = _encoded_size(value)
     chunk, consumed = _slice_text_by_bytes(value, offset=offset, size=max_bytes, label="offset")
     next_offset = offset + consumed
     return {
@@ -432,6 +444,9 @@ def project_library_page(
     media_offset: int = 0,
     media_limit_bytes: int = MAX_MEDIA_CHUNK_BYTES,
     expected_revision: str | None = None,
+    view: Literal["summary", "detail"] = "detail",
+    fields: list[str] | None = None,
+    include_source: bool = False,
 ) -> dict[str, Any]:
     """Search/page personal plants while separating and bounding embedded art."""
     if expected_revision is not None and expected_revision != revision:
@@ -461,6 +476,15 @@ def project_library_page(
     if media_id is not None and (not include_media or plant_id is None):
         raise ValueError("media_id requires include_media=true and a plant_id")
 
+    if view not in {"summary", "detail"}:
+        raise ValueError("view must be summary or detail")
+    if fields is not None and (not isinstance(fields, list) or len(fields) > 32
+                               or any(not isinstance(field, str) or not field or len(field) > 100
+                                      for field in fields) or len(set(fields)) != len(fields)):
+        raise ValueError("fields must contain at most 32 distinct top-level field names")
+    if fields is not None and not include_source and set(fields) & {"raw_data", "provider_data", "html"}:
+        raise ValueError("Source fields require include_source=true")
+
     normalized_query = query.strip().casefold() if query else ""
     if plant_id is not None:
         matching = [plant_id] if plant_id in plants else []
@@ -485,9 +509,19 @@ def project_library_page(
     selected_ids = matching[offset : offset + limit]
     projected: dict[str, Any] = {}
     truncated: list[str] = []
+    omitted_fields: dict[str, list[str]] = {}
     for identity in selected_ids:
         record = plants[identity]
-        clean = _strip_media(record)
+        selected_record = record
+        if isinstance(record, Mapping):
+            selected_fields = set(fields) if fields is not None else (
+                set(_PLANT_SUMMARY_FIELDS) if view == "summary" else set(record)
+            )
+            if not include_source:
+                selected_fields -= {"raw_data", "provider_data", "html"}
+            selected_record = {key: value for key, value in record.items() if key in selected_fields}
+            omitted_fields[str(identity)] = sorted(str(key) for key in record if key not in selected_record)
+        clean = _strip_media(selected_record)
         if not isinstance(clean, dict):
             clean = {"value": clean[:2_048] if isinstance(clean, str) else clean}
         if _json_size(clean) > MAX_LIBRARY_RECORD_BYTES:
@@ -495,12 +529,15 @@ def project_library_page(
                 {
                     field: record[field][:2_048] if isinstance(record[field], str) else deepcopy(record[field])
                     for field in _PLANT_SUMMARY_FIELDS
-                    if isinstance(record, Mapping)
+                    if (fields is None or field in fields)
+                    and isinstance(record, Mapping)
                     and field in record
                     and not _is_data_uri(record[field])
                 }
             )
             truncated.append(identity)
+            if isinstance(record, Mapping):
+                omitted_fields[str(identity)] = sorted(str(key) for key in record if key not in clean)
         projected[str(identity)] = clean
     result: dict[str, Any] = {
         "scope": "library",
@@ -511,6 +548,8 @@ def project_library_page(
         "limit": limit,
         "next_offset": min(offset + len(projected), total) if offset + len(projected) < total else None,
         "truncated_records": truncated,
+        "omitted_fields": omitted_fields,
+        "view": view,
     }
     if plant_id is not None:
         result["found"] = bool(selected_ids)
@@ -550,10 +589,10 @@ def project_library_page(
             value: Any = plants[identity]
             for part in asset["path_parts"]:
                 value = value[int(part)] if isinstance(value, list) else value[str(part)]
-            raw = value.encode("utf-8")
-            finished = media_offset >= len(raw)
+            encoded_size = _encoded_size(value)
+            finished = media_offset >= encoded_size
             if finished:
-                chunk, end = "", len(raw)
+                chunk, end = "", encoded_size
             else:
                 chunk, consumed = _slice_text_by_bytes(
                     value,
@@ -568,10 +607,10 @@ def project_library_page(
                 "encoding": asset["encoding"],
                 "offset": media_offset,
                 "offset_unit": "UTF-8 bytes in the encoded text; base64 content is ASCII",
-                "encoded_bytes": len(raw),
+                "encoded_bytes": encoded_size,
                 "data": chunk,
-                "finished": finished or end >= len(raw),
-                "next_offset": end if end < len(raw) else None,
+                "finished": finished or end >= encoded_size,
+                "next_offset": end if end < encoded_size else None,
             })
         result["media"] = media_parts
     if _json_size(result) > MAX_LIBRARY_RESPONSE_BYTES:

@@ -266,3 +266,41 @@ def test_live_multidomain_batch_publishes_together_and_undoes(qtbot, monkeypatch
         assert reopened.snapshot()["harvest_logs"][plant_id]["records"][0]["quantity"] == 0
         assert reopened.dispatch("result", {"request_key": "multi"})["effect"] == "present"
     window.close()
+
+
+def test_live_read_captures_on_qt_and_projects_detached_data_on_worker(qtbot, monkeypatch):
+    import threading
+
+    from PyQt6.QtWidgets import QMessageBox
+
+    import open_garden_planner.app.domain_adapter as adapter
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    main = threading.get_ident()
+    captures, calculations = [], []
+    original_capture = adapter.LiveDocumentOperations.capture_read
+    original_hash = adapter.document_fingerprint
+
+    def capture(host):
+        captures.append(threading.get_ident())
+        return original_capture(host)
+
+    def calculate(data):
+        calculations.append(threading.get_ident())
+        return original_hash(data)
+
+    monkeypatch.setattr(adapter.LiveDocumentOperations, "capture_read", capture)
+    monkeypatch.setattr(adapter, "document_fingerprint", calculate)
+    dispatch = window._build_agent_providers().document_operation
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(dispatch, "read", {"domains": ["tasks"]})
+        qtbot.waitUntil(future.done, timeout=10000)
+        assert future.result()["mode"] == "live"
+    assert captures == [main]
+    assert len(calculations) == 1 and calculations[0] != main
+    window.close()

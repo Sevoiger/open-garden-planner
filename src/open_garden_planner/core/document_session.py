@@ -42,6 +42,7 @@ class DocumentSession:
             raise
         self.history = CommandHistory()
         self._epoch, self._sequence = str(uuid4()), 0
+        self._fingerprint: str | None = None
         self._backup_created = False
         self.operations = OperationSession(self.snapshot, self._write, self.history.execute,
                                            self.revision, persisted=True, media_check=self.check_media)
@@ -63,8 +64,11 @@ class DocumentSession:
             raise ValueError("Document session is closed")
 
     def revision(self) -> str:
-        self._require_open()
-        return f"{self._epoch}:{self._sequence}:{document_fingerprint(self._document)}"
+        with self._mutex:
+            self._require_open()
+            if self._fingerprint is None:
+                self._fingerprint = document_fingerprint(self._document)
+            return f"{self._epoch}:{self._sequence}:{self._fingerprint}"
 
     def _write(self, candidate: dict[str, Any]) -> None:
         self._require_open()
@@ -86,6 +90,7 @@ class DocumentSession:
         self._disk_version = disk_version(self.path)
         self._document = deepcopy(candidate)
         self._sequence += 1
+        self._fingerprint = None
 
     def dispatch(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
         with self._mutex:

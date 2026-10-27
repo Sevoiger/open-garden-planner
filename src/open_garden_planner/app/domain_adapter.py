@@ -40,33 +40,13 @@ class LiveDocumentOperations:
     def revision(self) -> str:
         return f"{self.epoch}:{getattr(self.project, '_domain_revision', 0)}:{document_fingerprint(self.snapshot())}"
 
+    def capture_read(self) -> tuple[dict[str, Any], str]:
+        """Detach coherent data and its generation on Qt; compute off-thread later."""
+        return self.snapshot(), f"{self.epoch}:{getattr(self.project, '_domain_revision', 0)}"
+
     def dispatch(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if action in {"read", "media"}:
-            from open_garden_planner.agent_api.read_projection import (
-                project_document_state,
-                read_document_media,
-            )
-
-            snapshot = self.snapshot()
-            revision = (
-                f"{self.epoch}:{getattr(self.project, '_domain_revision', 0)}:"
-                f"{document_fingerprint(snapshot)}"
-            )
-            if action == "read":
-                return project_document_state(
-                    snapshot,
-                    revision=revision,
-                    mode="live",
-                    **arguments,
-                )
-            return read_document_media(
-                snapshot,
-                media_id=arguments["media_id"],
-                revision=revision,
-                expected_revision=arguments["expected_revision"],
-                offset=arguments.get("offset", 0),
-                max_bytes=arguments.get("max_bytes", 65536),
-            )
+            return project_captured_read(self.capture_read(), action, arguments)
         if action == "snapshot":
             return {"revision": self.revision(), "document": self.snapshot(), "mode": "live"}
         if action == "prepare":
@@ -169,3 +149,21 @@ class LiveDocumentOperations:
             pm.task_completions_changed.emit(set(pm._task_completions))
         for item, *_rest in updates:
             item.update()
+
+
+def project_captured_read(capture: tuple[dict[str, Any], str], action: str,
+                          arguments: dict[str, Any]) -> dict[str, Any]:
+    """Pure work on detached Python data. Never access Qt from this function."""
+    from open_garden_planner.agent_api.read_projection import (
+        project_document_state,
+        read_document_media,
+    )
+
+    snapshot, generation = capture
+    revision = f"{generation}:{document_fingerprint(snapshot)}"
+    if action == "read":
+        return project_document_state(snapshot, revision=revision, mode="live", **arguments)
+    return read_document_media(snapshot, media_id=arguments["media_id"], revision=revision,
+                               expected_revision=arguments["expected_revision"],
+                               offset=arguments.get("offset", 0),
+                               max_bytes=arguments.get("max_bytes", 65536))

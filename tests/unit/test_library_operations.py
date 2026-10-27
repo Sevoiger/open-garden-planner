@@ -613,3 +613,18 @@ def test_file_lock_is_nonblocking_and_keeps_its_lock_path(tmp_path):
     assert second.acquire() is True
     second.release()
     assert lock_path.exists()
+
+
+def test_fresh_library_snapshots_are_detached_and_observe_external_edits(tmp_path):
+    import json
+
+    from open_garden_planner.services.library_operations import LibraryOperations
+
+    path = tmp_path / "isolated.json"
+    path.write_text(json.dumps({"version": "1.0", "plants": {"p": {"common_name": "Before", "raw_data": {"flag": False}}}}))
+    library = LibraryOperations(path)
+    snapshot = library.snapshot()
+    snapshot["p"]["raw_data"]["flag"] = True
+    assert library.snapshot()["p"]["raw_data"]["flag"] is False
+    path.write_text(json.dumps({"version": "1.0", "plants": {"p": {"common_name": "External"}}}))
+    assert library.snapshot()["p"]["common_name"] == "External"
