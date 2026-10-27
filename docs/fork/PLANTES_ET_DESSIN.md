@@ -657,3 +657,27 @@ Les exports JSON, CSV et sauvegardes portables utilisent toujours le plan comple
 Une liaison **Sur le côté** reste prioritaire sur le magnétisme visuel et le
 recalage au bord du canevas. Les longueurs internes d’un rectangle ne désactivent
 pas son glissement le long d’une référence fixe ; ses dimensions restent identiques.
+
+
+## Points de référence sur le plan
+
+L’icône en forme de cible avec une croix, près de l’outil de mesure dans la barre
+principale, active **Point de référence**. Cliquer sur le plan ou saisir une
+coordonnée, puis donner un nom (par exemple « Poteau nord » ou « Borne OGE »).
+Choisir **Point indépendant** ou un objet dans **Rattaché à** ; un unique objet
+sélectionné est proposé comme parent. Le rattachement est explicite et ne dépend
+pas du fait de cliquer à l’intérieur d’un polygone.
+
+La croix garde sa taille à l’écran ; son centre est la position exacte utilisée
+par les mesures et l’accrochage. Le point ne représente aucune surface. Un
+double-clic, ou le menu contextuel, permet de le renommer, le rattacher ou le
+détacher. Les opérations sont annulables. Un point rattaché accompagne les
+translations de son parent, par glissement, clavier ou API, et sa copie ; il ne
+recalcule pas sa position lors d’une modification des sommets ou d’une rotation.
+Supprimer le parent d’un repère le laisse indépendant à sa dernière position.
+
+Le format `.ogp` conserve le point comme cercle avec l’indicateur additif
+`metadata.reference_point`, son nom, son calque et les liens d’objets existants
+(`parent_bed_id` / `child_item_ids`, également utilisés pour ces repères). Une
+ancienne version peut donc le lire comme un petit cercle. La bibliothèque
+personnelle n’intervient pas dans ce stockage.

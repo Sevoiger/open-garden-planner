@@ -68,6 +68,11 @@ def get_anchor_points(item: QGraphicsItem) -> list[AnchorPoint]:
 
     anchors: list[AnchorPoint] = []
 
+    from open_garden_planner.core.reference_points import is_reference_point
+
+    if isinstance(item, CircleItem) and is_reference_point(item):
+        return [AnchorPoint(item.mapToScene(item.rect().center()), AnchorType.CENTER, item)]
+
     if isinstance(item, RectangleItem):
         anchors = _rect_anchors(item)
     elif isinstance(item, EllipseItem):

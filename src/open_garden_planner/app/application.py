@@ -1053,11 +1053,10 @@ class GardenPlannerApp(QMainWindow):
         plant, uniformly offset — the release-time equivalent of
         ``CanvasView._propagate_bed_children_during_drag``. A plain plant/shape
         with no children returns just itself."""
-        from open_garden_planner.core.object_types import is_plant_parent_type
         from open_garden_planner.ui.canvas.items import GardenItemMixin
 
         item_deltas: list[tuple[Any, Any]] = [(item, delta)]
-        if isinstance(item, GardenItemMixin) and is_plant_parent_type(item.object_type):
+        if isinstance(item, GardenItemMixin) and item.has_children:
             for child_id in item.child_item_ids:
                 child = self.canvas_scene.find_item_by_id(child_id)
                 if child is not None:

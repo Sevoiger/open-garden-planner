@@ -499,6 +499,12 @@ class CanvasView(QGraphicsView):
             display_name=QCoreApplication.translate("CalloutTool", 'Callout'),
         )
 
+        from open_garden_planner.core.tools.reference_point_tool import ReferencePointTool
+        self._tool_manager.register_tool(
+            ReferencePointTool(self),
+            display_name=QCoreApplication.translate("ReferencePoints", "Reference point"),
+        )
+
         journal_pin_tool = JournalPinTool(self)
         self._tool_manager.register_tool(
             journal_pin_tool,
@@ -3855,9 +3861,7 @@ class CanvasView(QGraphicsView):
         selected_set = {id(i) for i in selected}
         extra_children: list[QGraphicsItem] = []
         for item in selected:
-            if isinstance(item, GardenItemMixin) and is_plant_parent_type(
-                item.object_type
-            ):
+            if isinstance(item, GardenItemMixin) and item.has_children:
                 for child_id in item.child_item_ids:
                     child = self._canvas_scene.find_item_by_id(child_id)
                     if (
@@ -3970,9 +3974,7 @@ class CanvasView(QGraphicsView):
 
         child_start_positions: dict[QGraphicsItem, QPointF] = {}
         for item, delta in list(item_deltas):
-            if not isinstance(item, GardenItemMixin) or not is_plant_parent_type(
-                item.object_type
-            ):
+            if not isinstance(item, GardenItemMixin) or not item.has_children:
                 continue
             for child_id in item.child_item_ids:
                 child = self._canvas_scene.find_item_by_id(child_id)
@@ -4031,9 +4033,7 @@ class CanvasView(QGraphicsView):
         from open_garden_planner.ui.canvas.items import GardenItemMixin
 
         for item, start_pos in self._drag_start_positions.items():
-            if not isinstance(item, GardenItemMixin) or not is_plant_parent_type(
-                item.object_type
-            ):
+            if not isinstance(item, GardenItemMixin) or not item.has_children:
                 continue
             delta = item.pos() - start_pos
             if delta.x() == 0 and delta.y() == 0:
@@ -4044,9 +4044,9 @@ class CanvasView(QGraphicsView):
                     continue
                 # Track the child's original position only once
                 if child not in self._child_drag_origins:
-                    # First frame: child hasn't moved yet, so compute
-                    # its origin from the parent's start delta
-                    self._child_drag_origins[child] = child.pos() - delta
+                    # Children are independent Qt items: the parent has moved,
+                    # but this child still has its original scene position.
+                    self._child_drag_origins[child] = QPointF(child.pos())
                 child.setPos(self._child_drag_origins[child] + delta)
 
     def _update_plant_bed_relationships(self) -> None:
@@ -4761,9 +4761,7 @@ class CanvasView(QGraphicsView):
             item.item_id for item in selected if isinstance(item, GardenItemMixin)
         }
         for item in list(selected):
-            if isinstance(item, GardenItemMixin) and is_plant_parent_type(
-                item.object_type
-            ):
+            if isinstance(item, GardenItemMixin) and item.has_children:
                 for child_id in item.child_item_ids:
                     if child_id not in selected_ids:
                         child = self._canvas_scene.find_item_by_id(child_id)
@@ -4893,9 +4891,7 @@ class CanvasView(QGraphicsView):
             item.item_id for item in selected if isinstance(item, GardenItemMixin)
         }
         for item in list(selected):
-            if isinstance(item, GardenItemMixin) and is_plant_parent_type(
-                item.object_type
-            ):
+            if isinstance(item, GardenItemMixin) and item.has_children:
                 for child_id in item.child_item_ids:
                     if child_id not in selected_ids:
                         child = self._canvas_scene.find_item_by_id(child_id)

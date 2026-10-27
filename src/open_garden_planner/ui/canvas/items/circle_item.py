@@ -26,6 +26,7 @@ from open_garden_planner.core.plant_renderer import (
     render_plant_pixmap,
 )
 from open_garden_planner.core.plant_sizing import sizing_for_item
+from open_garden_planner.core.reference_points import is_reference_point
 
 from .garden_item import GardenItemMixin
 from .resize_handle import (
@@ -174,9 +175,11 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         x = center_x - radius
         y = center_y - radius
         diameter = radius * 2
+        if is_reference_point(self):
+            x, y = -radius, -radius
         QGraphicsEllipseItem.__init__(self, x, y, diameter, diameter)
 
-        self._center = QPointF(center_x, center_y)
+        self._center = QPointF() if is_reference_point(self) else QPointF(center_x, center_y)
         self._radius = radius
         self._plant_category: PlantCategory | None = None
         self._plant_species: str = ""
@@ -190,7 +193,18 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
 
         self._setup_styling()
         self._setup_flags()
+        if is_reference_point(self):
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            self.setPos(center_x, center_y)
         self.initialize_label()
+
+    def _position_label(self) -> None:
+        if is_reference_point(self) and self._label_item is not None:
+            # Both the point and label have screen-sized coordinates. Leave
+            # the surveying centre visible and clickable beside its name.
+            self._label_item.setPos(self.rect().right() + 5, -self._label_item.boundingRect().height() / 2)
+            return
+        super()._position_label()
 
     def _setup_styling(self) -> None:
         """Configure visual appearance based on object type."""
@@ -346,6 +360,18 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         For non-plant circles, delegates to the default ellipse painting.
         """
         rect = self.rect()
+        if is_reference_point(self):
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor("#168c9e") if not self.isSelected() else QColor("#0078d7"), 1.8)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            center = rect.center()
+            radius = rect.width() / 2
+            painter.drawEllipse(center, radius * 0.55, radius * 0.55)
+            painter.drawLine(QPointF(center.x() - radius, center.y()), QPointF(center.x() + radius, center.y()))
+            painter.drawLine(QPointF(center.x(), center.y() - radius), QPointF(center.x(), center.y() + radius))
+            return
         is_plant = is_plant_type(self.object_type)
         # Resolved once and reused by both the decorative drop-shadow below
         # and the SVG render further down -- computing it twice risked the
@@ -609,7 +635,7 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         """
         self.handle_selection_change_for_cache(change, value)
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
-            if value:  # Being selected
+            if value and not is_reference_point(self):  # Being selected
                 self.show_resize_handles()
                 self.show_rotation_handle()
                 self._show_circle_annotations()
@@ -626,6 +652,8 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         return super().itemChange(change, value)
 
     def _compute_area_cm2(self) -> float | None:
+        if is_reference_point(self):
+            return None
         import math
         return math.pi * self.radius ** 2
 
@@ -861,6 +889,11 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         """Handle double-click to edit label inline."""
         if event.button() == Qt.MouseButton.LeftButton:
+            if is_reference_point(self):
+                from open_garden_planner.ui.reference_points import edit_reference_point
+                edit_reference_point(self)
+                event.accept()
+                return
             self.start_label_edit()
             event.accept()
         else:
@@ -868,6 +901,13 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
 
     def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
         """Show context menu on right-click."""
+        if is_reference_point(self):
+            from open_garden_planner.ui.reference_points import edit_reference_point
+            menu = QMenu()
+            edit = menu.addAction(QCoreApplication.translate("ReferencePoints", "Edit reference point…"))
+            if menu.exec(event.screenPos()) == edit:
+                edit_reference_point(self)
+            return
         # Select this item if not already selected
         if not self.isSelected():
             self.scene().clearSelection()

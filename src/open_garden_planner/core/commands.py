@@ -305,6 +305,10 @@ class CreateItemsCommand(Command):
         self._scene = scene
         self._items = list(items)  # Copy the list
         self._item_type = item_type
+        from open_garden_planner.core.reference_points import is_reference_point
+        self._reference_parents = [
+            (item, item.parent_bed_id) for item in self._items if is_reference_point(item)
+        ]
 
     @property
     def description(self) -> str:
@@ -326,6 +330,8 @@ class CreateItemsCommand(Command):
                     self._scene.addItem(item)
         for item in self._items:
             _auto_parent_plant(self._scene, item)
+        for point, parent_id in self._reference_parents:
+            SetParentBedCommand(self._scene, point, point.parent_bed_id, parent_id).execute()
 
     def undo(self) -> None:
         """Remove the items from the scene."""

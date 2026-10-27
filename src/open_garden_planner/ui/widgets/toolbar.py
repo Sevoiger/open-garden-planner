@@ -56,6 +56,10 @@ class MainToolbar(QToolBar):
             self.tr("Measure distances between two points"), "M",
         )
         self._add_tool_button(
+            ToolType.REFERENCE_POINT, "reference_point", self.tr("Reference point"),
+            self.tr("Place a named reference point, independent or attached to an object"), "",
+        )
+        self._add_tool_button(
             ToolType.TEXT, "text_annotation", self.tr("Text"),
             self.tr("Place a text annotation"), "",
         )
