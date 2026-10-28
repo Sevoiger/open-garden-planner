@@ -53,7 +53,7 @@ revalidation de sa révision.
 
 Les noms admis sont définis dans
 <code>services/document_operations.SUPPORTED_OPERATIONS</code> : CRUD des tâches
-manuelles, fiches de jardin, dates de plantation, interventions, relevés de sol,
+manuelles, fiches de jardin, dates de plantation, mesures datées des plantations, interventions, relevés de sol,
 récoltes, ravageurs, notes de journal, statuts des tâches manuelles et plans de
 succession. Le [guide utilisateur](METIER_PARTAGE.md) en donne la liste complète,
 le format d’appel et les limites par famille. L’évaluation du sol est une
@@ -230,6 +230,7 @@ limitations sont recensées séparément ci-dessus.
 | Apparence | Valeurs initiales du catalogue | Couleurs, contours, matières, motifs, remplissages, hauteur, texte et libellés dans les propriétés |
 | Botanique | Ressources, `set_species`, création avec espèce | Catalogue personnalisé, imports personnels, traits et apparence par panneaux/dialogues |
 | Plantation | `set_planting_date`, `set_garden_card`, `set_parent_bed` | Toutes les propriétés de croissance et de pépinière présentes dans l’UI |
+| Dimensions des plantes | `get_garden_record`, `add_plant_measurement`, `edit_plant_measurement`, `delete_plant_measurement` ; historique, dates par dimension et valeurs non datées | Fiche : **Mesures et historique…**, mêmes commandes annulables |
 | Retours du jardin | CRUD/recherche d’interventions | Fiches et dialogues de suivi ; le récit conversationnel utilise les outils métier |
 | Tâches | Calendrier, CRUD manuel | Cases d’état des tâches automatiques et dialogues du calendrier |
 | Sol | État/incompatibilités, recommandations, `record_soil_test` | Édition/suppression des relevés et sol par défaut du projet |

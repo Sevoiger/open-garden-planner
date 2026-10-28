@@ -188,7 +188,8 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
                 tasks[change.task_id] = deepcopy(change.after)
             results.append({"row": index + 1, "operation": name, "target_id": change.task_id,
                             "status": "unchanged" if change.is_noop else "prepared"})
-        elif name in {"set_garden_card", "set_planting_date", "add_garden_intervention",
+        elif name in {"add_plant_measurement", "edit_plant_measurement", "delete_plant_measurement",
+                      "set_garden_card", "set_planting_date", "add_garden_intervention",
                       "edit_garden_intervention", "delete_garden_intervention"}:
             from open_garden_planner.services.garden_operations import prepare_garden_operation
 
@@ -197,9 +198,9 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
                             "delete_garden_intervention": "edit_event"}
             # The outer operation receipt owns idempotence for this batch. The
             # legacy event key is only a private planner input, never exposed.
-            key = str(uuid4()) if name == "add_garden_intervention" else None
+            key = str(uuid4()) if name in {"add_garden_intervention", "add_plant_measurement"} else None
             candidate, result = prepare_garden_operation(
-                candidate, garden_names[name], None if name == "delete_garden_intervention" else fields,
+                candidate, garden_names.get(name, name), None if name == "delete_garden_intervention" else fields,
                 operation.get("target_id"), key, media_check=media_check)
             if key is not None:
                 candidate["garden_memory"]["requests"].pop(key, None)

@@ -270,6 +270,57 @@ def _prepare_edit_event(
     return candidate, {"event_id": event_id, "deleted": fields is None, "persisted": False}
 
 
+def _prepare_measurement(
+    document: dict[str, Any], operation: str, fields: dict[str, Any],
+    target_id: str | None, request_key: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from open_garden_planner.services.plant_measurements import (
+        measurement_view,
+        update_measurements,
+        validate_measurement,
+    )
+
+    candidate = deepcopy(document)
+    record, top_level, identity = _resolve(_records(candidate), target_id)
+    _editable(record, top_level, candidate)
+    if record.get("object_type") not in _PLANT_TYPES:
+        raise ValueError("Measurements require a plant")
+    memory = _validated_memory(candidate)
+    incoming = deepcopy(fields)
+    measurement_id = incoming.pop("measurement_id", None)
+    deleting = operation == "delete_plant_measurement"
+    adding = operation == "add_plant_measurement"
+    if not adding and not measurement_id:
+        raise ValueError("A measurement_id is required")
+    if adding and measurement_id is not None:
+        raise ValueError("Creation identity is assigned by the application")
+    if deleting and incoming:
+        raise ValueError("Deletion accepts only measurement_id")
+    if adding:
+        if not isinstance(request_key, str) or not request_key.strip():
+            raise ValueError("An idempotence request_key is required")
+        incoming = validate_measurement(incoming)
+        fingerprint = hashlib.sha256(json.dumps(
+            {"operation": operation, "item_id": identity, "fields": incoming},
+            sort_keys=True, allow_nan=False).encode()).hexdigest()
+        receipt = memory["requests"].get(request_key)
+        if receipt is not None:
+            if receipt["fingerprint"] != fingerprint:
+                raise ValueError("Idempotence conflict")
+            return candidate, {"item_id": identity, "measurement_id": receipt["event_id"],
+                               "replayed": True, "persisted": False,
+                               **measurement_view(record.get("metadata", {}))}
+    metadata, measurement_id = update_measurements(
+        record.get("metadata", {}), None if deleting else incoming, measurement_id)
+    record["metadata"] = metadata
+    if adding:
+        memory["requests"][request_key] = {"fingerprint": fingerprint, "event_id": measurement_id}
+    candidate["garden_memory"] = memory
+    return candidate, {"item_id": identity, "measurement_id": measurement_id,
+                       "replayed": False, "deleted": deleting, "persisted": False,
+                       **measurement_view(metadata)}
+
+
 def prepare_garden_operation(
     document: dict[str, Any], operation: str, fields: dict[str, Any] | None,
     target_id: str | None = None, request_key: str | None = None, *,
@@ -287,8 +338,13 @@ def prepare_garden_operation(
         raise TypeError("Garden document must be an object")
     if not isinstance(operation, str) or operation not in {
         "set_card", "set_planting_date", "add_event", "edit_event",
+        "add_plant_measurement", "edit_plant_measurement", "delete_plant_measurement",
     }:
         raise ValueError(f"Unsupported garden operation: {operation}")
+    if operation.endswith("_plant_measurement"):
+        if not isinstance(fields, dict):
+            raise ValueError("Measurement fields must be an object")
+        return _prepare_measurement(document, operation, fields, target_id, request_key)
     if operation == "edit_event":
         return _prepare_edit_event(document, target_id, fields, media_check)
     if not isinstance(fields, dict):

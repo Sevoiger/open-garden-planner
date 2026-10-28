@@ -4,9 +4,8 @@ The growth tests elsewhere call ``collect_shadow_casters`` /
 ``collect_scene3d_records`` directly, so they pass even when nothing is
 wired to invoke them. These drive the REAL widgets instead:
 
-* editing Current height in the Plant Details panel must make the sun/shade
-  shadow recompute (a metadata-only write reaches neither ``scene.changed``
-  nor ``stack_changed`` — the owner's "the field does nothing" bug);
+* saving a dated measurement from Plant Details must make the sun/shade
+  shadow recompute through the shared command stack;
 * scrubbing the sim date must rebuild the 3D geometry, not just the light;
 * loading a plan must NOT stamp a planting date into a dateless plant.
 """
@@ -78,6 +77,12 @@ class TestPanelEditReachesTheShadow:
         baseline = _settle(qtbot, controller)
         panel = PlantDatabasePanel()
         qtbot.addWidget(panel)
+        from open_garden_planner.core.commands import CommandManager
+        from open_garden_planner.core.garden_memory import GardenMemoryService
+
+        commands = CommandManager()
+        commands.stack_changed.connect(controller.schedule_recompute)
+        panel.measurement_service = GardenMemoryService(ProjectManager(), commands, scene)
         panel.set_selected_items([tree])
         baseline = _settle(qtbot, controller)
         return scene, controller, panel, baseline
@@ -85,7 +90,12 @@ class TestPanelEditReachesTheShadow:
     def test_current_height_edit_triggers_recompute(self, qtbot) -> None:
         scene, controller, panel, baseline = self._setup(qtbot)
 
-        panel.current_height_spin.setValue(600.0)
+        from open_garden_planner.ui.dialogs.plant_measurements_dialog import PlantMeasurementsDialog
+
+        dialog = PlantMeasurementsDialog(panel.measurement_service, panel._current_plant_item)
+        qtbot.addWidget(dialog)
+        dialog.height.setText("600")
+        dialog._save()
 
         qtbot.waitUntil(
             lambda: controller.recompute_count > baseline, timeout=2000
@@ -96,7 +106,12 @@ class TestPanelEditReachesTheShadow:
     def test_current_spread_edit_triggers_recompute(self, qtbot) -> None:
         scene, controller, panel, baseline = self._setup(qtbot)
 
-        panel.current_spread_spin.setValue(250.0)
+        from open_garden_planner.ui.dialogs.plant_measurements_dialog import PlantMeasurementsDialog
+
+        dialog = PlantMeasurementsDialog(panel.measurement_service, panel._current_plant_item)
+        qtbot.addWidget(dialog)
+        dialog.spread.setText("250")
+        dialog._save()
 
         qtbot.waitUntil(
             lambda: controller.recompute_count > baseline, timeout=2000

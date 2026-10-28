@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -617,7 +618,6 @@ class PlantDatabasePanel(QWidget):
         self.current_height_spin.setSuffix(" cm")
         self.current_height_spin.setSpecialValueText(self.tr("—"))  # — when unset (#231)
         self.current_height_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.current_height_spin.valueChanged.connect(self._on_current_height_changed)
         self.details_form.addRow(self.tr("Current Height:"), self.current_height_spin)
 
         # Current Spread (instance-specific)
@@ -628,8 +628,13 @@ class PlantDatabasePanel(QWidget):
         self.current_spread_spin.setSuffix(" cm")
         self.current_spread_spin.setSpecialValueText(self.tr("—"))  # — when unset (#231)
         self.current_spread_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.current_spread_spin.valueChanged.connect(self._on_current_spread_changed)
         self.details_form.addRow(self.tr("Current Spread:"), self.current_spread_spin)
+
+        self.current_height_spin.setReadOnly(True)
+        self.current_spread_spin.setReadOnly(True)
+        self.measurements_button = QPushButton(self.tr("Measurements and history…"))
+        self.measurements_button.clicked.connect(self._open_measurements)
+        self.details_form.addRow(self.measurements_button)
 
         # === EDIBILITY ===
 
@@ -1068,19 +1073,44 @@ class PlantDatabasePanel(QWidget):
             else:
                 self.age_label.setText(self.tr("({years}y)").format(years=years))
 
-    def _on_current_height_changed(self) -> None:
-        """Handle current height change."""
-        if not self._current_plant_item:
-            return
-        val = self.current_height_spin.value()
-        self._update_instance_metadata("current_height_cm", val if val > 0 else None)
+    def _refresh_measurement_fields(self, instance_data: dict) -> None:
+        current_height = instance_data.get("current_height_cm")
+        self.current_height_spin.blockSignals(True)
+        self.current_height_spin.setDecimals(max(0, -Decimal(str(current_height or 0)).as_tuple().exponent))
+        self.current_height_spin.setMaximum(max(10000, float(current_height or 0)))
+        self.current_height_spin.setValue(float(current_height) if current_height else 0)
+        self.current_height_spin.blockSignals(False)
 
-    def _on_current_spread_changed(self) -> None:
-        """Handle current spread change."""
-        if not self._current_plant_item:
+        # Current spread — honour the legacy current_diameter_cm alias, as
+        # PlantInstance.from_dict, the CSV export and the growth model all
+        # do; otherwise an old plan shows "—" here while its shadow is sized
+        # from the aliased value.
+        current_spread = instance_data.get("current_spread_cm") or instance_data.get(
+            "current_diameter_cm"
+        )
+        self.current_spread_spin.blockSignals(True)
+        self.current_spread_spin.setDecimals(max(0, -Decimal(str(current_spread or 0)).as_tuple().exponent))
+        self.current_spread_spin.setMaximum(max(10000, float(current_spread or 0)))
+        self.current_spread_spin.setValue(float(current_spread) if current_spread else 0)
+        self.current_spread_spin.blockSignals(False)
+
+        from open_garden_planner.services.plant_measurements import measurement_view
+
+        current = measurement_view({"plant_instance": instance_data})["current_size"]
+        for key, spin in (("height_cm", self.current_height_spin), ("spread_cm", self.current_spread_spin)):
+            day = current[key]["date"]
+            spin.setToolTip(self.tr("Measured on {date}").format(date=day) if day else self.tr("Measurement date unknown"))
+
+    def _open_measurements(self) -> None:
+        service = getattr(self, "measurement_service", None)
+        item = self._current_plant_item
+        if service is None or item is None:
             return
-        val = self.current_spread_spin.value()
-        self._update_instance_metadata("current_spread_cm", val if val > 0 else None)
+        from open_garden_planner.ui.dialogs.plant_measurements_dialog import PlantMeasurementsDialog
+
+        PlantMeasurementsDialog(service, item, self).exec()
+        if self._current_plant_item is item and self._current_plant_data is not None:
+            self._show_plant_data(self._current_plant_data, item)
 
     def _on_notes_changed(self) -> None:
         """Handle notes change."""
@@ -1442,6 +1472,7 @@ class PlantDatabasePanel(QWidget):
                         after.pop(field, None)
                     if before == after:
                         self._current_plant_data = data
+                        self._refresh_measurement_fields(items[0].metadata.get("plant_instance", {}))
                         return
         if (
             len(items) == 1
@@ -1582,6 +1613,8 @@ class PlantDatabasePanel(QWidget):
                         widget = layout.itemAt(j).widget()
                         if widget:
                             widget.setVisible(False)
+
+        self.measurements_button.show()
 
     def _clear_profile_header(self) -> None:
         """Discard identity, art and attribution belonging to the previous selection."""
@@ -1816,21 +1849,7 @@ class PlantDatabasePanel(QWidget):
         self._update_age_label(planting_date_val)
 
         # Current height
-        current_height = instance_data.get("current_height_cm")
-        self.current_height_spin.blockSignals(True)
-        self.current_height_spin.setValue(float(current_height) if current_height else 0)
-        self.current_height_spin.blockSignals(False)
-
-        # Current spread — honour the legacy current_diameter_cm alias, as
-        # PlantInstance.from_dict, the CSV export and the growth model all
-        # do; otherwise an old plan shows "—" here while its shadow is sized
-        # from the aliased value.
-        current_spread = instance_data.get("current_spread_cm") or instance_data.get(
-            "current_diameter_cm"
-        )
-        self.current_spread_spin.blockSignals(True)
-        self.current_spread_spin.setValue(float(current_spread) if current_spread else 0)
-        self.current_spread_spin.blockSignals(False)
+        self._refresh_measurement_fields(instance_data)
 
         # Notes
         self.notes_edit.blockSignals(True)
