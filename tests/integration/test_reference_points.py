@@ -233,14 +233,17 @@ def test_api_translation_includes_polygon_references(canvas, monkeypatch):
     assert pairs == [(parent, delta), (point, delta)]
 
 
+@pytest.mark.parametrize("fixed_size", [False, True])
 @pytest.mark.parametrize("zoom", [0.2, 0.65, 2.0])
 @pytest.mark.parametrize("target", ["halo", "label"])
 @pytest.mark.parametrize("attached", [False, True])
-def test_drag_reference_through_viewport(canvas, qtbot, monkeypatch, zoom, target, attached):
+def test_drag_reference_through_viewport(canvas, qtbot, monkeypatch, zoom, target, attached, fixed_size):
     scene, view = canvas
     parent = PolygonItem([QPointF(100, 100), QPointF(500, 100), QPointF(500, 500)])
     scene.addItem(parent)
     point = add_point(monkeypatch, scene, view, parent if attached else None)
+    reference_points.apply_appearance(point, reference_points.PointProperties(
+        point.name, point.parent_bed_id, fixed_size=fixed_size))
     view.resize(850, 600)
     view._zoom_factor = zoom
     view._apply_transform()
@@ -254,7 +257,7 @@ def test_drag_reference_through_viewport(canvas, qtbot, monkeypatch, zoom, targe
         label = point._label_item
         start = label.deviceTransform(view.viewportTransform()).map(label.boundingRect().center()).toPoint()
     else:
-        start += QPoint(10, 0)
+        start += QPoint(round(10 * zoom) if fixed_size else 10, 0)
     end = start + QPoint(50, -30)
     expected = view.mapToScene(end) - view.mapToScene(start)
     original = QPointF(point.pos())
@@ -276,15 +279,18 @@ def test_edit_appearance_keeps_exact_centre_and_roundtrips(canvas, qtbot, monkey
     point = add_point(monkeypatch, scene, view)
     point.setPos(341.5, 227.25)
     original = reference_points.PointProperties.from_item(point)
-    changed = reference_points.PointProperties("Borne rouge", None, 36, "#ffd5283a", 4)
+    changed = reference_points.PointProperties("Borne rouge", None, 36, "#ffd5283a", 4, fixed_size=False)
     monkeypatch.setattr(reference_points, "point_dialog", lambda *_args: changed)
     reference_points.edit_reference_point(point)
     assert point.mapToScene(point.rect().center()) == QPointF(341.5, 227.25)
+    assert point.flags() & point.GraphicsItemFlag.ItemIgnoresTransformations
     assert reference_points.PointProperties.from_item(point) == changed
     view.command_manager.undo()
     assert reference_points.PointProperties.from_item(point) == original
+    assert not point.flags() & point.GraphicsItemFlag.ItemIgnoresTransformations
     view.command_manager.redo()
     assert reference_points.PointProperties.from_item(point) == changed
+    assert point.flags() & point.GraphicsItemFlag.ItemIgnoresTransformations
     path = tmp_path / "point-style.ogp"
     ProjectManager().save(scene, path)
     other = CanvasScene()
@@ -313,14 +319,20 @@ def test_dialog_appearance_and_attachment_preview(canvas, monkeypatch):
         parents.setCurrentIndex(parents.findData(parent.item_id))
         assert any("Clôture" in label.text() for label in dialog.findChildren(QLabel))
         assert set(scene.items()) - before
-        dialog.findChild(QSpinBox, "reference_point_size").setValue(32)
+        sizing = dialog.findChild(QComboBox, "reference_point_sizing")
+        size = dialog.findChild(QSpinBox, "reference_point_size")
+        assert sizing.currentData() is True
+        assert size.suffix() == " cm"
+        sizing.setCurrentIndex(1)
+        assert size.suffix() == " px"
+        size.setValue(32)
         dialog.findChild(QDoubleSpinBox, "reference_point_width").setValue(3.5)
         dialog.findChild(ColorButton, "reference_point_color").set_color(QColor("#ff8800"))
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(QDialog, "exec", accept)
     result = reference_points.point_dialog(view, None, QPointF(300, 200))
-    assert result == reference_points.PointProperties("", parent.item_id, 32, "#ffff8800", 3.5)
+    assert result == reference_points.PointProperties("", parent.item_id, 32, "#ffff8800", 3.5, fixed_size=False)
     assert set(scene.items()) == before
 
 
@@ -997,3 +1009,29 @@ def test_popup_reference_menu_can_lock_then_delete_with_one_undo(canvas, qtbot, 
     view.command_manager.undo()
     assert point.scene() is scene
     assert any(c.constraint_type == ConstraintType.FIXED for c in scene.constraint_graph.constraints.values())
+
+
+@pytest.mark.parametrize("fixed_size", [False, True, None])
+def test_symbol_zoom_and_legacy_roundtrip(canvas, qtbot, tmp_path, fixed_size):
+    scene, view = canvas
+    metadata = {"reference_point": True}
+    if fixed_size is not None:
+        metadata["reference_point_fixed_size"] = fixed_size
+    point = CircleItem(240, 180, 8, metadata=metadata)
+    scene.addItem(point)
+    path = tmp_path / "zoom-mode.ogp"
+    ProjectManager().save(scene, path)
+    other = CanvasScene()
+    other_view = CanvasView(other)
+    qtbot.addWidget(other_view)
+    ProjectManager().load(other, path)
+    restored = other.find_item_by_id(point.item_id)
+    assert reference_points.PointProperties.from_item(restored).fixed_size == (fixed_size is True)
+    widths = []
+    for zoom in (0.5, 2.0):
+        other_view._zoom_factor = zoom
+        other_view._apply_transform()
+        transform = restored.deviceTransform(other_view.viewportTransform())
+        widths.append(transform.mapRect(restored.rect()).width())
+        assert restored.mapToScene(restored.rect().center()) == QPointF(240, 180)
+    assert widths[1] / widths[0] == pytest.approx(4 if fixed_size else 1)

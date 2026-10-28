@@ -45,12 +45,14 @@ class PointProperties:
     color: str = "#168c9e"
     stroke_width: float = 1.8
     on_contour: bool = False
+    fixed_size: bool = True
 
     @classmethod
     def from_item(cls, item: CircleItem) -> "PointProperties":
         return cls(item.name, item.parent_bed_id, item.radius * 2,
                    item.pen().color().name(QColor.NameFormat.HexArgb), item.pen().widthF(),
-                   item.metadata.get("reference_point_on_contour") is True)
+                   item.metadata.get("reference_point_on_contour") is True,
+                   item.metadata.get("reference_point_fixed_size") is True)
 
 
 def nearest_contour_position(parent: QGraphicsItem, position: QPointF) -> tuple[QPointF, float] | None:
@@ -138,9 +140,10 @@ def reference_status(item: CircleItem) -> str:
 
 def reference_summary(item: CircleItem) -> str:
     return QCoreApplication.translate(
-        "ReferencePoints", "{name}\n{status}\nSymbol: {size} px; stroke: {width} px"
+        "ReferencePoints", "{name}\n{status}\nSymbol: {size} {unit}; stroke: {width} px"
     ).format(name=item.name, status=reference_status(item), size=f"{item.radius * 2:g}",
-             width=f"{item.pen().widthF():g}")
+             width=f"{item.pen().widthF():g}",
+             unit="cm" if item.metadata.get("reference_point_fixed_size") is True else "px")
 
 
 def draw_reference_links(view: "CanvasView", painter: QPainter) -> None:
@@ -157,7 +160,6 @@ def draw_reference_links(view: "CanvasView", painter: QPainter) -> None:
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(parent.mapToScene(parent.shape()))
-        painter.drawLine(item.mapToScene(item.rect().center()), parent.sceneBoundingRect().center())
     painter.restore()
 
 
@@ -228,9 +230,20 @@ def point_dialog(view: "CanvasView", item: CircleItem | None = None,
     size = QSpinBox(dialog)
     size.setObjectName("reference_point_size")
     size.setRange(8, 64)
-    size.setSuffix(" px")
     size.setValue(round(options.size_px))
     form.addRow(QCoreApplication.translate("ReferencePoints", "Symbol size"), size)
+    sizing = QComboBox(dialog)
+    sizing.setObjectName("reference_point_sizing")
+    sizing.addItem(QCoreApplication.translate("ReferencePoints", "Fixed in plan (scales with zoom)"), True)
+    sizing.addItem(QCoreApplication.translate("ReferencePoints", "Variable in plan (constant on screen)"), False)
+    sizing.setCurrentIndex(0 if options.fixed_size else 1)
+    form.addRow(QCoreApplication.translate("ReferencePoints", "Size mode"), sizing)
+
+    def update_size_unit() -> None:
+        size.setSuffix(" cm" if sizing.currentData() else " px")
+
+    sizing.currentIndexChanged.connect(update_size_unit)
+    update_size_unit()
     color = ColorButton(QColor(options.color), dialog)
     color.setObjectName("reference_point_color")
     form.addRow(QCoreApplication.translate("ReferencePoints", "Color"), color)
@@ -276,9 +289,6 @@ def point_dialog(view: "CanvasView", item: CircleItem | None = None,
                 preview_origin = projection[0]
         if parent is not None:
             path.addPath(parent.mapToScene(parent.shape()))
-            if preview_origin is not None:
-                path.moveTo(preview_origin)
-                path.lineTo(parent.sceneBoundingRect().center())
             status.setText(QCoreApplication.translate("ReferencePoints", "Attached to: {name}").format(
                 name=parents.currentText()))
         else:
@@ -307,7 +317,7 @@ def point_dialog(view: "CanvasView", item: CircleItem | None = None,
             return None
         return PointProperties(name.text().strip(), cast(UUID | None, parents.currentData()),
                                float(size.value()), color.color.name(QColor.NameFormat.HexArgb), width.value(),
-                               contour.isChecked() and contour.isEnabled())
+                               contour.isChecked() and contour.isEnabled(), bool(sizing.currentData()))
     finally:
         if preview.scene() is view._canvas_scene:
             view._canvas_scene.removeItem(preview)
@@ -397,6 +407,8 @@ def edit_reference_point(item: CircleItem) -> None:
 def apply_appearance(item: CircleItem, options: PointProperties) -> None:
     item.name = options.name
     item.metadata["reference_point_on_contour"] = options.on_contour
+    item.metadata["reference_point_fixed_size"] = options.fixed_size
+    item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, not options.fixed_size)
     item.set_radius_centered(options.size_px / 2)
     item.prepareGeometryChange()
     item.stroke_color = QColor(options.color)

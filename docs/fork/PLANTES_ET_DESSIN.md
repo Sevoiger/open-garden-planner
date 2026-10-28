@@ -676,11 +676,15 @@ repère existant, choisir le parent et cocher **Rester sur le contour du parent*
 dans son dialogue. Décocher cette option conserve un simple rattachement qui suit
 les déplacements du parent ; choisir **Point indépendant** supprime le lien.
 
-La croix garde sa taille à l’écran ; son centre est la position exacte utilisée
+La croix propose deux modes : **Fixe dans le plan (suit le zoom)**, par défaut
+pour les nouveaux points, mesure sa taille en centimètres et grossit ou rétrécit
+avec le zoom ; **Variable dans le plan (constante à l’écran)** conserve une taille
+en pixels à l’écran, comme auparavant. Les anciens points gardent ce second mode.
+Son centre est la position exacte utilisée
 par les mesures et l’accrochage. Le point ne représente aucune surface. Il se
 déplace en tirant la croix, sa zone de prise élargie ou son nom ; un halo rend la
 sélection visible. Un double-clic, le menu contextuel ou le bouton du panneau
-**Propriétés** ouvre ses réglages : nom, rattachement, taille du symbole en pixels,
+**Propriétés** ouvre ses réglages : nom, rattachement, taille et mode de taille du symbole,
 couleur et épaisseur du trait. La taille ne change pas la coordonnée du repère.
 Les opérations, y compris l’apparence, sont annulables et sauvegardées.
 Un clic droit sur la croix ou son nom donne accès au verrouillage de position,
@@ -696,10 +700,10 @@ L’accrochage pendant le glissement utilise le centre exact et les ancrages ré
 des autres objets, sans attirer le contour du symbole ou son halo. Seul le centre
 doit rester dans le canevas : un repère peut donc atteindre exactement son bord.
 
-Le dialogue montre l’objet parent proposé par un contour et un lien pointillés ;
+Le dialogue montre l’objet parent proposé par un contour pointillé ;
 **Point indépendant** ne crée aucun lien. Après placement, un badge en maillons
-signale le rattachement. Sélectionner le point montre le lien vers son parent et
-son contour ; le nom du parent apparaît dans le panneau Propriétés et l’infobulle.
+signale le rattachement. Sélectionner le point montre le contour de son parent ;
+le nom du parent apparaît dans le panneau Propriétés et l’infobulle.
 Les aperçus sont transitoires : ils ne font pas partie des objets du plan.
 
 Un point rattaché accompagne les
@@ -714,6 +718,8 @@ ancienne version peut donc le lire comme un petit cercle. La bibliothèque
 personnelle n’intervient pas dans ce stockage. L’indicateur additif
 `metadata.reference_point_on_contour` mémorise le mode de coulissement. Les anciens
 repères gardent leur rattachement simple tant que cette option n’est pas activée.
+`metadata.reference_point_fixed_size` conserve le choix de taille ; absent ou faux,
+il garde le symbole de taille constante à l’écran.
 
 
 ### Masquer les cotes de contraintes
