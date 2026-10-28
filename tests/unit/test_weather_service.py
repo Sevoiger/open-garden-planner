@@ -12,6 +12,7 @@ import pytest
 
 from open_garden_planner.services.weather_service import (
     DayForecast,
+    HourForecast,
     WeatherForecast,
     WeatherService,
     WeatherServiceError,
@@ -225,6 +226,7 @@ class TestFetchForecast:
             days=[DayForecast(date="2024-06-01", max_c=20.0, min_c=10.0, precipitation_mm=0.0, weathercode=0)],
             fetched_at=datetime.now(UTC).isoformat(),
         )
+        cached.hours = [HourForecast("2024-06-01T10:00")]
         svc._save_cache(52.5, 13.4, cached)
 
         with patch("urllib.request.urlopen") as mock_urlopen:
@@ -287,3 +289,37 @@ class TestSerialization:
         assert len(restored.days) == 2
         assert restored.days[1].max_c == 24.0
         assert restored.fetched_at == original.fetched_at
+
+
+def test_water_data_missing_values_and_cache_roundtrip(svc, tmp_path, monkeypatch):
+    monkeypatch.setattr('open_garden_planner.services.weather_service.get_app_data_dir', lambda: tmp_path)
+    data = {
+        'timezone': 'Europe/Paris',
+        'daily': {'time': ['2026-10-28', '2026-10-29'], 'et0_fao_evapotranspiration': [2.7, None]},
+        'hourly': {
+            'time': ['2026-10-28T10:00', '2026-10-28T11:00'],
+            'temperature_2m': [15.3, None], 'precipitation': [0.0, 1.2],
+            'precipitation_probability': [0],
+        },
+    }
+    forecast = svc._parse_response(data)
+    assert [day.et0_mm for day in forecast.days] == [2.7, None]
+    assert forecast.hours[0].precipitation_mm == 0
+    assert forecast.hours[1].temperature_c is None
+    assert forecast.hours[1].rain_probability is None
+    svc._save_cache(48.8, 2.3, forecast)
+    assert svc._load_cache(48.8, 2.3) == forecast
+
+
+def test_legacy_cache_still_readable(svc, tmp_path, monkeypatch):
+    monkeypatch.setattr('open_garden_planner.services.weather_service.get_app_data_dir', lambda: tmp_path)
+    legacy = {'days': [{'date': '2026-10-28', 'max_c': 20, 'min_c': 10,
+                        'precipitation_mm': 0, 'weathercode': 0}],
+              'fetched_at': datetime.now(UTC).isoformat()}
+    (tmp_path / 'weather_cache_0.0000_0.0000.json').write_text(json.dumps(legacy))
+    forecast = svc._load_cache(0, 0)
+    assert forecast is not None
+    assert forecast.days[0].et0_mm is None
+    assert forecast.hours == []
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+        assert svc.fetch_forecast(0, 0) == forecast

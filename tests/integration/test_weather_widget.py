@@ -362,3 +362,65 @@ class TestWeatherWidgetLifecycle:
         gc.collect()
 
 
+
+
+def test_hourly_is_inline_and_water_values_are_explicit(qtbot):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication, QDialog
+
+    from open_garden_planner.services.weather_service import HourForecast
+
+    widget = WeatherWidget()
+    qtbot.addWidget(widget)
+    widget.show()
+    forecast = _make_forecast(2)
+    forecast.days[0].et0_mm = 2.7
+    forecast.hours = [HourForecast('2026-10-28T10:00', 15.3, 0, 20),
+                      HourForecast('2026-10-28T11:00')]
+    forecast.timezone = 'Europe/Paris'
+    widget._on_fetch_success(forecast)
+    assert widget._day_cells[0]._rain_lbl.text() == 'Rain 0.0 mm'
+    assert widget._day_cells[0]._et0_lbl.text() == 'ET₀ 2.7 mm'
+    assert widget._table.item(1, 5).text() == '—'
+    qtbot.mouseClick(widget._hourly_btn, Qt.MouseButton.LeftButton)
+    assert widget._hourly_panel.isVisible()
+    assert widget._hourly_table.rowCount() == 2
+    assert widget._hourly_table.item(0, 2).text() == '0.0'
+    assert widget._hourly_table.item(1, 2).text() == '—'
+    assert 'Europe/Paris' in widget._hourly_title.text()
+    assert not isinstance(QApplication.activeModalWidget(), QDialog)
+    widget.refresh_theme_icons()
+    assert widget._hourly_panel.isVisible()
+    qtbot.mouseClick(widget._hourly_btn, Qt.MouseButton.LeftButton)
+    assert not widget._hourly_panel.isVisible()
+    widget.set_location(None, None)
+    assert not widget._hourly_btn.isEnabled()
+
+
+def test_hourly_day_navigation_keeps_values_and_selection_on_theme_change(qtbot):
+    from PyQt6.QtCore import Qt
+
+    from open_garden_planner.services.weather_service import HourForecast
+
+    widget = WeatherWidget()
+    qtbot.addWidget(widget)
+    widget.show()
+    forecast = _make_forecast(2)
+    forecast.hours = [HourForecast('2024-06-01T23:00', 12, 0.2, 30),
+                      HourForecast('2024-06-02T00:00', None, None, None)]
+    widget._on_fetch_success(forecast)
+    qtbot.mouseClick(widget._hourly_btn, Qt.MouseButton.LeftButton)
+    assert widget._hourly_day.count() == 2
+    assert widget._hourly_table.rowCount() == 1
+    assert widget._hourly_table.item(0, 0).text() == '23:00'
+    assert widget._hourly_table.item(0, 2).text() == '0.2'
+    assert widget._hourly_table.item(0, 3).text() == '30'
+    widget._hourly_day.setCurrentIndex(1)
+    assert widget._hourly_table.item(0, 0).text() == '00:00'
+    assert widget._hourly_table.item(0, 2).text() == '—'
+    widget.refresh_theme_icons()
+    assert widget._hourly_day.currentData() == '2024-06-02'
+    assert widget._hourly_panel.isVisible()
+    qtbot.mouseClick(widget._expand_btn, Qt.MouseButton.LeftButton)
+    assert widget._table.isVisible()
+    assert not widget._hourly_panel.isVisible()

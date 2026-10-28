@@ -111,12 +111,14 @@ def test_original_is_backed_up_before_first_enrichment_and_bad_input_is_atomic(g
 
 
 def test_visible_tracking_workflow_uses_existing_name_notes_and_undo(garden, qtbot, monkeypatch, tmp_path):
+    from PyQt6.QtCore import QCoreApplication
     from PyQt6.QtWidgets import QDialog, QPushButton
 
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor, GardenMemoryDialog
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
-    dialog = GardenMemoryDialog(service, str(plant.item_id))
+    dialog = GardenMemoryPanel(service, str(plant.item_id))
     qtbot.addWidget(dialog)
     dialog.show()
     dialog.name_edit.setText("Trente alliums fictifs")
@@ -125,7 +127,7 @@ def test_visible_tracking_workflow_uses_existing_name_notes_and_undo(garden, qtb
     dialog.period_edit.setText("Automne 2023")
     dialog.notes_edit.setPlainText("Sachet inconnu — quantité non renseignée")
     dialog.zone_combo.setCurrentIndex(dialog.zone_combo.findData(str(bed.item_id)))
-    save = next(b for b in dialog.findChildren(QPushButton) if b.text() == dialog.tr("Save card"))
+    save = next(b for b in dialog.findChildren(QPushButton) if b.text() == QCoreApplication.translate("GardenMemoryDialog", "Save card"))
     save.click()
     assert plant.name == "Trente alliums fictifs"
     assert plant.metadata["plant_instance"]["notes"].startswith("Sachet inconnu")
@@ -285,7 +287,7 @@ def test_tracking_forms_fit_small_windows_and_attachment_buttons_are_readable(ga
 
 def test_zone_events_and_plantings_remain_distinct_and_filterable(garden, qtbot):
     from open_garden_planner.services.garden_queries import garden_record, search_events
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
     service.set_card(str(plant.item_id), {"kind": "group", "zone_id": str(bed.item_id), "period": "Automne 2023"})
@@ -298,7 +300,7 @@ def test_zone_events_and_plantings_remain_distinct_and_filterable(garden, qtbot)
     zone = garden_record(snapshot, str(bed.item_id))
     assert zone["plantings"][0]["item_id"] == str(plant.item_id)
     assert len(search_events(snapshot, event_type="mulching", since="2023-10-15", until="2023-10-16")) == 1
-    dialog = GardenMemoryDialog(service, str(bed.item_id))
+    dialog = GardenMemoryPanel(service, str(bed.item_id))
     qtbot.addWidget(dialog)
     index = dialog.zone_members.findData(str(plant.item_id))
     dialog.zone_members.setCurrentIndex(index)
@@ -337,12 +339,13 @@ def test_idempotence_receipt_survives_undo_and_refuses_late_resurrection(garden,
 
 @pytest.mark.parametrize("label", ["", "Autour de la Toussaint, année incertaine"])
 def test_unrelated_gui_edits_preserve_structured_periods(garden, qtbot, label):
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor, GardenMemoryDialog
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
     original = {"precision": "month", "value": "2023-10", "label": label}
     service.set_card(str(plant.item_id), {"kind": "group", "period": original})
-    dialog = GardenMemoryDialog(service, str(plant.item_id))
+    dialog = GardenMemoryPanel(service, str(plant.item_id))
     qtbot.addWidget(dialog)
     dialog.notes_edit.setPlainText("Note indépendante de la date")
     dialog._save_card()
@@ -366,11 +369,11 @@ def test_unrelated_gui_edits_preserve_structured_periods(garden, qtbot, label):
 
 
 def test_locked_intervention_delete_shows_error_and_keeps_history(garden, qtbot, monkeypatch):
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
     service.add_event(fields(plant), "delete-locked")
-    dialog = GardenMemoryDialog(service, str(plant.item_id))
+    dialog = GardenMemoryPanel(service, str(plant.item_id))
     qtbot.addWidget(dialog)
     dialog.events.setCurrentRow(0)
     layer = scene.layers[0]
@@ -388,7 +391,7 @@ def test_records_browsing_does_not_encode_background(garden, qtbot, tmp_path, mo
     from PyQt6.QtGui import QColor, QImage
 
     from open_garden_planner.ui.canvas.items import BackgroundImageItem
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
     image = QImage(100, 100, QImage.Format.Format_RGB32)
@@ -407,7 +410,7 @@ def test_records_browsing_does_not_encode_background(garden, qtbot, tmp_path, mo
     service.set_card(str(plant.item_id), {'kind': 'group', 'zone_id': str(bed.item_id),
                                            'period': 'Automne 2023'})
     monkeypatch.setattr(background, 'to_dict', counted)
-    dialog = GardenMemoryDialog(service, str(plant.item_id))
+    dialog = GardenMemoryPanel(service, str(plant.item_id))
     qtbot.addWidget(dialog)
     dialog.search_edit.setText('test')
     dialog.targets.setCurrentRow(1)
@@ -440,7 +443,7 @@ def test_tracking_projection_excludes_decorations_and_includes_group_children(ga
     from open_garden_planner.ui.canvas.items.group_item import GroupItem
     from open_garden_planner.ui.canvas.items.journal_pin_item import JournalPinItem
     from open_garden_planner.ui.canvas.items.text_item import TextItem
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
     for item in (TextItem(20, 20, content='annotation'), JournalPinItem(50, 50, 'note'),
@@ -449,7 +452,7 @@ def test_tracking_projection_excludes_decorations_and_includes_group_children(ga
     group = GroupItem()
     scene.addItem(group)
     group.addToGroup(plant)
-    dialog = GardenMemoryDialog(service)
+    dialog = GardenMemoryPanel(service)
     qtbot.addWidget(dialog)
     full = garden_objects(pm.snapshot_dict(scene))
     light = garden_objects(dialog._snapshot())
@@ -460,7 +463,7 @@ def test_record_layer_filter_is_remembered_without_changing_plan(garden, qtbot, 
     from PyQt6.QtCore import Qt
 
     from open_garden_planner.models.layer import Layer
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
     decor = Layer(name='Fonds et bâtiments')
@@ -468,7 +471,7 @@ def test_record_layer_filter_is_remembered_without_changing_plan(garden, qtbot, 
     bed.layer_id = decor.id
     plant.layer_id = scene.layers[0].id
     scene.layers[0].name = 'Plantations'
-    dialog = GardenMemoryDialog(service, str(bed.item_id))
+    dialog = GardenMemoryPanel(service, str(bed.item_id))
     qtbot.addWidget(dialog)
     assert any('Fonds et bâtiments' in dialog.targets.item(i).text()
                for i in range(dialog.targets.count()))
@@ -491,7 +494,7 @@ def test_record_layer_filter_is_remembered_without_changing_plan(garden, qtbot, 
     path = tmp_path / 'filtered.ogp'
     pm.save(scene, path)
     pm.load(scene, path)
-    reopened = GardenMemoryDialog(service)
+    reopened = GardenMemoryPanel(service)
     qtbot.addWidget(reopened)
     assert reopened.targets.count() == 2
     reopened.layer_filter_menu.actions()[0].trigger()
@@ -503,7 +506,8 @@ def test_record_layer_filter_keeps_mixed_and_deleted_target_history(garden, qtbo
     from PyQt6.QtCore import Qt
 
     from open_garden_planner.models.layer import Layer
-    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor, GardenMemoryDialog
+    from open_garden_planner.ui.dialogs.garden_memory_dialog import EventEditor
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
 
     scene, pm, commands, service, bed, plant = garden
     hidden_layer = Layer(name='Fond')
@@ -521,7 +525,7 @@ def test_record_layer_filter_keeps_mixed_and_deleted_target_history(garden, qtbo
     scene.removeItem(deleted)
     service.set_card(str(plant.item_id), {'zone_id': str(bed.item_id)})
     before = pm.garden_memory
-    dialog = GardenMemoryDialog(service)
+    dialog = GardenMemoryPanel(service)
     qtbot.addWidget(dialog)
     action = next(a for a in dialog.layer_filter_menu.actions() if a.data() == str(hidden_layer.id))
     action.trigger()

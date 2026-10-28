@@ -74,6 +74,7 @@ from open_garden_planner.ui.theme import (
     set_text_role,
     theme_color,
 )
+from open_garden_planner.ui.views.garden_data_view import GardenDataView
 from open_garden_planner.ui.views.harvest_view import HarvestView
 from open_garden_planner.ui.views.planting_calendar_view import PlantingCalendarView
 from open_garden_planner.ui.views.seed_inventory_view import SeedInventoryView
@@ -4694,19 +4695,9 @@ class GardenPlannerApp(QMainWindow):
         menu.addAction(check_companion_action)
 
     def _on_garden_records(self, target_id: str | None = None) -> None:
-        """Open perennial tracking from a selected shape or the global Garden menu."""
-        from open_garden_planner.core.garden_memory import GardenMemoryService
-        from open_garden_planner.ui.dialogs.garden_memory_dialog import GardenMemoryDialog
-
-        service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
-        dialog = GardenMemoryDialog(service, target_id, self)
-        try:
-            dialog.exec()
-        finally:
-            self._project_manager.garden_memory_changed.disconnect(dialog._refresh_events)
-            dialog.deleteLater()
-        self._update_properties_panel()
-        self._update_plant_database_panel()
+        """Show the garden data page, focused on a shape or the whole garden."""
+        self._tab_widget.setCurrentWidget(self.garden_data_view)
+        self.garden_data_view.select_target(target_id)
 
     def _setup_garden_menu(self, menu: QMenu) -> None:
         """Set up the Garden menu actions (US-12.10a — soil)."""
@@ -5186,6 +5177,14 @@ class GardenPlannerApp(QMainWindow):
         self.harvest_view = HarvestView(self.canvas_scene, self._project_manager)
         self._tab_widget.addTab(self.harvest_view, self.tr("Harvest"))
         self._set_tab_icon(self.harvest_view, "tab_harvest")
+
+        from open_garden_planner.core.garden_memory import GardenMemoryService
+
+        self.garden_data_view = GardenDataView(GardenMemoryService(
+            self._project_manager, cmd_mgr, self.canvas_scene,
+        ))
+        self._tab_widget.addTab(self.garden_data_view, self.tr("Garden Data"))
+        self._set_tab_icon(self.garden_data_view, "tab_calendar")
 
         # Keyboard shortcuts: Ctrl+1 / Ctrl+2 / Ctrl+3 to switch tabs.
         # (The "Layout / Paper Space" tab was dropped — `pdf_report_service`
@@ -9601,6 +9600,8 @@ class GardenPlannerApp(QMainWindow):
 
     def _on_tab_changed(self, index: int) -> None:
         """Refresh tab views when they become active."""
+        if self._tab_widget.widget(index) is self.garden_data_view:
+            self.garden_data_view.refresh()
         if index == 1:
             self.calendar_view.refresh()
         elif index == 2:
