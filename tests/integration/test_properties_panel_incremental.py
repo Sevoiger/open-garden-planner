@@ -15,7 +15,8 @@ widgets in place. These tests lock that contract:
 - the in-place refresh never stomps a focused field.
 """
 
-from PyQt6.QtCore import QPointF
+import pytest
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QDoubleSpinBox, QLabel, QLineEdit
 
@@ -173,6 +174,59 @@ class TestLayerComboRefresh:
         widget = _field_by_label(panel, "Layer")
         assert isinstance(widget, QComboBox), "Layer combo not found in panel"
         return widget
+
+    @pytest.mark.parametrize("layer_state", ["hidden", "locked"])
+    def test_move_to_unselectable_layer_keeps_sender_alive(self, qtbot, layer_state):
+        """A selection callback must not destroy the combo inside its signal."""
+        from PyQt6 import sip
+        from PyQt6.QtCore import QCoreApplication, QEvent
+
+        from open_garden_planner.models.layer import Layer
+
+        scene = CanvasScene(2000, 2000)
+        target = Layer(name="Destination", visible=layer_state != "hidden",
+                       locked=layer_state == "locked")
+        scene.add_layer(target)
+        item = RectangleItem(0, 0, 100, 50)
+        original_layer = scene.layers[0].id
+        item.layer_id = original_layer
+        scene.addItem(item)
+        manager = CommandManager()
+        panel = PropertiesPanel(command_manager=manager)
+        qtbot.addWidget(panel)
+        def refresh_selection():
+            panel.set_selected_items(scene.selectedItems())
+
+        scene.selectionChanged.connect(refresh_selection)
+        scene.setParent(panel)
+        item.setSelected(True)
+        combo = self._layer_combo(panel)
+        alive_during_signal = []
+        combo.currentIndexChanged.connect(lambda: alive_during_signal.append(not sip.isdeleted(combo)))
+
+        panel.resize(500, 900)
+        panel.show()
+        qtbot.waitExposed(panel)
+        combo.showPopup()
+        qtbot.wait(250)  # Let Qt's popup opening-click guard expire.
+        popup = combo.view()
+        index = combo.model().index(combo.findData(target.id), 0)
+        qtbot.mouseMove(popup.viewport(), pos=popup.visualRect(index).center())
+        qtbot.mouseClick(popup.viewport(), Qt.MouseButton.LeftButton,
+                         pos=popup.visualRect(index).center())
+
+        assert item.layer_id == target.id
+        assert not item.isSelected()
+        assert panel._current_items == []
+        assert alive_during_signal == [True]
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert sip.isdeleted(combo)
+        manager.undo()
+        assert item.layer_id == original_layer
+        assert item.isVisible()
+        manager.redo()
+        assert item.layer_id == target.id
+        scene.selectionChanged.disconnect()
 
     def test_layer_rename_reaches_combo_on_refresh(self, qtbot) -> None:  # noqa: ARG002
         scene = CanvasScene(2000, 2000)

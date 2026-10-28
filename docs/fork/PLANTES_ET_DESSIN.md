@@ -158,6 +158,10 @@ les formulaires, mais ne modifie plus les nombres, dates, listes de choix et
 curseurs. Les menus et listes déroulantes ouverts ignorent aussi la molette ;
 leurs choix restent accessibles au clic et au clavier.
 
+Dans **Properties > Calque**, déplacer un objet vers un calque masqué le rend
+invisible ; vers un calque verrouillé, il perd sa sélection. Le panneau se vide
+alors sans interrompre l'application. Le déplacement reste annulable et rétablissable.
+
 ### Associations de plantes et verrouillage
 
 L'interface française utilise **association** à la place du terme spécialisé
