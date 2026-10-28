@@ -2,16 +2,22 @@
 from __future__ import annotations
 
 import datetime
+from types import SimpleNamespace
+
+import pytest
 
 from open_garden_planner.models.propagation import compute_propagation_plan
 from open_garden_planner.models.succession import SuccessionEntry, SuccessionPlan
 from open_garden_planner.models.task import ManualTask
 from open_garden_planner.services.task_generator import (
     BedInput,
+    CalendarDataError,
     PlanState,
     PlantRowInput,
     Task,
+    build_propagation_plans,
     classify_urgency,
+    frost_anchor_years,
     generate_all,
     generate_calendar_tasks,
     generate_for_date_window,
@@ -129,6 +135,59 @@ class TestCalendarTasks:
             transplant_end=1,
         )
         assert generate_calendar_tasks(_state(last_frost=None, plant_rows=(row,))) == []
+
+    def test_date_overflow_is_reported_as_calendar_data_error(self) -> None:
+        row = PlantRowInput(
+            display_name="Tomato",
+            species_key="tomato",
+            indoor_sow_start=1_000_000_000,
+            indoor_sow_end=1_000_000_000,
+        )
+
+        with pytest.raises(CalendarDataError, match="Tomato.*indoor_sow"):
+            generate_calendar_tasks(
+                _state(plant_rows=(row,), actionable_only=False)
+            )
+
+    def test_anchor_year_expansion_date_underflow_is_typed(self) -> None:
+        first_day = datetime.date.min
+        row = PlantRowInput(
+            display_name="Tomato",
+            species_key="tomato",
+            direct_sow_start=1,
+            direct_sow_end=1,
+        )
+        state = _state(
+            today=first_day,
+            year=first_day.year,
+            last_frost=first_day,
+            plant_rows=(row,),
+            actionable_only=False,
+        )
+
+        with pytest.raises(CalendarDataError, match="frost-anchor years"):
+            frost_anchor_years(state, first_day, first_day)
+
+
+def test_propagation_duration_overflow_is_reported_as_calendar_data_error() -> None:
+    species = SimpleNamespace(
+        common_name="Tomato",
+        indoor_sow_start=0,
+        indoor_sow_end=0,
+        transplant_start=8,
+        days_to_germination_min=3_000_000,
+        days_to_germination_max=3_000_000,
+        prick_out_after_days=None,
+        harden_off_days=None,
+    )
+
+    with pytest.raises(CalendarDataError, match="Tomato.*supported date range"):
+        build_propagation_plans(
+            {"tomato": species},
+            datetime.date(2026, 4, 15),
+            {},
+            {},
+        )
 
 
 class TestPropagationTasks:

@@ -30,6 +30,11 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.core.object_types import ObjectType
+from open_garden_planner.core.personal_store import (
+    PersonalStoreError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+)
 from open_garden_planner.core.plant_renderer import render_plant_pixmap
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.models.plant_lists import (
@@ -38,6 +43,7 @@ from open_garden_planner.models.plant_lists import (
     get_plant_list_store,
 )
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.personal_store_status import PersonalStoreStatus
 
 if TYPE_CHECKING:
     from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
@@ -95,8 +101,7 @@ class PlantListsPanel(QWidget):
 
         self._setup_ui()
         self._store.changed.connect(self._on_store_changed)
-        self._refresh_lists_dropdown()
-        self._refresh_entries()
+        self._refresh_store_view()
 
     def set_canvas_scene(self, scene: CanvasScene | None) -> None:
         """Update canvas scene reference."""
@@ -139,6 +144,11 @@ class PlantListsPanel(QWidget):
         )
         layout.addWidget(self._desc_label)
 
+        self._storage_status = PersonalStoreStatus(self)
+        self._storage_status.retry_requested.connect(self._retry_storage)
+        self._storage_status.reload_requested.connect(self._reload_storage)
+        layout.addWidget(self._storage_status)
+
         # Entries list
         self._entries_list = _DraggablePlantListWidget()
         self._entries_list.setContextMenuPolicy(
@@ -170,6 +180,7 @@ class PlantListsPanel(QWidget):
         act_new = QAction(self.tr("New List..."), self)
         act_new.triggered.connect(self._on_new_list)
         menu.addAction(act_new)
+        self._act_new = act_new
 
         self._act_rename = QAction(self.tr("Rename List..."), self)
         self._act_rename.triggered.connect(self._on_rename_list)
@@ -190,13 +201,67 @@ class PlantListsPanel(QWidget):
         menu.addAction(act_import)
 
         self._menu_btn.setMenu(menu)
+        self._act_import = act_import
+        self._act_export = act_export
 
     # ── Refresh logic ─────────────────────────────────────────────────────────
 
     def _on_store_changed(self) -> None:
         """Handle store change event."""
-        self._refresh_lists_dropdown()
-        self._refresh_entries()
+        self._refresh_store_view()
+
+    def _refresh_store_view(self) -> None:
+        """Refresh visible lists or show a persistent load error."""
+        try:
+            self._refresh_lists_dropdown()
+            self._refresh_entries()
+        except PersonalStoreLoadError as exc:
+            self._list_combo.clear()
+            self._entries_list.clear()
+            self._desc_label.hide()
+            self._storage_status.show_load_error(exc)
+            self._set_storage_actions_enabled(False)
+            return
+        if not self._store.is_dirty:
+            self._storage_status.clear()
+        self._update_actions_state()
+
+    def _retry_storage(self) -> None:
+        """Retry either reading a repaired file or saving pending memory."""
+        if self._store.load_state == PersonalStoreLoadState.FAILED:
+            self._store.reload()
+            if self._store.load_state == PersonalStoreLoadState.FAILED:
+                self._storage_status.show_load_error(
+                    self._store.load_error or PersonalStoreLoadError("Unknown load error")
+                )
+            else:
+                self._refresh_store_view()
+            return
+        try:
+            self._store.save()
+        except PersonalStoreError as exc:
+            self._storage_status.show_save_error(exc)
+            self._refresh_store_view()
+            return
+        self._refresh_store_view()
+
+    def _reload_storage(self) -> None:
+        """Reload disk state after confirming that pending memory will be lost."""
+        if self._store.is_dirty and not self._storage_status.confirm_reload(self):
+            return
+        self._store.reload()
+        self._refresh_store_view()
+
+    def _set_storage_actions_enabled(self, enabled: bool) -> None:
+        """Enable write actions only after the store is loaded and clean."""
+        self._act_new.setEnabled(enabled)
+        self._act_rename.setEnabled(enabled)
+        self._act_delete.setEnabled(enabled)
+        self._act_import.setEnabled(enabled)
+        self._act_export.setEnabled(enabled)
+        self._add_selected_btn.setEnabled(enabled)
+        self._list_combo.setEnabled(enabled)
+        self._menu_btn.setEnabled(True)
 
     def _refresh_lists_dropdown(self) -> None:
         """Populate the list combo box."""
@@ -229,9 +294,17 @@ class PlantListsPanel(QWidget):
 
     def _update_actions_state(self) -> None:
         """Enable/disable actions based on current list."""
+        writable = (
+            self._store.load_state != PersonalStoreLoadState.FAILED
+            and not self._store.is_dirty
+        )
         is_fav = self._current_list_id == PlantListStore.FAVORITES_ID
-        self._act_rename.setEnabled(not is_fav)
-        self._act_delete.setEnabled(not is_fav)
+        self._act_rename.setEnabled(writable and not is_fav)
+        self._act_delete.setEnabled(writable and not is_fav)
+        self._act_new.setEnabled(writable)
+        self._act_import.setEnabled(writable)
+        self._act_export.setEnabled(self._store.load_state != PersonalStoreLoadState.FAILED)
+        self._add_selected_btn.setEnabled(writable)
 
         curr_list = self._store.get_list(self._current_list_id)
         if curr_list and curr_list.description:
@@ -239,6 +312,22 @@ class PlantListsPanel(QWidget):
             self._desc_label.show()
         else:
             self._desc_label.hide()
+        self._list_combo.setEnabled(self._store.load_state != PersonalStoreLoadState.FAILED)
+
+    def _run_store_action(self, action):
+        """Run a storage mutation and keep the resulting error visible in Qt."""
+        try:
+            result = action()
+        except PersonalStoreLoadError as exc:
+            self._storage_status.show_load_error(exc)
+            self._refresh_store_view()
+            return None
+        except PersonalStoreError as exc:
+            self._storage_status.show_save_error(exc)
+            self._refresh_store_view()
+            return None
+        self._refresh_store_view()
+        return result
 
     @staticmethod
     def _classify_object_type(species: PlantSpeciesData) -> ObjectType:
@@ -335,7 +424,11 @@ class PlantListsPanel(QWidget):
             self.tr("List name:"),
         )
         if ok and name.strip():
-            new_list = self._store.create_list(name.strip())
+            new_list = self._run_store_action(
+                lambda: self._store.create_list(name.strip())
+            )
+            if new_list is None:
+                return
             self._current_list_id = new_list.id
             self._refresh_lists_dropdown()
             self._refresh_entries()
@@ -352,8 +445,9 @@ class PlantListsPanel(QWidget):
             text=curr_list.name,
         )
         if ok and name.strip():
-            self._store.rename_list(curr_list.id, name.strip())
-            self._refresh_lists_dropdown()
+            self._run_store_action(
+                lambda: self._store.rename_list(curr_list.id, name.strip())
+            )
 
     def _on_delete_list(self) -> None:
         curr_list = self._store.get_list(self._current_list_id)
@@ -370,7 +464,8 @@ class PlantListsPanel(QWidget):
             QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self._store.delete_list(curr_list.id)
+            if not self._run_store_action(lambda: self._store.delete_list(curr_list.id)):
+                return
             self._current_list_id = PlantListStore.FAVORITES_ID
             self._refresh_lists_dropdown()
             self._refresh_entries()
@@ -414,7 +509,11 @@ class PlantListsPanel(QWidget):
             try:
                 with open(file_path, encoding="utf-8") as f:
                     content = f.read()
-                imported = self._store.import_list_from_json(content)
+                imported = self._run_store_action(
+                    lambda: self._store.import_list_from_json(content)
+                )
+                if imported is None:
+                    return
                 self._current_list_id = imported.id
                 self._refresh_lists_dropdown()
                 self._refresh_entries()
@@ -469,8 +568,8 @@ class PlantListsPanel(QWidget):
                         act_move.setIcon(star_icon)
                     dest_id = dest_list.id
                     act_move.triggered.connect(
-                        lambda _, d_id=dest_id: self._store.move_entry(
-                            pl.id, d_id, entry.id
+                        lambda _, d_id=dest_id: self._run_store_action(
+                            lambda: self._store.move_entry(pl.id, d_id, entry.id)
                         )
                     )
                     move_menu.addAction(act_move)
@@ -497,7 +596,9 @@ class PlantListsPanel(QWidget):
         # Remove action
         act_remove = QAction(self.tr("Remove from List"), self)
         act_remove.triggered.connect(
-            lambda: self._store.remove_entry(pl.id, entry.id)
+            lambda: self._run_store_action(
+                lambda: self._store.remove_entry(pl.id, entry.id)
+            )
         )
         menu.addAction(act_remove)
 
@@ -513,7 +614,11 @@ class PlantListsPanel(QWidget):
             text=entry.note,
         )
         if ok:
-            self._store.update_entry_note(self._current_list_id, entry.id, note)
+            self._run_store_action(
+                lambda: self._store.update_entry_note(
+                    self._current_list_id, entry.id, note
+                )
+            )
 
     def _find_selected_canvas_plant_matching(
         self, target_species_key: str
@@ -554,9 +659,13 @@ class PlantListsPanel(QWidget):
                 scientific_name=name, common_name=name
             )
 
-        self._store.update_entry_species(
-            self._current_list_id, entry.id, new_species
+        updated = self._run_store_action(
+            lambda: self._store.update_entry_species(
+                self._current_list_id, entry.id, new_species
+            )
         )
+        if not updated:
+            return
         QMessageBox.information(
             self,
             self.tr("Snapshot Updated"),
@@ -592,7 +701,13 @@ class PlantListsPanel(QWidget):
                         )
 
             if species_obj:
-                self._store.add_entry(self._current_list_id, species_obj)
+                added = self._run_store_action(
+                    lambda species=species_obj: self._store.add_entry(
+                        self._current_list_id, species
+                    )
+                )
+                if added is None:
+                    return
                 added_count += 1
 
         if added_count == 0:

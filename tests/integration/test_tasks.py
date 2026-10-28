@@ -428,6 +428,44 @@ class TestTasksView:
         texts = [w.text() for w in view.findChildren(QLabel)]
         assert any("Mow lawn" in t for t in texts)
 
+    def test_calendar_date_overflow_is_visible_instead_of_empty_state(self, qtbot) -> None:
+        from open_garden_planner.core.object_types import ObjectType
+        from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+        from open_garden_planner.ui.views.tasks_view import TasksView
+
+        scene = CanvasScene(width_cm=500, height_cm=500)
+        plant = CircleItem(
+            center_x=100, center_y=100, radius=20,
+            object_type=ObjectType.TREE, name="Tomato",
+        )
+        plant.metadata["plant_species"] = {
+            "scientific_name": "Solanum lycopersicum",
+            "common_name": "Tomato",
+            "source_id": "tomato-overflow-test",
+            "indoor_sow_start": 1_000_000_000,
+            "indoor_sow_end": 1_000_000_000,
+        }
+        scene.addItem(plant)
+        pm = ProjectManager()
+        pm.set_location({
+            "frost_dates": {
+                "last_spring_frost": datetime.date.today().strftime("%m-%d"),
+            },
+        })
+
+        view = TasksView(scene, pm)
+        qtbot.addWidget(view)
+
+        from PyQt6.QtWidgets import QLabel
+
+        error = view.findChild(QLabel, "calendarDataError")
+        assert error is not None
+        assert not error.isHidden()
+        assert "Tomato" in error.text()
+        assert "No tasks — you're all caught up." not in [
+            widget.text() for widget in view.findChildren(QLabel)
+        ]
+
     def test_done_then_archived(self, qtbot) -> None:
         pm = ProjectManager()
         today = datetime.date.today()

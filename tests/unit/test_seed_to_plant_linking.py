@@ -31,25 +31,25 @@ class TestSeedPacketIdStorage:
 class TestSeedPacketLinkLookup:
     """Verify seed packet store look-ups for linked packets."""
 
-    def _make_store(self, *packets: SeedPacket) -> SeedInventoryStore:
-        store = SeedInventoryStore.__new__(SeedInventoryStore)
-        store._packets = {p.id: p for p in packets}
-        store._path = None  # type: ignore[assignment]
+    def _make_store(self, tmp_path, *packets: SeedPacket) -> SeedInventoryStore:
+        store = SeedInventoryStore(tmp_path / "seeds.json")
+        for packet in packets:
+            store.add(packet)
         return store
 
-    def test_get_linked_packet(self) -> None:
+    def test_get_linked_packet(self, tmp_path) -> None:
         packet = SeedPacket(species_name="Tomato", germination_days_min=7, germination_days_max=14)
-        store = self._make_store(packet)
+        store = self._make_store(tmp_path, packet)
         result = store.get(packet.id)
         assert result is not None
         assert result.germination_days_min == 7
         assert result.germination_days_max == 14
 
-    def test_get_unknown_id_returns_none(self) -> None:
-        store = self._make_store()
+    def test_get_unknown_id_returns_none(self, tmp_path) -> None:
+        store = self._make_store(tmp_path)
         assert store.get("nonexistent-id") is None
 
-    def test_packet_with_germination_data_for_calendar(self) -> None:
+    def test_packet_with_germination_data_for_calendar(self, tmp_path) -> None:
         """Seed packet germination data should override species defaults when linked."""
         packet = SeedPacket(
             species_name="Pepper",
@@ -57,7 +57,7 @@ class TestSeedPacketLinkLookup:
             germination_days_max=21,
             germination_temp_opt_c=24.0,
         )
-        store = self._make_store(packet)
+        store = self._make_store(tmp_path, packet)
         p = store.get(packet.id)
         assert p is not None
         assert p.germination_days_min == 14

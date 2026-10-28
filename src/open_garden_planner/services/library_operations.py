@@ -13,6 +13,7 @@ import math
 import os
 import secrets
 import tempfile
+import threading
 import time
 import unicodedata
 import uuid
@@ -631,6 +632,9 @@ class LibraryOperations:
         except (OSError, RuntimeError) as exc:
             raise LibraryValidationError(f"Invalid plant library path: {exc}") from exc
         self._prepared: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # Readers may prepare while a serialized writer applies another plan.
+        # This mutex protects only cache bookkeeping, never disk I/O or Qt.
+        self._preparation_mutex = threading.RLock()
 
     def snapshot(self) -> dict[str, Any]:
         """Return a detached mapping of stored plant IDs to raw records."""
@@ -757,16 +761,18 @@ class LibraryOperations:
             )
 
         token = secrets.token_urlsafe(24)
-        self._prepared[token] = {
+        preparation = {
             "request_hash": request_hash,
             "expected_fingerprint": expected_fingerprint,
             "rows": prepared_rows,
             "public_rows": public_rows,
             "created_at": time.monotonic(),
         }
-        self._prepared.move_to_end(token)
-        while len(self._prepared) > _MAX_PREPARATIONS:
-            self._prepared.popitem(last=False)
+        with self._preparation_mutex:
+            self._prepared[token] = preparation
+            self._prepared.move_to_end(token)
+            while len(self._prepared) > _MAX_PREPARATIONS:
+                self._prepared.popitem(last=False)
         return {
             "token": token,
             "can_apply": not any(row["status"] == "conflict" for row in public_rows),
@@ -928,20 +934,22 @@ class LibraryOperations:
                 raise
             except OSError as exc:
                 raise LibraryPersistenceError(f"Could not save plant library: {exc}") from exc
-            self._prepared.pop(token, None)
+            with self._preparation_mutex:
+                self._prepared.pop(token, None)
             return result
 
     def _get_preparation(self, token: str) -> dict[str, Any] | None:
         if not isinstance(token, str):
             return None
-        preparation = self._prepared.get(token)
-        if preparation is None:
-            return None
-        if time.monotonic() - preparation["created_at"] >= _PREPARATION_TTL_SECONDS:
-            self._prepared.pop(token, None)
-            return None
-        self._prepared.move_to_end(token)
-        return preparation
+        with self._preparation_mutex:
+            preparation = self._prepared.get(token)
+            if preparation is None:
+                return None
+            if time.monotonic() - preparation["created_at"] >= _PREPARATION_TTL_SECONDS:
+                self._prepared.pop(token, None)
+                return None
+            self._prepared.move_to_end(token)
+            return preparation
 
     def result(self, key: str) -> dict[str, Any] | None:
         """Read a durable idempotency receipt and its current transaction state."""

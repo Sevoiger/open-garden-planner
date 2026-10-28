@@ -92,3 +92,36 @@ class TestCalendarTasksTabConvergence:
         view.refresh()
         assert tid not in _calendar_tids(view)
         assert _tasks_tab_status(scene, pm, tid) == "dismissed"
+
+    def test_propagation_date_overflow_is_visible_and_stops_calendar_refresh(
+        self, qtbot, tmp_path, monkeypatch
+    ) -> None:
+        from PyQt6.QtWidgets import QLabel
+
+        from open_garden_planner.models import seed_inventory as seed_inventory_module
+        from open_garden_planner.models.seed_inventory import SeedInventoryStore
+
+        scene, pm = _build()
+        plant = next(item for item in scene.items() if isinstance(item, CircleItem))
+        plant.metadata["plant_species"].update({
+            "indoor_sow_start": 0,
+            "indoor_sow_end": 0,
+            "transplant_start": 8,
+            "days_to_germination_min": 3_000_000,
+            "days_to_germination_max": 3_000_000,
+        })
+        monkeypatch.setattr(
+            seed_inventory_module,
+            "get_seed_inventory",
+            lambda: SeedInventoryStore(tmp_path / "seed_inventory.json"),
+        )
+
+        view = PlantingCalendarView(scene, pm)
+        qtbot.addWidget(view)
+
+        error = view.findChild(QLabel, "calendarDataError")
+        assert error is not None
+        assert not error.isHidden()
+        assert "Tomato" in error.text()
+        assert view._plan_state is None
+        assert view._scroll.isHidden()

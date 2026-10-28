@@ -13,9 +13,14 @@ class LibraryPort:
     def __init__(self, path: Path) -> None:
         self.operations = LibraryOperations(path)
         self._mutex = threading.RLock()
+        # Bound concurrent reader allocations without making a Qt writer wait
+        # for a worker's disk read. Atomic files and commit CAS coordinate the
+        # two lanes; LibraryOperations protects its short preparation cache.
+        self._read_mutex = threading.RLock()
 
     def dispatch(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        with self._mutex:
+        readonly = action in {"snapshot", "prepare", "result"}
+        with self._read_mutex if readonly else self._mutex:
             if action == "snapshot":
                 return {"plants": self.operations.snapshot(), "scope": "library"}
             if action == "prepare":

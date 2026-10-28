@@ -4,10 +4,17 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from open_garden_planner.models import seed_inventory as seed_inventory_module
+from open_garden_planner.core.personal_store import (
+    PersonalStoreConflictError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+    PersonalStorePersistenceError,
+)
 from open_garden_planner.models.seed_inventory import (
     SeedInventoryStore,
     SeedPacket,
@@ -155,6 +162,24 @@ class TestSeedPacketSerialization:
         packet = SeedPacket.from_dict(d)
         assert packet.light_germinator is False
 
+    @pytest.mark.parametrize(
+        ("field_name", "invalid_value"),
+        [
+            ("purchase_year", None),
+            ("cold_stratification", None),
+            ("purchase_year", 2**31),
+            ("germination_days_min", -1),
+            ("germination_days_max", 2**31),
+            ("stratification_days", 10**100),
+            ("viability_shelf_life_override", -(10**100)),
+        ],
+    )
+    def test_from_dict_rejects_null_and_out_of_range_integer_fields(
+        self, field_name: str, invalid_value: Any
+    ) -> None:
+        with pytest.raises(ValueError, match=field_name):
+            SeedPacket.from_dict({"id": "invalid", field_name: invalid_value})
+
 
 # ─── SeedViabilityDB ──────────────────────────────────────────────────────────
 
@@ -286,6 +311,7 @@ class TestSeedInventoryStore:
     def test_empty_on_creation(self, store: SeedInventoryStore) -> None:
         assert len(store) == 0
         assert store.all() == []
+        assert store.load_state == PersonalStoreLoadState.ABSENT
 
     def test_add_and_get(self, store: SeedInventoryStore, tomato_packet: SeedPacket) -> None:
         store.add(tomato_packet)
@@ -332,26 +358,23 @@ class TestSeedInventoryStore:
         assert restored.species_name == "Tomato"
         assert restored.variety == "Brandywine"
 
-    def test_partial_serialization_failure_preserves_existing_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_nonfinite_serialization_failure_preserves_existing_file(
+        self, tmp_path: Path
     ) -> None:
         path = tmp_path / "inv.json"
         path.write_text('[{"id":"old","species_name":"Ancienne"}]', encoding="utf-8")
         store = SeedInventoryStore(path)
         store.add(SeedPacket(id="new", species_name="Nouvelle"))
         original = path.read_bytes()
-
-        def partial_dump(_value: object, stream: object, **_kwargs: object) -> None:
-            stream.write("[")  # type: ignore[attr-defined]
-            raise OSError("injected serialization failure")
-
-        with monkeypatch.context() as scoped:
-            scoped.setattr(seed_inventory_module.json, "dump", partial_dump)
-            with pytest.raises(OSError, match="injected serialization failure"):
-                store.save()
+        packet = store.get("new")
+        assert packet is not None
+        packet.quantity = float("nan")
+        with pytest.raises(PersonalStorePersistenceError, match="non-finite quantity"):
+            store.save()
 
         assert path.read_bytes() == original
         assert not list(tmp_path.glob(".inv.json.*.tmp"))
+        assert store.is_dirty
 
     def test_replace_failure_preserves_existing_file_and_cleans_temporary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -361,7 +384,9 @@ class TestSeedInventoryStore:
         store = SeedInventoryStore(path)
         store.add(SeedPacket(id="new", species_name="Nouvelle"))
         original = path.read_bytes()
-        real_replace = seed_inventory_module.os.replace
+        from open_garden_planner.core import plan_io
+
+        real_replace = plan_io.os.replace
 
         def fail_replace(source: str | Path, destination: str | Path) -> None:
             if Path(destination) == path:
@@ -369,12 +394,13 @@ class TestSeedInventoryStore:
             real_replace(source, destination)
 
         with monkeypatch.context() as scoped:
-            scoped.setattr(seed_inventory_module.os, "replace", fail_replace)
-            with pytest.raises(OSError, match="injected replace failure"):
+            scoped.setattr(plan_io.os, "replace", fail_replace)
+            with pytest.raises(PersonalStorePersistenceError, match="injected replace failure"):
                 store.save()
 
         assert path.read_bytes() == original
         assert not list(tmp_path.glob(".inv.json.*.tmp"))
+        assert store.is_dirty
 
     def test_save_preserves_unknown_historical_fields_until_record_removal(
         self, tmp_path: Path
@@ -409,15 +435,198 @@ class TestSeedInventoryStore:
         assert replacement["species_name"] == "Replacement"
         assert "future_trait" not in replacement
 
-    def test_corrupt_file_starts_empty(self, tmp_path: Path) -> None:
+    def test_corrupt_file_is_failed_and_never_overwritten(self, tmp_path: Path) -> None:
         path = tmp_path / "inv.json"
-        path.write_text("NOT VALID JSON", encoding="utf-8")
+        original = b"NOT VALID JSON"
+        path.write_bytes(original)
         store = SeedInventoryStore(path)
-        assert len(store) == 0
+        assert store.load_state == PersonalStoreLoadState.FAILED
+        with pytest.raises(PersonalStoreLoadError):
+            store.all()
+        with pytest.raises(PersonalStoreLoadError):
+            store.add(SeedPacket(species_name="Not saved"))
+        with pytest.raises(PersonalStoreLoadError):
+            store.save()
+        assert path.read_bytes() == original
 
     def test_missing_file_starts_empty(self, tmp_path: Path) -> None:
         store = SeedInventoryStore(tmp_path / "nonexistent.json")
         assert len(store) == 0
+        assert store.load_state == PersonalStoreLoadState.ABSENT
+
+    def test_missing_nonnullable_fields_keep_legacy_defaults(self, tmp_path: Path) -> None:
+        path = tmp_path / "legacy.json"
+        path.write_text('[{"id":"legacy"}]', encoding="utf-8")
+
+        packet = SeedInventoryStore(path).get("legacy")
+
+        assert packet is not None
+        assert packet.purchase_year == 2024
+        assert packet.cold_stratification is False
+
+    @pytest.mark.parametrize(
+        ("field_name", "invalid_value"),
+        [
+            ("purchase_year", None),
+            ("cold_stratification", None),
+            ("purchase_year", 2**31),
+            ("germination_days_min", -1),
+            ("germination_days_max", 2**31),
+            ("stratification_days", 10**100),
+            ("viability_shelf_life_override", -(10**100)),
+        ],
+    )
+    def test_invalid_fields_and_calendar_durations_fail_closed(
+        self,
+        tmp_path: Path,
+        field_name: str,
+        invalid_value: Any,
+    ) -> None:
+        path = tmp_path / "invalid.json"
+        original = json.dumps([{"id": "invalid", field_name: invalid_value}]).encode()
+        path.write_bytes(original)
+
+        store = SeedInventoryStore(path)
+
+        assert store.load_state == PersonalStoreLoadState.FAILED
+        with pytest.raises(PersonalStoreLoadError, match=field_name):
+            store.all()
+        assert path.read_bytes() == original
+
+    def test_empty_file_has_distinct_state(self, tmp_path: Path) -> None:
+        path = tmp_path / "empty.json"
+        path.write_text("[]", encoding="utf-8")
+        store = SeedInventoryStore(path)
+        assert store.load_state == PersonalStoreLoadState.EMPTY
+        assert store.all() == []
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            'null',
+            '[{"id":"a","quantity":true}]',
+            '[{"id":"a"},{"id":"a"}]',
+            '[{"id":"a","quantity":NaN}]',
+            '[{"id":"a","quantity":' + ('9' * 1000) + '}]',
+            '[{"id":"a","future_field":1e999}]',
+            "[" * 1200 + "0" + "]" * 1200,
+        ],
+    )
+    def test_invalid_store_records_fail_closed(self, tmp_path: Path, payload: str) -> None:
+        path = tmp_path / "invalid.json"
+        path.write_text(payload, encoding="utf-8")
+        store = SeedInventoryStore(path)
+        assert store.load_state == PersonalStoreLoadState.FAILED
+        with pytest.raises(PersonalStoreLoadError):
+            store.all()
+        with pytest.raises(PersonalStoreLoadError):
+            store.save()
+        assert path.read_text(encoding="utf-8") == payload
+
+    def test_unreadable_path_and_explicit_reload(self, tmp_path: Path) -> None:
+        path = tmp_path / "inventory.json"
+        path.mkdir()
+        store = SeedInventoryStore(path)
+        assert store.load_state == PersonalStoreLoadState.FAILED
+        with pytest.raises(PersonalStoreLoadError):
+            store.all()
+
+        path.rmdir()
+        path.write_text("[]", encoding="utf-8")
+        store.reload()
+        assert store.load_state == PersonalStoreLoadState.EMPTY
+        assert store.load_error is None
+
+    def test_external_edit_is_a_conflict_and_can_be_reloaded(self, tmp_path: Path) -> None:
+        path = tmp_path / "inventory.json"
+        first = SeedInventoryStore(path)
+        stale = SeedInventoryStore(path)
+        first.add(SeedPacket(id="first", species_name="First"))
+        first.save()
+        stale.add(SeedPacket(id="stale", species_name="Stale"))
+        with pytest.raises(PersonalStoreConflictError):
+            stale.save()
+        assert stale.is_dirty
+        assert {packet.id for packet in SeedInventoryStore(path).all()} == {"first"}
+
+        stale.reload()
+        assert not stale.is_dirty
+        assert {packet.id for packet in stale.all()} == {"first"}
+
+    def test_save_failure_keeps_memory_and_retry_writes_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from open_garden_planner.core import plan_io
+
+        path = tmp_path / "inventory.json"
+        path.write_text('[{"id":"old","species_name":"Old"}]', encoding="utf-8")
+        store = SeedInventoryStore(path)
+        original = path.read_bytes()
+        store.add(SeedPacket(id="new", species_name="New"))
+        real_replace = plan_io.os.replace
+
+        def fail_replace(source: str | Path, destination: str | Path) -> None:
+            if Path(destination) == path:
+                raise OSError("simulated permission failure")
+            real_replace(source, destination)
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(plan_io.os, "replace", fail_replace)
+            with pytest.raises(PersonalStorePersistenceError, match="permission failure"):
+                store.save()
+
+        assert path.read_bytes() == original
+        assert store.is_dirty
+        assert {packet.id for packet in store.all()} == {"old", "new"}
+        store.save()
+        assert not store.is_dirty
+        assert {packet.id for packet in SeedInventoryStore(path).all()} == {"old", "new"}
+
+    def test_invalid_mutable_memory_is_not_published(self, tmp_path: Path) -> None:
+        path = tmp_path / "inventory.json"
+        store = SeedInventoryStore(path)
+        packet = SeedPacket(id="invalid", species_name="Invalid", purchase_year="2024")
+        store.add(packet)
+
+        with pytest.raises(PersonalStorePersistenceError, match="purchase_year"):
+            store.save()
+
+        assert not path.exists()
+        assert store.is_dirty
+        assert store.get("invalid") is packet
+
+    def test_task_state_propagates_failed_global_inventory_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from open_garden_planner.models import seed_inventory as seed_inventory_module
+        from open_garden_planner.services.task_generator import build_plan_state
+
+        path = tmp_path / "seed_inventory.json"
+        path.write_text("{broken", encoding="utf-8")
+        failed_store = SeedInventoryStore(path)
+        monkeypatch.setattr(
+            seed_inventory_module, "get_seed_inventory", lambda: failed_store
+        )
+        item = SimpleNamespace(
+            item_id="plant-1",
+            metadata={
+                "plant_species": {
+                    "scientific_name": "Solanum lycopersicum",
+                    "common_name": "Tomato",
+                },
+                "plant_instance": {"seed_packet_id": "packet-1"},
+            },
+        )
+        scene = SimpleNamespace(items=lambda: [item])
+        project_manager = SimpleNamespace(
+            location={},
+            manual_tasks={},
+            propagation_overrides={},
+            succession_plans={},
+        )
+
+        with pytest.raises(PersonalStoreLoadError):
+            build_plan_state(scene, project_manager, include_propagation=True)
 
 
 # ─── Bundled database coverage ────────────────────────────────────────────────

@@ -26,7 +26,7 @@ fichier, historique distinct. Aucun lot ne traverse simultanément Q/A et B.
 | Domaine | Entrées Qt / MCP direct / D / autonome | Règles et publication | Vérité, stockage, garanties |
 | --- | --- | --- | --- |
 | Plantes placées | Galerie, listes, propriétés ; `create_object`, `set_species`, `set_parent_bed`, `set_planting_date` ; D pour date/fiche seulement | `ui/plant_creation.py`, `ui/plant_species_assignment.py`, `GardenMemoryService`, `garden_operations` ; géométrie par commandes Qt | Espèce embarquée et instance dans metadata du `.ogp` ; Q. L'autonome conserve la géométrie brute, ne construit pas de plante graphique. |
-| Catalogue | Panneau/éditeur/import ; lectures espèces et outils bibliothèque préparés ; hors D | `PlantLibrary`, `LibraryOperations`, validations botaniques | Catalogue fourni + `custom_plants.json` ; B. Import n'actualise pas les instantanés déjà placés. En direct, le port est appelé sur Qt, donc ses I/O restent sur Qt. |
+| Catalogue | Panneau/éditeur/import ; lectures espèces et outils bibliothèque préparés ; hors D | `PlantLibrary`, `LibraryOperations`, validations botaniques | Catalogue fourni + `custom_plants.json` ; B. Import n'actualise pas les instantanés déjà placés. Suivi du 28 octobre : lectures et préparation sur worker ; application/undo et rafraîchissement sur Qt, voir [profil](MCP_REACTIVITE_QT.md). |
 | Listes | `PlantListsPanel` / `PlantListStore` ; `get_plant_lists`, `get_plant_list`, ressource protégée ; pas D ni autonome | Stockage Qt historique ; MCP lit la même source via bridge | `plant_lists.json`, global ; pas l'historique du projet. Mutations non extraites en transactions documentaires. |
 | Graines | Vue et dialogue inventaire ; `get_seed_inventory(scope=...)` ; pas D de mutation | `SeedInventoryStore`, `ProjectManager.set_seed_inventory` pour le stock projet | Deux sources explicites : global `seed_inventory.json`, projet `.ogp`. Autonome : lecture du stock projet seulement. Viabilité calculée distincte du stock observé. |
 | Tâches | `TasksView`, calendrier ; outils directs tâches/statut ; D tâches manuelles + statut | `task_operations`, `task_status`, `task_generator` ; commandes et `ProjectManager` | `manual_tasks`, `task_states`, miroir historique `task_completions` ; Q/A. Tâches générées dérivées, identifiants canoniques, pas d'ajout manuel de leur contenu. |
@@ -96,8 +96,9 @@ Parcours vivant : coroutine MCP → worker AnyIO → `MainThreadBridge` → capt
 ou préparation/application Qt → réponse Python. Pour les lectures documentaires,
 le hash et la projection se font après retour sur worker. Les autres lectures
 historiques capturent désormais une copie profonde avant de quitter Qt.
-Le port bibliothèque vivant effectue encore son I/O sur Qt : limite de latence,
-pas accès Qt non autorisé d'un worker.
+Depuis le suivi du 28 octobre, les lectures et préparations bibliothèque sont
+sur worker ; les écritures restent sur Qt. Les verrous de lecture et écriture
+sont séparés, avec revalidation disque à l’application ([preuves](MCP_REACTIVITE_QT.md)).
 
 Parcours autonome : coroutine → worker → `DocumentSession._mutex` → snapshot/
 préparation/application → vérification version disque → sauvegarde atomique →
@@ -136,14 +137,12 @@ constitue pas une garantie générale contre des callbacks arbitraires.
   L'échec de cette synchronisation est journalisé sans refuser l'ouverture.
 - Les épingles, positions de notes, contraintes et transformations restent Qt.
   Un test offscreen de coordonnées ne démontre pas l'acceptation visuelle native.
-- Les stores globaux de listes et graines restent historiques : leurs mutations
-  en mémoire précèdent la sauvegarde, sans transaction/reçu/CAS partagé avec le
-  projet. Leur chargement masque encore les erreurs et peut présenter une source
-  illisible comme vide. Le remplacement atomique protège le fichier contre un
-  échec de publication, mais ne constitue pas une récupération de données
-  corrompues ni une protection contre deux éditeurs globaux concurrents. Ces
-  cas n'ont pas fait l'objet d'une nouvelle migration ou d'un parcours UI d'erreur
-  dans cette revue ; ils restent à traiter avant d'exposer ces stores en écriture MCP.
+- Suivi du 28 octobre : les stores globaux listes/graines distinguent désormais
+  erreur et collection vide, bloquent les mutations après échec de lecture et
+  publient sous verrou avec précondition disque. Les modifications en mémoire
+  sont conservées après échec de sauvegarde ; reprise explicite dans l’UI.
+  Ils ne partagent ni historique ni reçu avec le projet et restent sans écriture
+  MCP. Voir [contrat et preuves](STORES_PERSONNELS.md).
 - Les outils historiques de sauvegarde/exports suivent le modèle de confiance
   loopback et permettent des chemins explicites ; cette revue ne change pas
   leur politique d'autorisation ou d'écrasement Save As.
@@ -156,8 +155,8 @@ constitue pas une garantie générale contre des callbacks arbitraires.
 Ont été relus les préparateurs cités, les frontières des hôtes et du stockage,
 les appels directs MCP correspondants, les commandes Qt qui les réutilisent,
 les appels de sauvegarde/ouverture et les primitives communes de géométrie/export.
-Les listes et graines sont cartographiées mais leur édition UI complète et leurs
-formats historiques ne bénéficient pas ici d'une nouvelle campagne de migration.
+Les listes et graines étaient seulement cartographiées dans cette revue ;
+le [suivi ciblé](STORES_PERSONNELS.md) examine leurs formats et surfaces UI.
 La géométrie a été examinée aux points d'entrée et aux primitives partagées ;
 ce document ne revendique pas la revue de tous les solveurs, outils ou symboles.
 Pas de revue exhaustive du fournisseur botanique distant, de la météo, de la 3D,
@@ -165,8 +164,8 @@ de l'impression native ni des calculs agronomiques de toutes les recommandations
 
 Les risques restants justifient des travaux ciblés seulement si ces parcours
 évoluent : transactions des listes/graines avant exposition MCP en écriture,
-mesure du port bibliothèque vivant avant déplacement d'I/O hors Qt, saturation
-de la file MCP au-delà de quatre requêtes, et revue des nouveaux callbacks qui
+étude de saturation au-delà de la campagne bornée à 32 requêtes
+([suivi](MCP_REACTIVITE_QT.md)), et revue des nouveaux callbacks qui
 muteraient pendant les signaux. Aucun défaut supplémentaire n'est inféré du seul
 fait qu'un service est large ou qu'un stockage historique reste propre à Qt.
 
@@ -195,7 +194,9 @@ d'ouverture d'un port loopback dans le sandbox ont été levés en relançant le
 tests concernés avec l'autorisation d'exécution locale. Un crash Qt intermittent
 `ComboWheelGuard` avait été signalé dans un run parallèle d'agent ; il n'est pas
 apparu dans le run consolidé. Aucune assertion n'a été assouplie pour le masquer.
-Pas de test d'acceptation visuelle native pour ces corrections de frontières.
+Le [ticket de diagnostic](COMBO_WHEEL_GUARD_INVESTIGATION.md) conserve la trace
+et les essais répétés, sans annoncer de résolution. Pas de test d’acceptation
+visuelle native pour ces corrections de frontières.
 
 Les benchmarks existants sont conservés. Rapports :
 [`mcp-audit-reads.json`](mcp-audit-reads.json) et

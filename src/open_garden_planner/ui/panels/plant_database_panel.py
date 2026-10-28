@@ -35,6 +35,11 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.core.object_types import ObjectType
+from open_garden_planner.core.personal_store import (
+    PersonalStoreError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+)
 from open_garden_planner.models.plant_data import (
     FlowerType,
     PermacultureLayer,
@@ -57,6 +62,7 @@ from open_garden_planner.ui.plant_species_assignment import (
     plant_source_label,
 )
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.personal_store_status import PersonalStoreStatus
 
 
 class ClickableDateEdit(QDateEdit):
@@ -315,6 +321,10 @@ class PlantDatabasePanel(QWidget):
         profile_text.addStretch()
         profile_layout.addLayout(profile_text)
         layout.addWidget(self._profile_header)
+        self._list_store_status = PersonalStoreStatus(self)
+        self._list_store_status.retry_requested.connect(self._retry_list_store)
+        self._list_store_status.reload_requested.connect(self._reload_list_store)
+        layout.addWidget(self._list_store_status)
 
         # Button row at top
         button_layout = QHBoxLayout()
@@ -796,6 +806,10 @@ class PlantDatabasePanel(QWidget):
         self.seed_packet_info_lbl.setWordWrap(True)
         self.seed_packet_info_lbl.setStyleSheet("font-size: 8pt;")
         seed_link_vbox.addWidget(self.seed_packet_info_lbl)
+        self._seed_store_status = PersonalStoreStatus(self)
+        self._seed_store_status.retry_requested.connect(self._retry_seed_store)
+        self._seed_store_status.reload_requested.connect(self._reload_seed_store)
+        seed_link_vbox.addWidget(self._seed_store_status)
 
         self.details_form.addRow(self.tr("Seed Packet:"), seed_link_widget)
 
@@ -1085,7 +1099,24 @@ class PlantDatabasePanel(QWidget):
         self.seed_packet_combo.addItem(self.tr("— No packet linked —"), None)
 
         store = get_seed_inventory()
-        packets = store.all()
+        try:
+            packets = store.all()
+        except PersonalStoreLoadError as exc:
+            self.seed_packet_combo.addItem(self.tr("Seed inventory unavailable"), None)
+            self.seed_packet_combo.setEnabled(False)
+            self.seed_packet_combo.blockSignals(False)
+            self.seed_packet_info_lbl.setText(
+                self.tr("Seed packet links are unavailable until this file is repaired.")
+            )
+            self._seed_store_status.show_load_error(exc)
+            return
+        if store.is_dirty:
+            self._seed_store_status.show_save_error(
+                PersonalStoreError("Seed inventory changes are still in memory")
+            )
+        else:
+            self._seed_store_status.clear()
+        self.seed_packet_combo.setEnabled(not store.is_dirty)
         species_lower = (plant_data.common_name or plant_data.scientific_name or "").lower()
         matching = [p for p in packets if species_lower and (
             species_lower in p.species_name.lower() or p.species_name.lower() in species_lower
@@ -1108,6 +1139,38 @@ class PlantDatabasePanel(QWidget):
 
         packet = store.get(linked_id) if linked_id else None
         self._update_seed_packet_info(packet)
+
+    def _retry_seed_store(self) -> None:
+        from open_garden_planner.models.seed_inventory import get_seed_inventory
+
+        store = get_seed_inventory()
+        if store.load_state == PersonalStoreLoadState.FAILED:
+            store.reload()
+        else:
+            try:
+                store.save()
+            except PersonalStoreLoadError as exc:
+                self._seed_store_status.show_load_error(exc)
+            except PersonalStoreError as exc:
+                self._seed_store_status.show_save_error(exc)
+        if self._current_plant_data is not None:
+            instance = getattr(self._current_plant_item, "metadata", {}).get(
+                "plant_instance", {}
+            ) if self._current_plant_item is not None else {}
+            self._populate_seed_packet_combo(self._current_plant_data, instance)
+
+    def _reload_seed_store(self) -> None:
+        from open_garden_planner.models.seed_inventory import get_seed_inventory
+
+        store = get_seed_inventory()
+        if store.is_dirty and not self._seed_store_status.confirm_reload(self):
+            return
+        store.reload()
+        if self._current_plant_data is not None:
+            instance = getattr(self._current_plant_item, "metadata", {}).get(
+                "plant_instance", {}
+            ) if self._current_plant_item is not None else {}
+            self._populate_seed_packet_combo(self._current_plant_data, instance)
 
     def _on_seed_packet_changed(self) -> None:
         """Handle seed packet link change — save to plant instance metadata."""
@@ -2003,7 +2066,12 @@ class PlantDatabasePanel(QWidget):
     def _on_toggle_favorite(self) -> None:
         """Toggle favorite status for currently displayed plant."""
         if self._current_plant_data:
-            self._list_store.toggle_favorite(self._current_plant_data)
+            try:
+                self._list_store.toggle_favorite(self._current_plant_data)
+            except PersonalStoreLoadError as exc:
+                self._list_store_status.show_load_error(exc)
+            except PersonalStoreError as exc:
+                self._list_store_status.show_save_error(exc)
             self._update_favorite_button()
 
     def _update_favorite_button(self) -> None:
@@ -2012,12 +2080,55 @@ class PlantDatabasePanel(QWidget):
             self._favorite_btn.setEnabled(False)
             self._favorite_btn.setText("☆")
             return
-        self._favorite_btn.setEnabled(True)
-        is_fav = self._list_store.is_favorite(self._current_plant_data)
+        try:
+            is_fav = self._list_store.is_favorite(self._current_plant_data)
+        except PersonalStoreLoadError as exc:
+            self._favorite_btn.setEnabled(False)
+            self._favorite_btn.setText("☆")
+            self._favorite_btn.setToolTip(str(exc))
+            self._list_store_status.show_load_error(exc)
+            return
         self._favorite_btn.setText("⭐" if is_fav else "☆")
+        self._favorite_btn.setEnabled(not self._list_store.is_dirty)
+        if self._list_store.is_dirty:
+            if self._list_store_status.isHidden():
+                self._list_store_status.show_save_error(
+                    PersonalStoreError("Plant-list changes remain in memory")
+                )
+        else:
+            self._list_store_status.clear()
         self._favorite_btn.setToolTip(
             self.tr("Remove from Favorites") if is_fav else self.tr("Add to Favorites")
         )
+
+    def _retry_list_store(self) -> None:
+        if self._list_store.load_state == PersonalStoreLoadState.FAILED:
+            self._list_store.reload()
+        else:
+            try:
+                self._list_store.save()
+            except PersonalStoreLoadError as exc:
+                self._list_store_status.show_load_error(exc)
+            except PersonalStoreError as exc:
+                self._list_store_status.show_save_error(exc)
+        self._clear_list_store_status_if_recovered()
+        self._update_favorite_button()
+
+    def _clear_list_store_status_if_recovered(self) -> None:
+        """Clear the load banner after recovery even when no plant is selected."""
+        if self._list_store.load_state == PersonalStoreLoadState.FAILED:
+            self._list_store_status.show_load_error(
+                self._list_store.load_error or PersonalStoreLoadError("Unknown load error")
+            )
+        elif not self._list_store.is_dirty:
+            self._list_store_status.clear()
+
+    def _reload_list_store(self) -> None:
+        if self._list_store.is_dirty and not self._list_store_status.confirm_reload(self):
+            return
+        self._list_store.reload()
+        self._clear_list_store_status_if_recovered()
+        self._update_favorite_button()
 
     def _apply_species_to_item(
         self, plant_item: QGraphicsItem, species_dict: dict

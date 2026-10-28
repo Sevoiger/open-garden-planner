@@ -10,6 +10,7 @@ from open_garden_planner.agent_api.personal_catalog_tools import (
     page_records,
     register_personal_catalog_tools,
 )
+from open_garden_planner.core.personal_store import PersonalStoreLoadError
 
 
 def test_catalogs_auth_projection_pagination_and_scope():
@@ -66,6 +67,32 @@ def test_autonomous_never_resolves_global_storage():
         assert [t.name for t in await mcp.list_tools()] == ["get_seed_inventory"]
         with pytest.raises(Exception, match="unavailable"):
             await mcp.call_tool("get_seed_inventory", {"scope": "global"})
+    asyncio.run(run())
+
+
+def test_failed_personal_store_reads_are_tool_errors_not_empty_catalogs():
+    async def run():
+        mcp = FastMCP("synthetic")
+
+        def failed_lists():
+            raise PersonalStoreLoadError("plant-list JSON is unreadable")
+
+        def failed_seeds():
+            raise PersonalStoreLoadError("seed-inventory JSON is unreadable")
+
+        register_personal_catalog_tools(
+            mcp,
+            snapshot=lambda: {},
+            plant_lists=failed_lists,
+            global_seeds=failed_seeds,
+            writes_active=True,
+            authorize=lambda: None,
+        )
+        with pytest.raises(Exception, match="plant-list JSON is unreadable"):
+            await mcp.call_tool("get_plant_lists", {})
+        with pytest.raises(Exception, match="seed-inventory JSON is unreadable"):
+            await mcp.call_tool("get_seed_inventory", {"scope": "global"})
+
     asyncio.run(run())
 
 

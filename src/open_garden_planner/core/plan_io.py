@@ -224,6 +224,15 @@ def write_plan(path: Path, data: dict[str, Any]) -> None:
     """Validate/encode first, then fsync and atomically replace the destination."""
     validate_plan_data(data)
     encoded = json.dumps(data, indent=2, allow_nan=False).encode("utf-8")
+    write_bytes_atomically(path, encoded)
+
+
+def write_bytes_atomically(path: Path, encoded: bytes) -> None:
+    """Publish already-encoded bytes with a same-directory atomic replace.
+
+    The caller owns schema validation, locking and any compare-and-swap check.
+    This small seam is shared by plan and personal-store persistence.
+    """
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as stream:

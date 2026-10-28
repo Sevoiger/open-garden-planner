@@ -38,6 +38,11 @@ from open_garden_planner.models.succession import SuccessionPlan
 from open_garden_planner.models.task import ManualTask
 from open_garden_planner.services.weather_service import FrostAlert
 
+
+class CalendarDataError(ValueError):
+    """Calendar inputs produced a date outside Python's representable range."""
+
+
 # ── Output value object ──────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -231,8 +236,14 @@ def generate_calendar_tasks(state: PlanState) -> list[Task]:
             end_weeks = getattr(row, end_attr)
             if start_weeks is None or end_weeks is None:
                 continue
-            start = last_frost + datetime.timedelta(weeks=start_weeks)
-            end = last_frost + datetime.timedelta(weeks=end_weeks)
+            try:
+                start = last_frost + datetime.timedelta(weeks=start_weeks)
+                end = last_frost + datetime.timedelta(weeks=end_weeks)
+            except OverflowError as exc:
+                raise CalendarDataError(
+                    f"Calendar window for {row.display_name} ({task_type}) exceeds "
+                    "the supported date range."
+                ) from exc
             if state.actionable_only and classify_urgency(start, end, state.today) is None:
                 continue
             tasks.append(Task(
@@ -620,25 +631,33 @@ def build_propagation_plans(
     for key, sp in species.items():
         if sp.indoor_sow_start is None or sp.transplant_start is None:
             continue
-        sow_start = last_frost + datetime.timedelta(weeks=sp.indoor_sow_start)
-        sow_end = (
-            last_frost + datetime.timedelta(weeks=sp.indoor_sow_end)
-            if sp.indoor_sow_end is not None else sow_start + datetime.timedelta(days=14)
-        )
-        germ_min, germ_max = sp.days_to_germination_min, sp.days_to_germination_max
-        packet = seed_packets.get(key)
-        if packet is not None:
-            if packet.germination_days_min is not None:
-                germ_min = packet.germination_days_min
-            if packet.germination_days_max is not None:
-                germ_max = packet.germination_days_max
-        plans[key] = compute_propagation_plan(
-            species_key=key, sow_start=sow_start, sow_end=sow_end,
-            transplant_date=last_frost + datetime.timedelta(weeks=sp.transplant_start),
-            germination_days_min=germ_min, germination_days_max=germ_max,
-            prick_out_after_days=sp.prick_out_after_days, harden_off_days=sp.harden_off_days,
-            overrides=overrides.get(key, {}),
-        )
+        label = getattr(sp, "common_name", None) or key
+        try:
+            sow_start = last_frost + datetime.timedelta(weeks=sp.indoor_sow_start)
+            sow_end = (
+                last_frost + datetime.timedelta(weeks=sp.indoor_sow_end)
+                if sp.indoor_sow_end is not None
+                else sow_start + datetime.timedelta(days=14)
+            )
+            germ_min, germ_max = sp.days_to_germination_min, sp.days_to_germination_max
+            packet = seed_packets.get(key)
+            if packet is not None:
+                if packet.germination_days_min is not None:
+                    germ_min = packet.germination_days_min
+                if packet.germination_days_max is not None:
+                    germ_max = packet.germination_days_max
+            plans[key] = compute_propagation_plan(
+                species_key=key, sow_start=sow_start, sow_end=sow_end,
+                transplant_date=last_frost + datetime.timedelta(weeks=sp.transplant_start),
+                germination_days_min=germ_min, germination_days_max=germ_max,
+                prick_out_after_days=sp.prick_out_after_days,
+                harden_off_days=sp.harden_off_days,
+                overrides=overrides.get(key, {}),
+            )
+        except OverflowError as exc:
+            raise CalendarDataError(
+                f"Propagation dates for {label} exceed the supported date range."
+            ) from exc
     return plans
 
 
@@ -699,8 +718,17 @@ def frost_anchor_years(
         if date is not None
     ]
     if offsets:
-        first_year = min(first_year, (start - datetime.timedelta(days=max(offsets))).year)
-        last_year = max(last_year, (end - datetime.timedelta(days=min(offsets))).year)
+        try:
+            first_year = min(
+                first_year, (start - datetime.timedelta(days=max(offsets))).year
+            )
+            last_year = max(
+                last_year, (end - datetime.timedelta(days=min(offsets))).year
+            )
+        except OverflowError as exc:
+            raise CalendarDataError(
+                f"Cannot expand the frost-anchor years for date window {start}..{end}."
+            ) from exc
     return list(range(first_year, last_year + 1))
 
 

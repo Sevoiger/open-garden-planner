@@ -33,10 +33,16 @@ from PyQt6.QtWidgets import (
 
 from open_garden_planner.app.settings import active_language, get_settings
 from open_garden_planner.core.frost_dates import parse_frost
+from open_garden_planner.core.personal_store import (
+    PersonalStoreError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+)
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.models.plant_data import species_key as _species_key
 from open_garden_planner.models.propagation import PropagationPlan
 from open_garden_planner.services.task_generator import (
+    CalendarDataError,
     PlanState,
     Task,
     build_plan_state,
@@ -50,6 +56,7 @@ from open_garden_planner.services.task_status import effective_status
 from open_garden_planner.services.weather_service import get_frost_alerts
 from open_garden_planner.ui.icons import get_icon, get_pixmap
 from open_garden_planner.ui.theme import URGENCY_TOKENS, set_text_role, theme_qcolor, urgency_dot
+from open_garden_planner.ui.widgets.personal_store_status import PersonalStoreStatus
 from open_garden_planner.ui.widgets.weather_widget import WeatherWidget
 
 # ─── Layout constants ──────────────────────────────────────────────────────────
@@ -1199,6 +1206,18 @@ class PlantingCalendarView(QWidget):
         self._weather.forecast_failed.connect(self._on_weather_failed)
         root.addWidget(self._weather)
 
+        self._seed_store_status = PersonalStoreStatus(self)
+        self._seed_store_status.retry_requested.connect(self._retry_seed_store)
+        self._seed_store_status.reload_requested.connect(self._reload_seed_store)
+        root.addWidget(self._seed_store_status)
+
+        self._calendar_error_lbl = QLabel()
+        self._calendar_error_lbl.setObjectName("calendarDataError")
+        self._calendar_error_lbl.setWordWrap(True)
+        set_text_role(self._calendar_error_lbl, color_role="caution")
+        self._calendar_error_lbl.hide()
+        root.addWidget(self._calendar_error_lbl)
+
         # Dashboard panel (US-8.6)
         self._dashboard = _DashboardPanel()
         self._dashboard.highlight_requested.connect(self.highlight_species.emit)
@@ -1327,7 +1346,8 @@ class PlantingCalendarView(QWidget):
         from open_garden_planner.services.task_generator import build_propagation_plans
 
         store = get_seed_inventory()
-        packets = {key: store.get(packet_id) for key, packet_id in (seed_links or {}).items()}
+        by_id = {packet.id: packet for packet in store.all()}
+        packets = {key: by_id.get(packet_id) for key, packet_id in (seed_links or {}).items()}
         return build_propagation_plans(
             {row.species_key: row.species for row in rows}, last_frost,
             self._project_manager.propagation_overrides, packets,
@@ -1337,6 +1357,8 @@ class PlantingCalendarView(QWidget):
 
     def refresh(self) -> None:
         """Rebuild the chart and dashboard from current canvas + project state."""
+        self._calendar_error_lbl.hide()
+        self._refresh_seed_store_status()
         # Trigger weather fetch if location is available (US-12.1)
         location = self._project_manager.location if hasattr(self._project_manager, "location") else None
         if location:
@@ -1358,13 +1380,21 @@ class PlantingCalendarView(QWidget):
         # drawn on the chart and listed by the dashboard/agent, but not edited,
         # because the detail panel edits exactly one plan per species.
         if last_frost is not None and rows:
-            self._prop_plans = self._build_propagation_plans(rows, last_frost, seed_links)
+            try:
+                self._prop_plans = self._build_propagation_plans(rows, last_frost, seed_links)
+            except PersonalStoreLoadError as exc:
+                self._seed_store_status.show_load_error(exc)
+                self._prop_plans = {}
+            except CalendarDataError as exc:
+                self._show_calendar_data_error(exc)
+                return
         else:
             self._prop_plans = {}
 
         # Update dashboard via the single unified engine (#228). This also
         # refreshes self._plan_state, which the Gantt windows are derived from.
-        self._rebuild_dashboard()
+        if not self._rebuild_dashboard():
+            return
 
         # Update Gantt translated marker labels
         self._gantt.label_today = self.tr("Today")
@@ -1400,7 +1430,11 @@ class PlantingCalendarView(QWidget):
 
         self._empty_lbl.hide()
         year = datetime.date.today().year
-        windows, prop_steps = self._compute_gantt_windows(year)
+        try:
+            windows, prop_steps = self._compute_gantt_windows(year)
+        except CalendarDataError as exc:
+            self._show_calendar_data_error(exc)
+            return
         self._gantt.set_data(rows, year, last_frost, first_fall, windows, prop_steps)
         self._scroll.show()
 
@@ -1757,24 +1791,39 @@ class PlantingCalendarView(QWidget):
         """Re-render on theme switch — dashboard urgency colors are palette-driven."""
         self.schedule_refresh()
 
-    def _rebuild_dashboard(self) -> None:
+    def _rebuild_dashboard(self) -> bool:
         """Regenerate the Today's-Tasks dashboard from the unified engine.
 
         Separate from :meth:`refresh` so the async weather callback can update
         the frost rows without re-triggering the weather fetch (which would loop).
         """
         today = datetime.date.today()
-        state = build_plan_state(
-            self._canvas_scene,
-            self._project_manager,
-            frost_alerts=self._current_frost_alerts,
-            soil_service=self._soil_service,
-            # include_propagation (rather than a pre-built single-year
-            # ``prop_plans`` dict) so the anchor-year machinery runs inside the
-            # shared generator — this surface used to pass one plan per species,
-            # which is exactly the single-anchor limitation #414 removes.
-            include_propagation=self._prop_toggle.isChecked(),
-        )
+        try:
+            state = build_plan_state(
+                self._canvas_scene,
+                self._project_manager,
+                frost_alerts=self._current_frost_alerts,
+                soil_service=self._soil_service,
+                # include_propagation (rather than a pre-built single-year
+                # ``prop_plans`` dict) so the anchor-year machinery runs inside the
+                # shared generator — this surface used to pass one plan per species,
+                # which is exactly the single-anchor limitation #414 removes.
+                include_propagation=self._prop_toggle.isChecked(),
+            )
+        except CalendarDataError as exc:
+            self._show_calendar_data_error(exc)
+            return False
+        except PersonalStoreLoadError as exc:
+            self._seed_store_status.show_load_error(exc)
+            # Keep the calendar and non-seed tasks available while explicitly
+            # reporting that linked seed data could not be read.
+            state = build_plan_state(
+                self._canvas_scene,
+                self._project_manager,
+                frost_alerts=self._current_frost_alerts,
+                soil_service=self._soil_service,
+                include_propagation=False,
+            )
         self._plan_state = state
         task_states = self._project_manager.task_states
         bed_names = self._bed_name_map()
@@ -1782,7 +1831,12 @@ class PlantingCalendarView(QWidget):
         # generate_actionable_for_surface, not generate_all: the dashboard must
         # list windows anchored on ANY year's frost (#414) while still applying
         # its own "actionable now" rule.
-        for task in generate_actionable_for_surface(state):
+        try:
+            tasks = generate_actionable_for_surface(state)
+        except CalendarDataError as exc:
+            self._show_calendar_data_error(exc)
+            return False
+        for task in tasks:
             # Calendar shows only actionable, still-open tasks (done / snoozed /
             # dismissed / archived are hidden via the shared status resolver).
             if effective_status(task_states.get(task.task_id), today) != "open":
@@ -1792,6 +1846,66 @@ class PlantingCalendarView(QWidget):
                 dash.append(adapted)
         self._current_dashboard_tasks = dash
         self._dashboard.set_data(dash)
+        self._calendar_error_lbl.hide()
+        return True
+
+    def _show_calendar_data_error(self, error: CalendarDataError) -> None:
+        """Replace stale calendar contents with an explicit generation error."""
+        self._plan_state = None
+        self._rows = []
+        self._prop_plans = {}
+        self._current_dashboard_tasks = []
+        self._dashboard.set_data([])
+        self._scroll.hide()
+        self._detail.hide()
+        self._empty_lbl.hide()
+        self._calendar_error_lbl.setText(
+            self.tr(
+                "Calendar dates cannot be shown because some task data "
+                "exceeds the supported date range: {error}"
+            ).format(error=str(error))
+        )
+        self._calendar_error_lbl.show()
+
+    def _refresh_seed_store_status(self) -> None:
+        from open_garden_planner.models.seed_inventory import get_seed_inventory
+
+        store = get_seed_inventory()
+        if store.load_state == PersonalStoreLoadState.FAILED:
+            self._seed_store_status.show_load_error(
+                store.load_error or PersonalStoreLoadError("Unknown load error")
+            )
+        elif store.is_dirty:
+            if self._seed_store_status.isHidden():
+                self._seed_store_status.show_save_error(
+                    PersonalStoreError("Seed inventory changes remain in memory")
+                )
+        else:
+            self._seed_store_status.clear()
+
+    def _retry_seed_store(self) -> None:
+        from open_garden_planner.models.seed_inventory import get_seed_inventory
+
+        store = get_seed_inventory()
+        if store.load_state == PersonalStoreLoadState.FAILED:
+            store.reload()
+        else:
+            try:
+                store.save()
+            except PersonalStoreLoadError as exc:
+                self._seed_store_status.show_load_error(exc)
+            except PersonalStoreError as exc:
+                self._seed_store_status.show_save_error(exc)
+        self.refresh()
+
+    def _reload_seed_store(self) -> None:
+        from open_garden_planner.models.seed_inventory import get_seed_inventory
+
+        store = get_seed_inventory()
+        if store.is_dirty and not self._seed_store_status.confirm_reload(self):
+            return
+        store.reload()
+        self.refresh()
 
     def _bed_name_map(self) -> dict[str, str]:
         """item_id → display name for every garden item (for succession rows)."""

@@ -350,13 +350,28 @@ class GardenPlannerApp(QMainWindow):
         return self._agent_bridge.run_on_main(lambda: host().dispatch(action, arguments))
 
     def _agent_library_operation(self, action: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        def run() -> dict[str, Any]:
+        def port() -> Any:
             from open_garden_planner.services import plant_library
             from open_garden_planner.services.library_port import LibraryPort
 
             if getattr(self, "_library_operations", None) is None:
                 path = plant_library._default_app_data_dir() / plant_library.PlantLibrary.LIBRARY_FILENAME
                 self._library_operations = LibraryPort(path)
+            return self._library_operations
+
+        if action in {"snapshot", "prepare", "result"}:
+            # MCP calls this provider from an AnyIO worker. Capture only the
+            # configured pure-Python port on Qt, then perform its serialized
+            # disk I/O and calculations on the calling worker. No widget or
+            # library UI cache is accessed while holding the port's mutex.
+            return self._agent_bridge.run_on_main(port).dispatch(action, arguments)
+
+        def run() -> dict[str, Any]:
+            from open_garden_planner.services import plant_library
+
+            # Keep writes and their cache/view publication on the existing Qt
+            # sequence. A worker holding the port mutex never calls back to Qt.
+            port()
             result = self._library_operations.dispatch(action, arguments)
             if action in {"apply", "undo"}:
                 if plant_library._library_instance is not None:
@@ -2274,11 +2289,11 @@ class GardenPlannerApp(QMainWindow):
         ).model_dump()
 
     def _agent_get_plant_lists(self) -> list[dict[str, Any]]:
-        """Get plant lists and favorites catalog ON the Qt main thread (US-G4)."""
+        """Read personal lists on Qt; storage failures remain MCP read errors."""
         return self._agent_bridge.run_on_main(self._do_agent_get_plant_lists)
 
     def _agent_get_seed_inventory(self) -> list[dict[str, Any]]:
-        """Read the same global store as the Seed Inventory tab on Qt's thread."""
+        """Read global seeds on Qt; never convert an unreadable store to empty."""
         def read():
             from open_garden_planner.models.seed_inventory import get_seed_inventory
 
