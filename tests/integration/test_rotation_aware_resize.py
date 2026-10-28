@@ -18,9 +18,12 @@ from __future__ import annotations
 import math
 
 import pytest
-from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt
+from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtWidgets import QApplication
 
 from open_garden_planner.core.object_types import ObjectType
+from open_garden_planner.core.project import ProjectManager
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
@@ -31,6 +34,7 @@ from open_garden_planner.ui.canvas.items.resize_handle import (
     ResizeHandle,
     resize_rect_item_keeping_anchor,
 )
+from open_garden_planner.ui.view3d.snapshot import collect_scene3d_records
 
 _ANGLES = [0.0, 45.0, 215.0]
 _CORNER = HandlePosition.BOTTOM_RIGHT
@@ -135,6 +139,11 @@ def test_fixed_reference_stays_put(
         assert ser.y() == pytest.approx(vis.y(), abs=1e-6)
         if shape == "circle":
             assert item.rect().width() == pytest.approx(item.rect().height())
+            # Use the real serializer: it reads CircleItem.center, which must
+            # include the rect's nonzero local origin after a handle resize.
+            stored = ProjectManager._serialize_item(item)
+            assert stored["center_x"] == pytest.approx(vis.x(), abs=1e-6)
+            assert stored["center_y"] == pytest.approx(vis.y(), abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +237,68 @@ def test_undo_rotated_resize_restores_everything(canvas: CanvasView) -> None:
     assert circle.rect() == init_rect
     assert circle.pos() == init_pos
     assert circle.transformOriginPoint() == init_rect.center()
+
+
+@pytest.mark.parametrize("angle", [0.0, 45.0])
+def test_circle_viewport_resize_keeps_3d_and_saved_position(canvas, qtbot, tmp_path, angle):
+    """A real handle gesture must agree in 2D, 3D, undo/redo and on disk."""
+    circle = CircleItem(1500, 1200, 80, object_type=ObjectType.TREE)
+    canvas.scene().addItem(circle)
+    circle.setPos(120, -30)
+    circle._apply_rotation(angle)
+    circle.setSelected(True)
+    canvas.resize(1000, 700)
+    canvas.set_zoom(1)
+    canvas.show()
+    canvas.centerOn(circle.mapToScene(circle.rect().center()))
+    QApplication.processEvents()
+    original_center = circle.mapToScene(circle.rect().center())
+    original_rect = QRectF(circle.rect())
+    original_pos = QPointF(circle.pos())
+    handle = next(h for h in circle._resize_handles if h._position == _CORNER)
+    start = canvas.mapFromScene(handle.scenePos())
+    finish = start + QPoint(60, -50)
+    qtbot.mousePress(canvas.viewport(), Qt.MouseButton.LeftButton, pos=start)
+    event = QMouseEvent(QMouseEvent.Type.MouseMove, QPointF(finish),
+                        QPointF(canvas.viewport().mapToGlobal(finish)),
+                        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+                        Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(canvas.viewport(), event)
+    qtbot.mouseRelease(canvas.viewport(), Qt.MouseButton.LeftButton, pos=finish)
+    assert circle.radius > 80
+    assert canvas.command_manager.undo_depth == 1
+    visible_center = circle.mapToScene(circle.rect().center())
+    radius = circle.radius
+
+    def assert_centers(scene, item, expected):
+        actual = item.mapToScene(item.rect().center())
+        assert (actual.x(), actual.y()) == pytest.approx((expected.x(), expected.y()), abs=1e-6)
+        stored = ProjectManager._serialize_item(item)
+        assert (stored["center_x"], stored["center_y"]) == pytest.approx(
+            (expected.x(), expected.y()), abs=1e-6)
+        records = collect_scene3d_records(scene)
+        assert len(records) == 1
+        footprint = records[0].footprint
+        center3d = tuple(sum(p[axis] for p in footprint) / len(footprint) for axis in (0, 1))
+        assert center3d == pytest.approx((expected.x(), expected.y()), abs=1e-6)
+        assert item.mapToScene(item.rect().center()) == actual  # 3D is read-only
+
+    assert_centers(canvas.scene(), circle, visible_center)
+    canvas.command_manager.undo()
+    assert circle.rect() == original_rect
+    assert circle.pos() == original_pos
+    assert_centers(canvas.scene(), circle, original_center)
+    canvas.command_manager.redo()
+    assert_centers(canvas.scene(), circle, visible_center)
+    path = tmp_path / "resized-tree.ogp"
+    ProjectManager().save(canvas.scene(), path)
+    assert_centers(canvas.scene(), circle, visible_center)
+    restored_scene = CanvasScene()
+    ProjectManager().load(restored_scene, path)
+    restored = next(i for i in restored_scene.items() if isinstance(i, CircleItem))
+    assert_centers(restored_scene, restored, visible_center)
+    assert restored.radius == pytest.approx(radius)
+    assert restored.rotation() == pytest.approx(angle)
 
 
 # ---------------------------------------------------------------------------

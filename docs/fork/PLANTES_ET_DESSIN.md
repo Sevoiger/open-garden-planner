@@ -80,6 +80,11 @@ existant est compté à partir de ce relevé. Avant le premier relevé, sa dimen
 maintenue comme estimation d’affichage, sans prétendre connaître une ancienne mesure.
 Les plans sans relevés datés gardent leur modèle antérieur.
 
+Après un redimensionnement par poignée, le centre enregistré et celui utilisé
+en 3D restent identiques au centre visible en 2D, y compris après annulation,
+rétablissement et réouverture du plan. Ce correctif ne permet pas de reconstituer
+automatiquement une position déjà perdue dans une ancienne sauvegarde.
+
 Pour le MCP :
 
 - `get_garden_record(item_id="…")` renvoie `measurements` (identifiant, `date`,
