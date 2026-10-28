@@ -44,7 +44,7 @@ class Scene3DRecord(NamedTuple):
     color_rgba: tuple[int, int, int, int]
     kind: str  # "extruded" | "flat"
     name: str
-    base_cm: float = 0.0  # vertical lift (flat decals stack up the 2D order)
+    base_cm: float = 0.0  # planting level, or flat decal stacking lift
 
 
 def records_from_raw(
@@ -53,7 +53,8 @@ def records_from_raw(
     """Validate + normalize collector output into engine-ready records.
 
     Each raw dict: ``footprint`` (list of (x, y)), ``height_cm``
-    (float | None), ``color_rgba`` ((r, g, b, a)), ``name`` (str).
+    (float | None), optional ``base_cm`` (planting level),
+    ``color_rgba`` ((r, g, b, a)), ``name`` (str).
     Items without a positive height become flat decals; degenerate
     footprints (< 3 vertices) are dropped.
     """
@@ -67,13 +68,14 @@ def records_from_raw(
             continue
         height = raw.get("height_cm")
         if height is not None and height > 0:
-            kind, height_cm, base_cm = "extruded", float(height), 0.0
+            kind, height_cm, base_cm = "extruded", float(height), float(raw.get("base_cm", 0.0))
         else:
             kind, height_cm = "flat", FLAT_THICKNESS_CM
             base_cm = min(
                 DECAL_LIFT_CM + decal_rank * DECAL_STACK_STEP_CM,
                 DECAL_MAX_LIFT_CM,
             )
+            base_cm += float(raw.get("base_cm", 0.0))
             decal_rank += 1
         color = raw.get("color_rgba") or (150, 150, 150, 255)
         records.append(

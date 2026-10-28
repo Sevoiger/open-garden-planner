@@ -98,6 +98,26 @@ _CONTAINER_TYPE_NAMES = frozenset({"CONTAINER", "CONTAINER_ROUND", "WALL_PLANTER
 # default height but the properties panel still offers the Height field.
 _PLANT_TYPE_NAMES = frozenset({"TREE", "SHRUB", "PERENNIAL"})
 
+_SOIL_PARENT_TYPE_NAMES = _CONTAINER_TYPE_NAMES | {"GARDEN_BED", "RAISED_BED"}
+
+
+def plant_base_height_cm(
+    object_type: Any,
+    parent_type: Any,
+    parent_metadata: dict[str, Any] | None,
+    *,
+    at_date: date | None = None,
+) -> float:
+    """3D plant base at its linked soil parent's top; other items stay grounded.
+
+    Use the rendered outer height, not the container's fill depth (soil volume).
+    A trellis is a supported plant parent but does not raise the planting level.
+    """
+    if _type_name(object_type) not in _PLANT_TYPE_NAMES or _type_name(parent_type) not in _SOIL_PARENT_TYPE_NAMES:
+        return 0.0
+    return effective_height_cm(parent_type, parent_metadata, at_date=at_date) or 0.0
+
+
 # height_source() return values (stable identifiers, not user-visible text).
 SOURCE_CUSTOM = "custom"
 SOURCE_CONTAINER = "container"
@@ -223,11 +243,9 @@ def height_source(object_type: Any, metadata: dict[str, Any] | None) -> str:
     return SOURCE_NONE
 
 
-# Open structures (Package 3a, #308): no DEFAULT height — the shadow model
-# extrudes a solid footprint and these are mostly air — but the Height field
-# is offered so a user can opt a specific swing/pergola/hammock into the sun
-# study by hand. Without a default or an explicit value they cast nothing.
-_HEIGHT_FIELD_TYPES: frozenset[str] = frozenset({"SWING", "PERGOLA", "HAMMOCK"})
+# Optional heights: beds stay at ground level until explicitly raised; open
+# structures have no default because the shadow model extrudes a solid footprint.
+_HEIGHT_FIELD_TYPES: frozenset[str] = frozenset({"GARDEN_BED", "SWING", "PERGOLA", "HAMMOCK"})
 
 
 def has_height_semantics(object_type: Any, metadata: dict[str, Any] | None) -> bool:

@@ -212,10 +212,8 @@ class TestCurrentHeightAnchor:
         assert height_source("TREE", meta) == SOURCE_SPECIES
 
 
-class TestOpenStructuresHeightField:
-    """Package 3a (#308): swing/pergola/hammock have NO default height (the
-    shadow model extrudes a solid footprint) but DO expose the Height field so
-    a user can opt in explicitly; until then they cast nothing."""
+class TestOptionalHeightField:
+    """Beds and open structures expose Height without a default extrusion."""
 
     @pytest.mark.parametrize("name", sorted(_HEIGHT_FIELD_TYPES))
     def test_field_offered_but_no_default(self, name: str) -> None:
