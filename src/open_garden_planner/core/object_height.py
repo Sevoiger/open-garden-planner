@@ -180,8 +180,8 @@ def effective_height_cm(
         # from in this slice; revisit when shadow accuracy matters (#258).
         return container_height_cm(metadata if metadata else None)
     species_dict = (metadata or {}).get("plant_species")
-    if isinstance(species_dict, dict) and at_date is not None:
-        grown = grown_height_cm(species_dict, metadata, at_date, name)
+    if name in _PLANT_TYPE_NAMES and at_date is not None:
+        grown = grown_height_cm(species_dict if isinstance(species_dict, dict) else {}, metadata, at_date, name)
         if grown is not None:
             return grown
     # Outside the SPECIES branch (a plant whose species lookup missed still

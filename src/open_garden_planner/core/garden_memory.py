@@ -136,6 +136,17 @@ class GardenMemoryService:
             ))
         return result
 
+    def plant_measurement(self, operation: str, item_id: str, fields: dict[str, Any],
+                          request_key: str | None = None) -> dict[str, Any]:
+        candidate, result = self._prepare(operation, fields, item_id, request_key)
+        if not result.get("replayed"):
+            target = self._item(item_id)
+            metadata = self._snapshot_object(candidate, item_id)["metadata"]
+            if metadata != target.metadata:
+                self.commands.execute(GardenEditCommand(
+                    self.project, candidate["garden_memory"], target, metadata))
+        return result
+
     def set_planting_date(self, item_id: str, value: str | None) -> dict[str, Any]:
         """Patch only a plant's date, preserving the other tracking fields."""
         return self._apply_card("set_planting_date", item_id, {"planting_date": value})

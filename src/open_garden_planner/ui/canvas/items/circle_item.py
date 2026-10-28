@@ -371,10 +371,8 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         diameter, unchanged, for a plant with no growth data set.
         """
         species = self.metadata.get("plant_species")
-        if not isinstance(species, dict):
-            return footprint_diameter
         grown = grown_spread_cm(
-            species, self.metadata, date.today(), getattr(self.object_type, "name", "")
+            species if isinstance(species, dict) else {}, self.metadata, date.today(), getattr(self.object_type, "name", "")
         )
         return grown if grown is not None else footprint_diameter
 

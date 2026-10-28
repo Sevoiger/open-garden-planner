@@ -73,7 +73,9 @@ La liste des noms admis est publiée par
 - tâches manuelles : <code>add_manual_task</code>, <code>edit_manual_task</code>,
   <code>delete_manual_task</code>, <code>set_manual_task_status</code> ;
 - fiches et suivi : <code>set_garden_card</code>,
-  <code>set_planting_date</code>, <code>add_garden_intervention</code>,
+  <code>set_planting_date</code>, <code>add_plant_measurement</code>,
+  <code>edit_plant_measurement</code>, <code>delete_plant_measurement</code>,
+  <code>add_garden_intervention</code>,
   <code>edit_garden_intervention</code>, <code>delete_garden_intervention</code> ;
 - sol : <code>record_soil_test</code> ;
 - récoltes, ravageurs et journal : <code>add_harvest_record</code>,

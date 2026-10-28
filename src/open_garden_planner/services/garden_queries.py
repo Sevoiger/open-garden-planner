@@ -94,5 +94,7 @@ def garden_record(snapshot: dict[str, Any], item_id: str) -> dict[str, Any]:
     zone_events = search_events(snapshot, card["zone_id"]) if card.get("zone_id") else []
     children = [_card_for_object(o) for o in objects
                 if o.get("metadata", {}).get("garden_tracking", {}).get("zone_id") == item_id]
-    return {"card": card, "direct_events": direct,
+    from open_garden_planner.services.plant_measurements import measurement_view
+
+    return {**measurement_view(obj.get("metadata", {})), "card": card, "direct_events": direct,
             "zone_events": [e for e in zone_events if e["id"] not in own_ids], "plantings": children}

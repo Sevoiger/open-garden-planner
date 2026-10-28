@@ -230,10 +230,10 @@ def _plant_canopy_radius_cm(item: Any, at_date: date | None) -> float | None:
 
     metadata = getattr(item, "metadata", None)
     species = (metadata or {}).get("plant_species")
-    if at_date is not None and isinstance(species, dict):
+    if at_date is not None:
         object_type = getattr(item, "object_type", None)
         grown = grown_spread_cm(
-            species, metadata, at_date, getattr(object_type, "name", "")
+            species if isinstance(species, dict) else {}, metadata, at_date, getattr(object_type, "name", "")
         )
         if grown is not None:
             return grown / 2.0

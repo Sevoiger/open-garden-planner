@@ -380,6 +380,8 @@ class PlantInstance:
     planting_date: date | None = None
     current_spread_cm: float | None = None  # Current canopy spread/diameter
     current_height_cm: float | None = None
+    size_measurements: list[dict[str, Any]] = field(default_factory=list)
+    size_measurement_baseline: dict[str, Any] = field(default_factory=dict)
     notes: str = ""
 
     # Custom metadata (user-defined fields)
@@ -399,6 +401,8 @@ class PlantInstance:
             "planting_date": self.planting_date.isoformat() if self.planting_date else None,
             "current_spread_cm": self.current_spread_cm,
             "current_height_cm": self.current_height_cm,
+            "size_measurements": self.size_measurements,
+            "size_measurement_baseline": self.size_measurement_baseline,
             "notes": self.notes,
             "custom_fields": self.custom_fields,
             "species_data": self.species_data.to_dict() if self.species_data else None,
@@ -430,6 +434,8 @@ class PlantInstance:
             planting_date=planting_date,
             current_spread_cm=current_spread,
             current_height_cm=data.get("current_height_cm"),
+            size_measurements=data.get("size_measurements", []),
+            size_measurement_baseline=data.get("size_measurement_baseline", {}),
             notes=data.get("notes", ""),
             custom_fields=data.get("custom_fields", {}),
             species_data=species_data,

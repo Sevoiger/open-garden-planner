@@ -3748,6 +3748,8 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.core.garden_memory import GardenMemoryService
 
         service = GardenMemoryService(self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
+        if operation in {"add_plant_measurement", "edit_plant_measurement", "delete_plant_measurement"}:
+            return service.plant_measurement(operation, payload["item_id"], payload["fields"], payload.get("request_key"))
         if operation == "planting_date":
             return service.set_planting_date(payload["item_id"], payload["planting_date"])
         if operation == "card":
@@ -5443,6 +5445,10 @@ class GardenPlannerApp(QMainWindow):
 
         # 6. Plant Details Panel (collapsible) - only shown when a plant is selected
         self.plant_database_panel = PlantDatabasePanel()
+        from open_garden_planner.core.garden_memory import GardenMemoryService
+
+        self.plant_database_panel.measurement_service = GardenMemoryService(
+            self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
         self.plant_database_panel.search_button.clicked.connect(self._on_search_plant_database)
         self.plant_details_collapsible = CollapsiblePanel(self.tr("Plant Details"), self.plant_database_panel, expanded=True)
         sidebar_layout.addWidget(self.plant_details_collapsible)

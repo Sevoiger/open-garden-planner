@@ -373,7 +373,7 @@ def _cached_capability_details(
         }
 
     persistent_keys = [name for name in (
-        "add_garden_intervention", "apply_document_operations", "apply_plant_library_import",
+        "add_plant_measurement", "add_garden_intervention", "apply_document_operations", "apply_plant_library_import",
     ) if name in names]
     read_before_retry = [name for name in (
         "create_object", "create_layer", "add_manual_task", "record_soil_test",
@@ -397,6 +397,7 @@ def _cached_capability_details(
         "read_before_retry": read_before_retry,
         "durability": {
             name: text for name, text in (
+                ("add_plant_measurement", "Measurement request keys survive undo/deletion in .ogp; save_plan persists live edits."),
                 ("add_garden_intervention", "Intervention request keys are stored in the .ogp project; live edits become durable after save_plan."),
                 ("apply_document_operations", document_receipt),
                 ("apply_plant_library_import", "The botanical transaction and receipt are committed atomically to the personal library before success."),
@@ -756,6 +757,7 @@ def build_server(
                 "inspect_plan": ["list_objects", "get_object", "get_geometry"],
                 "move_with_constraints": ["get_geometry", "move_object", "set_object_position"],
                 "detach_junction": ["list_constraints", "remove_constraint"],
+                "plant_measurements": ["get_garden_record", "add_plant_measurement", "edit_plant_measurement", "delete_plant_measurement", "save_plan"],
                 "planting_date": ["get_garden_record", "set_planting_date", "save_plan"],
                 "garden_report": ["add_garden_intervention", "search_garden_interventions", "save_plan"],
                 "correct_report": ["edit_garden_intervention", "delete_garden_intervention"],
@@ -1675,7 +1677,11 @@ def build_server(
     # main thread — invariants #3/#4/#13: one agent write = one Ctrl-Z step.
     @mcp.tool(structured_output=False)
     async def get_garden_record(item_id: str) -> dict[str, Any]:
-        """Read a perennial card, disjoint direct/zone interventions and zone plantings.
+        """Read a perennial card, interventions, plantings and dated size measurements.
+
+        measurements includes stable IDs, date, height_cm/spread_cm and note.
+        current_size reports each dimension with its own date and measurement_id;
+        undated_size preserves pre-existing dimensions without inventing a date.
 
         Partial dates keep precision and original labels. Legacy exact planting
         dates remain exact; missing dates stay unknown. Read-only, in-memory.
@@ -2146,6 +2152,43 @@ def build_server(
             if provider is None:
                 raise ValueError("Garden tracking writes are not available in this application")
             return await anyio.to_thread.run_sync(lambda: provider(operation, payload))
+
+        @mcp.tool(structured_output=False)
+        async def add_plant_measurement(item_id: str, date: str, request_key: str,
+                                        height_cm: StrictFloat | None = None, spread_cm: StrictFloat | None = None,
+                                        note: str = "") -> dict[str, Any]:
+            """Record measured dimensions on an explicit ISO day; at least one positive cm value.
+
+            Preserves older/undated sizes. Latest measurement per dimension drives
+            current size; drawing geometry stays independent. Same-day overlapping
+            dimensions require editing the existing record. Stable request_key is
+            mandatory: retries never recreate an undone/deleted record. Token required,
+            one undo step; call save_plan. Read history/current_size in get_garden_record.
+            """
+            return await _garden_write("add_plant_measurement", {"item_id": item_id,
+                "fields": {"date": date, "height_cm": height_cm, "spread_cm": spread_cm, "note": note},
+                "request_key": request_key})
+
+        @mcp.tool(structured_output=False)
+        async def edit_plant_measurement(item_id: str, measurement_id: str, date: str,
+                                         height_cm: StrictFloat | None = None, spread_cm: StrictFloat | None = None,
+                                         note: str = "") -> dict[str, Any]:
+            """Replace a dated measurement, retaining its ID. Omitted dimensions become unknown.
+
+            Token required, undoable; recomputes latest current sizes. save_plan persists.
+            """
+            return await _garden_write("edit_plant_measurement", {"item_id": item_id,
+                "fields": {"measurement_id": measurement_id, "date": date,
+                           "height_cm": height_cm, "spread_cm": spread_cm, "note": note}})
+
+        @mcp.tool(structured_output=False)
+        async def delete_plant_measurement(item_id: str, measurement_id: str) -> dict[str, Any]:
+            """Delete a measurement, restore preceding sizes; retain replay receipts.
+
+            Token required, undoable; save_plan persists. Undated legacy values are retained.
+            """
+            return await _garden_write("delete_plant_measurement", {"item_id": item_id,
+                "fields": {"measurement_id": measurement_id}})
 
         @mcp.tool(structured_output=False)
         async def set_planting_date(item_id: str, planting_date: str | None) -> dict[str, Any]:

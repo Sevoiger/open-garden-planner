@@ -1,12 +1,18 @@
 """Qt-free plant growth-over-time model (US-E8, #263).
 
+Dated measurements anchor dimensions at their observation dates, interpolate
+between observations (including pruning), and project toward maturity after the
+last observation. Before the first observation its size is held constant, an
+estimate rather than a historical measurement. Undated legacy plans keep their
+existing planting-date model.
+
 One interpolation, used everywhere: the US-E2 height resolver routes plant
 heights through this module when asked for a date-projected value, so the
 2D shadow overlay (US-E3), the hours-of-sun heatmap (US-E4) and the 3D
 view (US-E6) all see the SAME grown size — there is deliberately no second
 interpolation anywhere (issue #263's fenced path).
 
-MVP model (linear + clamp, ADR-037/US-E8 note — owner-chosen
+Legacy model for plants without dated measurements (linear + clamp, ADR-037/US-E8 note — owner-chosen
 "current-height anchors it" redesign):
     size(t) = current + (max − current) · clamp(years_since_planting / years_to_maturity, 0, 1)
 
@@ -211,6 +217,51 @@ def growth_fraction(
     return max(0.0, min(1.0, years / maturity_years))
 
 
+def _dated_dimension(
+    species: dict[str, Any], metadata: dict[str, Any] | None, at_date: date,
+    object_type_name: str, dimension: str,
+) -> float | None:
+    """Observed anchors, interpolation between them, then a maturity estimate.
+
+    Before the first observation hold its value (no invented earlier measurement).
+    The other dimension is inferred only if this one has never been measured.
+    """
+    from open_garden_planner.services.plant_measurements import stored_measurements
+
+    instance = (metadata or {}).get("plant_instance", {})
+    if not isinstance(instance, dict):
+        return None
+    records = stored_measurements(instance)
+    samples = sorted((r["date"], r[dimension]) for r in records if dimension in r)
+    high_key = "max_height_cm" if dimension == "height_cm" else "max_spread_cm"
+    if not samples:
+        current_key = "current_height_cm" if dimension == "height_cm" else "current_spread_cm"
+        if _positive(instance.get(current_key)) is not None:
+            return None
+        other = "spread_cm" if dimension == "height_cm" else "height_cm"
+        other_max = species.get("max_spread_cm" if other == "spread_cm" else "max_height_cm")
+        samples = [(r["date"], _derive_from_other(r[other], other_max, species.get(high_key)))
+                   for r in records if other in r]
+        samples = sorted((day, value) for day, value in samples if value is not None)
+    if not samples:
+        return None
+    day = at_date.isoformat()
+    if day <= samples[0][0]:
+        return samples[0][1]
+    for (left_day, left), (right_day, right) in zip(samples, samples[1:], strict=False):
+        if left_day <= day <= right_day:
+            span = (date.fromisoformat(right_day) - date.fromisoformat(left_day)).days
+            fraction = (at_date - date.fromisoformat(left_day)).days / span
+            return left + (right - left) * fraction
+    measured_day, measured = samples[-1]
+    high = _positive(species.get(high_key))
+    if high is None or measured >= high:
+        return measured
+    fraction = growth_fraction(date.fromisoformat(measured_day), at_date,
+                               years_to_maturity(species, object_type_name))
+    return measured + (high - measured) * fraction
+
+
 def _grown_dimension(
     species: dict[str, Any],
     metadata: dict[str, Any] | None,
@@ -250,6 +301,9 @@ def grown_height_cm(
 ) -> float | None:
     """Date-projected height from the plant's CURRENT height up to the
     species max, or None (no planting date / no current height / no max)."""
+    dated = _dated_dimension(species, metadata, at_date, object_type_name, "height_cm")
+    if dated is not None:
+        return dated
     return _grown_dimension(
         species,
         metadata,
@@ -268,6 +322,9 @@ def grown_spread_cm(
 ) -> float | None:
     """Date-projected canopy spread from the plant's CURRENT spread up to
     the species max, or None. Drives the shadow footprint."""
+    dated = _dated_dimension(species, metadata, at_date, object_type_name, "spread_cm")
+    if dated is not None:
+        return dated
     return _grown_dimension(
         species,
         metadata,

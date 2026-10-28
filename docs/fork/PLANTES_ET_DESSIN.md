@@ -56,6 +56,52 @@ La suppression est annulable, y compris pour les contraintes à trois points ; l
 objets verrouillés ou membres d’un groupe restent protégés. Les déplacements ou
 modifications de sommets peuvent ensuite être effectués indépendamment.
 
+## Suivre les dimensions d’une plantation
+
+Dans la fiche d’une plante, **Mesures et historique…** permet d’ajouter un relevé
+avec une date exacte, une hauteur et/ou une envergure en cm, et une note facultative.
+Les champs « actuels » affichent la dernière mesure connue de chaque dimension ;
+leur infobulle donne sa date. Une hauteur récente et une envergure plus ancienne
+conservent donc chacune leur date. Le suivi reste accessible sans espèce renseignée.
+
+Sélectionner un relevé pour le corriger ou le supprimer. **Nouveau relevé** prépare
+une nouvelle saisie ; **Enregistrer le relevé** la valide. Une dimension vide reste
+inconnue pour ce relevé. Un doublon du même jour et de la même dimension est refusé :
+corriger le relevé existant. Chaque validation ou suppression s’annule en une étape.
+Les valeurs antérieures sans date sont conservées séparément, sans inventer une date ;
+elles redeviennent les valeurs actuelles si tous les relevés de la dimension sont retirés.
+
+Le diamètre du cercle dessiné et les distances de plantation restent indépendants
+des mesures : redimensionner le cercle ne crée pas d’observation. L’icône et les
+vues qui projettent la croissance utilisent les relevés : valeur observée à sa date,
+interpolation entre relevés (une réduction après taille est possible), puis estimation
+linéaire vers la dimension adulte depuis le dernier relevé. Le délai de maturité
+existant est compté à partir de ce relevé. Avant le premier relevé, sa dimension est
+maintenue comme estimation d’affichage, sans prétendre connaître une ancienne mesure.
+Les plans sans relevés datés gardent leur modèle antérieur.
+
+Pour le MCP :
+
+- `get_garden_record(item_id="…")` renvoie `measurements` (identifiant, `date`,
+  `height_cm`/`spread_cm`, `note`), `current_size` (valeur, date et identifiant par
+  dimension) et `undated_size` (anciennes valeurs conservées).
+- `add_plant_measurement(item_id="…", date="2026-10-28", height_cm=125,
+  spread_cm=80, note="Relevé au jardin", request_key="mesure-2026-10-28-1")`
+  ajoute une observation. La date doit être explicite ; au moins une dimension
+  strictement positive et finie est requise. Réutiliser la même clé au rejeu.
+- `edit_plant_measurement(item_id="…", measurement_id="…", date="2026-10-28",
+  height_cm=120, spread_cm=80)` remplace le contenu du relevé ; les dimensions
+  omises deviennent inconnues dans ce relevé.
+- `delete_plant_measurement(item_id="…", measurement_id="…")` le supprime.
+  Le rejeu d’un ajout annulé ou supprimé ne recrée jamais le relevé.
+
+Ces écritures exigent le jeton, passent sur le thread Qt et restent en mémoire
+jusqu’à `save_plan`. Les opérations de document préparées exposent les mêmes trois
+noms avec `target_id` pour la plante et `fields` pour le contenu du relevé ;
+`measurement_id` appartient à `fields` pour corriger/supprimer. Leur clé de lot
+assure le rejeu sûr, y compris dans l’hôte autonome. Le `.ogp` conserve les relevés
+dans les métadonnées de la plantation ; aucun changement de version n’est nécessaire.
+
 ## Reclasser une pergola
 
 Le type **Pergola** est disponible pour les rectangles et les polygones dans le
