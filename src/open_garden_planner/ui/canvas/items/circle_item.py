@@ -198,7 +198,10 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         self._setup_styling()
         self._setup_flags()
         if is_reference_point(self):
-            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            self.setFlag(
+                QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+                self.metadata.get("reference_point_fixed_size") is not True,
+            )
             self.setPos(center_x, center_y)
             self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.initialize_label()

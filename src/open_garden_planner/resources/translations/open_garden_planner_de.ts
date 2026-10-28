@@ -845,7 +845,7 @@
             <location filename="../../ui/canvas/canvas_view.py" line="4029" />
             <location filename="../../ui/canvas/canvas_view.py" line="4051" />
             <location filename="../../ui/canvas/canvas_view.py" line="4062" />
-            <location filename="../../ui/reference_points.py" line="381" />
+            <location filename="../../ui/reference_points.py" line="391" />
             <source>Movement blocked: existing constraints conflict with the parent outline.</source>
             <translation>Verschieben blockiert: Bestehende Bedingungen stehen im Konflikt mit dem übergeordneten Umriss.</translation>
         </message>
@@ -1341,69 +1341,69 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation type="vanished">Bodenprobe hinzufügen…</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1082" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1085" />
             <source>Array Along Path...</source>
             <translation>Muster entlang Pfad...</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1075" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1078" />
             <source>Boolean</source>
             <translation>Bool'sche Operation</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1057" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1060" />
             <source>Create Circular Array...</source>
             <translation>Kreismuster erstellen...</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1054" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1057" />
             <source>Create Grid Array...</source>
             <translation>Rastermuster erstellen...</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1051" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1054" />
             <source>Create Linear Array...</source>
             <translation>Lineares Muster erstellen...</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1043" />
-            <location filename="../../ui/reference_points.py" line="446" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1046" />
+            <location filename="../../ui/reference_points.py" line="458" />
             <source>Delete</source>
             <translation>Löschen</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1048" />
-            <location filename="../../ui/reference_points.py" line="441" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1051" />
+            <location filename="../../ui/reference_points.py" line="453" />
             <source>Duplicate</source>
             <translation>Duplizieren</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1078" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1081" />
             <source>Intersect</source>
             <translation>Schnittmenge</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1032" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1035" />
             <source>Log Harvest…</source>
             <translation>Ernte erfassen…</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1029" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1032" />
             <source>Log Pest/Disease…</source>
             <translation>Schädling/Krankheit eintragen…</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1036" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1039" />
             <source>Show Area</source>
             <translation>Fläche anzeigen</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1079" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1082" />
             <source>Subtract</source>
             <translation>Subtraktion</translation>
         </message>
         <message>
-            <location filename="../../ui/canvas/items/circle_item.py" line="1076" />
+            <location filename="../../ui/canvas/items/circle_item.py" line="1079" />
             <source>Union</source>
             <translation>Vereinigung</translation>
         </message>
@@ -1864,7 +1864,7 @@ Auswählen, dann Mitte und Rand im Plan setzen. Größenwahl für Platzierung mi
             <translation>{count} Objekte verschieben</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="393" />
+            <location filename="../../ui/reference_points.py" line="403" />
             <source>Reference point</source>
             <translation>Referenzpunkt</translation>
         </message>
@@ -5502,7 +5502,7 @@ Diese Datei über Datei &gt; Öffnen öffnen.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="4113" />
-            <location filename="../../ui/reference_points.py" line="436" />
+            <location filename="../../ui/reference_points.py" line="448" />
             <source>&amp;Copy</source>
             <translation>&amp;Kopieren</translation>
         </message>
@@ -9965,42 +9965,42 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
     <context>
         <name>PersonalStoreStatus</name>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="53" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="55" />
             <source>Another OGP writer changed this file. Your edits remain in memory: {error}. Retry after resolving the conflict, or reload.</source>
             <translation>Eine andere OGP-Instanz hat diese Datei geändert. Deine Änderungen bleiben im Arbeitsspeicher: {error}. Löse den Konflikt und versuche es erneut, oder lade die Datei neu.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="58" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="60" />
             <source>Changes are in memory but were not saved: {error}. Retry saving or reload from disk.</source>
             <translation>Änderungen befinden sich im Arbeitsspeicher, wurden aber nicht gespeichert: {error}. Versuche erneut zu speichern oder lade den Datenträger neu.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="40" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="42" />
             <source>Personal data could not be loaded: {error}. The file was left unchanged. Repair it, then retry loading.</source>
             <translation>Persönliche Daten konnten nicht geladen werden: {error}. Die Datei blieb unverändert. Repariere sie und versuche dann erneut, sie zu laden.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="77" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="79" />
             <source>Reload Personal Data</source>
             <translation>Persönliche Daten neu laden</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="32" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="34" />
             <source>Reload from Disk…</source>
             <translation>Von Datenträger neu laden…</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="78" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="80" />
             <source>Reloading will discard the current in-memory changes. Continue?</source>
             <translation>Beim erneuten Laden gehen die aktuellen Änderungen im Arbeitsspeicher verloren. Fortfahren?</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="45" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="47" />
             <source>Retry Loading</source>
             <translation>Laden erneut versuchen</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/personal_store_status.py" line="63" />
+            <location filename="../../ui/widgets/personal_store_status.py" line="65" />
             <source>Retry Saving</source>
             <translation>Speichern erneut versuchen</translation>
         </message>
@@ -12940,88 +12940,111 @@ angehakt = immer schützen, nicht angehakt = nie schützen, unbestimmt = Standar
     <context>
         <name>ReferencePoints</name>
         <message>
-            <location filename="../../ui/reference_points.py" line="220" />
+            <location filename="../../ui/reference_points.py" line="222" />
             <source>Attached to</source>
             <translation>Zugeordnet zu</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="136" />
-            <location filename="../../ui/reference_points.py" line="282" />
+            <location filename="../../ui/reference_points.py" line="138" />
+            <location filename="../../ui/reference_points.py" line="292" />
             <source>Attached to: {name}</source>
             <translation>Zugeordnet zu: {name}</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="330" />
+            <location filename="../../ui/reference_points.py" line="340" />
             <source>Choose a visible, unlocked layer to place a reference point.</source>
             <translation>Zum Platzieren eines Referenzpunkts eine sichtbare, nicht gesperrte Ebene wählen.</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="236" />
+            <location filename="../../ui/reference_points.py" line="249" />
             <source>Color</source>
             <translation>Farbe</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="173" />
+            <location filename="../../ui/reference_points.py" line="175" />
             <source>Create reference point</source>
             <translation>Referenzpunkt erstellen</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="244" />
+            <location filename="../../ui/reference_points.py" line="257" />
             <source>Drag the point to move it. Double-click to edit its appearance or attachment.</source>
             <translation>Punkt zum Verschieben ziehen. Aussehen oder Zuordnung per Doppelklick bearbeiten.</translation>
         </message>
         <message>
             <location filename="../../ui/panels/properties_panel.py" line="549" />
-            <location filename="../../ui/reference_points.py" line="423" />
+            <location filename="../../ui/reference_points.py" line="435" />
             <source>Edit reference point…</source>
             <translation>Referenzpunkt bearbeiten…</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="129" />
-            <location filename="../../ui/reference_points.py" line="190" />
-            <location filename="../../ui/reference_points.py" line="285" />
+            <location filename="../../ui/reference_points.py" line="237" />
+            <source>Fixed in plan (scales with zoom)</source>
+            <translation>Fest im Plan (skaliert mit Zoom)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/reference_points.py" line="131" />
+            <location filename="../../ui/reference_points.py" line="192" />
+            <location filename="../../ui/reference_points.py" line="295" />
             <source>Independent point</source>
             <translation>Unabhängiger Punkt</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="221" />
+            <location filename="../../ui/reference_points.py" line="223" />
             <source>Keep on the parent outline</source>
             <translation>Auf dem Umriss des übergeordneten Objekts halten</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="188" />
+            <location filename="../../ui/reference_points.py" line="190" />
             <source>Name</source>
             <translation>Name</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="135" />
+            <location filename="../../ui/reference_points.py" line="137" />
             <source>On outline of: {name}</source>
             <translation>Auf dem Umriss von: {name}</translation>
         </message>
         <message>
             <location filename="../../ui/canvas/canvas_view.py" line="508" />
-            <location filename="../../ui/reference_points.py" line="184" />
+            <location filename="../../ui/reference_points.py" line="186" />
             <source>Reference point</source>
             <translation>Referenzpunkt</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="243" />
+            <location filename="../../ui/reference_points.py" line="240" />
+            <source>Size mode</source>
+            <translation>Größenmodus</translation>
+        </message>
+        <message>
+            <location filename="../../ui/reference_points.py" line="256" />
             <source>Stroke width</source>
             <translation>Strichstärke</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="233" />
+            <location filename="../../ui/reference_points.py" line="234" />
             <source>Symbol size</source>
             <translation>Symbolgröße</translation>
         </message>
         <message>
-            <location filename="../../ui/reference_points.py" line="140" />
+            <location filename="../../ui/reference_points.py" line="238" />
+            <source>Variable in plan (constant on screen)</source>
+            <translation>Variabel im Plan (konstant am Bildschirm)</translation>
+        </message>
+        <message>
             <source>{name}
 {status}
 Symbol: {size} px; stroke: {width} px</source>
-            <translation>{name}
+            <translation type="vanished">{name}
 {status}
 Symbol: {size} px; Strich: {width} px</translation>
+        </message>
+        <message>
+            <location filename="../../ui/reference_points.py" line="142" />
+            <source>{name}
+{status}
+Symbol: {size} {unit}; stroke: {width} px</source>
+            <translation>{name}
+{status}
+Symbol: {size} {unit}; Strich: {width} px</translation>
         </message>
     </context>
     <context>
