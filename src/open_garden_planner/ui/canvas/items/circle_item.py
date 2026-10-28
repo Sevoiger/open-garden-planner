@@ -810,7 +810,10 @@ class CircleItem(RotationHandleMixin, ResizeHandlesMixin, GardenItemMixin, QGrap
         the dimension feedback, handles, labels and annotations.
         """
         r = self.rect()
-        self._center = QPointF(r.width() / 2.0, r.height() / 2.0)
+        # The shared resize primitive preserves the rect's local origin.
+        # Half the size alone drops that offset: 2D paints the right rect,
+        # but serialization and shadow/3D footprints read the wrong centre.
+        self._center = r.center()
         self._radius = r.width() / 2.0
         # Single dimension readout: the circle annotates its own diameter ("Ø")
         # when annotations are visible, so only fall back to the handle's
