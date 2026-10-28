@@ -115,18 +115,31 @@ class SeedTableModel(QAbstractTableModel):
         ViabilityStatus.UNKNOWN: "help",
     }
 
-    def __init__(self, store: SeedInventoryStore, viability_db: SeedViabilityDB) -> None:
+    def __init__(
+        self,
+        store: SeedInventoryStore,
+        viability_db: SeedViabilityDB,
+        *,
+        initial_packets: list[SeedPacket] | None = None,
+    ) -> None:
         super().__init__()
         self._store = store
         self._db = viability_db
-        self._packets: list[SeedPacket] = []
+        self._packets: list[SeedPacket] = list(initial_packets or [])
         self._current_year = datetime.date.today().year
         self._viability_labels: dict[ViabilityStatus, str] = dict(self._DEFAULT_VIA_LABELS)
-        self._reload()
+        if initial_packets is None:
+            self._reload()
 
     def _reload(self) -> None:
         self.beginResetModel()
         self._packets = self._store.all()
+        self.endResetModel()
+
+    def set_packets(self, packets: list[SeedPacket]) -> None:
+        """Replace displayed rows with a caller-validated snapshot."""
+        self.beginResetModel()
+        self._packets = list(packets)
         self.endResetModel()
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: ARG002, B008
@@ -245,6 +258,7 @@ class SeedPacketEditDialog(ResponsiveDialog):
         self._build_ui()
         if packet is not None:
             self._populate(packet)
+        self._initial_form_values = self._current_form_values()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -415,10 +429,21 @@ class SeedPacketEditDialog(ResponsiveDialog):
         sb.setMinimumWidth(60)
         return sb
 
+    @staticmethod
+    def _set_spin_value_preserving_range(sb: QSpinBox, value: int) -> None:
+        """Display stored integer values even when they exceed the usual UI range."""
+        if not -(2**31) <= value <= 2**31 - 1:
+            raise ValueError("Integer value cannot be represented by a Qt spin box")
+        minimum = min(sb.minimum(), value)
+        maximum = max(sb.maximum(), value)
+        if minimum != sb.minimum() or maximum != sb.maximum():
+            sb.setRange(minimum, maximum)
+        sb.setValue(value)
+
     def _populate(self, p: SeedPacket) -> None:
         self._name_edit.setText(p.species_name)
         self._variety_edit.setText(p.variety)
-        self._year_spin.setValue(p.purchase_year)
+        self._set_spin_value_preserving_range(self._year_spin, p.purchase_year)
         self._qty_spin.setValue(p.quantity)
         idx = self._unit_combo.findData(p.quantity_unit)
         if idx >= 0:
@@ -433,9 +458,9 @@ class SeedPacketEditDialog(ResponsiveDialog):
         if p.germination_temp_max_c is not None:
             self._temp_max.setValue(p.germination_temp_max_c)
         if p.germination_days_min is not None:
-            self._days_min.setValue(p.germination_days_min)
+            self._set_spin_value_preserving_range(self._days_min, p.germination_days_min)
         if p.germination_days_max is not None:
-            self._days_max.setValue(p.germination_days_max)
+            self._set_spin_value_preserving_range(self._days_max, p.germination_days_max)
 
         if p.light_germinator is not None:
             idx = self._light_combo.findData(p.light_germinator)
@@ -444,14 +469,52 @@ class SeedPacketEditDialog(ResponsiveDialog):
 
         self._cold_strat_cb.setChecked(p.cold_stratification)
         if p.stratification_days is not None:
-            self._strat_days_spin.setValue(p.stratification_days)
+            self._set_spin_value_preserving_range(
+                self._strat_days_spin, p.stratification_days
+            )
         self._pretreat_edit.setText(p.pre_treatment)
 
         if p.viability_shelf_life_override is not None:
             self._override_cb.setChecked(True)
-            self._override_spin.setValue(p.viability_shelf_life_override)
+            self._set_spin_value_preserving_range(
+                self._override_spin, p.viability_shelf_life_override
+            )
 
         self._notes_edit.setPlainText(p.notes)
+
+    @staticmethod
+    def _temperature_value(sb: QDoubleSpinBox) -> float | None:
+        return None if sb.value() == sb.minimum() else sb.value()
+
+    @staticmethod
+    def _days_value(sb: QSpinBox) -> int | None:
+        return None if sb.value() == 0 else sb.value()
+
+    def _current_form_values(self) -> dict[str, Any]:
+        return {
+            "species_name": self._name_edit.text().strip(),
+            "variety": self._variety_edit.text().strip(),
+            "purchase_year": self._year_spin.value(),
+            "quantity": self._qty_spin.value(),
+            "quantity_unit": self._unit_combo.currentData() or "seeds",
+            "manufacturer": self._manufacturer_edit.text().strip(),
+            "batch_number": self._batch_edit.text().strip(),
+            "germination_temp_min_c": self._temperature_value(self._temp_min),
+            "germination_temp_opt_c": self._temperature_value(self._temp_opt),
+            "germination_temp_max_c": self._temperature_value(self._temp_max),
+            "germination_days_min": self._days_value(self._days_min),
+            "germination_days_max": self._days_value(self._days_max),
+            "light_germinator": self._light_combo.currentData(),
+            "cold_stratification": self._cold_strat_cb.isChecked(),
+            "stratification_days": (
+                self._strat_days_spin.value() if self._cold_strat_cb.isChecked() else None
+            ),
+            "pre_treatment": self._pretreat_edit.text().strip(),
+            "notes": self._notes_edit.toPlainText().strip(),
+            "viability_shelf_life_override": (
+                self._override_spin.value() if self._override_cb.isChecked() else None
+            ),
+        }
 
     def _on_accept(self) -> None:
         if not self._name_edit.text().strip():
@@ -465,38 +528,19 @@ class SeedPacketEditDialog(ResponsiveDialog):
 
     def get_packet(self) -> SeedPacket:
         """Build and return a SeedPacket from the form values."""
-        def _temp(sb: QDoubleSpinBox) -> float | None:
-            return None if sb.value() == sb.minimum() else sb.value()
-
-        def _days(sb: QSpinBox) -> int | None:
-            return None if sb.value() == 0 else sb.value()
-
+        values = self._current_form_values()
+        if self._packet is not None:
+            for field_name, form_value in values.items():
+                if form_value == self._initial_form_values[field_name]:
+                    values[field_name] = getattr(self._packet, field_name)
         existing_id = self._packet.id if self._packet else None
         import uuid
         packet_id = existing_id or str(uuid.uuid4())
 
         return SeedPacket(
             id=packet_id,
-            species_name=self._name_edit.text().strip(),
-            variety=self._variety_edit.text().strip(),
-            purchase_year=self._year_spin.value(),
-            quantity=self._qty_spin.value(),
-            quantity_unit=self._unit_combo.currentData() or "seeds",
-            manufacturer=self._manufacturer_edit.text().strip(),
-            batch_number=self._batch_edit.text().strip(),
-            germination_temp_min_c=_temp(self._temp_min),
-            germination_temp_opt_c=_temp(self._temp_opt),
-            germination_temp_max_c=_temp(self._temp_max),
-            germination_days_min=_days(self._days_min),
-            germination_days_max=_days(self._days_max),
-            light_germinator=self._light_combo.currentData(),
-            cold_stratification=self._cold_strat_cb.isChecked(),
-            stratification_days=(
-                self._strat_days_spin.value() if self._cold_strat_cb.isChecked() else None
-            ),
-            pre_treatment=self._pretreat_edit.text().strip(),
-            notes=self._notes_edit.toPlainText().strip(),
-            viability_shelf_life_override=(
-                self._override_spin.value() if self._override_cb.isChecked() else None
-            ),
+            species_id=self._packet.species_id if self._packet else None,
+            photo_path=self._packet.photo_path if self._packet else "",
+            created_date=self._packet.created_date if self._packet else "",
+            **values,
         )

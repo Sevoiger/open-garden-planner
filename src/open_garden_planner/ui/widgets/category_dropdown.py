@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QToolButton,
@@ -28,6 +29,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.personal_store import (
+    PersonalStoreError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+)
 from open_garden_planner.core.tools import ToolType
 from open_garden_planner.ui.theme import set_text_role
 from open_garden_planner.ui.widgets.gallery_data import (
@@ -155,15 +161,33 @@ class _ThumbnailButton(QToolButton):
             get_plant_list_store,
         )
 
-        store = get_plant_list_store()
+        store = self._list_store or get_plant_list_store()
         obj = self._get_species_obj()
-        is_fav = (
-            store.is_favorite(obj)
-            or store.is_favorite(self._item.species)
-            or store.is_favorite(self._item.name)
-        )
+        try:
+            is_fav = (
+                store.is_favorite(obj)
+                or store.is_favorite(self._item.species)
+                or store.is_favorite(self._item.name)
+            )
+        except PersonalStoreLoadError as exc:
+            if hasattr(self, "_star_badge"):
+                self._star_badge.setVisible(False)
+            self.setToolTip(
+                QCoreApplication.translate(
+                    "CategoryDropdown", "Personal plant lists unavailable: {error}"
+                ).format(error=str(exc))
+            )
+            return
         if hasattr(self, "_star_badge"):
             self._star_badge.setVisible(is_fav)
+        if store.is_dirty:
+            self.setToolTip(
+                QCoreApplication.translate(
+                    "CategoryDropdown",
+                    "Plant-list changes are in memory but not saved. Retry saving in the Plant Lists panel.",
+                )
+            )
+            return
         if is_fav:
             self.setToolTip(
                 QCoreApplication.translate(
@@ -187,7 +211,29 @@ class _ThumbnailButton(QToolButton):
 
         store = get_plant_list_store()
         obj = self._get_species_obj()
-        is_fav = store.is_favorite(obj) or store.is_favorite(self._item.species) or store.is_favorite(self._item.name)
+        try:
+            is_fav = (
+                store.is_favorite(obj)
+                or store.is_favorite(self._item.species)
+                or store.is_favorite(self._item.name)
+            )
+            custom_lists = [
+                pl for pl in store.all_lists() if pl.id != store.FAVORITES_ID
+            ]
+        except PersonalStoreLoadError as exc:
+            QMessageBox.warning(
+                self,
+                QCoreApplication.translate("CategoryDropdown", "Plant lists unavailable"),
+                QCoreApplication.translate(
+                    "CategoryDropdown",
+                    "Personal plant lists could not be read: {error}. Repair the file, "
+                    "then retry from the Plant Lists panel.",
+                ).format(error=str(exc)),
+            )
+            return
+        writable = (
+            store.load_state != PersonalStoreLoadState.FAILED and not store.is_dirty
+        )
 
         menu = QMenu(self)
 
@@ -196,15 +242,20 @@ class _ThumbnailButton(QToolButton):
                 QCoreApplication.translate("CategoryDropdown", "Remove from Favorites")
             )
             if fav_action is not None:
-                fav_action.triggered.connect(lambda: store.toggle_favorite(obj))
+                fav_action.setEnabled(writable)
+                fav_action.triggered.connect(
+                    lambda: self._run_list_action(lambda: store.toggle_favorite(obj))
+                )
         else:
             fav_action = menu.addAction(
                 QCoreApplication.translate("CategoryDropdown", "Add to Favorites")
             )
             if fav_action is not None:
-                fav_action.triggered.connect(lambda: store.toggle_favorite(obj))
+                fav_action.setEnabled(writable)
+                fav_action.triggered.connect(
+                    lambda: self._run_list_action(lambda: store.toggle_favorite(obj))
+                )
 
-        custom_lists = [pl for pl in store.all_lists() if pl.id != store.FAVORITES_ID]
         if custom_lists:
             sub_menu = menu.addMenu(
                 QCoreApplication.translate("CategoryDropdown", "Add to List")
@@ -213,13 +264,40 @@ class _ThumbnailButton(QToolButton):
                 for pl in custom_lists:
                     action = sub_menu.addAction(pl.name)
                     if action is not None:
+                        action.setEnabled(writable)
                         action.triggered.connect(
-                            lambda _checked=False, target_id=pl.id: store.add_entry(
-                                target_id, self._get_species_obj()
+                            lambda _checked=False, target_id=pl.id: self._run_list_action(
+                                lambda: store.add_entry(
+                                    target_id, self._get_species_obj()
+                                )
                             )
                         )
 
+        if not writable and store.is_dirty:
+            menu.addSeparator()
+            pending = menu.addAction(
+                QCoreApplication.translate(
+                    "CategoryDropdown",
+                    "Plant-list changes are in memory but not saved. Retry saving in the Plant Lists panel.",
+                )
+            )
+            if pending is not None:
+                pending.setEnabled(False)
+
         menu.exec(event.globalPos())
+
+    def _run_list_action(self, action) -> None:
+        """Keep favorite/list write failures visible to the user."""
+        try:
+            action()
+        except PersonalStoreError as exc:
+            QMessageBox.warning(
+                self,
+                QCoreApplication.translate("CategoryDropdown", "Plant lists unavailable"),
+                QCoreApplication.translate(
+                    "CategoryDropdown", "Personal plant-list change failed: {error}"
+                ).format(error=str(exc)),
+            )
 
     @property
     def item(self) -> GalleryItem:

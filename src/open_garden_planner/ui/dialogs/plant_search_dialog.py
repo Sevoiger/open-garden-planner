@@ -22,6 +22,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.personal_store import (
+    PersonalStoreError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+)
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.services.plant_api import (
     PlantAPIManager,
@@ -29,6 +34,7 @@ from open_garden_planner.services.plant_api import (
 )
 from open_garden_planner.ui.plant_species_assignment import plant_source_label
 from open_garden_planner.ui.theme import set_text_role, theme_color
+from open_garden_planner.ui.widgets.personal_store_status import PersonalStoreStatus
 from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
 logger = logging.getLogger(__name__)
@@ -84,8 +90,12 @@ class PlantSearchDialog(ResponsiveDialog):
 
         self._list_store = get_plant_list_store()
         self._list_store.changed.connect(self._on_list_store_changed)
+        self._list_store_status = PersonalStoreStatus(self)
+        self._list_store_status.retry_requested.connect(self._retry_list_store)
+        self._list_store_status.reload_requested.connect(self._reload_list_store)
 
         self._setup_ui()
+        self._update_favorite_button()
         self._perform_search()
 
     def _setup_ui(self) -> None:
@@ -120,6 +130,7 @@ class PlantSearchDialog(ResponsiveDialog):
         self.status_label = QLabel(self.tr("Enter a plant name to search"))
         self.status_label.setStyleSheet(f"color: {theme_color('text_secondary')};")
         layout.addWidget(self.status_label)
+        layout.addWidget(self._list_store_status)
 
         # Main content area
         content_layout = QHBoxLayout()
@@ -325,7 +336,12 @@ class PlantSearchDialog(ResponsiveDialog):
     def _on_toggle_favorite(self) -> None:
         """Toggle favorite status for currently selected plant."""
         if self._selected_plant:
-            self._list_store.toggle_favorite(self._selected_plant)
+            try:
+                self._list_store.toggle_favorite(self._selected_plant)
+            except PersonalStoreLoadError as exc:
+                self._list_store_status.show_load_error(exc)
+            except PersonalStoreError as exc:
+                self._list_store_status.show_save_error(exc)
             self._update_favorite_button()
 
     def _update_favorite_button(self) -> None:
@@ -334,9 +350,23 @@ class PlantSearchDialog(ResponsiveDialog):
             self.favorite_btn.setEnabled(False)
             self.favorite_btn.setChecked(False)
             return
-        self.favorite_btn.setEnabled(True)
-        is_fav = self._list_store.is_favorite(self._selected_plant)
+        try:
+            is_fav = self._list_store.is_favorite(self._selected_plant)
+        except PersonalStoreLoadError as exc:
+            self.favorite_btn.setEnabled(False)
+            self.favorite_btn.setChecked(False)
+            self._list_store_status.show_load_error(exc)
+            return
         self.favorite_btn.setChecked(is_fav)
+        writable = not self._list_store.is_dirty
+        self.favorite_btn.setEnabled(writable)
+        if self._list_store.is_dirty:
+            if self._list_store_status.isHidden():
+                self._list_store_status.show_save_error(
+                    PersonalStoreError("Changes remain in memory but were not saved")
+                )
+        else:
+            self._list_store_status.clear()
         self.favorite_btn.setToolTip(
             self.tr("Remove from Favorites") if is_fav else self.tr("Add to Favorites")
         )
@@ -344,6 +374,8 @@ class PlantSearchDialog(ResponsiveDialog):
     def _on_list_store_changed(self) -> None:
         """React to plant list store changes (update button and star icons in list)."""
         self._update_favorite_button()
+        if self._list_store.load_state == PersonalStoreLoadState.FAILED:
+            return
         from open_garden_planner.ui.icons import get_icon  # noqa: PLC0415
 
         s_icon = get_icon("star")
@@ -353,10 +385,44 @@ class PlantSearchDialog(ResponsiveDialog):
                 pdata = item.data(Qt.ItemDataRole.UserRole)
                 if pdata:
                     item.setText(self._format_result_text(pdata))
-                    if self._list_store.is_favorite(pdata) and s_icon is not None:
+                    try:
+                        is_fav = self._list_store.is_favorite(pdata)
+                    except PersonalStoreLoadError as exc:
+                        self._list_store_status.show_load_error(exc)
+                        return
+                    if is_fav and s_icon is not None:
                         item.setIcon(s_icon)
                     else:
                         item.setIcon(QIcon())
+
+    def _retry_list_store(self) -> None:
+        if self._list_store.load_state == PersonalStoreLoadState.FAILED:
+            self._list_store.reload()
+        else:
+            try:
+                self._list_store.save()
+            except PersonalStoreLoadError as exc:
+                self._list_store_status.show_load_error(exc)
+            except PersonalStoreError as exc:
+                self._list_store_status.show_save_error(exc)
+        self._clear_list_store_status_if_recovered()
+        self._on_list_store_changed()
+
+    def _clear_list_store_status_if_recovered(self) -> None:
+        """Clear the load banner after recovery even when no plant is selected."""
+        if self._list_store.load_state == PersonalStoreLoadState.FAILED:
+            self._list_store_status.show_load_error(
+                self._list_store.load_error or PersonalStoreLoadError("Unknown load error")
+            )
+        elif not self._list_store.is_dirty:
+            self._list_store_status.clear()
+
+    def _reload_list_store(self) -> None:
+        if self._list_store.is_dirty and not self._list_store_status.confirm_reload(self):
+            return
+        self._list_store.reload()
+        self._clear_list_store_status_if_recovered()
+        self._on_list_store_changed()
 
     def _display_plant_details(self, plant: PlantSpeciesData) -> None:
         """Display detailed information about a plant.

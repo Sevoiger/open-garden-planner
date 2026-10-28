@@ -6,13 +6,33 @@ SeedInventoryStore for persisting the global (cross-project) inventory.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+import math
 import uuid
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from open_garden_planner.core.personal_store import (
+    PersonalStoreConflictError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+    PersonalStorePersistenceError,
+    read_json,
+    write_json,
+)
+
+_QT_SPINBOX_INT_MIN = -(2**31)
+_QT_SPINBOX_INT_MAX = 2**31 - 1
+_MAX_CALENDAR_DURATION_DAYS = (date.max - date.min).days
+_SEED_PACKET_INTEGER_FIELDS = {
+    "purchase_year", "germination_days_min", "germination_days_max",
+    "stratification_days", "viability_shelf_life_override",
+}
+_SEED_PACKET_DATE_DURATION_FIELDS = {
+    "germination_days_min", "germination_days_max",
+}
 
 
 class ViabilityStatus(Enum):
@@ -159,12 +179,32 @@ class SeedPacket:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SeedPacket:
         """Deserialise from dictionary."""
+        for field_name in _SEED_PACKET_INTEGER_FIELDS:
+            value = data.get(field_name, 2024 if field_name == "purchase_year" else None)
+            if value is None and field_name != "purchase_year":
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"seed packet has an invalid {field_name}")
+            if field_name in _SEED_PACKET_DATE_DURATION_FIELDS:
+                in_range = 0 <= value <= _MAX_CALENDAR_DURATION_DAYS
+                supported_range = f"0..{_MAX_CALENDAR_DURATION_DAYS} days"
+            else:
+                in_range = _QT_SPINBOX_INT_MIN <= value <= _QT_SPINBOX_INT_MAX
+                supported_range = "the supported Qt integer range"
+            if not in_range:
+                raise ValueError(
+                    f"seed packet {field_name} is outside {supported_range}"
+                )
+        purchase_year = data.get("purchase_year", 2024)
+        cold_stratification = data.get("cold_stratification", False)
+        if not isinstance(cold_stratification, bool):
+            raise ValueError("seed packet has an invalid cold_stratification")
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             species_id=data.get("species_id"),
             species_name=data.get("species_name", ""),
             variety=data.get("variety", ""),
-            purchase_year=data.get("purchase_year", 2024),
+            purchase_year=purchase_year,
             manufacturer=data.get("manufacturer", ""),
             batch_number=data.get("batch_number", ""),
             quantity=data.get("quantity", 0.0),
@@ -175,7 +215,7 @@ class SeedPacket:
             germination_days_min=data.get("germination_days_min"),
             germination_days_max=data.get("germination_days_max"),
             light_germinator=data.get("light_germinator"),
-            cold_stratification=data.get("cold_stratification", False),
+            cold_stratification=cold_stratification,
             stratification_days=data.get("stratification_days"),
             pre_treatment=data.get("pre_treatment", ""),
             notes=data.get("notes", ""),
@@ -287,29 +327,184 @@ class SeedInventoryStore:
         self._path = storage_path
         self._packets: dict[str, SeedPacket] = {}
         self._extra_fields: dict[str, dict[str, Any]] = {}
+        self._disk_fingerprint: str | None = None
+        self._load_state = PersonalStoreLoadState.ABSENT
+        self._load_error: PersonalStoreLoadError | None = None
+        self._dirty = False
         self._load()
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
+    @property
+    def path(self) -> Path:
+        """Return the JSON file path for this store."""
+        return self._path
+
+    @property
+    def load_state(self) -> PersonalStoreLoadState:
+        """Return the last observed disk state."""
+        return self._load_state
+
+    @property
+    def load_error(self) -> PersonalStoreLoadError | None:
+        """Return the active load/validation failure, if any."""
+        return self._load_error
+
+    @property
+    def is_dirty(self) -> bool:
+        """Whether current in-memory data has not been durably saved."""
+        return self._dirty
+
+    @staticmethod
+    def _validate_records(raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            raise ValueError("seed inventory must be a JSON array")
+
+        string_fields = {
+            "species_name", "variety", "manufacturer", "batch_number",
+            "quantity_unit", "pre_treatment", "notes", "photo_path", "created_date",
+        }
+        nullable_string_fields = {"species_id"}
+        integer_fields = _SEED_PACKET_INTEGER_FIELDS
+        required_integer_fields = {"purchase_year"}
+        numeric_fields = {
+            "quantity", "germination_temp_min_c", "germination_temp_opt_c",
+            "germination_temp_max_c",
+        }
+        boolean_fields = {"cold_stratification", "light_germinator"}
+        packet_ids: set[str] = set()
+        for index, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise ValueError(f"seed packet at index {index} must be an object")
+            packet_id = item.get("id")
+            if not isinstance(packet_id, str) or not packet_id.strip():
+                raise ValueError(f"seed packet at index {index} has no valid id")
+            if packet_id in packet_ids:
+                raise ValueError(f"duplicate seed packet id: {packet_id!r}")
+            packet_ids.add(packet_id)
+            for field_name in string_fields:
+                if field_name in item and not isinstance(item[field_name], str):
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has an invalid {field_name}"
+                    )
+            for field_name in nullable_string_fields:
+                value = item.get(field_name)
+                if value is not None and not isinstance(value, str):
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has an invalid {field_name}"
+                    )
+            for field_name in integer_fields:
+                value = item.get(field_name)
+                if field_name in item and field_name in required_integer_fields and (
+                    isinstance(value, bool) or not isinstance(value, int)
+                ):
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has an invalid {field_name}"
+                    )
+                if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has an invalid {field_name}"
+                    )
+                if value is not None:
+                    if field_name in _SEED_PACKET_DATE_DURATION_FIELDS:
+                        in_range = 0 <= value <= _MAX_CALENDAR_DURATION_DAYS
+                        supported_range = f"0..{_MAX_CALENDAR_DURATION_DAYS} days"
+                    else:
+                        in_range = (
+                            _QT_SPINBOX_INT_MIN <= value <= _QT_SPINBOX_INT_MAX
+                        )
+                        supported_range = "the supported Qt integer range"
+                    if not in_range:
+                        raise ValueError(
+                            f"seed packet {packet_id!r} has a {field_name} outside "
+                            f"{supported_range}"
+                        )
+            for field_name in numeric_fields:
+                value = item.get(field_name)
+                if value is None:
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has an invalid {field_name}"
+                    )
+                try:
+                    finite = math.isfinite(value)
+                except OverflowError:
+                    finite = False
+                if not finite:
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has a non-finite {field_name}"
+                    )
+            if item.get("quantity", 0.0) < 0:
+                raise ValueError(f"seed packet {packet_id!r} has a negative quantity")
+            for field_name in boolean_fields:
+                value = item.get(field_name)
+                if (
+                    field_name in item
+                    and field_name == "cold_stratification"
+                    and not isinstance(value, bool)
+                ):
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has an invalid {field_name}"
+                    )
+                if value is not None and not isinstance(value, bool):
+                    raise ValueError(
+                        f"seed packet {packet_id!r} has an invalid {field_name}"
+                    )
+        return raw
+
     def _load(self) -> None:
-        if not self._path.exists():
-            return
+        self._packets = {}
+        self._extra_fields = {}
+        self._disk_fingerprint = None
+        self._load_error = None
+        self._dirty = False
         try:
-            with open(self._path, encoding="utf-8") as fh:
-                raw: list[dict[str, Any]] = json.load(fh)
-            for item in raw:
+            loaded = read_json(self._path)
+            if loaded.state == PersonalStoreLoadState.ABSENT:
+                self._load_state = PersonalStoreLoadState.ABSENT
+                return
+            records = self._validate_records(loaded.value)
+            for item in records:
                 packet = SeedPacket.from_dict(item)
                 self._packets[packet.id] = packet
                 known_fields = SeedPacket.__dataclass_fields__
                 self._extra_fields[packet.id] = {
                     key: value for key, value in item.items() if key not in known_fields
                 }
-        except Exception:  # noqa: BLE001
-            pass  # Corrupt / missing file — start empty
+            self._disk_fingerprint = loaded.fingerprint
+            self._load_state = (
+                PersonalStoreLoadState.LOADED if records
+                else PersonalStoreLoadState.EMPTY
+            )
+        except (
+            PersonalStoreLoadError, ValueError, TypeError, KeyError, RecursionError
+        ) as exc:
+            self._packets = {}
+            self._extra_fields = {}
+            self._disk_fingerprint = None
+            self._load_state = PersonalStoreLoadState.FAILED
+            self._load_error = (
+                exc if isinstance(exc, PersonalStoreLoadError)
+                else PersonalStoreLoadError(f"Invalid seed inventory {self._path}: {exc}")
+            )
+
+    def reload(self) -> None:
+        """Explicitly discard current memory and try loading the file again."""
+        self._load()
+
+    def _ensure_readable(self) -> None:
+        if self._load_state == PersonalStoreLoadState.FAILED:
+            raise self._load_error or PersonalStoreLoadError(
+                f"Seed inventory is unreadable: {self._path}"
+            )
+
+    def _ensure_writable(self) -> None:
+        self._ensure_readable()
 
     def save(self) -> None:
-        """Persist the inventory to disk."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        """Persist memory state, retaining it explicitly when disk save fails."""
+        self._ensure_writable()
         packets_list = sorted(
             self._packets.values(), key=lambda p: (p.species_name, p.id)
         )
@@ -319,45 +514,58 @@ class SeedInventoryStore:
             record.update(packet.to_dict())
             records.append(record)
 
-        fd, temporary = tempfile.mkstemp(
-            dir=self._path.parent,
-            prefix=f".{self._path.name}.",
-            suffix=".tmp",
-        )
-        temporary_path = Path(temporary)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(records, fh, indent=2)
-                fh.flush()
-                os.fsync(fh.fileno())
-            if self._path.exists():
-                os.chmod(temporary_path, self._path.stat().st_mode & 0o777)
-            os.replace(temporary_path, self._path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
+            # A packet can be edited in memory by callers. Refuse to publish a
+            # shape that would fail the next load, even when json.dumps accepts it.
+            self._validate_records(records)
+            self._disk_fingerprint = write_json(
+                self._path,
+                records,
+                expected_fingerprint=self._disk_fingerprint,
+            )
+        except PersonalStoreConflictError:
+            self._dirty = True
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._dirty = True
+            raise PersonalStorePersistenceError(
+                f"Changes remain in memory but could not be saved to {self._path}: {exc}"
+            ) from exc
+        self._load_state = (
+            PersonalStoreLoadState.LOADED if records
+            else PersonalStoreLoadState.EMPTY
+        )
+        self._dirty = False
 
     # ── CRUD ──────────────────────────────────────────────────────────────────
 
     def add(self, packet: SeedPacket) -> None:
         """Add or replace a packet (keyed by packet.id)."""
+        self._ensure_writable()
         self._packets[packet.id] = packet
+        self._dirty = True
 
     def remove(self, packet_id: str) -> bool:
         """Remove a packet by ID.  Returns True if it existed."""
+        self._ensure_writable()
         removed = self._packets.pop(packet_id, None) is not None
         if removed:
             self._extra_fields.pop(packet_id, None)
+            self._dirty = True
         return removed
 
     def get(self, packet_id: str) -> SeedPacket | None:
         """Return packet by ID, or None."""
+        self._ensure_readable()
         return self._packets.get(packet_id)
 
     def all(self) -> list[SeedPacket]:
         """Return all packets sorted by species name then ID."""
+        self._ensure_readable()
         return sorted(self._packets.values(), key=lambda p: (p.species_name, p.id))
 
     def __len__(self) -> int:
+        self._ensure_readable()
         return len(self._packets)
 
 

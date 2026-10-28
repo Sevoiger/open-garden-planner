@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.services.task_generator import (
+    CalendarDataError,
     Task,
     build_plan_state,
     classify_urgency,
@@ -119,6 +120,13 @@ class TasksView(QWidget):
         header.addWidget(add_btn)
         layout.addLayout(header)
 
+        self._calendar_error_lbl = QLabel()
+        self._calendar_error_lbl.setObjectName("calendarDataError")
+        self._calendar_error_lbl.setWordWrap(True)
+        set_text_role(self._calendar_error_lbl, color_role="caution")
+        self._calendar_error_lbl.hide()
+        layout.addWidget(self._calendar_error_lbl)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -149,20 +157,30 @@ class TasksView(QWidget):
     def refresh(self) -> None:
         """Rebuild the task list from current project state."""
         self._clear_content()
+        self._calendar_error_lbl.hide()
         try:
             state = build_plan_state(
                 self._scene, self._pm, self._frost_alerts, self._soil_service
             )
+            # generate_actionable_for_surface, not generate_all: the frost-relative
+            # windows are anchored on EVERY year whose frost can reach "now", not on
+            # this year only (#414). The old single-anchor read meant a tomato
+            # harvest running 29 Nov – 7 Feb vanished from this tab on 1 January,
+            # and a plan could read "No tasks — you're all caught up." while open.
+            # The helper re-applies this tab's own urgency rule after the multi-anchor
+            # pass, so the listing stays as narrow as before.
+            tasks = generate_actionable_for_surface(state)
         except RuntimeError:
             return  # scene torn down (shutdown)
-        # generate_actionable_for_surface, not generate_all: the frost-relative
-        # windows are anchored on EVERY year whose frost can reach "now", not on
-        # this year only (#414). The old single-anchor read meant a tomato
-        # harvest running 29 Nov – 7 Feb vanished from this tab on 1 January,
-        # and a plan could read "No tasks — you're all caught up." while open.
-        # The helper re-applies this tab's own urgency rule after the multi-anchor
-        # pass, so the listing stays as narrow as before.
-        tasks = generate_actionable_for_surface(state)
+        except CalendarDataError as exc:
+            self._calendar_error_lbl.setText(
+                self.tr(
+                    "Calendar dates cannot be shown because some task data "
+                    "exceeds the supported date range: {error}"
+                ).format(error=str(exc))
+            )
+            self._calendar_error_lbl.show()
+            return
         today = state.today
         task_states = self._pm.task_states
 

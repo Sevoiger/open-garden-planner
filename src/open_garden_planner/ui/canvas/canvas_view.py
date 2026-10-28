@@ -54,6 +54,7 @@ from open_garden_planner.core.object_types import (
     is_bed_type,
     is_plant_parent_type,
 )
+from open_garden_planner.core.personal_store import PersonalStoreLoadError
 from open_garden_planner.core.snap import (
     PointSnapper,
     SnapCandidate,
@@ -1978,7 +1979,15 @@ class CanvasView(QGraphicsView):
                     get_plant_list_store,  # noqa: PLC0415
                 )
                 store = get_plant_list_store()
-                _pl, entry = store.get_entry(entry_id)
+                try:
+                    _pl, entry = store.get_entry(entry_id)
+                except PersonalStoreLoadError as exc:
+                    self.set_status_message(
+                        self.tr("Plant list could not be read: {error}").format(
+                            error=str(exc)
+                        )
+                    )
+                    return
                 if entry is None or not entry.species:
                     return
                 species_obj = entry.species

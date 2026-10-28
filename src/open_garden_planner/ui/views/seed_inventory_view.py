@@ -7,6 +7,7 @@ Shares SeedTableModel and SeedPacketEditDialog with the seed inventory dialog.
 from __future__ import annotations
 
 import datetime
+from collections.abc import Callable
 
 from PyQt6.QtCore import QSortFilterProxyModel, Qt
 from PyQt6.QtWidgets import (
@@ -24,6 +25,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.personal_store import (
+    PersonalStoreError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+)
 from open_garden_planner.models.seed_inventory import (
     SeedPacket,
     ViabilityStatus,
@@ -42,6 +48,7 @@ from open_garden_planner.ui.dialogs.seed_inventory_dialog import (
     SeedTableModel,
 )
 from open_garden_planner.ui.theme import set_text_role
+from open_garden_planner.ui.widgets.personal_store_status import PersonalStoreStatus
 
 
 def _needs_reorder(packet: SeedPacket) -> bool:
@@ -56,11 +63,17 @@ class SeedInventoryView(QWidget):
         super().__init__(parent)
         self._store = get_seed_inventory()
         self._db = get_viability_db()
-        self._model = SeedTableModel(self._store, self._db)
+        try:
+            initial_packets = self._store.all()
+        except PersonalStoreLoadError:
+            initial_packets = []
+        self._model = SeedTableModel(
+            self._store, self._db, initial_packets=initial_packets
+        )
         self._canvas_scene = None
         self._setup_ui()
         self._update_headers()
-        self._update_stats()
+        self._refresh_contents()
 
     def set_canvas_scene(self, scene) -> None:
         """Set the canvas scene for bidirectional plant linking (US-9.6)."""
@@ -90,6 +103,11 @@ class SeedInventoryView(QWidget):
         self._stats_lbl.setStyleSheet("color: palette(text); font-size: 9pt;")
         top_row.addWidget(self._stats_lbl)
         layout.addLayout(top_row)
+
+        self._storage_status = PersonalStoreStatus(self)
+        self._storage_status.retry_requested.connect(self._retry_storage)
+        self._storage_status.reload_requested.connect(self._reload_storage)
+        layout.addWidget(self._storage_status)
 
         # Search + filter + quick-add button
         filter_row = QHBoxLayout()
@@ -200,8 +218,16 @@ class SeedInventoryView(QWidget):
         })
 
     def _update_stats(self) -> None:
-        """Refresh the stats label and year filter combo."""
-        packets = self._store.all()
+        """Refresh the stats label and year filter combo from current memory."""
+        try:
+            packets = self._store.all()
+        except PersonalStoreLoadError as exc:
+            self._show_load_error(exc)
+            return
+        self._update_stats_for_packets(packets)
+
+    def _update_stats_for_packets(self, packets: list[SeedPacket]) -> None:
+        """Refresh summary and year choices from an already-read snapshot."""
         total = len(packets)
         year = datetime.date.today().year
         expired = sum(1 for p in packets if p.viability_status(year, self._db) == ViabilityStatus.EXPIRED)
@@ -228,11 +254,18 @@ class SeedInventoryView(QWidget):
     # ── Filtering ─────────────────────────────────────────────────────────────
 
     def _apply_filter(self) -> None:
+        try:
+            packets = self._store.all()
+        except PersonalStoreLoadError as exc:
+            self._show_load_error(exc)
+            return
+        self._apply_filter_to_packets(packets)
+
+    def _apply_filter_to_packets(self, packets: list[SeedPacket]) -> None:
         search_text = self._search_edit.text().strip()
         status_filter = self._status_combo.currentData()
         year_filter = self._year_combo.currentData()
 
-        packets = self._store.all()
         year = datetime.date.today().year
         if status_filter and status_filter != "all":
             wanted = {
@@ -245,10 +278,66 @@ class SeedInventoryView(QWidget):
         if year_filter and year_filter != "all":
             packets = [p for p in packets if p.purchase_year == year_filter]
 
-        self._model.beginResetModel()
-        self._model._packets = packets
-        self._model.endResetModel()
+        self._model.set_packets(packets)
         self._proxy.setFilterFixedString(search_text)
+
+    def _set_write_actions_enabled(self, enabled: bool) -> None:
+        self._add_btn.setEnabled(enabled)
+        self._edit_btn.setEnabled(enabled and len(self._selected_packets()) == 1)
+        selected_count = len(self._selected_packets())
+        self._mark_used_btn.setEnabled(enabled and selected_count > 0)
+        self._delete_btn.setEnabled(enabled and selected_count > 0)
+
+    def _show_load_error(self, error: PersonalStoreLoadError) -> None:
+        self._model.set_packets([])
+        self._stats_lbl.setText(self.tr("Inventory unavailable"))
+        self._storage_status.show_load_error(error)
+        self._set_write_actions_enabled(False)
+
+    def _refresh_contents(self) -> None:
+        """Render memory or show an explicit failure state; never imply emptiness."""
+        try:
+            packets = self._store.all()
+        except PersonalStoreLoadError as exc:
+            self._show_load_error(exc)
+            return
+        if self._store.is_dirty:
+            # Keep the pending-save message visible while showing its exact
+            # in-memory contents for retry or confirmed reload.
+            if self._storage_status.isHidden():
+                self._storage_status.show_save_error(
+                    PersonalStoreError("Changes have not been saved to disk")
+                )
+        else:
+            self._storage_status.clear()
+        self._model.set_packets(packets)
+        self._update_stats_for_packets(packets)
+        self._apply_filter_to_packets(packets)
+        self._on_selection_changed()
+        self._set_write_actions_enabled(not self._store.is_dirty)
+
+    def _retry_storage(self) -> None:
+        if self._store.load_state == PersonalStoreLoadState.FAILED:
+            self._store.reload()
+            if self._store.load_state == PersonalStoreLoadState.FAILED:
+                self._show_load_error(
+                    self._store.load_error or PersonalStoreLoadError("Unknown load error")
+                )
+                return
+        else:
+            try:
+                self._store.save()
+            except PersonalStoreError as exc:
+                self._storage_status.show_save_error(exc)
+                self._refresh_contents()
+                return
+        self._refresh_contents()
+
+    def _reload_storage(self) -> None:
+        if self._store.is_dirty and not self._storage_status.confirm_reload(self):
+            return
+        self._store.reload()
+        self._refresh_contents()
 
     # ── Selection ─────────────────────────────────────────────────────────────
 
@@ -269,9 +358,13 @@ class SeedInventoryView(QWidget):
     def _on_selection_changed(self) -> None:
         rows = self._table.selectionModel().selectedRows()
         count = len(rows)
-        self._edit_btn.setEnabled(count == 1)
-        self._mark_used_btn.setEnabled(count > 0)
-        self._delete_btn.setEnabled(count > 0)
+        writes_enabled = (
+            self._store.load_state != PersonalStoreLoadState.FAILED
+            and not self._store.is_dirty
+        )
+        self._edit_btn.setEnabled(writes_enabled and count == 1)
+        self._mark_used_btn.setEnabled(writes_enabled and count > 0)
+        self._delete_btn.setEnabled(writes_enabled and count > 0)
 
         # Show linked plants for single selection (US-9.6)
         if count == 1 and self._canvas_scene is not None:
@@ -303,9 +396,7 @@ class SeedInventoryView(QWidget):
         dlg = SeedPacketEditDialog(parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             packet = dlg.get_packet()
-            self._store.add(packet)
-            self._store.save()
-            self._reload()
+            self._mutate_and_save(lambda: self._store.add(packet))
 
     def _on_edit(self) -> None:
         packets = self._selected_packets()
@@ -314,9 +405,7 @@ class SeedInventoryView(QWidget):
         dlg = SeedPacketEditDialog(packet=packets[0], parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             updated = dlg.get_packet()
-            self._store.add(updated)
-            self._store.save()
-            self._reload()
+            self._mutate_and_save(lambda: self._store.add(updated))
 
     def _on_mark_used(self) -> None:
         packets = self._selected_packets()
@@ -337,11 +426,11 @@ class SeedInventoryView(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         import dataclasses
-        for packet in packets:
-            updated = dataclasses.replace(packet, quantity=0.0)
-            self._store.add(updated)
-        self._store.save()
-        self._reload()
+        def mark_used() -> None:
+            for packet in packets:
+                updated = dataclasses.replace(packet, quantity=0.0)
+                self._store.add(updated)
+        self._mutate_and_save(mark_used)
 
     def _on_delete(self) -> None:
         packets = self._selected_packets()
@@ -363,13 +452,24 @@ class SeedInventoryView(QWidget):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        for packet in packets:
-            self._store.remove(packet.id)
-        self._store.save()
-        self._reload()
+        def delete_selected() -> None:
+            for packet in packets:
+                self._store.remove(packet.id)
+        self._mutate_and_save(delete_selected)
 
     def _reload(self) -> None:
-        self._model._reload()
-        self._update_stats()
-        self._apply_filter()
-        self._on_selection_changed()
+        self._refresh_contents()
+
+    def _mutate_and_save(self, mutation: Callable[[], None]) -> None:
+        try:
+            mutation()
+            self._store.save()
+        except PersonalStoreLoadError as exc:
+            self._storage_status.show_load_error(exc)
+            self._refresh_contents()
+            return
+        except PersonalStoreError as exc:
+            self._storage_status.show_save_error(exc)
+            self._refresh_contents()
+            return
+        self._refresh_contents()

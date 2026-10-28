@@ -1,11 +1,18 @@
 """Unit tests for PlantList and PlantListStore (US-G4, issue #320)."""
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from open_garden_planner.core.personal_store import (
+    PersonalStoreConflictError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+    PersonalStorePersistenceError,
+)
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.models.plant_lists import (
     PlantListEntry,
@@ -47,6 +54,7 @@ def test_plant_list_entry_serialization_roundtrip() -> None:
         max_height_cm=150.0,
     )
     entry = PlantListEntry(species=sp, note="Cherry tomato variety")
+    assert entry.added_at
     entry_dict = entry.to_dict()
 
     restored = PlantListEntry.from_dict(entry_dict)
@@ -69,6 +77,104 @@ def test_plant_list_entry_corrupt_species_dict_fallback() -> None:
     assert entry.id == "abc-123"
     assert entry.species_key == "mystery-plant"
     assert entry.species.scientific_name == "Mystery sp."
+    assert entry.to_dict()["species"]["cycle"] == "invalid_enum_value"
+
+
+@pytest.mark.parametrize(
+    ("stored_added_at", "expected_added_at", "expected_key"),
+    [
+        ({}, None, False),
+        ({"added_at": None}, None, True),
+        ({"added_at": ""}, "", True),
+    ],
+)
+def test_plant_list_entry_keeps_unknown_added_at_unknown(
+    stored_added_at: dict[str, Any],
+    expected_added_at: str | None,
+    expected_key: bool,
+) -> None:
+    raw = {
+        "id": "entry",
+        "species_key": "example plant",
+        "species": {"scientific_name": "Example plant", "common_name": "Example"},
+        **stored_added_at,
+    }
+
+    entry = PlantListEntry.from_dict(raw)
+
+    assert entry.added_at == expected_added_at
+    assert ("added_at" in entry.to_dict()) is expected_key
+    assert entry.to_dict().get("added_at") == expected_added_at
+
+
+def test_store_rejects_null_entry_note_without_overwriting_source(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "plant_lists.json"
+    original = json.dumps({
+        "version": "1.0",
+        "lists": [{
+            "id": "orchard",
+            "name": "Orchard",
+            "entries": [{
+                "id": "apple",
+                "species_key": "malus domestica",
+                "species": {"scientific_name": "Malus domestica"},
+                "note": None,
+            }],
+        }],
+    }).encode("utf-8")
+    path.write_bytes(original)
+
+    store = PlantListStore(path)
+
+    assert store.load_state == PersonalStoreLoadState.FAILED
+    with pytest.raises(PersonalStoreLoadError, match="invalid note"):
+        store.all_lists()
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("indoor_sow_start", 1_000_000_000),
+        ("direct_sow_end", (date.max - date.min).days // 7 + 1),
+        ("days_to_germination_min", (date.max - date.min).days + 1),
+        ("prick_out_after_days", -1),
+        ("hardiness_zone_min", 2**31),
+    ],
+)
+def test_store_rejects_calendar_integer_fields_outside_technical_limits(
+    tmp_path: Path,
+    field_name: str,
+    invalid_value: int,
+) -> None:
+    path = tmp_path / "plant_lists.json"
+    raw = {
+        "version": "1.0",
+        "lists": [{
+            "id": "garden",
+            "name": "Garden",
+            "entries": [{
+                "id": "plant",
+                "species_key": "example plant",
+                "species": {
+                    "scientific_name": "Example plant",
+                    "common_name": "Example",
+                    field_name: invalid_value,
+                },
+            }],
+        }],
+    }
+    original = json.dumps(raw).encode("utf-8")
+    path.write_bytes(original)
+
+    store = PlantListStore(path)
+
+    assert store.load_state == PersonalStoreLoadState.FAILED
+    with pytest.raises(PersonalStoreLoadError, match=field_name):
+        store.all_lists()
+    assert path.read_bytes() == original
 
 
 def test_store_creates_default_favorites(tmp_path: Path) -> None:
@@ -281,19 +387,29 @@ def test_store_initialization_variations(tmp_path: Path) -> None:
     store_bare = PlantListStore(bare_file)
     assert store_bare.get_list("list-bare") is not None
     assert store_bare.get_list(PlantListStore.FAVORITES_ID) is not None
+    assert store_bare.load_state == PersonalStoreLoadState.LOADED
 
     # Primitive string JSON
     prim_file = tmp_path / "prim.json"
     prim_file.write_text(json.dumps("invalid string payload"), encoding="utf-8")
     store_prim = PlantListStore(prim_file)
-    assert len(store_prim.all_lists()) == 1
+    assert store_prim.load_state == PersonalStoreLoadState.FAILED
+    with pytest.raises(PersonalStoreLoadError):
+        store_prim.all_lists()
+    with pytest.raises(PersonalStoreLoadError):
+        store_prim.save()
+    assert prim_file.read_text(encoding="utf-8") == json.dumps("invalid string payload")
 
     # Corrupt JSON file
     corrupt_file = tmp_path / "corrupt.json"
     corrupt_file.write_text("{corrupt json content", encoding="utf-8")
     store_corrupt = PlantListStore(corrupt_file)
-    assert len(store_corrupt.all_lists()) == 1
-    assert store_corrupt.get_list(PlantListStore.FAVORITES_ID) is not None
+    assert store_corrupt.load_state == PersonalStoreLoadState.FAILED
+    with pytest.raises(PersonalStoreLoadError):
+        store_corrupt.all_lists()
+    with pytest.raises(PersonalStoreLoadError):
+        store_corrupt.create_list("must not overwrite")
+    assert corrupt_file.read_text(encoding="utf-8") == "{corrupt json content"
 
 
 def test_store_atomic_write_error(tmp_path: Path, monkeypatch: Any) -> None:
@@ -308,8 +424,203 @@ def test_store_atomic_write_error(tmp_path: Path, monkeypatch: Any) -> None:
 
     monkeypatch.setattr(os, "replace", mock_replace)
 
-    with pytest.raises(OSError, match="Disk simulated write failure"):
+    with pytest.raises(PersonalStorePersistenceError, match="Disk simulated write failure"):
         store.save()
+    assert store.is_dirty
+    assert not storage_file.exists()
+
+
+def test_store_states_and_unreadable_file_recovery(tmp_path: Path) -> None:
+    path = tmp_path / "plant_lists.json"
+    store = PlantListStore(path)
+    assert store.load_state == PersonalStoreLoadState.ABSENT
+
+    path.write_text('{"version":"1.0","lists":[]}', encoding="utf-8")
+    store.reload()
+    assert store.load_state == PersonalStoreLoadState.EMPTY
+    assert store.get_list(PlantListStore.FAVORITES_ID) is not None
+
+    original = b'{"version":"1.0","lists":[{"id":"bad","entries":7}]}'
+    path.write_bytes(original)
+    store.reload()
+    assert store.load_state == PersonalStoreLoadState.FAILED
+    with pytest.raises(PersonalStoreLoadError):
+        store.all_lists()
+    with pytest.raises(PersonalStoreLoadError):
+        store.save()
+    assert path.read_bytes() == original
+
+    path.write_text('{"version":"1.0","lists":[]}', encoding="utf-8")
+    store.reload()
+    assert store.load_state == PersonalStoreLoadState.EMPTY
+    assert store.load_error is None
+
+
+def test_unreadable_path_is_not_presented_as_empty(tmp_path: Path) -> None:
+    path = tmp_path / "plant_lists.json"
+    path.mkdir()
+    store = PlantListStore(path)
+    assert store.load_state == PersonalStoreLoadState.FAILED
+    with pytest.raises(PersonalStoreLoadError):
+        store.all_lists()
+    with pytest.raises(PersonalStoreLoadError):
+        store.create_list("not saved")
+    assert path.is_dir()
+
+
+def test_store_preserves_unknown_fields_through_an_edit(tmp_path: Path) -> None:
+    path = tmp_path / "plant_lists.json"
+    raw = {
+        "version": "1.0",
+        "future_document_field": {"keep": True},
+        "lists": [{
+            "id": "orchard",
+            "name": "Orchard",
+            "description": "",
+            "future_list_field": [1, 2, 3],
+            "entries": [{
+                "id": "apple",
+                "species_key": "malus domestica",
+                "added_at": "2025-01-01T00:00:00+00:00",
+                "note": "old",
+                "future_entry_field": "keep me",
+                "species": {
+                    "scientific_name": "Malus domestica",
+                    "common_name": "Apple",
+                    "future_species_field": {"source": "archive"},
+                },
+            }],
+        }],
+    }
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    store = PlantListStore(path)
+    assert store.update_entry_note("orchard", "apple", "updated")
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["future_document_field"] == {"keep": True}
+    orchard = next(item for item in saved["lists"] if item["id"] == "orchard")
+    assert orchard["future_list_field"] == [1, 2, 3]
+    entry = orchard["entries"][0]
+    assert entry["future_entry_field"] == "keep me"
+    assert entry["note"] == "updated"
+    assert entry["species"]["future_species_field"] == {"source": "archive"}
+
+
+def test_store_external_edit_is_a_conflict_and_can_be_explicitly_reloaded(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "plant_lists.json"
+    first = PlantListStore(path)
+    stale = PlantListStore(path)
+    first.create_list("First writer")
+
+    with pytest.raises(PersonalStoreConflictError):
+        stale.create_list("Stale writer")
+    assert stale.is_dirty
+    assert stale.get_list(next(
+        row.id for row in stale.all_lists() if row.name == "Stale writer"
+    )) is not None
+    disk_names = {row.name for row in PlantListStore(path).all_lists()}
+    assert "First writer" in disk_names
+    assert "Stale writer" not in disk_names
+
+    stale.reload()
+    assert not stale.is_dirty
+    assert {row.name for row in stale.all_lists()} == disk_names
+
+
+def test_store_save_failure_keeps_memory_explicit_and_can_be_retried(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import os
+
+    path = tmp_path / "plant_lists.json"
+    store = PlantListStore(path)
+    orchard = store.create_list("Orchard")
+    disk_before = path.read_bytes()
+    real_replace = os.replace
+
+    def fail_replace(source: str, destination: str) -> None:
+        if Path(destination) == path:
+            raise OSError("simulated disk full")
+        real_replace(source, destination)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "replace", fail_replace)
+        with pytest.raises(PersonalStorePersistenceError, match="simulated disk full"):
+            store.rename_list(orchard.id, "Pending in memory")
+
+    assert path.read_bytes() == disk_before
+    assert store.get_list(orchard.id).name == "Pending in memory"
+    assert store.is_dirty
+    store.save()
+    assert not store.is_dirty
+    assert PlantListStore(path).get_list(orchard.id).name == "Pending in memory"
+
+
+def test_invalid_mutable_memory_is_not_published(tmp_path: Path) -> None:
+    path = tmp_path / "plant_lists.json"
+    store = PlantListStore(path)
+    favorites = store.get_list(PlantListStore.FAVORITES_ID)
+    assert favorites is not None
+    favorites.name = 42  # type: ignore[assignment]
+
+    with pytest.raises(PersonalStorePersistenceError, match="invalid name"):
+        store.save()
+
+    assert not path.exists()
+    assert store.is_dirty
+
+
+def test_import_rejects_duplicate_keys_and_nonstandard_numbers(tmp_path: Path) -> None:
+    store = PlantListStore(tmp_path / "plant_lists.json")
+    for payload in (
+        '{"id":"one","id":"two","name":"Duplicate","entries":[]}',
+        '{"id":"one","name":"Non-finite","entries":[],"future":NaN}',
+        '{"id":"one","name":"Overflow","entries":[],"future":1e999}',
+    ):
+        with pytest.raises(ValueError):
+            store.import_list_from_json(payload)
+    assert [item.id for item in store.all_lists()] == [PlantListStore.FAVORITES_ID]
+
+
+def test_store_rejects_invalid_and_overflowing_known_species_fields(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "plant_lists.json"
+    payload = {
+        "version": "1.0",
+        "lists": [{
+            "id": "list",
+            "name": "Garden",
+            "entries": [{
+                "id": "entry",
+                "species": {
+                    "scientific_name": "Example plant",
+                    "common_name": "Example",
+                    "min_height_cm": int("9" * 1000),
+                },
+            }],
+        }],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    store = PlantListStore(path)
+
+    assert store.load_state == PersonalStoreLoadState.FAILED
+    with pytest.raises(PersonalStoreLoadError, match="min_height_cm"):
+        store.all_lists()
+
+    malformed = json.loads(json.dumps(payload))
+    malformed["lists"][0]["entries"][0]["species"]["min_height_cm"] = "tall"
+    path.write_text(json.dumps(malformed), encoding="utf-8")
+    store.reload()
+    assert store.load_state == PersonalStoreLoadState.FAILED
+
+    non_finite_extension = b'{"version":"1.0","lists":[],"future_field":1e999}'
+    path.write_bytes(non_finite_extension)
+    store.reload()
+    assert store.load_state == PersonalStoreLoadState.FAILED
+    assert path.read_bytes() == non_finite_extension
 
 
 def test_store_edge_cases(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 from pathlib import Path
 
 import pytest
@@ -171,6 +172,80 @@ class TestSeedPacketEditDialog:
         assert dlg._override_cb.isChecked() is True
         assert dlg._override_spin.value() == 4
         assert dlg._notes_edit.toPlainText() == "Stored in fridge"
+
+    def test_populate_and_get_preserves_values_outside_default_spin_ranges(
+        self, qtbot
+    ) -> None:
+        existing = SeedPacket(
+            species_name="Carrot",
+            purchase_year=1900,
+            germination_days_min=400,
+            germination_days_max=500,
+            cold_stratification=True,
+            stratification_days=600,
+            viability_shelf_life_override=75,
+        )
+
+        dlg = SeedPacketEditDialog(packet=existing)
+        qtbot.addWidget(dlg)
+
+        assert dlg._year_spin.value() == 1900
+        assert dlg._days_min.value() == 400
+        assert dlg._days_max.value() == 500
+        assert dlg._strat_days_spin.value() == 600
+        assert dlg._override_spin.value() == 75
+        assert dlg.get_packet().purchase_year == 1900
+        assert dlg.get_packet().germination_days_min == 400
+        assert dlg.get_packet().germination_days_max == 500
+        assert dlg.get_packet().stratification_days == 600
+        assert dlg.get_packet().viability_shelf_life_override == 75
+
+    def test_editing_notes_preserves_other_historical_values(self, qtbot, tmp_path) -> None:
+        existing = SeedPacket(
+            id="legacy-packet",
+            species_id="legacy-species-id",
+            species_name="Carrot",
+            quantity=0.04,
+            quantity_unit="packets",
+            germination_temp_min_c=-20.0,
+            germination_temp_opt_c=100.0,
+            germination_days_min=0,
+            germination_days_max=400,
+            cold_stratification=False,
+            stratification_days=0,
+            notes="old note",
+            photo_path="/legacy/photo.jpg",
+            created_date="2018-04-03",
+        )
+        path = tmp_path / "seeds.json"
+        original = existing.to_dict()
+        original["future_extension"] = {"nested": [0, False, None]}
+        path.write_text(json.dumps([original]), encoding="utf-8")
+        store = SeedInventoryStore(path)
+        dlg = SeedPacketEditDialog(packet=store.get(existing.id))
+        qtbot.addWidget(dlg)
+        dlg._notes_edit.setPlainText("updated note")
+
+        result = dlg.get_packet()
+
+        assert result.notes == "updated note"
+        assert result.species_id == existing.species_id
+        assert result.quantity == existing.quantity
+        assert result.quantity_unit == existing.quantity_unit
+        assert result.germination_temp_min_c == existing.germination_temp_min_c
+        assert result.germination_temp_opt_c == existing.germination_temp_opt_c
+        assert result.germination_days_min == existing.germination_days_min
+        assert result.germination_days_max == existing.germination_days_max
+        assert result.stratification_days == existing.stratification_days
+        assert result.photo_path == existing.photo_path
+        assert result.created_date == existing.created_date
+        store.add(result)
+        store.save()
+        reopened = SeedInventoryStore(path).get(existing.id)
+        assert reopened.to_dict() == result.to_dict()
+        assert json.loads(path.read_text(encoding="utf-8"))[0]["future_extension"] == {
+            "nested": [0, False, None],
+        }
 
     def test_get_packet_preserves_id(self, qtbot) -> None:
         existing = SeedPacket(species_name="Pea")

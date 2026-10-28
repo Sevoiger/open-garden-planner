@@ -12,19 +12,41 @@ Provides:
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
-import tempfile
+import math
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from open_garden_planner.core.personal_store import (
+    PersonalStoreConflictError,
+    PersonalStoreLoadError,
+    PersonalStoreLoadState,
+    PersonalStorePersistenceError,
+    loads_json,
+    read_json,
+    write_json,
+)
 from open_garden_planner.models.plant_data import PlantSpeciesData, species_key
+
+_QT_SPINBOX_INT_MIN = -(2**31)
+_QT_SPINBOX_INT_MAX = 2**31 - 1
+_MAX_CALENDAR_DURATION_DAYS = (date.max - date.min).days
+_MAX_CALENDAR_OFFSET_WEEKS = _MAX_CALENDAR_DURATION_DAYS // 7
+_SPECIES_CALENDAR_WEEK_FIELDS = {
+    "indoor_sow_start", "indoor_sow_end", "direct_sow_start", "direct_sow_end",
+    "transplant_start", "transplant_end", "harvest_start", "harvest_end",
+}
+_SPECIES_CALENDAR_DURATION_FIELDS = {
+    "days_to_germination_min", "days_to_germination_max",
+    "days_to_maturity_min", "days_to_maturity_max",
+    "prick_out_after_days", "harden_off_days",
+}
 
 
 def _get_species_key(species_obj: PlantSpeciesData | dict[str, Any] | str) -> str:
@@ -87,24 +109,45 @@ class PlantListEntry:
             scientific_name="", common_name=""
         )
     )
-    added_at: str = ""
+    added_at: str | None = field(default_factory=lambda: datetime.now(UTC).isoformat())
     note: str = ""
+    _added_at_present: bool = field(default=True, repr=False, compare=False)
+    _extra_fields: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    _raw_species_data: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    _species_baseline: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.species_key and self.species:
             self.species_key = _get_species_key(self.species)
-        if not self.added_at:
-            self.added_at = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize entry to dictionary."""
-        return {
+        species_data = deepcopy(self._raw_species_data)
+        species_current = self.species.to_dict() if self.species else {}
+        for key, value in species_current.items():
+            baseline_value = (
+                self._species_baseline.get(key)
+                if self._species_baseline is not None
+                else None
+            )
+            if (
+                key not in species_data
+                or self._species_baseline is None
+                or value != baseline_value
+            ):
+                species_data[key] = deepcopy(value)
+        data = deepcopy(self._extra_fields)
+        data.update({
             "id": self.id,
             "species_key": self.species_key,
-            "species": self.species.to_dict() if self.species else {},
-            "added_at": self.added_at,
+            "species": species_data,
             "note": self.note,
-        }
+        })
+        if self._added_at_present:
+            data["added_at"] = self.added_at
+        else:
+            data.pop("added_at", None)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlantListEntry:
@@ -124,8 +167,12 @@ class PlantListEntry:
 
         entry_id = data.get("id") or str(uuid.uuid4())
         sp_key = data.get("species_key") or _get_species_key(species_obj)
-        added_at = data.get("added_at") or datetime.now(UTC).isoformat()
+        added_at = data.get("added_at")
         note = data.get("note", "")
+        if added_at is not None and not isinstance(added_at, str):
+            raise ValueError("plant-list entry has an invalid added_at")
+        if not isinstance(note, str):
+            raise ValueError("plant-list entry has an invalid note")
 
         return cls(
             id=entry_id,
@@ -133,6 +180,14 @@ class PlantListEntry:
             species=species_obj,
             added_at=added_at,
             note=note,
+            _added_at_present="added_at" in data,
+            _extra_fields={
+                key: deepcopy(value)
+                for key, value in data.items()
+                if key not in {"id", "species_key", "species", "added_at", "note"}
+            },
+            _raw_species_data=deepcopy(species_raw) if isinstance(species_raw, dict) else {},
+            _species_baseline=species_obj.to_dict(),
         )
 
 
@@ -144,15 +199,18 @@ class PlantList:
     name: str = ""
     description: str = ""
     entries: list[PlantListEntry] = field(default_factory=list)
+    _extra_fields: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize list to dictionary."""
-        return {
+        data = deepcopy(self._extra_fields)
+        data.update({
             "id": self.id,
             "name": self.name,
             "description": self.description,
             "entries": [entry.to_dict() for entry in self.entries],
-        }
+        })
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlantList:
@@ -162,7 +220,17 @@ class PlantList:
         desc = data.get("description", "")
         raw_entries = data.get("entries", [])
         entries = [PlantListEntry.from_dict(e) for e in raw_entries]
-        return cls(id=list_id, name=name, description=desc, entries=entries)
+        return cls(
+            id=list_id,
+            name=name,
+            description=desc,
+            entries=entries,
+            _extra_fields={
+                key: deepcopy(value)
+                for key, value in data.items()
+                if key not in {"id", "name", "description", "entries"}
+            },
+        )
 
 
 class PlantListStore(QObject):
@@ -188,12 +256,32 @@ class PlantListStore(QObject):
             self._path = storage_path
 
         self._lists: dict[str, PlantList] = {}
+        self._document_fields: dict[str, Any] = {}
+        self._disk_fingerprint: str | None = None
+        self._load_state = PersonalStoreLoadState.ABSENT
+        self._load_error: PersonalStoreLoadError | None = None
+        self._dirty = False
         self._load()
 
     @property
     def path(self) -> Path:
         """Return the storage file path."""
         return self._path
+
+    @property
+    def load_state(self) -> PersonalStoreLoadState:
+        """Return the last observed disk state."""
+        return self._load_state
+
+    @property
+    def load_error(self) -> PersonalStoreLoadError | None:
+        """Return the active load/validation failure, if any."""
+        return self._load_error
+
+    @property
+    def is_dirty(self) -> bool:
+        """Whether current in-memory data has not been durably saved."""
+        return self._dirty
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -207,58 +295,295 @@ class PlantListStore(QObject):
                 entries=[],
             )
 
-    def _load(self) -> None:
-        """Load lists from disk."""
-        self._lists = {}
-        if self._path.exists():
+    @staticmethod
+    def _validate_document(raw_data: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Validate the persistent envelope before constructing typed records."""
+        if isinstance(raw_data, list):
+            lists_raw = raw_data  # legacy bare-list format
+            document_fields: dict[str, Any] = {}
+        elif isinstance(raw_data, dict):
+            version = raw_data.get("version")
+            if version is not None and version != "1.0":
+                raise ValueError(f"unsupported plant-list store version: {version!r}")
+            if "lists" not in raw_data:
+                raise ValueError("plant-list store is missing its 'lists' array")
+            lists_raw = raw_data["lists"]
+            if not isinstance(lists_raw, list):
+                raise ValueError("plant-list store 'lists' must be an array")
+            document_fields = {
+                key: deepcopy(value)
+                for key, value in raw_data.items()
+                if key not in {"version", "lists"}
+            }
+        else:
+            raise ValueError("plant-list store must be an object or legacy array")
+
+        list_ids: set[str] = set()
+        entry_ids: set[str] = set()
+        for index, raw_list in enumerate(lists_raw):
+            if not isinstance(raw_list, dict):
+                raise ValueError(f"plant list at index {index} must be an object")
+            list_id = raw_list.get("id")
+            if not isinstance(list_id, str) or not list_id.strip():
+                raise ValueError(f"plant list at index {index} has no valid id")
+            if list_id in list_ids:
+                raise ValueError(f"duplicate plant-list id: {list_id!r}")
+            list_ids.add(list_id)
+            if not isinstance(raw_list.get("name", ""), str):
+                raise ValueError(f"plant list {list_id!r} has an invalid name")
+            if not isinstance(raw_list.get("description", ""), str):
+                raise ValueError(f"plant list {list_id!r} has an invalid description")
+            raw_entries = raw_list.get("entries", [])
+            if not isinstance(raw_entries, list):
+                raise ValueError(f"plant list {list_id!r} entries must be an array")
+            for entry_index, raw_entry in enumerate(raw_entries):
+                if not isinstance(raw_entry, dict):
+                    raise ValueError(
+                        f"entry {entry_index} in plant list {list_id!r} must be an object"
+                    )
+                entry_id = raw_entry.get("id")
+                if not isinstance(entry_id, str) or not entry_id.strip():
+                    raise ValueError(
+                        f"entry {entry_index} in plant list {list_id!r} has no valid id"
+                    )
+                if entry_id in entry_ids:
+                    raise ValueError(f"duplicate plant-list entry id: {entry_id!r}")
+                entry_ids.add(entry_id)
+                for field_name in ("species_key", "added_at"):
+                    value = raw_entry.get(field_name)
+                    if value is not None and not isinstance(value, str):
+                        raise ValueError(
+                            f"plant-list entry {entry_id!r} has an invalid {field_name}"
+                        )
+                if "note" in raw_entry and not isinstance(raw_entry["note"], str):
+                    raise ValueError(
+                        f"plant-list entry {entry_id!r} has an invalid note"
+                    )
+                species = raw_entry.get("species", {})
+                if not isinstance(species, dict):
+                    raise ValueError(
+                        f"plant-list entry {entry_id!r} species must be an object"
+                    )
+                for field_name in ("scientific_name", "common_name"):
+                    value = species.get(field_name)
+                    if value is not None and not isinstance(value, str):
+                        raise ValueError(
+                            f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                        )
+                PlantListStore._validate_species_snapshot(species, entry_id)
+        return lists_raw, document_fields
+
+    @staticmethod
+    def _validate_species_snapshot(species: dict[str, Any], entry_id: str) -> None:
+        """Validate known snapshot field shapes while retaining extensions."""
+        string_fields = {
+            "scientific_name", "common_name", "family", "genus", "soil_type",
+            "flower_color", "foliage_color", "foliage_texture", "image_url",
+            "thumbnail_url", "data_source", "source_id", "slug", "description",
+            "cycle", "growth_rate", "permaculture_layer", "flower_type",
+            "pollination_type", "sun_requirement", "water_needs",
+        }
+        nullable_string_fields = {
+            "frost_tolerance", "nutrient_demand", "n_demand", "p_demand", "k_demand",
+        }
+        integer_fields = {
+            "hardiness_zone_min", "hardiness_zone_max", "indoor_sow_start",
+            "indoor_sow_end", "direct_sow_start", "direct_sow_end",
+            "transplant_start", "transplant_end", "harvest_start", "harvest_end",
+            "days_to_germination_min", "days_to_germination_max",
+            "days_to_maturity_min", "days_to_maturity_max",
+            "prick_out_after_days", "harden_off_days",
+        }
+        numeric_fields = {
+            "min_height_cm", "max_height_cm", "min_spread_cm", "max_spread_cm",
+            "ph_min", "ph_max", "min_germination_temp_c", "seed_depth_cm",
+        }
+        boolean_fields = {"edible", "flowering"}
+
+        for field_name in string_fields:
+            value = species.get(field_name)
+            if field_name in species and not isinstance(value, str):
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                )
+        for field_name in nullable_string_fields:
+            value = species.get(field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                )
+        for field_name in integer_fields:
+            value = species.get(field_name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                )
+            if value is None:
+                continue
+            if field_name in _SPECIES_CALENDAR_WEEK_FIELDS:
+                in_range = abs(value) <= _MAX_CALENDAR_OFFSET_WEEKS
+                supported_range = f"±{_MAX_CALENDAR_OFFSET_WEEKS} weeks"
+            elif field_name in _SPECIES_CALENDAR_DURATION_FIELDS:
+                in_range = 0 <= value <= _MAX_CALENDAR_DURATION_DAYS
+                supported_range = f"0..{_MAX_CALENDAR_DURATION_DAYS} days"
+            else:
+                in_range = _QT_SPINBOX_INT_MIN <= value <= _QT_SPINBOX_INT_MAX
+                supported_range = "the supported Qt integer range"
+            if not in_range:
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has species {field_name} "
+                    f"outside {supported_range}"
+                )
+        for field_name in numeric_fields:
+            value = species.get(field_name)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                )
             try:
-                with open(self._path, encoding="utf-8") as fh:
-                    raw_data = json.load(fh)
-                if isinstance(raw_data, dict):
-                    lists_raw = raw_data.get("lists", [])
-                elif isinstance(raw_data, list):
-                    lists_raw = raw_data
-                else:
-                    lists_raw = []
+                finite = math.isfinite(value)
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                )
+        for field_name in boolean_fields:
+            value = species.get(field_name)
+            if value is not None and not isinstance(value, bool):
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                )
+        for field_name in ("functions", "edible_parts"):
+            value = species.get(field_name)
+            if value is not None and (
+                not isinstance(value, list)
+                or any(not isinstance(entry, str) for entry in value)
+            ):
+                raise ValueError(
+                    f"plant-list entry {entry_id!r} has invalid species {field_name}"
+                )
+        raw_data = species.get("raw_data")
+        if raw_data is not None and not isinstance(raw_data, dict):
+            raise ValueError(
+                f"plant-list entry {entry_id!r} has invalid species raw_data"
+            )
 
-                for item in lists_raw:
-                    pl = PlantList.from_dict(item)
-                    self._lists[pl.id] = pl
-            except Exception:  # noqa: BLE001
-                # Corrupted or unreadable file: start clean with favorites
-                self._lists = {}
-
-        self._ensure_favorites()
-
-    def _atomic_write(self, text: str) -> None:
-        """Write text to storage path atomically."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=self._path.parent, prefix=".ogp-plant-lists-", suffix=".tmp"
-        )
+    def _load(self) -> None:
+        """Read and validate disk state without replacing failures with emptiness."""
+        self._lists = {}
+        self._document_fields = {}
+        self._disk_fingerprint = None
+        self._load_error = None
+        self._dirty = False
         try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-                f.write(text)
-            os.replace(tmp_name, self._path)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.remove(tmp_name)
-            raise
+            loaded = read_json(self._path)
+            if loaded.state == PersonalStoreLoadState.ABSENT:
+                self._load_state = PersonalStoreLoadState.ABSENT
+                self._ensure_favorites()
+                return
+            lists_raw, self._document_fields = self._validate_document(loaded.value)
+            for item in lists_raw:
+                plant_list = PlantList.from_dict(item)
+                self._lists[plant_list.id] = plant_list
+            self._disk_fingerprint = loaded.fingerprint
+            self._ensure_favorites()
+            has_records = any(
+                plant_list.id != self.FAVORITES_ID or plant_list.entries
+                for plant_list in self._lists.values()
+            )
+            self._load_state = (
+                PersonalStoreLoadState.LOADED
+                if has_records
+                else PersonalStoreLoadState.EMPTY
+            )
+        except (
+            PersonalStoreLoadError, ValueError, TypeError, KeyError, RecursionError
+        ) as exc:
+            self._lists = {}
+            self._document_fields = {}
+            self._disk_fingerprint = None
+            self._load_state = PersonalStoreLoadState.FAILED
+            self._load_error = (
+                exc if isinstance(exc, PersonalStoreLoadError)
+                else PersonalStoreLoadError(f"Invalid plant-list store {self._path}: {exc}")
+            )
+
+    def reload(self) -> None:
+        """Explicitly discard current memory and try loading the file again."""
+        self._load()
+        self.changed.emit()
+
+    def _ensure_readable(self) -> None:
+        if self._load_state == PersonalStoreLoadState.FAILED:
+            raise self._load_error or PersonalStoreLoadError(
+                f"Plant-list store is unreadable: {self._path}"
+            )
+
+    def _ensure_writable(self) -> None:
+        self._ensure_readable()
+
+    def _atomic_write(self, text: str) -> str:
+        """Compatibility seam for tests and older callers of the store writer."""
+        value = loads_json(text)
+        return write_json(
+            self._path,
+            value,
+            expected_fingerprint=self._disk_fingerprint,
+        )
 
     def save(self) -> None:
-        """Persist lists to disk and emit changed signal."""
+        """Persist the current memory state or report why it was not saved.
+
+        A write failure keeps edits in memory so the UI can offer a retry or an
+        explicit reload.
+        """
+        self._ensure_writable()
         self._ensure_favorites()
         data = {
+            **deepcopy(self._document_fields),
             "version": "1.0",
             "lists": [pl.to_dict() for pl in self.all_lists()],
         }
-        self._atomic_write(json.dumps(data, indent=2))
+        try:
+            # Mutable records and imported objects can be changed by callers;
+            # never publish a document that this store would reject on reopen.
+            self._validate_document(data)
+            self._disk_fingerprint = self._atomic_write(
+                json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False)
+            )
+        except PersonalStoreConflictError:
+            self._dirty = True
+            self.changed.emit()
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._dirty = True
+            self.changed.emit()
+            raise PersonalStorePersistenceError(
+                f"Changes remain in memory but could not be saved to {self._path}: {exc}"
+            ) from exc
+        has_records = any(
+            plant_list.id != self.FAVORITES_ID or plant_list.entries
+            for plant_list in self._lists.values()
+        )
+        self._load_state = (
+            PersonalStoreLoadState.LOADED
+            if has_records
+            else PersonalStoreLoadState.EMPTY
+        )
+        self._dirty = False
+        self._load_error = None
         self.changed.emit()
 
     # ── List operations ───────────────────────────────────────────────────────
 
     def all_lists(self) -> list[PlantList]:
         """Return all lists with Favorites first, followed by custom lists sorted by name."""
+        self._ensure_readable()
         fav = self._lists.get(self.FAVORITES_ID)
         others = [
             pl for pl in self._lists.values() if pl.id != self.FAVORITES_ID
@@ -268,10 +593,12 @@ class PlantListStore(QObject):
 
     def get_list(self, list_id: str) -> PlantList | None:
         """Return list by ID or None."""
+        self._ensure_readable()
         return self._lists.get(list_id)
 
     def create_list(self, name: str, description: str = "") -> PlantList:
         """Create a new custom plant list."""
+        self._ensure_writable()
         clean_name = name.strip()
         if not clean_name:
             clean_name = "New List"
@@ -287,6 +614,7 @@ class PlantListStore(QObject):
 
     def rename_list(self, list_id: str, new_name: str) -> bool:
         """Rename a list. Reserved favorites cannot be renamed."""
+        self._ensure_writable()
         if list_id == self.FAVORITES_ID:
             return False
         clean_name = new_name.strip()
@@ -301,6 +629,7 @@ class PlantListStore(QObject):
 
     def delete_list(self, list_id: str) -> bool:
         """Delete a list. Reserved favorites cannot be deleted."""
+        self._ensure_writable()
         if list_id == self.FAVORITES_ID:
             return False
         if list_id in self._lists:
@@ -315,6 +644,7 @@ class PlantListStore(QObject):
         self, entry_id: str
     ) -> tuple[PlantList, PlantListEntry] | tuple[None, None]:
         """Find an entry across all lists by its ID."""
+        self._ensure_readable()
         for pl in self._lists.values():
             for entry in pl.entries:
                 if entry.id == entry_id:
@@ -332,6 +662,7 @@ class PlantListStore(QObject):
         If already present (matching species_key), updates its snapshot and note,
         avoiding duplicate entries.
         """
+        self._ensure_writable()
         pl = self._lists.get(list_id)
         if not pl:
             return None
@@ -358,6 +689,7 @@ class PlantListStore(QObject):
 
     def remove_entry(self, list_id: str, entry_id: str) -> bool:
         """Remove an entry from a list."""
+        self._ensure_writable()
         pl = self._lists.get(list_id)
         if not pl:
             return False
@@ -372,6 +704,7 @@ class PlantListStore(QObject):
         """Move an entry from one list to another."""
         if from_list_id == to_list_id:
             return False
+        self._ensure_writable()
         from_list = self._lists.get(from_list_id)
         to_list = self._lists.get(to_list_id)
         if not from_list or not to_list:
@@ -399,6 +732,7 @@ class PlantListStore(QObject):
 
     def update_entry_note(self, list_id: str, entry_id: str, note: str) -> bool:
         """Update note for an entry."""
+        self._ensure_writable()
         pl = self._lists.get(list_id)
         if not pl:
             return False
@@ -413,6 +747,7 @@ class PlantListStore(QObject):
         self, list_id: str, entry_id: str, species: PlantSpeciesData
     ) -> bool:
         """Update species snapshot for an entry ('Update from plan')."""
+        self._ensure_writable()
         pl = self._lists.get(list_id)
         if not pl:
             return False
@@ -420,6 +755,13 @@ class PlantListStore(QObject):
             if e.id == entry_id:
                 e.species = species
                 e.species_key = _get_species_key(species)
+                known_fields = set(PlantSpeciesData.__dataclass_fields__)
+                e._raw_species_data = {
+                    key: value
+                    for key, value in e._raw_species_data.items()
+                    if key not in known_fields
+                }
+                e._species_baseline = species.to_dict()
                 self.save()
                 return True
         return False
@@ -428,6 +770,7 @@ class PlantListStore(QObject):
 
     def is_favorite(self, species_or_key: PlantSpeciesData | dict[str, Any] | str) -> bool:
         """Check whether a species is in the favorites list."""
+        self._ensure_readable()
         fav = self._lists.get(self.FAVORITES_ID)
         if not fav:
             return False
@@ -444,6 +787,7 @@ class PlantListStore(QObject):
         Returns:
             True if now favorited, False if unfavorited.
         """
+        self._ensure_writable()
         fav = self._lists.get(self.FAVORITES_ID)
         if not fav:
             self._ensure_favorites()
@@ -462,6 +806,7 @@ class PlantListStore(QObject):
 
     def export_list_to_json(self, list_id: str) -> str:
         """Export a list to a formatted JSON string."""
+        self._ensure_readable()
         pl = self._lists.get(list_id)
         if not pl:
             raise KeyError(f"Plant list not found: {list_id}")
@@ -478,13 +823,16 @@ class PlantListStore(QObject):
         Guarantees unique ID (never overwrites the reserved favorites id)
         and unique list name.
         """
-        data = json.loads(json_text)
+        self._ensure_writable()
+        data = loads_json(json_text)
         if isinstance(data, dict) and "list" in data:
             list_data = data["list"]
         elif isinstance(data, dict):
             list_data = data
         else:
             raise ValueError("Invalid plant list JSON structure")
+
+        self._validate_document([list_data])
 
         imported = PlantList.from_dict(list_data)
 

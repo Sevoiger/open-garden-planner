@@ -272,6 +272,17 @@ n'écrit de bibliothèque personnelle. L'annulation d'un import utilise son
 du document ou du canevas. Une modification de bibliothèque ne propage pas ses
 fiches vers les instantanés botaniques déjà intégrés dans les projets.
 
+Dans l’hôte vivant, la résolution du chemin et la création du port se font sur
+Qt. Les lectures `snapshot`/`result` et la préparation sont ensuite exécutées
+sur le worker appelant, sans QObject. Les applications et annulations restent
+sur Qt, publication disque comprise, puis rafraîchissent la bibliothèque UI.
+Les lecteurs sont sérialisés entre eux, indépendamment du verrou des écritures :
+une lecture disque lente ne retient pas Qt derrière ce verrou. Les fichiers
+publiés atomiquement et la précondition disque à l’application protègent la
+cohérence d’une préparation concurrente. Le cache de préparations utilise un
+verrou bref distinct qui ne couvre aucune I/O. Aucun cache de contenu n’est ajouté.
+Voir les [mesures de réactivité et leurs limites](MCP_REACTIVITE_QT.md).
+
 ## Listes personnelles et graines
 
 La bibliothèque botanique ne constitue pas la liste de plantes à placer.
@@ -302,12 +313,14 @@ Les listes et stocks globaux ne sont jamais ouverts implicitement par l’hôte
 autonome. Aucun outil d’écriture dédié de ces deux stockages n’est ajouté ici ;
 leurs modifications restent accessibles par les parcours Qt existants.
 
-La sauvegarde du stock global de graines utilise un temporaire dans le même
-dossier puis un remplacement atomique : un échec de sérialisation ou de
-publication conserve l'ancien fichier. Les extensions inconnues des paquets
-chargés sont conservées après édition ; supprimer un paquet retire aussi ses
-extensions. Cela ne crée pas d'undo, de reçu ou de contrôle de concurrence entre
-éditeurs globaux : ces garanties restent propres aux ports qui les annoncent.
+Les erreurs de lecture ne deviennent pas des réponses vides : le service MCP
+fait échouer les lectures des listes ou des graines globales si leur fichier
+est illisible. L’interface Qt signale également l’état et propose une reprise
+explicite. Les sauvegardes globales sont atomiques, vérifient la version disque
+sous verrou coopératif, et conservent les extensions inconnues. Les erreurs
+laissent les modifications en mémoire visibles, avec des commandes pour
+réessayer ou recharger après confirmation. Le détail des états et de la reprise
+figure dans [Fiabilité des stockages personnels](STORES_PERSONNELS.md).
 
 ## Limites graphiques et métier
 

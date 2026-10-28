@@ -218,3 +218,7 @@ Validation : tests ciblés HTTP, Qt, médias imbriqués, source opt-in et sélec
 limites/pagination, bibliothèque externe, cache et invalidations, undo/redo,
 conflits, reçus/rejeu, absence de Qt en mode autonome. La revue indépendante a
 identifié et fait corriger le fallback qui ajoutait des champs non demandés.
+
+Le [profil complémentaire du 28 octobre 2026](MCP_REACTIVITE_QT.md) mesure aussi
+la copie profonde des anciens snapshots, le port bibliothèque vivant et la
+concurrence jusqu’à 32 requêtes. Les mesures ci-dessus restent historiques.
