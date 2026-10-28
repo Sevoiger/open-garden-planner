@@ -10,6 +10,13 @@ from open_garden_planner.core.png_asset import import_png as import_png
 
 VISUAL_KEY = "personal_visual_png"
 
+# A frame visits every visible plant in sequence. An eight-entry LRU evicted
+# the preceding frame's images in ordinary gardens (22 distinct PNGs measured),
+# forcing PNG decoding on every pan/zoom. Keep room for both canvas and catalog
+# orientations of 32 illustrations. Each cached 1024² raster costs 4 MiB,
+# bounding raster storage to 256 MiB regardless of imported PNG dimensions.
+_PIXMAP_CACHE_SIZE = 64
+
 
 def personal_visual_pixmap(species: object, *, canvas: bool = False) -> QPixmap | None:
     """Return original proportions/alpha, compensating Y-up only on the canvas."""
@@ -22,7 +29,7 @@ def personal_visual_pixmap(species: object, *, canvas: bool = False) -> QPixmap 
     return _pixmap(encoded, canvas)
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=_PIXMAP_CACHE_SIZE)
 def _pixmap(encoded: str, canvas: bool) -> QPixmap | None:
     image = decode_png(encoded)
     if image is None:

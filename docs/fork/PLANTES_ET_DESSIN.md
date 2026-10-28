@@ -512,6 +512,11 @@ d'origine ne casse pas le plan. Formats acceptés : PNG, 4 Mio maximum et
 standard. Les images personnelles dans **visuals/** sont privées et ignorées
 par Git. Une image personnelle ne devient pas un dessin fourni avec l'application.
 
+Le rendu conserve en cache 64 images de 1024 × 1024 pixels (256 Mio au maximum
+pour les rasters), soit les deux orientations plan/catalogue de 32 illustrations
+personnelles. Cela évite de redécoder les PNG à chaque déplacement ou zoom dans
+un jardin comportant une vingtaine d'illustrations différentes.
+
 Le gros catalogue local est utile hors ligne, mais la recherche en ligne suffit
 pour découvrir des plantes au fil du projet. Pour un usage simple, partir de ses
 propres fiches et favoris ; il n'est pas nécessaire de parcourir les milliers de

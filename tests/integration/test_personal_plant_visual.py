@@ -61,6 +61,55 @@ def test_png_keeps_alpha_aspect_and_orientation(qtbot, png):
     assert catalog_item(snapshot).thumbnail.toImage() == icon
 
 
+def test_pan_repaints_reuse_personal_images_with_catalog_open(qtbot, tmp_path, monkeypatch):
+    """A modest mixed garden must not decode all its PNGs on every frame."""
+    from open_garden_planner.core import personal_plant_visual as visual
+
+    plants = []
+    for index in range(24):
+        image = QImage(40, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor.fromHsv(index * 15, 255, 200))
+        path = tmp_path / f"plant-{index}.png"
+        assert image.save(str(path), "PNG")
+        snapshot = record()
+        snapshot["raw_data"][VISUAL_KEY] = import_png(path)
+        plants.append(CircleItem(0, 0, 60, object_type=ObjectType.SHRUB,
+                                 metadata={"plant_species": snapshot}))
+
+    calls = []
+    decode = visual.decode_png
+
+    def counted_decode(encoded):
+        calls.append(encoded)
+        return decode(encoded)
+
+    monkeypatch.setattr(visual, "decode_png", counted_decode)
+    target = QImage(160, 160, QImage.Format.Format_ARGB32)
+
+    def repaint():
+        target.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(target)
+        painter.translate(80, 80)
+        try:
+            for plant in plants:
+                plant.paint(painter, None)
+                assert personal_visual_pixmap(plant.metadata["plant_species"]) is not None
+        finally:
+            painter.end()
+
+    visual._pixmap.cache_clear()
+    try:
+        repaint()
+        assert len(calls) == 48  # canvas and catalog orientations
+        calls.clear()
+        repaint()
+        repaint()
+        assert calls == []
+        assert target.pixelColor(80, 80).alpha() > 0
+    finally:
+        visual._pixmap.cache_clear()
+
+
 @pytest.mark.parametrize("value", [None, 42, {}, "not base64", base64.b64encode(b"not a PNG").decode()])
 def test_bad_embedded_art_falls_back_without_error(qtbot, value):
     snapshot = record()
