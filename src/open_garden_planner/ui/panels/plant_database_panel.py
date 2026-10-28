@@ -2036,7 +2036,7 @@ class PlantDatabasePanel(QWidget):
             self._set_personal_visual(import_png(Path(path)))
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, self.tr("Personal visual"), self.tr(
-                "Choose a valid PNG up to 4 MiB and 16 megapixels.\n{error}"
+                "Choose a valid PNG up to 16 MiB and 16 megapixels.\n{error}"
             ).format(error=error))
 
     def _set_personal_visual(self, encoded: str | None) -> None:

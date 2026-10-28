@@ -10005,9 +10005,9 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="2038" />
-            <source>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <source>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</source>
-            <translation>Choisir un PNG valide de 4 Mio et 16 mégapixels maximum.
+            <translation>Choisir un PNG valide de 16 Mio et 16 mégapixels maximum.
 {error}</translation>
         </message>
         <message>
@@ -11948,9 +11948,9 @@ pour leur associer les données d’une espèce.</translation>
         </message>
         <message>
             <location filename="../../ui/panels/properties_panel.py" line="2224" />
-            <source>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <source>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</source>
-            <translation>Choisir un PNG valide de 4 Mio et 16 mégapixels maximum.
+            <translation>Choisir un PNG valide de 16 Mio et 16 mégapixels maximum.
 {error}</translation>
         </message>
         <message>

@@ -507,7 +507,7 @@ sélectionnée ; mémoriser ensuite si ce choix doit aussi devenir le défaut fu
 L'import et le retour à la silhouette standard s'annulent avec Cmd+Z dans le plan.
 
 Le PNG est intégré au fichier .ogp : déplacer ou supprimer le fichier image
-d'origine ne casse pas le plan. Formats acceptés : PNG, 4 Mio maximum et
+d'origine ne casse pas le plan. Formats acceptés : PNG, 16 Mio maximum et
 16 mégapixels maximum. Un PNG endommagé dans un plan utilise la silhouette
 standard. Les images personnelles dans **visuals/** sont privées et ignorées
 par Git. Une image personnelle ne devient pas un dessin fourni avec l'application.
@@ -607,7 +607,7 @@ si cette zone n’a pas encore sa propre fiche ou ses propres interventions.
 ## Importer un remplissage personnel
 
 Sélectionner une surface (rectangle, polygone, cercle géométrique ou ellipse),
-puis **Properties > Import fill PNG…**. Le PNG doit faire au plus 4 Mio et
+puis **Properties > Import fill PNG…**. Le PNG doit faire au plus 16 Mio et
 16 mégapixels. **Tile width** règle la largeur réelle de chaque répétition en
 centimètres ; la hauteur suit les proportions de l'image. La valeur initiale est
 256 cm. Les couleurs et la transparence d'origine sont conservées : la couleur
