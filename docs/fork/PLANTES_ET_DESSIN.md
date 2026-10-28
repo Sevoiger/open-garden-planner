@@ -739,3 +739,22 @@ et des longueurs. Le même réglage existe dans **Affichage → Superpositions �
 Afficher les contraintes**. Les longueurs fixées et les autres contraintes restent
 actives lorsque leurs marqueurs sont masqués. L’état est conservé entre les lancements
 et ce bouton ne change pas l’outil de dessin actif.
+
+## Données du jardin et météo
+
+L’onglet **Données du jardin**, à côté du calendrier, du stock et des tâches,
+regroupe la météo du lieu configuré via **Fichier › Définir la position du jardin**.
+Les cartes indiquent les températures, les précipitations prévues en mm (y compris
+l’équivalent en eau de la neige) et l’**ET₀ estimée**. Déplier le tableau pour les
+16 jours disponibles ; cliquer **Heure par heure (3 jours)** pour afficher dans la
+page les températures, précipitations et probabilités de pluie horaires. Les heures
+sont celles du fuseau du jardin, indiqué au-dessus du tableau.
+
+L’ET₀ est l’évapotranspiration de référence FAO-56 fournie par
+[Open-Meteo](https://open-meteo.com/en/docs), en mm/j : perte d’eau estimée d’un
+gazon bien arrosé. Elle ne constitue pas une dose d’arrosage pour les plantes du
+plan. 1 mm représente 1 L/m². Une valeur indisponible apparaît comme **—**.
+Les données sont mises en cache pendant trois heures. Un ancien cache sans
+détail horaire est renouvelé dès le prochain chargement ; en cas d’échec réseau,
+son contenu journalier reste disponible, avec l’ET₀ indiquée comme inconnue. Les alertes de gel
+du calendrier et des tâches utilisent la même prévision que cette page.

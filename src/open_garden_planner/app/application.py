@@ -74,6 +74,7 @@ from open_garden_planner.ui.theme import (
     set_text_role,
     theme_color,
 )
+from open_garden_planner.ui.views.garden_data_view import GardenDataView
 from open_garden_planner.ui.views.harvest_view import HarvestView
 from open_garden_planner.ui.views.planting_calendar_view import PlantingCalendarView
 from open_garden_planner.ui.views.seed_inventory_view import SeedInventoryView
@@ -5153,10 +5154,13 @@ class GardenPlannerApp(QMainWindow):
         self._tab_widget.addTab(splitter, self.tr("Garden Plan"))
         self._set_tab_icon(splitter, "tab_plan")
 
+        self.garden_data_view = GardenDataView(self._project_manager)
+
         # Tab 1: Planting Calendar (US-8.5)
         self.calendar_view = PlantingCalendarView(
             self.canvas_scene, self._project_manager,
             command_manager=self.canvas_view.command_manager,
+            weather_widget=self.garden_data_view.weather,
         )
         # The planting-calendar tab carries its own status messages (a refused
         # propagation date, #415). It shares the canvas's scene, but a tab
@@ -5186,6 +5190,10 @@ class GardenPlannerApp(QMainWindow):
         self.harvest_view = HarvestView(self.canvas_scene, self._project_manager)
         self._tab_widget.addTab(self.harvest_view, self.tr("Harvest"))
         self._set_tab_icon(self.harvest_view, "tab_harvest")
+
+        self._tab_widget.addTab(self.garden_data_view, self.tr("Garden Data"))
+        self._set_tab_icon(self.garden_data_view, "sun")
+        self._project_manager.location_changed.connect(lambda _: self.garden_data_view.refresh())
 
         # Keyboard shortcuts: Ctrl+1 / Ctrl+2 / Ctrl+3 to switch tabs.
         # (The "Layout / Paper Space" tab was dropped — `pdf_report_service`
@@ -9601,6 +9609,8 @@ class GardenPlannerApp(QMainWindow):
 
     def _on_tab_changed(self, index: int) -> None:
         """Refresh tab views when they become active."""
+        if self._tab_widget.widget(index) is self.garden_data_view:
+            self.garden_data_view.refresh()
         if index == 1:
             self.calendar_view.refresh()
         elif index == 2:

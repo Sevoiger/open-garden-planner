@@ -14,7 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -70,6 +70,7 @@ class DayForecast:
     min_c: float
     precipitation_mm: float
     weathercode: int
+    et0_mm: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +79,7 @@ class DayForecast:
             "min_c": self.min_c,
             "precipitation_mm": self.precipitation_mm,
             "weathercode": self.weathercode,
+            "et0_mm": self.et0_mm,
         }
 
     @classmethod
@@ -88,7 +90,18 @@ class DayForecast:
             min_c=float(data["min_c"]),
             precipitation_mm=float(data.get("precipitation_mm", 0)),
             weathercode=int(data["weathercode"]),
+            et0_mm=float(data["et0_mm"]) if data.get("et0_mm") is not None else None,
         )
+
+
+@dataclass
+class HourForecast:
+    """Local forecast time and optional hourly values; missing is not zero."""
+
+    time: str
+    temperature_c: float | None = None
+    precipitation_mm: float | None = None
+    rain_probability: float | None = None
 
 
 @dataclass
@@ -97,11 +110,15 @@ class WeatherForecast:
 
     days: list[DayForecast]
     fetched_at: str  # ISO datetime with timezone
+    hours: list[HourForecast] = field(default_factory=list)
+    timezone: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "days": [d.to_dict() for d in self.days],
             "fetched_at": self.fetched_at,
+            "hours": [asdict(hour) for hour in self.hours],
+            "timezone": self.timezone,
         }
 
     @classmethod
@@ -109,6 +126,8 @@ class WeatherForecast:
         return cls(
             days=[DayForecast.from_dict(d) for d in data.get("days", [])],
             fetched_at=str(data["fetched_at"]),
+            hours=[HourForecast(**hour) for hour in data.get("hours", [])],
+            timezone=str(data.get("timezone", "")),
         )
 
 
@@ -197,7 +216,7 @@ class WeatherService:
             no valid cache exists.
         """
         cached = self._load_cache(lat, lon)
-        if cached is not None:
+        if cached is not None and cached.hours:
             logger.info("Using cached weather data for (%.4f, %.4f)", lat, lon)
             return cached
 
@@ -205,7 +224,7 @@ class WeatherService:
             forecast = self._fetch_from_api(lat, lon)
         except WeatherServiceError:
             logger.debug("Weather fetch failed for (%.4f, %.4f)", lat, lon, exc_info=True)
-            return None
+            return cached  # Legacy daily-only cache remains usable offline.
 
         self._save_cache(lat, lon, forecast)
         return forecast
@@ -248,7 +267,9 @@ class WeatherService:
         params = {
             "latitude": lat,
             "longitude": lon,
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode,et0_fao_evapotranspiration",
+            "hourly": "temperature_2m,precipitation,precipitation_probability",
+            "forecast_hours": 72,
             "forecast_days": 16,
             "timezone": "auto",
         }
@@ -296,11 +317,13 @@ class WeatherService:
         precips: list[float | None] = daily.get("precipitation_sum", [])
         codes: list[int | None] = daily.get("weathercode", [])
 
+        et0 = daily.get("et0_fao_evapotranspiration", [])
         days: list[DayForecast] = []
         for i, date in enumerate(dates):
             days.append(
                 DayForecast(
                     date=str(date),
+                    et0_mm=float(et0[i]) if i < len(et0) and et0[i] is not None else None,
                     max_c=float(max_temps[i]) if i < len(max_temps) and max_temps[i] is not None else 0.0,
                     min_c=float(min_temps[i]) if i < len(min_temps) and min_temps[i] is not None else 0.0,
                     precipitation_mm=float(precips[i]) if i < len(precips) and precips[i] is not None else 0.0,
@@ -308,7 +331,24 @@ class WeatherService:
                 )
             )
 
+        hourly = data.get("hourly", {})
+
+        def optional_value(key: str, index: int) -> float | None:
+            values = hourly.get(key, [])
+            return float(values[index]) if index < len(values) and values[index] is not None else None
+
+        hours = [
+            HourForecast(
+                time=str(time),
+                temperature_c=optional_value("temperature_2m", i),
+                precipitation_mm=optional_value("precipitation", i),
+                rain_probability=optional_value("precipitation_probability", i),
+            )
+            for i, time in enumerate(hourly.get("time", []))
+        ]
         return WeatherForecast(
+            hours=hours,
+            timezone=str(data.get("timezone", "")),
             days=days,
             fetched_at=datetime.now(UTC).isoformat(),
         )

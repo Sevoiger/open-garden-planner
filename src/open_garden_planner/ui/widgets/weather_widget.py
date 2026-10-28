@@ -12,6 +12,7 @@ from typing import Any
 
 from PyQt6.QtCore import QCoreApplication, QDate, QLocale, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -104,6 +105,7 @@ class WeatherWidget(QFrame):
         self._forecast: WeatherForecast | None = None
         self._worker: _WeatherFetchWorker | None = None
         self._expanded = False
+        self._hourly_expanded = False
         self._build_ui()
 
     # ── construction ────────────────────────────────────────────────────
@@ -147,6 +149,11 @@ class WeatherWidget(QFrame):
 
         outer.addWidget(header)
 
+        self._hourly_btn = QPushButton(self.tr("Hour by hour (3 days)"))
+        self._hourly_btn.setEnabled(False)
+        self._hourly_btn.clicked.connect(self._show_hourly)
+        outer.addWidget(self._hourly_btn)
+
         # ── Loading label ───────────────────────────────────────────────
         self._loading_lbl = QLabel(self.tr("Loading forecast …"))
         set_text_role(self._loading_lbl, "hint")
@@ -181,19 +188,43 @@ class WeatherWidget(QFrame):
 
         # ── Expandable table ────────────────────────────────────────────
         self._table = QTableWidget()
-        self._table.setColumnCount(5)
+        self._table.setColumnCount(6)
         self._table.setHorizontalHeaderLabels([
             self.tr("Date"),
             self.tr("Weather"),
             self.tr("Max °C"),
             self.tr("Min °C"),
             self.tr("Rain mm"),
+            self.tr("ET₀ mm/day"),
         ])
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.horizontalHeaderItem(4).setToolTip(self.tr("Total precipitation, including snow water equivalent."))
+        self._table.horizontalHeaderItem(5).setToolTip(self.tr(
+            "Estimated reference evapotranspiration (FAO-56): water loss from well-watered grass. "
+            "Not a watering recommendation. 1 mm = 1 L/m²."
+        ))
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setSectionResizeMode(1, self._table.horizontalHeader().ResizeMode.Stretch)
         self._table.setMaximumHeight(280)
         self._table.hide()
         outer.addWidget(self._table)
+
+        self._hourly_panel = QWidget()
+        hourly_layout = QVBoxLayout(self._hourly_panel)
+        self._hourly_title = QLabel()
+        hourly_layout.addWidget(self._hourly_title)
+        self._hourly_table = QTableWidget(0, 4)
+        self._hourly_table.setObjectName("hourlyForecastTable")
+        self._hourly_table.setHorizontalHeaderLabels([
+            self.tr("Date / time"), self.tr("Temperature °C"),
+            self.tr("Precipitation mm"), self.tr("Rain probability %"),
+        ])
+        self._hourly_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._hourly_table.horizontalHeader().setStretchLastSection(True)
+        self._hourly_table.setMinimumHeight(320)
+        hourly_layout.addWidget(self._hourly_table)
+        self._hourly_panel.hide()
+        outer.addWidget(self._hourly_panel)
 
         # ── Offline / age label ─────────────────────────────────────────
         self._age_lbl = QLabel()
@@ -208,6 +239,11 @@ class WeatherWidget(QFrame):
 
     def set_location(self, lat: float | None, lon: float | None) -> None:
         """Set (or clear) the GPS location; reset UI accordingly."""
+        if (lat, lon) != (self._lat, self._lon):
+            if self._worker is not None:
+                self._worker.shutdown(100)
+                self._worker = None
+            self._forecast = None
         self._lat = lat
         self._lon = lon
         if lat is None or lon is None:
@@ -288,6 +324,13 @@ class WeatherWidget(QFrame):
         if self._lat is not None and self._lon is not None:
             self.refresh()
 
+    def _show_hourly(self) -> None:
+        forecast = self._forecast
+        if forecast is None or not forecast.hours:
+            return
+        self._hourly_expanded = not self._hourly_expanded
+        self._hourly_panel.setVisible(self._hourly_expanded)
+
     def _on_expand_clicked(self) -> None:
         self._expanded = not self._expanded
         self._set_expand_icon()
@@ -313,6 +356,19 @@ class WeatherWidget(QFrame):
     def _render_forecast(self, forecast: WeatherForecast) -> None:
         self._last_forecast = forecast
         self._hide_all_content()
+        self._hourly_btn.setEnabled(bool(forecast.hours))
+        self._hourly_title.setText(
+            self.tr("Local time: {timezone} · Source: Open-Meteo").format(timezone=forecast.timezone)
+        )
+        self._hourly_table.setRowCount(len(forecast.hours))
+        for row, hour in enumerate(forecast.hours):
+            self._hourly_table.setItem(row, 0, QTableWidgetItem(hour.time.replace("T", " ")))
+            for column, value in enumerate(
+                (hour.temperature_c, hour.precipitation_mm, hour.rain_probability), start=1
+            ):
+                self._hourly_table.setItem(row, column, QTableWidgetItem("—" if value is None else f"{value:.1f}"))
+        self._hourly_table.resizeColumnsToContents()
+        self._hourly_panel.setVisible(self._hourly_expanded and bool(forecast.hours))
 
         # 7-day strip
         for i, cell in enumerate(self._day_cells):
@@ -335,6 +391,7 @@ class WeatherWidget(QFrame):
             self._table.setItem(row, 2, QTableWidgetItem(f"{day.max_c:.1f}"))
             self._table.setItem(row, 3, QTableWidgetItem(f"{day.min_c:.1f}"))
             self._table.setItem(row, 4, QTableWidgetItem(f"{day.precipitation_mm:.1f}"))
+            self._table.setItem(row, 5, QTableWidgetItem("—" if day.et0_mm is None else f"{day.et0_mm:.1f}"))
         self._table.setVisible(self._expanded)
 
         # Age label
@@ -365,6 +422,8 @@ class WeatherWidget(QFrame):
         self._empty_lbl.show()
 
     def _hide_all_content(self) -> None:
+        self._hourly_btn.setEnabled(False)
+        self._hourly_panel.hide()
         self._loading_lbl.hide()
         self._empty_lbl.hide()
         self._strip.hide()
@@ -400,7 +459,7 @@ class _DayCell(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setFixedSize(90, 110)
+        self.setFixedSize(90, 138)
         # Styled by theme.py's QFrame[weatherCard="true"] rules — base card
         # plus frostSeverity="orange"/"red" tints — so the cards follow the
         # active theme (the old hardcoded #fafafa broke dark mode).
@@ -431,6 +490,18 @@ class _DayCell(QFrame):
         set_text_role(self._rain_lbl, "small", "info")
         layout.addWidget(self._rain_lbl)
 
+        self._et0_lbl = QLabel()
+        self._et0_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        set_text_role(self._et0_lbl, "small", "secondary")
+        self._et0_lbl.setToolTip(QCoreApplication.translate("WeatherWidget",
+            "Estimated reference evapotranspiration (FAO-56): water loss from well-watered grass. "
+            "Not a watering recommendation. 1 mm = 1 L/m²."
+        ))
+        layout.addWidget(self._et0_lbl)
+        self._rain_lbl.setToolTip(QCoreApplication.translate("WeatherWidget",
+            "Total precipitation, including snow water equivalent."
+        ))
+
     def set_day(self, day: Any) -> None:
         """Populate the cell with forecast data."""
         date = QDate.fromString(day.date, Qt.DateFormat.ISODate)
@@ -441,11 +512,10 @@ class _DayCell(QFrame):
         if pixmap is not None:
             self._icon_lbl.setPixmap(pixmap)
         self._temp_lbl.setText(f"{day.max_c:.0f}° / {day.min_c:.0f}°")
-        if day.precipitation_mm > 0:
-            self._rain_lbl.setText(f"{day.precipitation_mm:.1f} mm")
-            self._rain_lbl.show()
-        else:
-            self._rain_lbl.hide()
+        self._rain_lbl.setText(self.tr("Rain {value} mm").format(value=f"{day.precipitation_mm:.1f}"))
+        self._rain_lbl.show()
+        value = "—" if day.et0_mm is None else f"{day.et0_mm:.1f}"
+        self._et0_lbl.setText(self.tr("ET₀ {value} mm").format(value=value))
 
     def set_frost_severity(self, severity: str | None) -> None:
         """Tint the cell via the theme's frostSeverity QSS property.
