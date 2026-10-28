@@ -85,6 +85,18 @@ en 3D restent identiques au centre visible en 2D, y compris après annulation,
 rétablissement et réouverture du plan. Ce correctif ne permet pas de reconstituer
 automatiquement une position déjà perdue dans une ancienne sauvegarde.
 
+En 3D, une plante rattachée à un massif, bac surélevé ou pot part du sommet
+de son support. Le champ de hauteur verticale des propriétés permet de
+surélever un massif. La hauteur de la plante reste mesurée depuis cette surface : un massif de
+60 cm et une plante de 40 cm donnent un sommet à 100 cm du sol. Cette règle
+vaut dans la vue du menu et dans le prototype Qt Quick 3D. Un massif sans
+hauteur reste au sol ; un treillis ne surélève pas ses plantes. Le rattachement
+au support doit exister : une simple superposition visuelle ne suffit pas.
+Pour les pots, la hauteur extérieure affichée sert de niveau de plantation ;
+la profondeur de remplissage conserve son rôle de calcul du volume de terre.
+Les ombres 2D et la carte d’ensoleillement restent des approximations au sol,
+sans prise en compte du niveau de plantation surélevé.
+
 Pour le MCP :
 
 - `get_garden_record(item_id="…")` renvoie `measurements` (identifiant, `date`,

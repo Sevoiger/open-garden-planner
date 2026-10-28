@@ -14,7 +14,7 @@ from typing import Any
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsScene
 
-from open_garden_planner.core.object_height import effective_height_cm
+from open_garden_planner.core.object_height import effective_height_cm, plant_base_height_cm
 from open_garden_planner.core.scene3d import Scene3DRecord, records_from_raw
 from open_garden_planner.ui.canvas.sun_shadow_controller import _item_footprints
 
@@ -42,6 +42,7 @@ def collect_scene3d_records(
     date and trees grow in 3D.
     """
     raw: list[dict] = []
+    by_id = {str(item.item_id): item for item in scene.items() if hasattr(item, "item_id")}
     # Bottom-to-top stacking order (scene.items() is top-first) so flat decals
     # can be lifted up the 2D layer order — a higher layer renders on top.
     for item in reversed(scene.items()):
@@ -52,6 +53,11 @@ def collect_scene3d_records(
             continue
         metadata = getattr(item, "metadata", None)
         height = effective_height_cm(object_type, metadata, at_date=at_date)
+        parent = by_id.get(str(getattr(item, "parent_bed_id", None)))
+        base = plant_base_height_cm(
+            object_type, getattr(parent, "object_type", None),
+            getattr(parent, "metadata", None), at_date=at_date,
+        )
         color = _item_color_rgba(item)
         name = str(getattr(item, "name", "") or object_type.name)
         for footprint in _item_footprints(item, at_date):
@@ -60,6 +66,7 @@ def collect_scene3d_records(
                     {
                         "footprint": footprint,
                         "height_cm": height,
+                        "base_cm": base,
                         "color_rgba": color,
                         "name": name,
                     }

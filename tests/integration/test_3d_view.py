@@ -81,6 +81,66 @@ class TestSnapshot:
         assert collect_scene3d_records(plan_scene) == []
 
 
+@pytest.mark.parametrize("parent_type,height", [
+    (ObjectType.GARDEN_BED, 30.0), (ObjectType.GARDEN_BED, 60.0),
+    (ObjectType.GARDEN_BED, None), (ObjectType.RAISED_BED, None),
+    (ObjectType.CONTAINER, 60.0), (ObjectType.CONTAINER_ROUND, 30.0),
+    (ObjectType.WALL_PLANTER, 60.0), (ObjectType.TRELLIS, 180.0),
+])
+def test_linked_plants_stand_on_parent_surface(qtbot, parent_type, height):  # noqa: ARG001
+    """Both engines preserve plant height and place the base on the support."""
+    from datetime import date
+
+    from open_garden_planner.core.object_height import effective_height_cm
+    from open_garden_planner.core.scene3d import extrude_footprint
+    from open_garden_planner.spike_q3d.runner import build_models
+
+    scene = CanvasScene(500, 500)
+    if parent_type == ObjectType.CONTAINER_ROUND:
+        parent = CircleItem(150, 150, 100, object_type=parent_type)
+    else:
+        parent = RectangleItem(50, 50, 200, 200, object_type=parent_type)
+    parent.name = "support"
+    # Fill depth must not override the explicit rendered outer height.
+    if parent_type in (ObjectType.CONTAINER, ObjectType.CONTAINER_ROUND, ObjectType.WALL_PLANTER):
+        parent.metadata["container_height_cm"] = 15.0
+    if height is not None:
+        parent.metadata[METADATA_KEY] = height
+    plant = CircleItem(150, 150, 20, object_type=ObjectType.PERENNIAL)
+    plant.name = "plant"
+    plant.metadata[METADATA_KEY] = 40.0
+    plant.parent_bed_id = parent.item_id
+    scene.addItem(parent)
+    scene.addItem(plant)
+    expected = 0.0 if parent_type == ObjectType.TRELLIS else effective_height_cm(parent_type, parent.metadata) or 0.0
+
+    def check(base):
+        records = {r.name: r for r in collect_scene3d_records(scene)}
+        record = records["plant"]
+        positions, _ = extrude_footprint(list(record.footprint), record.height_cm, record.base_cm)
+        assert min(positions[2::3]) == pytest.approx(base)
+        assert max(positions[2::3]) == pytest.approx(base + 40.0)
+        meshes = {}
+
+        def capture(item_id, mesh, kind, casts):  # noqa: ARG001
+            meshes.setdefault(item_id, []).append(mesh)
+            return item_id
+
+        build_models(scene, date(2026, 6, 21), 110.0, False, make_model=capture)
+        plant_meshes = meshes[str(plant.item_id)]
+        assert min(float(m.positions[:, 2].min()) for m in plant_meshes) == pytest.approx(base, abs=0.01)
+        assert max(float(m.positions[:, 2].max()) for m in plant_meshes) == pytest.approx(base + 40.0, abs=0.01)
+        if base:
+            assert max(float(m.positions[:, 2].max()) for m in meshes[str(parent.item_id)]) == pytest.approx(base)
+
+    check(expected)
+    # Rebuilding after a height edit or detach must not retain the old lift.
+    parent.metadata[METADATA_KEY] = 90.0
+    check(0.0 if parent_type == ObjectType.TRELLIS else 90.0)
+    plant.parent_bed_id = None
+    check(0.0)
+
+
 class TestGrowthIn3D:
     """US-E8: the 3D snapshot shares the growth timeline."""
 

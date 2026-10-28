@@ -475,7 +475,7 @@ def build_models(scene: Any, at: date, grass_density: float, with_grass: bool,
     that window, the planting calendar's (``accents_in_season``); without frost dates
     every accent stays.
     """
-    from open_garden_planner.core.object_height import effective_height_cm
+    from open_garden_planner.core.object_height import effective_height_cm, plant_base_height_cm
     from open_garden_planner.spike_q3d import meshes as M
     from open_garden_planner.ui.canvas.items.circle_item import CircleItem
     from open_garden_planner.ui.canvas.items.polyline_item import PolylineItem
@@ -543,11 +543,10 @@ def build_models(scene: Any, at: date, grass_density: float, with_grass: bool,
             height = h if h else max(radius * 1.2, 20.0)  # no resolved height: decoration
             species_data = item.metadata.get("plant_species") or {}
             species = species_data.get("common_name") or getattr(item, "plant_species", "") or ""
-            base = 0.0
             parent = by_id.get(str(item.parent_bed_id)) if item.parent_bed_id else None
-            if parent is not None and parent.object_type.name in SOIL_PARENTS:
-                base = effective_height_cm(parent.object_type, parent.metadata, at_date=at) or 0.0
-                base -= 2.0  # soil sits just below the rim
+            base = plant_base_height_cm(
+                ot, getattr(parent, "object_type", None), getattr(parent, "metadata", None), at_date=at,
+            )
             mesh = M.plant_mesh(species, M.item_seed(iid), height, 2.0 * radius, name,
                                 in_season=accents_in_season(location, at, species, species_data,
                                                             stats.in_season))
@@ -645,6 +644,8 @@ def build_models(scene: Any, at: date, grass_density: float, with_grass: bool,
             c = item.mapToScene(item.center)
             parts.append((M.round_thing(c.x(), c.y(), item.radius, h or 28.0, "#8d8478",
                                         "#2b2622"), "vc", True))
+        elif name == "GARDEN_BED" and h:
+            parts.append((M.prism(fp, h, 0.0, "#6b4932", top="#4a3222"), "vc", True))
         elif name in GROUND_TYPES:
             pass  # baked into the ground texture
         elif h:
