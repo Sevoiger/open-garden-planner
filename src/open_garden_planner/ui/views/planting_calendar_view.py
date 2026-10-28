@@ -1156,10 +1156,8 @@ class PlantingCalendarView(QWidget):
         parent: QWidget | None = None,
         *,
         command_manager: Any | None = None,
-        weather_widget: WeatherWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._shared_weather = weather_widget
         self._canvas_scene = canvas_scene
         self._project_manager = project_manager
         self._command_manager = command_manager
@@ -1203,11 +1201,10 @@ class PlantingCalendarView(QWidget):
         root.setSpacing(0)
 
         # Weather forecast widget (US-12.1)
-        self._weather = self._shared_weather if self._shared_weather is not None else WeatherWidget()
+        self._weather = WeatherWidget()
         self._weather.forecast_ready.connect(self._on_weather_ready)
         self._weather.forecast_failed.connect(self._on_weather_failed)
-        if self._shared_weather is None:
-            root.addWidget(self._weather)
+        root.addWidget(self._weather)
 
         self._seed_store_status = PersonalStoreStatus(self)
         self._seed_store_status.retry_requested.connect(self._retry_seed_store)

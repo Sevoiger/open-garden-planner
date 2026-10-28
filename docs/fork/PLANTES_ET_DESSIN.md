@@ -743,7 +743,14 @@ et ce bouton ne change pas l’outil de dessin actif.
 ## Données du jardin et météo
 
 L’onglet **Données du jardin**, à côté du calendrier, du stock et des tâches,
-regroupe la météo du lieu configuré via **Fichier › Définir la position du jardin**.
+affiche les fiches des plantes et zones, les interventions, les filtres par calque
+et les exports déjà accessibles via **Données du jardin…** dans Propriétés
+ou le menu Jardin. Ces accès ouvrent maintenant la page, sans modale, et le bouton
+de Propriétés sélectionne la fiche de l’objet. **Enregistrer la fiche**,
+**Annuler** et **Rétablir** utilisent les commandes habituelles du plan.
+
+La météo reste dans l’onglet **Calendrier de plantation**, pour le lieu configuré
+via **Fichier › Définir la position du jardin**.
 Les cartes indiquent les températures, les précipitations prévues en mm (y compris
 l’équivalent en eau de la neige) et l’**ET₀ estimée**. Déplier le tableau pour les
 16 jours disponibles ; cliquer **Heure par heure (3 jours)** pour afficher dans la
@@ -757,4 +764,4 @@ plan. 1 mm représente 1 L/m². Une valeur indisponible apparaît comme **—**.
 Les données sont mises en cache pendant trois heures. Un ancien cache sans
 détail horaire est renouvelé dès le prochain chargement ; en cas d’échec réseau,
 son contenu journalier reste disponible, avec l’ET₀ indiquée comme inconnue. Les alertes de gel
-du calendrier et des tâches utilisent la même prévision que cette page.
+du calendrier et des tâches utilisent cette même prévision.
