@@ -8,7 +8,7 @@ from pathlib import Path
 from PyQt6.QtCore import QBuffer, QByteArray, QIODevice
 from PyQt6.QtGui import QImage, QImageReader
 
-MAX_BYTES = 4 * 1024 * 1024
+MAX_BYTES = 16 * 1024 * 1024
 MAX_PIXELS = 4096 * 4096
 
 
@@ -38,7 +38,7 @@ def import_png(path: Path) -> str:
     with path.open("rb") as stream:
         data = stream.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
-        raise ValueError("PNG exceeds 4 MiB")
+        raise ValueError("PNG exceeds 16 MiB")
     encoded = base64.b64encode(data).decode("ascii")
     if decode_png(encoded) is None:
         raise ValueError("Invalid PNG or image exceeds 16 megapixels")

@@ -14,6 +14,7 @@ from open_garden_planner.core.personal_plant_visual import (
     import_png,
     personal_visual_pixmap,
 )
+from open_garden_planner.core.png_asset import MAX_BYTES
 from open_garden_planner.core.project import ProjectManager
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.services.personal_plant_visual import remember_visual
@@ -120,7 +121,7 @@ def test_bad_embedded_art_falls_back_without_error(qtbot, value):
 
 def test_import_rejects_corrupt_and_oversize_png(qtbot, tmp_path):
     path = tmp_path / "bad.png"
-    for data in (b"broken", b"x" * (4 * 1024 * 1024 + 1)):
+    for data in (b"broken", b"x" * (MAX_BYTES + 1)):
         path.write_bytes(data)
         with pytest.raises(ValueError):
             import_png(path)

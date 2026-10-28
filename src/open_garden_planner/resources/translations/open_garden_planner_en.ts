@@ -10205,9 +10205,9 @@ You can capture the satellite view directly from the map below instead.</transla
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="2038" />
-            <source>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <source>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</source>
-            <translation>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <translation>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</translation>
         </message>
         <message>
@@ -12178,9 +12178,9 @@ to assign species data.</translation>
         </message>
         <message>
             <location filename="../../ui/panels/properties_panel.py" line="2224" />
-            <source>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <source>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</source>
-            <translation>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <translation>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</translation>
         </message>
         <message>

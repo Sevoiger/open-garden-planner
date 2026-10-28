@@ -10350,9 +10350,9 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="2038" />
-            <source>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <source>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</source>
-            <translation>Wählen Sie eine gültige PNG-Datei mit höchstens 4 MiB und 16 Megapixeln.
+            <translation>Wählen Sie eine gültige PNG-Datei mit höchstens 16 MiB und 16 Megapixeln.
 {error}</translation>
         </message>
         <message>
@@ -12391,9 +12391,9 @@ Platzieren Sie Pflanzen auf der Zeichenfläche und verwenden Sie
         </message>
         <message>
             <location filename="../../ui/panels/properties_panel.py" line="2224" />
-            <source>Choose a valid PNG up to 4 MiB and 16 megapixels.
+            <source>Choose a valid PNG up to 16 MiB and 16 megapixels.
 {error}</source>
-            <translation>Wählen Sie ein gültiges PNG mit höchstens 4 MiB und 16 Megapixeln.
+            <translation>Wählen Sie ein gültiges PNG mit höchstens 16 MiB und 16 Megapixeln.
 {error}</translation>
         </message>
         <message>

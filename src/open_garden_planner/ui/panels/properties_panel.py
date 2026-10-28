@@ -2222,7 +2222,7 @@ class PropertiesPanel(QWidget):
             encoded = import_png(Path(filename))
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, self.tr("Personal fill pattern"), self.tr(
-                "Choose a valid PNG up to 4 MiB and 16 megapixels.\n{error}"
+                "Choose a valid PNG up to 16 MiB and 16 megapixels.\n{error}"
             ).format(error=error))
             return
         self._set_personal_fill_pattern(item, {"png": encoded, "width_cm": DEFAULT_TILE_WIDTH_CM})

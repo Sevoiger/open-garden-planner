@@ -1,14 +1,16 @@
 """Personal fill PNGs repeat at a real size and survive undo and plan reload."""
 
 from copy import deepcopy
+from random import Random
 
 import pytest
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QColor, QImage, QPainter
+from PyQt6.QtGui import QColor, QImage, QPainter, QPixmap
 from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QFileDialog, QMessageBox, QPushButton
 
 from open_garden_planner.core.fill_patterns import FillPattern, create_pattern_brush
 from open_garden_planner.core.personal_fill_pattern import PATTERN_KEY
+from open_garden_planner.core.png_asset import decode_png
 from open_garden_planner.core.project import ProjectManager
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
@@ -139,3 +141,43 @@ def test_invalid_import_leaves_plan_and_history_unchanged(qtbot, monkeypatch, tm
     assert messages
     assert item.metadata == before
     assert view.command_manager.undo_depth == 0
+
+
+def test_fill_larger_than_four_mib_survives_undo_and_reload(qtbot, monkeypatch, tmp_path):
+    # Incompressible pixels produce a genuine PNG above the old file-size cap.
+    pixels = Random(0).randbytes(1100 * 1100 * 4)
+    image = QImage(pixels, 1100, 1100, QImage.Format.Format_RGBA8888)
+    png = tmp_path / "large-tile.png"
+    assert image.save(str(png), "PNG")
+    assert 4 * 1024 * 1024 < png.stat().st_size < 16 * 1024 * 1024
+    scene = CanvasScene()
+    view = CanvasView(scene)
+    panel = PropertiesPanel()
+    qtbot.addWidget(view)
+    qtbot.addWidget(panel)
+    panel.set_command_manager(view.command_manager)
+    item = RectangleItem(0, 0, 200, 200)
+    scene.addItem(item)
+    panel.set_selected_items([item])
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *_args: (str(png), "PNG"))
+    messages = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: messages.append(args))
+    panel.findChild(QPushButton, "import_fill_png").click()
+    assert messages == []
+    record = deepcopy(item.metadata[PATTERN_KEY])
+    assert decode_png(record["png"]).convertToFormat(image.format()) == image
+    expected_texture = QPixmap.fromImage(image.mirrored(False, True)).toImage()
+    assert item.brush().textureImage() == expected_texture
+    view.command_manager.undo()
+    assert PATTERN_KEY not in item.metadata
+    view.command_manager.redo()
+    assert item.metadata[PATTERN_KEY] == record
+    path = tmp_path / "large-fill.ogp"
+    ProjectManager().save(scene, path)
+    png.unlink()
+    decode_png.cache_clear()  # reopening must decode the embedded bytes afresh
+    restored_scene = CanvasScene()
+    ProjectManager().load(restored_scene, path)
+    restored = next(i for i in restored_scene.items() if isinstance(i, RectangleItem))
+    assert restored.metadata[PATTERN_KEY] == record
+    assert restored.brush().textureImage() == expected_texture
