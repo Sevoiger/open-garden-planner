@@ -755,7 +755,11 @@ Les cartes indiquent les températures, les précipitations prévues en mm (y co
 l’équivalent en eau de la neige) et l’**ET₀ estimée**. Déplier le tableau pour les
 16 jours disponibles ; cliquer **Heure par heure (3 jours)** pour afficher dans la
 page les températures, précipitations et probabilités de pluie horaires. Les heures
-sont celles du fuseau du jardin, indiqué au-dessus du tableau.
+sont celles du fuseau du jardin, indiqué au-dessus du tableau. Choisir la journée
+dans la liste pour parcourir ses heures. Les dates utilisent la langue de
+l’application, les colonnes numériques sont alignées et de petites barres
+facilitent la comparaison des précipitations, de leur probabilité et de l’ET₀.
+Le détail journalier et le détail horaire s’ouvrent chacun à leur tour.
 
 L’ET₀ est l’évapotranspiration de référence FAO-56 fournie par
 [Open-Meteo](https://open-meteo.com/en/docs), en mm/j : perte d’eau estimée d’un

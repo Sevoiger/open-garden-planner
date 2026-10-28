@@ -15317,7 +15317,7 @@ Fortfahren?</translation>
             <translation>Gewitter</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="42" />
+            <location filename="../../ui/widgets/weather_widget.py" line="47" />
             <source>Unknown</source>
             <translation>Unbekannt</translation>
         </message>
@@ -15325,28 +15325,32 @@ Fortfahren?</translation>
     <context>
         <name>WeatherWidget</name>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="193" />
+            <location filename="../../ui/widgets/weather_widget.py" line="221" />
             <source>Date</source>
             <translation>Datum</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="219" />
             <source>Date / time</source>
-            <translation>Datum / Uhrzeit</translation>
+            <translation type="vanished">Datum / Uhrzeit</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="198" />
+            <location filename="../../ui/widgets/weather_widget.py" line="226" />
             <source>ET₀ mm/day</source>
             <translation>ET₀ mm/Tag</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="202" />
-            <location filename="../../ui/widgets/weather_widget.py" line="496" />
+            <location filename="../../ui/widgets/weather_widget.py" line="233" />
+            <location filename="../../ui/widgets/weather_widget.py" line="638" />
             <source>Estimated reference evapotranspiration (FAO-56): water loss from well-watered grass. Not a watering recommendation. 1 mm = 1 L/m².</source>
             <translation>Geschätzte Referenzverdunstung (FAO-56): Wasserverlust einer gut bewässerten Grasfläche. Keine Bewässerungsempfehlung. 1 mm = 1 L/m².</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="152" />
+            <location filename="../../ui/widgets/weather_widget.py" line="255" />
+            <source>Forecast day</source>
+            <translation>Vorhersagetag</translation>
+        </message>
+        <message>
+            <location filename="../../ui/widgets/weather_widget.py" line="179" />
             <source>Hour by hour (3 days)</source>
             <translation>Stündlich (3 Tage)</translation>
         </message>
@@ -15355,90 +15359,95 @@ Fortfahren?</translation>
             <translation type="vanished" />
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="449" />
+            <location filename="../../ui/widgets/weather_widget.py" line="591" />
             <source>Last updated %1 h ago</source>
             <translation>Zuletzt aktualisiert vor %1 Std.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="447" />
+            <location filename="../../ui/widgets/weather_widget.py" line="589" />
             <source>Last updated %1 min ago</source>
             <translation>Zuletzt aktualisiert vor %1 Min.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="158" />
+            <location filename="../../ui/widgets/weather_widget.py" line="186" />
             <source>Loading forecast …</source>
             <translation>Vorhersage wird geladen …</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="361" />
+            <location filename="../../ui/widgets/weather_widget.py" line="462" />
             <source>Local time: {timezone} · Source: Open-Meteo</source>
             <translation>Ortszeit: {timezone} · Quelle: Open-Meteo</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="195" />
+            <location filename="../../ui/widgets/weather_widget.py" line="223" />
             <source>Max °C</source>
             <translation>Max °C</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="196" />
+            <location filename="../../ui/widgets/weather_widget.py" line="224" />
             <source>Min °C</source>
             <translation>Min °C</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="220" />
+            <location filename="../../ui/widgets/weather_widget.py" line="268" />
             <source>Precipitation mm</source>
             <translation>Niederschlag mm</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="197" />
+            <location filename="../../ui/widgets/weather_widget.py" line="225" />
             <source>Rain mm</source>
             <translation>Regen mm</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="220" />
+            <location filename="../../ui/widgets/weather_widget.py" line="268" />
             <source>Rain probability %</source>
             <translation>Regenwahrscheinlichkeit %</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="137" />
+            <location filename="../../ui/widgets/weather_widget.py" line="164" />
             <source>Refresh forecast</source>
             <translation>Vorhersage aktualisieren</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="166" />
+            <location filename="../../ui/widgets/weather_widget.py" line="194" />
             <source>Set a location to enable weather forecast.
 Use File › Set Garden Location to configure GPS coordinates.</source>
             <translation>Legen Sie einen Standort fest, um die Wettervorhersage zu aktivieren.
 Verwenden Sie Datei › Gartenstandort festlegen zum Konfigurieren der GPS-Koordinaten.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="144" />
+            <location filename="../../ui/widgets/weather_widget.py" line="171" />
             <source>Show / hide full forecast</source>
             <translation>Vollständige Vorhersage anzeigen/ausblenden</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="219" />
+            <location filename="../../ui/widgets/weather_widget.py" line="267" />
             <source>Temperature °C</source>
             <translation>Temperatur °C</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="201" />
-            <location filename="../../ui/widgets/weather_widget.py" line="501" />
+            <location filename="../../ui/widgets/weather_widget.py" line="267" />
+            <source>Time</source>
+            <translation>Uhrzeit</translation>
+        </message>
+        <message>
+            <location filename="../../ui/widgets/weather_widget.py" line="232" />
+            <location filename="../../ui/widgets/weather_widget.py" line="643" />
             <source>Total precipitation, including snow water equivalent.</source>
             <translation>Gesamtniederschlag einschließlich des Wasseräquivalents von Schnee.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="194" />
+            <location filename="../../ui/widgets/weather_widget.py" line="222" />
             <source>Weather</source>
             <translation>Wetter</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="124" />
+            <location filename="../../ui/widgets/weather_widget.py" line="151" />
             <source>Weather Forecast</source>
             <translation>Wettervorhersage</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="421" />
+            <location filename="../../ui/widgets/weather_widget.py" line="563" />
             <source>Weather forecast unavailable:
 {message}</source>
             <translation>Wettervorhersage nicht verfügbar:
@@ -15622,12 +15631,12 @@ Verwenden Sie Datei › Gartenstandort festlegen zum Konfigurieren der GPS-Koord
     <context>
         <name>_DayCell</name>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="518" />
+            <location filename="../../ui/widgets/weather_widget.py" line="660" />
             <source>ET₀ {value} mm</source>
             <translation>ET₀ {value} mm</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="515" />
+            <location filename="../../ui/widgets/weather_widget.py" line="657" />
             <source>Rain {value} mm</source>
             <translation>Regen {value} mm</translation>
         </message>
@@ -15847,7 +15856,7 @@ Verwenden Sie Datei › Gartenstandort festlegen zum Konfigurieren der GPS-Koord
     <context>
         <name>_WeatherFetchWorker</name>
         <message>
-            <location filename="../../ui/widgets/weather_widget.py" line="86" />
+            <location filename="../../ui/widgets/weather_widget.py" line="113" />
             <source>Forecast unavailable</source>
             <translation>Vorhersage nicht verfügbar</translation>
         </message>

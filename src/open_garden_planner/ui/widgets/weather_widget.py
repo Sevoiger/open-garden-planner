@@ -10,13 +10,18 @@ import contextlib
 import datetime
 from typing import Any
 
-from PyQt6.QtCore import QCoreApplication, QDate, QLocale, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QDate, QLocale, QModelIndex, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -32,7 +37,7 @@ from open_garden_planner.services.weather_service import (
     wmo_to_icon,
 )
 from open_garden_planner.ui.icons import get_icon, get_pixmap
-from open_garden_planner.ui.theme import set_text_role
+from open_garden_planner.ui.theme import set_text_role, theme_color, theme_qcolor
 
 
 def weather_description(code: int) -> str:
@@ -41,6 +46,28 @@ def weather_description(code: int) -> str:
     if description == "Unknown":
         return QCoreApplication.translate("WeatherConditions", "Unknown")
     return QCoreApplication.translate("WeatherConditions", description)
+
+_METRIC_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+
+class _WeatherMetricDelegate(QStyledItemDelegate):
+    """A quiet comparison bar below the exact value, without a spreadsheet grid."""
+
+    def paint(self, painter: QPainter | None, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        super().paint(painter, option, index)
+        metric = index.data(_METRIC_ROLE)
+        if painter is None or metric is None:
+            return
+        value, maximum, token = metric
+        if value <= 0 or maximum <= 0:
+            return
+        rect = option.rect.adjusted(12, 0, -12, -5)
+        painter.save()
+        color = theme_qcolor(token)
+        color.setAlpha(150)
+        painter.fillRect(rect.left(), rect.bottom() - 2, round(rect.width() * min(value / maximum, 1)), 3, color)
+        painter.restore()
+
 
 # ─── Background worker ────────────────────────────────────────────────────────
 
@@ -151,6 +178,7 @@ class WeatherWidget(QFrame):
 
         self._hourly_btn = QPushButton(self.tr("Hour by hour (3 days)"))
         self._hourly_btn.setEnabled(False)
+        self._hourly_btn.setCheckable(True)
         self._hourly_btn.clicked.connect(self._show_hourly)
         outer.addWidget(self._hourly_btn)
 
@@ -187,7 +215,7 @@ class WeatherWidget(QFrame):
         self._strip.hide()
 
         # ── Expandable table ────────────────────────────────────────────
-        self._table = QTableWidget()
+        self._table = self._make_forecast_table()
         self._table.setColumnCount(6)
         self._table.setHorizontalHeaderLabels([
             self.tr("Date"),
@@ -198,30 +226,59 @@ class WeatherWidget(QFrame):
             self.tr("ET₀ mm/day"),
         ])
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.horizontalHeaderItem(4).setToolTip(self.tr("Total precipitation, including snow water equivalent."))
-        self._table.horizontalHeaderItem(5).setToolTip(self.tr(
+        rain_header = self._table.horizontalHeaderItem(4)
+        et0_header = self._table.horizontalHeaderItem(5)
+        assert rain_header is not None and et0_header is not None
+        rain_header.setToolTip(self.tr("Total precipitation, including snow water equivalent."))
+        et0_header.setToolTip(self.tr(
             "Estimated reference evapotranspiration (FAO-56): water loss from well-watered grass. "
             "Not a watering recommendation. 1 mm = 1 L/m²."
         ))
-        self._table.horizontalHeader().setStretchLastSection(False)
-        self._table.horizontalHeader().setSectionResizeMode(1, self._table.horizontalHeader().ResizeMode.Stretch)
+        daily_header = self._table.horizontalHeader()
+        assert daily_header is not None
+        daily_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        daily_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        daily_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        for column in range(6):
+            item = self._table.horizontalHeaderItem(column)
+            assert item is not None
+            item.setTextAlignment((Qt.AlignmentFlag.AlignLeft if column < 2 else Qt.AlignmentFlag.AlignRight)
+                                  | Qt.AlignmentFlag.AlignVCenter)
         self._table.setMaximumHeight(280)
         self._table.hide()
         outer.addWidget(self._table)
 
         self._hourly_panel = QWidget()
         hourly_layout = QVBoxLayout(self._hourly_panel)
+        day_row = QHBoxLayout()
+        self._hourly_day = QComboBox()
+        self._hourly_day.setAccessibleName(self.tr("Forecast day"))
+        self._hourly_day.currentIndexChanged.connect(self._render_hourly_day)
+        day_row.addWidget(self._hourly_day)
+        day_row.addStretch()
         self._hourly_title = QLabel()
-        hourly_layout.addWidget(self._hourly_title)
-        self._hourly_table = QTableWidget(0, 4)
+        set_text_role(self._hourly_title, "hint")
+        day_row.addWidget(self._hourly_title)
+        hourly_layout.addLayout(day_row)
+        self._hourly_table = self._make_forecast_table()
+        self._hourly_table.setColumnCount(4)
         self._hourly_table.setObjectName("hourlyForecastTable")
         self._hourly_table.setHorizontalHeaderLabels([
-            self.tr("Date / time"), self.tr("Temperature °C"),
+            self.tr("Time"), self.tr("Temperature °C"),
             self.tr("Precipitation mm"), self.tr("Rain probability %"),
         ])
         self._hourly_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._hourly_table.horizontalHeader().setStretchLastSection(True)
-        self._hourly_table.setMinimumHeight(320)
+        hourly_header = self._hourly_table.horizontalHeader()
+        assert hourly_header is not None
+        hourly_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        hourly_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for column in range(4):
+            item = self._hourly_table.horizontalHeaderItem(column)
+            assert item is not None
+            item.setTextAlignment((Qt.AlignmentFlag.AlignLeft if column == 0 else Qt.AlignmentFlag.AlignRight)
+                                  | Qt.AlignmentFlag.AlignVCenter)
+        self._hourly_table.setMinimumHeight(280)
+        self._hourly_table.setMaximumHeight(360)
         hourly_layout.addWidget(self._hourly_table)
         self._hourly_panel.hide()
         outer.addWidget(self._hourly_panel)
@@ -233,7 +290,40 @@ class WeatherWidget(QFrame):
         self._age_lbl.hide()
         outer.addWidget(self._age_lbl)
 
+        self._style_forecast_tables()
         self._show_empty_state()
+
+    def _make_forecast_table(self) -> QTableWidget:
+        table = QTableWidget()
+        table.setProperty("weatherForecast", True)
+        table.setShowGrid(False)
+        vertical_header = table.verticalHeader()
+        assert vertical_header is not None
+        vertical_header.hide()
+        vertical_header.setDefaultSectionSize(44)
+        table.setAlternatingRowColors(True)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setFrameShape(QFrame.Shape.NoFrame)
+        table.setItemDelegate(_WeatherMetricDelegate(table))
+        return table
+
+    def _style_forecast_tables(self) -> None:
+        for table in (self._table, self._hourly_table):
+            table.setStyleSheet(f"""
+                QTableWidget {{
+                    background: {theme_color("background")};
+                    alternate-background-color: {theme_color("surface")};
+                    border: none;
+                }}
+                QTableWidget::item {{ padding: 8px 12px; border: none; }}
+                QHeaderView::section {{
+                    background: {theme_color("surface")};
+                    color: {theme_color("text_secondary")};
+                    padding: 10px 12px; border: none; font-weight: 500;
+                }}
+            """)
 
     # ── public API ──────────────────────────────────────────────────────
 
@@ -330,11 +420,20 @@ class WeatherWidget(QFrame):
             return
         self._hourly_expanded = not self._hourly_expanded
         self._hourly_panel.setVisible(self._hourly_expanded)
+        self._hourly_btn.setChecked(self._hourly_expanded)
+        if self._hourly_expanded:
+            self._expanded = False
+            self._table.hide()
+            self._set_expand_icon()
 
     def _on_expand_clicked(self) -> None:
         self._expanded = not self._expanded
         self._set_expand_icon()
         self._table.setVisible(self._expanded)
+        if self._expanded:
+            self._hourly_expanded = False
+            self._hourly_panel.hide()
+            self._hourly_btn.setChecked(False)
 
     def _set_expand_icon(self) -> None:
         icon = get_icon("chevron_up" if self._expanded else "chevron_down")
@@ -348,6 +447,8 @@ class WeatherWidget(QFrame):
         if refresh_icon is not None:
             self._refresh_btn.setIcon(refresh_icon)
         self._set_expand_icon()
+        if hasattr(self, "_table"):
+            self._style_forecast_tables()
         if self._last_forecast is not None:
             self._render_forecast(self._last_forecast)
 
@@ -360,14 +461,16 @@ class WeatherWidget(QFrame):
         self._hourly_title.setText(
             self.tr("Local time: {timezone} · Source: Open-Meteo").format(timezone=forecast.timezone)
         )
-        self._hourly_table.setRowCount(len(forecast.hours))
-        for row, hour in enumerate(forecast.hours):
-            self._hourly_table.setItem(row, 0, QTableWidgetItem(hour.time.replace("T", " ")))
-            for column, value in enumerate(
-                (hour.temperature_c, hour.precipitation_mm, hour.rain_probability), start=1
-            ):
-                self._hourly_table.setItem(row, column, QTableWidgetItem("—" if value is None else f"{value:.1f}"))
-        self._hourly_table.resizeColumnsToContents()
+        selected_day = self._hourly_day.currentData()
+        days = list(dict.fromkeys(hour.time[:10] for hour in forecast.hours))
+        self._hourly_day.blockSignals(True)
+        self._hourly_day.clear()
+        locale = QLocale(active_language())
+        for iso_day in days:
+            self._hourly_day.addItem(locale.toString(QDate.fromString(iso_day, Qt.DateFormat.ISODate), "dddd d MMMM"), iso_day)
+        self._hourly_day.setCurrentIndex(max(0, self._hourly_day.findData(selected_day)))
+        self._hourly_day.blockSignals(False)
+        self._render_hourly_day()
         self._hourly_panel.setVisible(self._hourly_expanded and bool(forecast.hours))
 
         # 7-day strip
@@ -381,17 +484,21 @@ class WeatherWidget(QFrame):
 
         # 14-day table (data for all days)
         self._table.setRowCount(len(forecast.days))
+        rain_scale = max((day.precipitation_mm for day in forecast.days), default=0)
+        et0_scale = max((day.et0_mm or 0 for day in forecast.days), default=0)
         for row, day in enumerate(forecast.days):
-            self._table.setItem(row, 0, QTableWidgetItem(day.date))
+            date_item = QTableWidgetItem(locale.toString(QDate.fromString(day.date, Qt.DateFormat.ISODate), "ddd d MMM"))
+            date_item.setToolTip(day.date)
+            self._table.setItem(row, 0, date_item)
             condition_item = QTableWidgetItem(weather_description(day.weathercode))
             condition_icon = get_icon(wmo_to_icon(day.weathercode))
             if condition_icon is not None:
                 condition_item.setIcon(condition_icon)
             self._table.setItem(row, 1, condition_item)
-            self._table.setItem(row, 2, QTableWidgetItem(f"{day.max_c:.1f}"))
-            self._table.setItem(row, 3, QTableWidgetItem(f"{day.min_c:.1f}"))
-            self._table.setItem(row, 4, QTableWidgetItem(f"{day.precipitation_mm:.1f}"))
-            self._table.setItem(row, 5, QTableWidgetItem("—" if day.et0_mm is None else f"{day.et0_mm:.1f}"))
+            self._table.setItem(row, 2, self._value_item(day.max_c, bold=True))
+            self._table.setItem(row, 3, self._value_item(day.min_c))
+            self._table.setItem(row, 4, self._value_item(day.precipitation_mm, "info", rain_scale))
+            self._table.setItem(row, 5, self._value_item(day.et0_mm, "caution", et0_scale))
         self._table.setVisible(self._expanded)
 
         # Age label
@@ -401,6 +508,41 @@ class WeatherWidget(QFrame):
             self._age_lbl.show()
         else:
             self._age_lbl.hide()
+
+    @staticmethod
+    def _value_item(value: float | None, token: str = "text_primary", maximum: float = 0,
+                    *, bold: bool = False, decimals: int = 1) -> QTableWidgetItem:
+        text = "—" if value is None else QLocale(active_language()).toString(float(value), "f", decimals)
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        item.setForeground(theme_qcolor("text_secondary" if value is None or value == 0 else token))
+        if bold:
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+        if value is not None and maximum > 0:
+            item.setData(_METRIC_ROLE, (value, maximum, token))
+        return item
+
+    def _render_hourly_day(self, _index: int = 0) -> None:
+        forecast = self._last_forecast
+        if forecast is None:
+            return
+        hours = [hour for hour in forecast.hours if hour.time[:10] == self._hourly_day.currentData()]
+        # Same scale across days so changing the day preserves the comparison.
+        rain_scale = max((hour.precipitation_mm or 0 for hour in forecast.hours), default=0)
+        self._hourly_table.setRowCount(len(hours))
+        self._hourly_table.scrollToTop()
+        for row, hour in enumerate(hours):
+            time_item = QTableWidgetItem(hour.time[11:16])
+            time_item.setToolTip(hour.time.replace("T", " "))
+            font = time_item.font()
+            font.setBold(True)
+            time_item.setFont(font)
+            self._hourly_table.setItem(row, 0, time_item)
+            self._hourly_table.setItem(row, 1, self._value_item(hour.temperature_c))
+            self._hourly_table.setItem(row, 2, self._value_item(hour.precipitation_mm, "info", rain_scale))
+            self._hourly_table.setItem(row, 3, self._value_item(hour.rain_probability, "info", 100, decimals=0))
 
     # ── state helpers ───────────────────────────────────────────────────
 
