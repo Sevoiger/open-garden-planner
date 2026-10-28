@@ -264,7 +264,20 @@ class PropertiesPanel(QWidget):
         """
         self._field_refreshers = []
         while self._form_layout.rowCount() > 0:
-            self._form_layout.removeRow(0)
+            field = self._form_layout.itemAt(0, QFormLayout.ItemRole.FieldRole)
+            if field is None or not isinstance(field.widget(), QComboBox):
+                self._form_layout.removeRow(0)
+                continue
+            # A layer edit can deselect the item synchronously (hidden/locked
+            # destination), re-entering here from the combo's own Qt event.
+            # removeRow destroys its widgets immediately, including the sender.
+            # Detach now but let Qt finish the event before destroying them.
+            row = self._form_layout.takeRow(0)
+            for entry in (row.labelItem, row.fieldItem):
+                if entry is not None and (widget := entry.widget()) is not None:
+                    widget.hide()
+                    widget.setParent(None)
+                    widget.deleteLater()
 
     def _show_no_selection(self) -> None:
         """Show message when nothing is selected."""
