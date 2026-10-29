@@ -64,7 +64,7 @@ class TestMainUtilities:
         from open_garden_planner.main import get_icon_path
 
         p = get_icon_path()
-        assert p.name == "OGP_logo.png"
+        assert p.name == "OpenGardenPlanner.png"
         assert p.exists()
 
     def test_write_crash_log(self, tmp_path, monkeypatch) -> None:
