@@ -821,6 +821,8 @@ Pour archiver quotidiennement les cartes AROME Meteociel et des séries numériq
 par modèle pour Briollay, le [dossier météo dédié](../../weather/README.md) fournit
 une commande autonome, un exemple cron et un export JSON pour un second agent IA.
 Ces archives personnelles sont indépendantes du cache de l’onglet.
+La sélection vise le bulletin jardin : pluie par intervalle et cumul, froid, vent,
+humidité et nuages, avec une relève des modèles et des ensembles jusqu’à 15 jours.
 
 La météo reste dans l’onglet **Calendrier de plantation**, pour le lieu configuré
 via **Fichier › Définir la position du jardin**.

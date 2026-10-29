@@ -5,17 +5,25 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
-import html
 import json
 import math
 import re
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
+
+from open_garden_planner.services.weather_ensembles import (
+    ENSEMBLE_MODELS,
+    ENSEMBLE_VARIABLES,
+    normalize_ensemble,
+)
+from open_garden_planner.services.weather_maps import fetch_product, validate_groups
 
 VARIABLES = {
     "temperature_2m": "°C",
@@ -44,7 +52,7 @@ def iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def atomic_json(path: Path, data: dict) -> None:
+def atomic_json(path: Path, data: dict[str, Any]) -> None:
     """Publish a complete document; readers never see a partial write."""
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
         temporary = Path(stream.name)
@@ -68,7 +76,7 @@ class CurlClient:
         if (
             parsed.scheme != "https"
             or not (
-                host in {"api.open-meteo.com", "www.meteociel.fr"}
+                host in {"api.open-meteo.com", "ensemble-api.open-meteo.com", "www.meteociel.fr"}
                 or re.fullmatch(r"modeles\d+\.meteociel\.fr", host)
             )
             or parsed.port not in {None, 443}
@@ -119,24 +127,7 @@ class CurlClient:
             return target.read_bytes()
 
 
-def pinned_maps(page: str, leads: list[int], zone: int) -> dict[int, str]:
-    """Only use run-specific URLs actually published by the page."""
-    matches = re.finditer(
-        rf"https://modeles\d+\.meteociel\.fr/modeles/arome/runs/\d{{10}}/"
-        rf"aromehd-\d+-(\d+)-{zone}\.png(?:\?[^\s\x22\x27<>]*)?",
-        page,
-    )
-    found = {int(m[1]): html.unescape(m[0]) for m in matches}
-    if any(lead not in found for lead in leads):
-        raise ValueError("Requested map horizon unavailable or Meteociel HTML changed")
-    selected = {lead: found[lead] for lead in leads}
-    runs = {re.search(r"/runs/(\d{10})/", url)[1] for url in selected.values()}
-    if len(runs) != 1:
-        raise ValueError("Mixed map runs")
-    return selected
-
-
-def normalize(data: dict, timezone: str) -> dict:
+def normalize(data: dict[str, Any], timezone: str) -> dict[str, Any]:
     """Validate hourly values and preserve missing hours without interpolation."""
     hourly, units = data["hourly"], data["hourly_units"]
     times = hourly["time"]
@@ -196,7 +187,7 @@ def normalize(data: dict, timezone: str) -> dict:
     }
 
 
-def daily_summary(rows: list[dict], timezone: str) -> list[dict]:
+def daily_summary(rows: list[dict[str, Any]], timezone: str) -> list[dict[str, Any]]:
     """Local calendar days; accumulations belong to the hour BEFORE valid_at."""
     zone = ZoneInfo(timezone)
     dates = sorted({datetime.fromisoformat(r["valid_at"]).astimezone(zone).date() for r in rows})
@@ -236,7 +227,7 @@ def daily_summary(rows: list[dict], timezone: str) -> list[dict]:
     return result
 
 
-def validate_config(config: dict) -> None:
+def validate_config(config: dict[str, Any]) -> None:
     loc = config["location"]
     ZoneInfo(loc["timezone"])
     if not -90 <= loc["latitude"] <= 90 or not -180 <= loc["longitude"] <= 180:
@@ -251,12 +242,14 @@ def validate_config(config: dict) -> None:
         ):
             raise ValueError(f"Unsupported model/horizon: {model}")
     mc = config["meteociel"]
-    if not set(mc["modes"]) <= {100, 101} or not 0 <= mc["map"] <= 4:
-        raise ValueError("Supported maps: AROME HD temperature and precipitation, France zones 0–4")
-    if not mc["leads_hours"] or any(
-        not isinstance(h, int) or not 1 <= h <= 48 for h in mc["leads_hours"]
-    ):
-        raise ValueError("Map leads must be between 1 and 48 h")
+    validate_groups(mc["groups"])
+    for model, days in config.get("ensembles", {}).items():
+        if (
+            model not in ENSEMBLE_MODELS
+            or not isinstance(days, int)
+            or not 1 <= days <= ENSEMBLE_MODELS[model]
+        ):
+            raise ValueError(f"Unsupported ensemble model/horizon: {model}")
     url = urlsplit(mc["local_page"])
     if (
         url.scheme != "https"
@@ -266,7 +259,7 @@ def validate_config(config: dict) -> None:
         raise ValueError("Unexpected local page URL")
 
 
-def freshness(report: dict) -> dict:
+def freshness(report: dict[str, Any]) -> dict[str, Any]:
     """Recalculate at read time, including cached runs and failed-source fallback."""
     now = datetime.now(UTC)
     for source in report["sources"].values():
@@ -285,7 +278,7 @@ def freshness(report: dict) -> dict:
     return report
 
 
-def collect(config: dict, output: Path, force: bool = False) -> dict:
+def collect(config: dict[str, Any], output: Path, force: bool = False) -> dict[str, Any]:
     validate_config(config)
     output.mkdir(parents=True, exist_ok=True)
     with (output / ".collect.lock").open("a") as lock:
@@ -293,7 +286,7 @@ def collect(config: dict, output: Path, force: bool = False) -> dict:
         return _collect_locked(config, output, force)
 
 
-def _collect_locked(config: dict, output: Path, force: bool) -> dict:
+def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     fingerprint = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     latest = output / "latest.json"
@@ -317,7 +310,7 @@ def _collect_locked(config: dict, output: Path, force: bool) -> dict:
     client = CurlClient(config["request_spacing_seconds"])
     sources = {}
 
-    def save(name: str, payload: bytes) -> dict:
+    def save(name: str, payload: bytes) -> dict[str, Any]:
         path = run / name
         path.write_bytes(payload)
         return {
@@ -325,7 +318,7 @@ def _collect_locked(config: dict, output: Path, force: bool) -> dict:
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
 
-    def attempt(key: str, action) -> None:
+    def attempt(key: str, action: Callable[[], dict[str, Any]]) -> None:
         try:
             sources[key] = {**action(), "state": "ok", "fetched_at": iso_now()}
         except (
@@ -345,7 +338,7 @@ def _collect_locked(config: dict, output: Path, force: bool) -> dict:
 
     for model, hours in config["models"].items():
 
-        def fetch_model(model=model, hours=hours):
+        def fetch_model(model: str = model, hours: int = hours) -> dict[str, Any]:
             params = {
                 "latitude": config["location"]["latitude"],
                 "longitude": config["location"]["longitude"],
@@ -372,10 +365,39 @@ def _collect_locked(config: dict, output: Path, force: bool) -> dict:
 
         attempt(model, fetch_model)
 
+    for model, days in config.get("ensembles", {}).items():
+
+        def fetch_ensemble(model: str = model, days: int = days) -> dict[str, Any]:
+            params = {
+                "latitude": config["location"]["latitude"],
+                "longitude": config["location"]["longitude"],
+                "models": model,
+                "forecast_days": days,
+                "hourly": ",".join(ENSEMBLE_VARIABLES),
+                "timeformat": "unixtime",
+                "timezone": "GMT",
+                "wind_speed_unit": "kmh",
+                "temperature_unit": "celsius",
+                "precipitation_unit": "mm",
+            }
+            url = "https://ensemble-api.open-meteo.com/v1/ensemble?" + urlencode(params)
+            raw = client.get(url)
+            return {
+                "provider": "Open-Meteo",
+                "model": model,
+                "url": url,
+                "requested_days": days,
+                "attribution": "Open-Meteo CC BY 4.0; ECMWF / NOAA",
+                "raw": save(f"ensemble-{model}.json", raw),
+                **normalize_ensemble(json.loads(raw), config["location"]["timezone"]),
+            }
+
+        attempt(f"ensemble_{model}", fetch_ensemble)
+
     mc = config["meteociel"]
     if mc["enabled"]:
 
-        def fetch_local():
+        def fetch_local() -> dict[str, Any]:
             raw = client.get(mc["local_page"])
             if b"Briollay" not in raw and config["location"]["name"].startswith("Briollay"):
                 raise ValueError("Unexpected local page content")
@@ -387,55 +409,31 @@ def _collect_locked(config: dict, output: Path, force: bool) -> dict:
             }
 
         attempt("meteociel_local", fetch_local)
-        for mode in mc["modes"]:
+        for family, group in mc["groups"].items():
+            for product in group["products"]:
+                key = f"meteociel_{family}_{product['mode']}"
 
-            def fetch_maps(mode=mode):
-                url = "https://www.meteociel.fr/modeles/arome.php?" + urlencode(
-                    {"ech": 3, "mode": mode, "map": mc["map"]}
-                )
-                raw = client.get(url)
-                links = pinned_maps(raw.decode("iso-8859-1"), mc["leads_hours"], mc["map"])
-                page = save(f"meteociel-{mode}.html", raw)
-                maps = []
-                for lead, image_url in links.items():
-                    image = client.get(image_url)
-                    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
-                        raise ValueError("Map response is not a PNG")
-                    run_at = datetime.strptime(
-                        re.search(r"/runs/(\d{10})/", image_url)[1], "%Y%m%d%H"
-                    ).replace(tzinfo=UTC)
-                    maps.append(
-                        {
-                            "url": image_url,
-                            "lead_hours": lead,
-                            "model_run_at": run_at.isoformat(),
-                            "valid_at": (run_at + timedelta(hours=lead)).isoformat(),
-                            **save(f"arome-{mode}-{lead:02d}h.png", image),
-                        }
-                    )
-                return {
-                    "provider": "Meteociel / Météo-France",
-                    "model": "AROME HD 1.3 km",
-                    "status": "forecast_map",
-                    "variable": "temperature_2m" if mode == 100 else "precipitation",
-                    "interval_note": "Read original map legend; do not infer local amounts from colours",
-                    "url": url,
-                    "page": page,
-                    "maps": maps,
-                }
+                def fetch_maps(
+                    family: str = family,
+                    group: dict[str, Any] = group,
+                    product: dict[str, Any] = product,
+                ) -> dict[str, Any]:
+                    return fetch_product(client, save, family, group, product)
 
-            attempt(f"meteociel_maps_{mode}", fetch_maps)
+                attempt(key, fetch_maps)
+                print(f"{key}: {sources[key]['state']}", flush=True)
     report = freshness(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "attempted_at": started_at.isoformat(),
             "config_sha256": fingerprint,
             "refresh_hours": config["refresh_hours"],
             "location": config["location"],
             "garden_context": config["garden_context"],
             "sources": sources,
+            "requested_map_catalogue": config["meteociel"]["groups"],
             "limitations": [
-                "No observations, radar, soil measurements or ensembles in v1",
+                "No observations, observed radar or soil measurements",
                 "No calibrated probability from deterministic model disagreement",
                 "Rain minus ET0 is not garden soil water storage",
                 "Archived forecasts are not observed rainfall",

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from open_garden_planner.services import weather_collection as wc
+from open_garden_planner.services.weather_maps import published_maps
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -16,6 +17,7 @@ def config():
     result = json.loads((ROOT / "weather/config.json").read_text())
     result["models"] = {"meteofrance_arome_france": 48}
     result["meteociel"]["enabled"] = False
+    result["ensembles"] = {}
     return result
 
 
@@ -91,12 +93,12 @@ def test_daily_intervals_follow_real_dst_day(day, hours):
 
 def test_only_published_pinned_maps_are_used():
     page = """imgArrayRun=['https://modeles7.meteociel.fr/modeles/arome/runs/2026102900/aromehd-1-3-1.png?29-02'];"""
-    urls = wc.pinned_maps(page, [3], 1)
+    urls = published_maps([page], "arome_hd", 101, 1, [3])["urls"]
     assert "/runs/2026102900/" in urls[3]
-    with pytest.raises(ValueError, match="unavailable"):
-        wc.pinned_maps(page, [48], 1)
+    with pytest.raises(ValueError, match="No requested"):
+        published_maps([page], "arome_hd", 101, 1, [48])
     with pytest.raises(ValueError):
-        wc.pinned_maps(page.replace("/runs/2026102900/", "/"), [3], 1)
+        published_maps([page.replace("/runs/2026102900/", "/")], "arome_hd", 101, 1, [3])
 
 
 def test_cache_failure_and_configuration_change(tmp_path, monkeypatch):
