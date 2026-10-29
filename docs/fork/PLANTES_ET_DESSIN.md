@@ -817,6 +817,11 @@ ou le menu Jardin. Ces accès ouvrent maintenant la page, sans modale, et le bou
 de Propriétés sélectionne la fiche de l’objet. **Enregistrer la fiche**,
 **Annuler** et **Rétablir** utilisent les commandes habituelles du plan.
 
+Pour archiver quotidiennement les cartes AROME Meteociel et des séries numériques
+par modèle pour Briollay, le [dossier météo dédié](../../weather/README.md) fournit
+une commande autonome, un exemple cron et un export JSON pour un second agent IA.
+Ces archives personnelles sont indépendantes du cache de l’onglet.
+
 La météo reste dans l’onglet **Calendrier de plantation**, pour le lieu configuré
 via **Fichier › Définir la position du jardin**.
 Les cartes indiquent les températures, les précipitations prévues en mm (y compris

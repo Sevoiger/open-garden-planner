@@ -1,0 +1,27 @@
+{
+  "location": {
+    "name": "Briollay (49125)",
+    "latitude": 47.56446,
+    "longitude": -0.50805,
+    "timezone": "Europe/Paris",
+    "geocoding_source": "https://geocoding-api.open-meteo.com/v1/search?name=Briollay&count=1&language=fr&format=json",
+    "geocoding_id": 3030020,
+    "geocoded_on": "2026-10-29"
+  },
+  "garden_context": "Terrain très sableux, infiltration rapide, faible réserve en eau. Humidité réelle du sol inconnue.",
+  "refresh_hours": 24,
+  "request_spacing_seconds": 2,
+  "models": {
+    "meteofrance_arome_france": 48,
+    "meteofrance_arpege_europe": 96,
+    "ecmwf_ifs025": 168,
+    "gfs_global": 168
+  },
+  "meteociel": {
+    "enabled": true,
+    "local_page": "https://www.meteociel.fr/previsions/16902/briollay.htm",
+    "map": 1,
+    "modes": [100, 101],
+    "leads_hours": [3, 12, 24, 36, 48]
+  }
+}
