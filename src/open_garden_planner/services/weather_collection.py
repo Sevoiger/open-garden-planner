@@ -9,6 +9,7 @@ import json
 import math
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -18,12 +19,14 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
+from open_garden_planner.services.weather_brief import build_brief
 from open_garden_planner.services.weather_ensembles import (
     ENSEMBLE_MODELS,
     ENSEMBLE_VARIABLES,
     normalize_ensemble,
 )
 from open_garden_planner.services.weather_maps import fetch_product, validate_groups
+from open_garden_planner.services.weather_retention import MARKER, prune_archives
 
 VARIABLES = {
     "temperature_2m": "°C",
@@ -305,8 +308,11 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
         )
         if age.total_seconds() < config["refresh_hours"] * 3600 and not next_daily_date:
             return freshness(previous)
+    if (output / "runs").is_symlink():
+        raise ValueError("Weather runs directory must not be a symlink")
     run = output / "runs" / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     run.mkdir(parents=True)
+    (run / MARKER).write_text("OpenGardenPlanner weather archive v1\n")
     client = CurlClient(config["request_spacing_seconds"])
     sources = {}
 
@@ -440,8 +446,26 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
             ],
         }
     )
+    brief = build_brief(report)
+    atomic_json(run / "analysis-input.json", brief)
+    report["analysis_input"] = {
+        "path": str((run / "analysis-input.json").relative_to(output)),
+        "sha256": hashlib.sha256((run / "analysis-input.json").read_bytes()).hexdigest(),
+    }
     atomic_json(run / "manifest.json", report)
     atomic_json(latest, report)
+    # Never delete before both the immutable manifest and latest are published.
+    try:
+        cleanup = prune_archives(output, run)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        cleanup = {"keep_recent_runs": 2, "errors": [str(exc)]}
+    cleanup["checked_at"] = iso_now()
+    try:
+        atomic_json(output / "retention.json", cleanup)
+    except OSError as exc:
+        print(f"Weather retention report could not be written: {exc}", file=sys.stderr)
+    if cleanup["errors"]:
+        print(f"Weather retention incomplete: {cleanup['errors']}", file=sys.stderr)
     return report
 
 

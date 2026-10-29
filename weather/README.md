@@ -142,15 +142,25 @@ Toutes les archives sont des prévisions, jamais un historique de pluie observé
 utiliser `--status`. La fraîcheur du téléchargement ne garantit pas celle du run.
 En cas d'échec, les dernières données valides de la même configuration gardent
 leurs fichiers et leurs dates. Verrou contre les exécutions simultanées et publication
-JSON par remplacement atomique. Pas de purge automatique ; ne supprimer aucun run
-encore référencé par `latest.json`. Un essai interrompu peut laisser un dossier sans
-manifeste, sans remplacer le dernier manifeste valide.
+JSON par remplacement atomique. Après publication du nouveau manifeste et de
+`latest.json`, nettoyage automatique : conserver **N et N−1**, supprimer N−2 et
+les plus anciens. Les dossiers encore référencés par N ou N−1 pour un repli sont
+protégés, y compris leurs références transitives. Le bilan est dans `retention.json`.
+Un manifeste incohérent annule le nettoyage ; un échec de suppression est signalé
+sans invalider les données météo. Les liens symboliques et dossiers étrangers ne
+sont pas supprimés. Les interruptions marquées par le nouveau collecteur sont
+nettoyables ; les anciens dossiers sans marqueur ni manifeste restent intacts.
+Un essai interrompu ne remplace jamais le dernier manifeste valide.
 
 ## Analyse IA et conditions des sources
 
 Fournir `analyse-prompt.md`, `latest.json` et les images référencées au second agent.
 Un agent sans accès aux fichiers doit recevoir les PNG, pas seulement le JSON.
 Le collecteur ne lance pas de fournisseur IA et n'envoie pas les cartes à un tiers.
+Il fournit aussi `analysis-input.json`, référencé par `analysis_input.path` : résumé
+numérique calculé localement, avec statistiques journalières des ensembles établies
+après agrégation de chaque membre. Ce résumé ne prétend pas lire les cartes.
+Voir [choix Sol/Terra/Luna et coûts selon les pixels](ANALYSE_ET_COUTS.md).
 
 Sources consultées le 29 octobre 2026 :
 [Open-Meteo Météo-France](https://open-meteo.com/en/docs/meteofrance-api),
