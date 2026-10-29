@@ -13,8 +13,12 @@ Pour déboguer, ouvrir **Lancer-Jardin.command** : les messages défilent dans l
 Terminal et sont aussi enregistrés dans le journal. Le lanceur ne réinstalle
 rien. Pour modifier l’application : fermer la fenêtre, modifier les fichiers sous
 `src/open_garden_planner/`, puis rouvrir le lanceur. `Jardin.app` est un simple
-lanceur vers les sources, à conserver dans le dossier du projet ; aucune
-reconstruction n'est nécessaire.
+lanceur vers les sources. Après `bash scripts/build_macos_launcher.sh`, glisser
+**Jardin.app** dans **Applications**, puis l'ouvrir et le conserver dans le Dock.
+Le bundle intègre l'icône macOS et mémorise le chemin local du projet ; conserver
+le dossier du projet et sa `.venv` à cet emplacement. Les modifications Python
+ne nécessitent aucune reconstruction. Après déplacement du projet, reconstruire
+le lanceur puis remplacer la copie dans Applications.
 L'entrée du bundle est un petit exécutable natif signé localement (signature
 ad hoc, sans certificat Developer ID ni notarisation). Il évite le blocage
 d'accès au dossier Documents rencontré avec une entrée Bash. Ses sources sont

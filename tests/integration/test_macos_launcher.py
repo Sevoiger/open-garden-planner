@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,29 @@ def test_app_launcher_signature_is_valid():
         ["/usr/bin/codesign", "--verify", "--strict", str(ROOT / "Jardin.app")],
         check=True, capture_output=True, text=True, timeout=10,
     )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Native macOS launcher")
+def test_app_launcher_can_be_moved_to_applications(tmp_path):
+    source = tmp_path / "Sources jardin é"
+    source.mkdir()
+    shutil.copyfile(ROOT / "Lancer-Jardin.command", source / "Lancer-Jardin.command")
+    binary = source / ".venv/bin/python"
+    binary.parent.mkdir(parents=True)
+    binary.write_text('#!/bin/bash\nprintf "%s\\n" "$PWD" "$@"\n')
+    binary.chmod(0o755)
+    app = tmp_path / "Applications/Jardin.app"
+    shutil.copytree(ROOT / "Jardin.app", app)
+    (app / "Contents/Resources/SourceRoot.txt").write_text(str(source))
+    result = subprocess.run(
+        [str(app / "Contents/MacOS/Jardin"), "plan é.ogp"],
+        cwd=tmp_path, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert result.stdout == result.stderr == ""
+    lines = (source / ".local/logs/launcher.log").read_text().splitlines()
+    assert unicodedata.normalize("NFC", lines[0]) == str(source)
+    assert lines[1:] == ["-m", "open_garden_planner", "plan é.ogp"]
 
 
 def test_launcher_missing_environment_explains_recovery(tmp_path):

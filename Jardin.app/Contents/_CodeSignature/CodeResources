@@ -3,9 +3,33 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/OpenGardenPlanner.icns</key>
+		<data>
+		SMWysRp0mRnW8tP7rxxH5N/xQx4=
+		</data>
+		<key>Resources/SourceRoot.txt</key>
+		<data>
+		vJWhX5zsvkIm+1lohVQfUhFZbNs=
+		</data>
+	</dict>
 	<key>files2</key>
-	<dict/>
+	<dict>
+		<key>Resources/OpenGardenPlanner.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			tHmMhZPjpLkOWYgaBJ28VT94fv4jnkw+bFHB60nZdgU=
+			</data>
+		</dict>
+		<key>Resources/SourceRoot.txt</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			p7MqhN6I6WPkQnl/bhZQqIn1Kt+/t6jJYwEbOSTZjgM=
+			</data>
+		</dict>
+	</dict>
 	<key>rules</key>
 	<dict>
 		<key>^Resources/</key>

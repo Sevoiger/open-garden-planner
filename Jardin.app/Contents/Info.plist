@@ -8,6 +8,8 @@
     <string>fr.sevoiger.open-garden-planner.launcher</string>
     <key>CFBundleName</key>
     <string>Jardin</string>
+    <key>CFBundleIconFile</key>
+    <string>OpenGardenPlanner.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>

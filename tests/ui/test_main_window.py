@@ -415,9 +415,9 @@ class TestApplicationIcon:
         assert icon_path.suffix.lower() == ".png"
 
     def test_icon_path_contains_logo_name(self) -> None:
-        """Test that the icon path refers to OGP_logo.png."""
+        """Test that the icon path refers to the application icon."""
         icon_path = get_icon_path()
-        assert "OGP_logo.png" in str(icon_path)
+        assert icon_path.name == "OpenGardenPlanner.png"
 
     def test_application_has_window_icon(self, qtbot) -> None:
         """Test that QApplication has a window icon set after startup."""
@@ -425,6 +425,9 @@ class TestApplicationIcon:
         # We verify the icon path is valid here
         icon_path = get_icon_path()
         assert icon_path.exists()
+        from PyQt6.QtGui import QIcon
+
+        assert not QIcon(str(icon_path)).isNull()
         # The actual icon setting happens in main() when the app starts
 
     def test_about_dialog_icon_path_exists(self, qtbot) -> None:

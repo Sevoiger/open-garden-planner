@@ -41,7 +41,7 @@ except (AttributeError, ImportError):
 
 def get_icon_path() -> Path:
     """Get the path to the application icon."""
-    return Path(__file__).parent / "resources" / "icons" / "OGP_logo.png"
+    return Path(__file__).parent / "resources" / "icons" / "OpenGardenPlanner.png"
 
 
 def _run_selftest() -> int:

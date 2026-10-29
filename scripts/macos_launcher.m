@@ -8,6 +8,13 @@ extern char **environ;
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSString *root = [[[NSBundle mainBundle] bundlePath] stringByDeletingLastPathComponent];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:[root stringByAppendingPathComponent:@"Lancer-Jardin.command"]]) {
+            NSString *sourceFile = [[NSBundle mainBundle] pathForResource:@"SourceRoot" ofType:@"txt"];
+            if (sourceFile) {
+                NSString *sourceRoot = [NSString stringWithContentsOfFile:sourceFile encoding:NSUTF8StringEncoding error:NULL];
+                if (sourceRoot.length) root = sourceRoot;
+            }
+        }
         // Keep this signed native process alive as the responsible application
         // for macOS Documents access. Do not exec Bash in its place.
         char **args = calloc((size_t)argc + 3, sizeof(char *));

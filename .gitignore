@@ -157,3 +157,5 @@ MISSION_AGENT_JARDIN.md
 /output/
 /tmp/pdfs/
 /visuals/
+# Local source location embedded by the macOS launcher build.
+Jardin.app/Contents/Resources/SourceRoot.txt
