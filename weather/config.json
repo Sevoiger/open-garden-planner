@@ -1,0 +1,228 @@
+{
+  "location": {
+    "name": "Briollay (49125)",
+    "latitude": 47.56446,
+    "longitude": -0.50805,
+    "timezone": "Europe/Paris",
+    "geocoding_source": "https://geocoding-api.open-meteo.com/v1/search?name=Briollay&count=1&language=fr&format=json",
+    "geocoding_id": 3030020,
+    "geocoded_on": "2026-10-29"
+  },
+  "garden_context": "Terrain très sableux, infiltration rapide, faible réserve en eau. Humidité réelle du sol inconnue.",
+  "refresh_hours": 24,
+  "request_spacing_seconds": 1,
+  "models": {
+    "meteofrance_arome_france": 48,
+    "meteofrance_arpege_europe": 96,
+    "ecmwf_ifs025": 168,
+    "gfs_global": 168
+  },
+  "meteociel": {
+    "enabled": true,
+    "local_page": "https://www.meteociel.fr/previsions/16902/briollay.htm",
+    "groups": {
+      "arome_hd": {
+        "label": "AROME HD 1.3 km",
+        "map": 1,
+        "leads_hours": [
+          12,
+          24,
+          36,
+          48
+        ],
+        "products": [
+          {
+            "mode": 100,
+            "label": "Temp. 2m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 131,
+            "label": "Temp. Max 2m",
+            "semantics": "extreme",
+            "leads_hours": [
+              6,
+              18,
+              30,
+              42
+            ]
+          },
+          {
+            "mode": 132,
+            "label": "Min 2m",
+            "semantics": "extreme",
+            "leads_hours": [
+              6,
+              18,
+              30,
+              42
+            ]
+          },
+          {
+            "mode": 118,
+            "label": "Point rosée 2m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 101,
+            "label": "Précipitations",
+            "semantics": "interval"
+          },
+          {
+            "mode": 142,
+            "label": "Type précip.",
+            "semantics": "diagnostic"
+          },
+          {
+            "mode": 125,
+            "label": "Accumulations préc.",
+            "semantics": "cumulative"
+          },
+          {
+            "mode": 103,
+            "label": "Vent moy. 10m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 111,
+            "label": "Rafales 10m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 138,
+            "label": "Couches nébu.",
+            "semantics": "instant"
+          },
+          {
+            "mode": 119,
+            "label": "Humidité 2m",
+            "semantics": "instant"
+          }
+        ]
+      },
+      "arpege": {
+        "label": "ARPEGE",
+        "map": 301,
+        "leads_hours": [
+          72,
+          96
+        ],
+        "products": [
+          {
+            "mode": 0,
+            "label": "Température 2 m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 1,
+            "label": "Précipitations",
+            "semantics": "interval"
+          },
+          {
+            "mode": 25,
+            "label": "Accumulations précipitations",
+            "semantics": "cumulative"
+          },
+          {
+            "mode": 3,
+            "label": "Vent moyen 10 m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 11,
+            "label": "Rafales 10 m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 4,
+            "label": "Nébulosité",
+            "semantics": "instant"
+          },
+          {
+            "mode": 19,
+            "label": "Humidité 2 m",
+            "semantics": "instant"
+          }
+        ]
+      },
+      "ecmwf": {
+        "label": "ECMWF IFS 0.25°",
+        "map": 2,
+        "leads_hours": [
+          120,
+          168,
+          240,
+          360
+        ],
+        "products": [
+          {
+            "mode": 9,
+            "label": "Température 2 m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 2,
+            "label": "Précipitations",
+            "semantics": "interval"
+          },
+          {
+            "mode": 25,
+            "label": "Accumulations précipitations",
+            "semantics": "cumulative"
+          },
+          {
+            "mode": 14,
+            "label": "Vent moyen 10 m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 27,
+            "label": "Rafales 10 m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 35,
+            "label": "Nébulosité",
+            "semantics": "instant"
+          }
+        ]
+      },
+      "gfs": {
+        "label": "GFS",
+        "map": 0,
+        "leads_hours": [
+          168,
+          240,
+          360,
+          384
+        ],
+        "products": [
+          {
+            "mode": 9,
+            "label": "Température 2 m",
+            "semantics": "instant"
+          },
+          {
+            "mode": 2,
+            "label": "Précipitations",
+            "semantics": "interval"
+          },
+          {
+            "mode": 25,
+            "label": "Cumul précipitations",
+            "semantics": "cumulative"
+          },
+          {
+            "mode": 14,
+            "label": "Vent 10 m",
+            "semantics": "instant"
+          }
+        ]
+      }
+    }
+  },
+  "ensembles": {
+    "ecmwf_ifs025": 15,
+    "gfs05": 15
+  }
+}

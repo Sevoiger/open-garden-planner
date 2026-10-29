@@ -817,23 +817,33 @@ ou le menu Jardin. Ces accès ouvrent maintenant la page, sans modale, et le bou
 de Propriétés sélectionne la fiche de l’objet. **Enregistrer la fiche**,
 **Annuler** et **Rétablir** utilisent les commandes habituelles du plan.
 
-La météo reste dans l’onglet **Calendrier de plantation**, pour le lieu configuré
-via **Fichier › Définir la position du jardin**.
-Les cartes indiquent les températures, les précipitations prévues en mm (y compris
-l’équivalent en eau de la neige) et l’**ET₀ estimée**. Déplier le tableau pour les
-16 jours disponibles ; cliquer **Heure par heure (3 jours)** pour afficher dans la
-page les températures, précipitations et probabilités de pluie horaires. Les heures
-sont celles du fuseau du jardin, indiqué au-dessus du tableau. Choisir la journée
-dans la liste pour parcourir ses heures. Les dates utilisent la langue de
-l’application, les colonnes numériques sont alignées et de petites barres
-facilitent la comparaison des précipitations, de leur probabilité et de l’ET₀.
-Le détail journalier et le détail horaire s’ouvrent chacun à leur tour.
+L’onglet **Météo** regroupe les prévisions et le bulletin du jardin. Le calendrier
+de plantation conserve les tâches et les alertes gel, sans panneau météo.
+Le bandeau journalier provient des séries numériques récoltées, sans appel IA :
+températures, pluie et rafales, avec indication des journées partielles ou des
+prévisions anciennes. Une source récente est préférée à une source périmée.
 
-L’ET₀ est l’évapotranspiration de référence FAO-56 fournie par
+À l’ouverture de la page, seules les prévisions numériques sont actualisées,
+au maximum une fois par jour civil Europe/Paris. **Générer le bulletin** récupère
+les cartes utiles puis appelle **GPT-6.1 Sol, raisonnement élevé**.
+Il s’agit d’un clic explicite ; aucun appel IA ne part à l’ouverture. Le service
+conserve une seule tentative IA par jour, même après redémarrage ou échec réseau.
+Un bulletin déjà généré reste affiché ; en cas d’échec, le précédent est conservé.
+Le résultat structuré est présenté en synthèse, faits marquants et périodes,
+sans rendu Markdown. Les deux thèmes utilisent les couleurs de l’application.
+
+La configuration du point météo est dans `weather/config.json` (Briollay par défaut).
+Les archives et le bulletin sont conservés dans le dossier météo de l’application,
+indépendamment du plan : sur macOS, `~/Library/Application Support/OpenGardenPlanner/weather`.
+La clé est lue depuis `OPENAI_API_KEY` ou le fichier privé `.local/weather/openai.env`.
+Le [dossier météo dédié](../../weather/README.md) décrit le collecteur et la rétention.
+Les alertes gel utilisent ces données seulement lorsque le plan est dans la même
+zone ; elles sont recalculées localement quand ses plantes changent.
+
+Les exports numériques conservent aussi l’ET₀, évapotranspiration de référence FAO-56 fournie par
 [Open-Meteo](https://open-meteo.com/en/docs), en mm/j : perte d’eau estimée d’un
 gazon bien arrosé. Elle ne constitue pas une dose d’arrosage pour les plantes du
-plan. 1 mm représente 1 L/m². Une valeur indisponible apparaît comme **—**.
-Les données sont mises en cache pendant trois heures. Un ancien cache sans
-détail horaire est renouvelé dès le prochain chargement ; en cas d’échec réseau,
-son contenu journalier reste disponible, avec l’ET₀ indiquée comme inconnue. Les alertes de gel
-du calendrier et des tâches utilisent cette même prévision.
+plan. 1 mm représente 1 L/m². Une valeur indisponible reste inconnue.
+Les dates d’actualisation sont indiquées dans l’onglet Météo. Les alertes de gel
+du calendrier et des tâches utilisent la même prévision numérique, recalculée
+localement selon les plantes du plan sans nouvel appel réseau.

@@ -1,0 +1,340 @@
+{
+  "arome_hd": [
+    {
+      "mode": 100,
+      "label": "Temp. 2m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 141,
+      "label": "(Avec iso)",
+      "semantics": "instant"
+    },
+    {
+      "mode": 131,
+      "label": "Temp. Max 2m",
+      "semantics": "extreme",
+      "leads_hours": [
+        6,
+        18,
+        30,
+        42
+      ]
+    },
+    {
+      "mode": 132,
+      "label": "Min 2m",
+      "semantics": "extreme",
+      "leads_hours": [
+        6,
+        18,
+        30,
+        42
+      ]
+    },
+    {
+      "mode": 143,
+      "label": "Windchill",
+      "semantics": "instant"
+    },
+    {
+      "mode": 147,
+      "label": "Humidex",
+      "semantics": "instant"
+    },
+    {
+      "mode": 118,
+      "label": "Point rosée 2m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 101,
+      "label": "Précipitations",
+      "semantics": "interval"
+    },
+    {
+      "mode": 129,
+      "label": "Réfl. Radar Max",
+      "semantics": "simulation"
+    },
+    {
+      "mode": 142,
+      "label": "Type précip.",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 157,
+      "label": "Type précip sévère MF N!",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 125,
+      "label": "Accumulations préc.",
+      "semantics": "cumulative"
+    },
+    {
+      "mode": 145,
+      "label": "Cumul précip. neige depuis 0h",
+      "semantics": "cumulative"
+    },
+    {
+      "mode": 153,
+      "label": "Cumul graupel depuis 0h",
+      "semantics": "cumulative"
+    },
+    {
+      "mode": 156,
+      "label": "Cumul neige + graupel depuis 0h",
+      "semantics": "cumulative"
+    },
+    {
+      "mode": 158,
+      "label": "Couche neige N!",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 103,
+      "label": "Vent moy. 10m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 111,
+      "label": "Rafales 10m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 152,
+      "label": "Rafales Max.Ech",
+      "semantics": "extreme"
+    },
+    {
+      "mode": 128,
+      "label": "MUCAPE",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 138,
+      "label": "Couches nébu.",
+      "semantics": "instant"
+    },
+    {
+      "mode": 119,
+      "label": "Humidité 2m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 154,
+      "label": "Simu Sat IR -",
+      "semantics": "simulation"
+    },
+    {
+      "mode": 155,
+      "label": "Col.",
+      "semantics": "simulation"
+    }
+  ],
+  "arome": [
+    {
+      "mode": 0,
+      "label": "Temp.2m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 41,
+      "label": "Temp.2m (iso)",
+      "semantics": "instant"
+    },
+    {
+      "mode": 31,
+      "label": "Temp. Max 2m",
+      "semantics": "extreme",
+      "leads_hours": [
+        6,
+        18,
+        30,
+        42
+      ]
+    },
+    {
+      "mode": 32,
+      "label": "Min 2m",
+      "semantics": "extreme",
+      "leads_hours": [
+        6,
+        18,
+        30,
+        42
+      ]
+    },
+    {
+      "mode": 43,
+      "label": "Windchill",
+      "semantics": "instant"
+    },
+    {
+      "mode": 47,
+      "label": "Humidex",
+      "semantics": "instant"
+    },
+    {
+      "mode": 18,
+      "label": "Point rosée 2m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 16,
+      "label": "Temp 850hPa",
+      "semantics": "instant"
+    },
+    {
+      "mode": 21,
+      "label": "Temp 500hPa",
+      "semantics": "instant"
+    },
+    {
+      "mode": 1,
+      "label": "Précipitations",
+      "semantics": "interval"
+    },
+    {
+      "mode": 29,
+      "label": "Réfl. Radar 925hPa",
+      "semantics": "simulation"
+    },
+    {
+      "mode": 49,
+      "label": "Max.",
+      "semantics": "simulation"
+    },
+    {
+      "mode": 42,
+      "label": "Type précip class.",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 46,
+      "label": "Eau précipitable",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 25,
+      "label": "Accumulations préc.",
+      "semantics": "cumulative"
+    },
+    {
+      "mode": 45,
+      "label": "Cumul précip. neige depuis 0h",
+      "semantics": "cumulative"
+    },
+    {
+      "mode": 3,
+      "label": "Vent moyen 10m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 11,
+      "label": "Rafales 10m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 52,
+      "label": "Rafales Max.Ech",
+      "semantics": "extreme"
+    },
+    {
+      "mode": 28,
+      "label": "MUCAPE",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 24,
+      "label": "Résumé",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 19,
+      "label": "Humidité 2m",
+      "semantics": "instant"
+    },
+    {
+      "mode": 13,
+      "label": "Humidité 700hPa",
+      "semantics": "instant"
+    },
+    {
+      "mode": 38,
+      "label": "Couches nébu.",
+      "semantics": "instant"
+    },
+    {
+      "mode": 4,
+      "label": "Nébulosité",
+      "semantics": "instant"
+    },
+    {
+      "mode": 2,
+      "label": "Pression/Geop 500hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 30,
+      "label": "Alt 1.5 PVU",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 14,
+      "label": "TA 500hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 5,
+      "label": "ThetaE  850hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 50,
+      "label": "Theta'W 850hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 17,
+      "label": "Iso 0° / Epais. z1000-z500",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 37,
+      "label": "Iso 0° Couleur",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 8,
+      "label": "Vent 925hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 35,
+      "label": "700hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 15,
+      "label": "V. Vert 700hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 48,
+      "label": "VV2 700hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 51,
+      "label": "600hPa",
+      "semantics": "diagnostic"
+    },
+    {
+      "mode": 9,
+      "label": "Jetstream 300hPa",
+      "semantics": "diagnostic"
+    }
+  ]
+}

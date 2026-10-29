@@ -53,11 +53,10 @@ from open_garden_planner.services.task_generator import (
     propagate_plans_by_anchor,
 )
 from open_garden_planner.services.task_status import effective_status
-from open_garden_planner.services.weather_service import get_frost_alerts
+from open_garden_planner.services.weather_service import WeatherForecast, get_frost_alerts
 from open_garden_planner.ui.icons import get_icon, get_pixmap
 from open_garden_planner.ui.theme import URGENCY_TOKENS, set_text_role, theme_qcolor, urgency_dot
 from open_garden_planner.ui.widgets.personal_store_status import PersonalStoreStatus
-from open_garden_planner.ui.widgets.weather_widget import WeatherWidget
 
 # ─── Layout constants ──────────────────────────────────────────────────────────
 _NAME_W = 210          # left column: plant name
@@ -1200,12 +1199,6 @@ class PlantingCalendarView(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Weather forecast widget (US-12.1)
-        self._weather = WeatherWidget()
-        self._weather.forecast_ready.connect(self._on_weather_ready)
-        self._weather.forecast_failed.connect(self._on_weather_failed)
-        root.addWidget(self._weather)
-
         self._seed_store_status = PersonalStoreStatus(self)
         self._seed_store_status.retry_requested.connect(self._retry_seed_store)
         self._seed_store_status.reload_requested.connect(self._reload_seed_store)
@@ -1359,18 +1352,8 @@ class PlantingCalendarView(QWidget):
         """Rebuild the chart and dashboard from current canvas + project state."""
         self._calendar_error_lbl.hide()
         self._refresh_seed_store_status()
-        # Trigger weather fetch if location is available (US-12.1)
-        location = self._project_manager.location if hasattr(self._project_manager, "location") else None
-        if location:
-            lat = location.get("latitude")
-            lon = location.get("longitude")
-            if lat is not None and lon is not None:
-                self._weather.set_location(float(lat), float(lon))
-                self._weather.refresh()
-            else:
-                self._weather.set_location(None, None)
-        else:
-            self._weather.set_location(None, None)
+        if getattr(self, "_weather_forecast", None) is not None:
+            self.set_weather_forecast(self._weather_forecast)
 
         rows, last_frost, first_fall, seed_links = self._collect_data()
         self._rows = rows
@@ -1672,16 +1655,19 @@ class PlantingCalendarView(QWidget):
 
     # ─── Weather widget slots (US-12.1 / US-12.2) ────────────────────
 
-    def _on_weather_ready(self) -> None:
+    def set_weather_forecast(self, forecast: WeatherForecast | None) -> None:
         """Apply frost tinting; frost alerts flow into the dashboard via the
         unified engine (build_plan_state → generate_frost_tasks) on refresh."""
-        forecast = self._weather.forecast()
+        self._weather_forecast = forecast
         if forecast is None:
+            self._current_frost_alerts = []
+            self.frost_alert_ready.emit(0, "")
+            self.frost_alerts_ready.emit([])
+            self._rebuild_dashboard()
             return
         settings = get_settings()
         orange_c = settings.frost_warning_orange_c
         red_c = settings.frost_warning_red_c
-        self._weather.apply_frost_thresholds(orange_c, red_c)
         plants = self._collect_plant_info()
         alerts = get_frost_alerts(forecast, plants, orange_c, red_c)
         self._current_frost_alerts = alerts
@@ -1971,6 +1957,5 @@ class PlantingCalendarView(QWidget):
 
     def shutdown(self) -> None:
         """Shut down child background workers and services (#483)."""
-        if hasattr(self, "_weather") and self._weather is not None:
-            self._weather.shutdown()
+        self._refresh_timer.stop()
 
