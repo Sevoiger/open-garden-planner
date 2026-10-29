@@ -1,9 +1,12 @@
 # Analyse locale, choix du modèle et coût indicatif
 
 Vérification de documentation officielle OpenAI le **29 octobre 2026**.
-Aucun appel API d'analyse n'a été effectué : coûts simulés, pas facture mesurée.
+Les tableaux de coûts ci-dessous restent des simulations. Des essais API à la
+demande ont aussi été réalisés ; leurs tokens et bulletins sont conservés dans
+`.local/weather/briollay/analyses/`. Un coût calculé depuis ces tokens ne constitue
+pas une facture mesurée.
 
-**Choix retenu par le propriétaire : GPT-6.1 Terra, raisonnement `medium`, analyse
+**Choix retenu par le propriétaire : GPT-6.1 Terra, raisonnement `high`, analyse
 occasionnelle à la demande, images aux dimensions d'origine.** Aucune réduction
 ni analyse automatique n'est activée. Le gain financier d'un redimensionnement
 paraît faible pour cet usage face au risque de rendre les légendes illisibles.
@@ -39,7 +42,7 @@ Les originaux restent la référence ; aucune extrapolation météo locale n'est
 | Modèle API | Entrée / million de tokens | Sortie / million | Usage proposé ici |
 | --- | ---: | ---: | --- |
 | `gpt-6-luna` | 0,10 $ | 0,50 $ | Tester en `medium` pour le bulletin quotidien cadré et peu coûteux |
-| `gpt-6.1-terra` | 1 $ | 5 $ | `medium` pour lecture visuelle et rédaction ; compromis à comparer à Luna |
+| `gpt-6.1-terra` | 1 $ | 5 $ | `high` retenu pour lecture visuelle et rédaction |
 | `gpt-6.1-sol` | 2 $ | 10 $ | `medium` pour synthèse plus complexe ; `high` seulement si une comparaison réelle montre un gain |
 
 Les trois prennent des images en entrée. Terra et Luna supportent `none`, `low`,
@@ -51,11 +54,13 @@ Ces usages sont des recommandations pour ce dossier, pas un benchmark météo.
 Exemple de paramètres d'analyse, sans activer un appel :
 
 ```json
-{"model":"gpt-6.1-terra","reasoning":{"effort":"medium"}}
+{"model":"gpt-6.1-terra","reasoning":{"effort":"high"}}
 ```
 
-Le prompt est dans `analyse-prompt.md`. Il demande un bulletin de 250–350 mots,
+Le prompt est dans `analyse-prompt.md`. Il demande un bulletin sans longueur imposée,
 centré sur les événements, leurs dates et les conséquences météo pour le jardin.
+Le lanceur local omet `max_output_tokens` : aucun plafond supplémentaire n'est
+ajouté par l'outil, dans les limites propres au modèle et à son contexte.
 Les contrôles de provenance et de couverture restent des règles de travail : ils
 ne sont exposés que si un défaut change concrètement la conclusion. Aucun bloc
 générique « Limites », audit des runs ou rappel systématique sur le sol.
@@ -99,7 +104,7 @@ Un recadrage local peut également supprimer le contexte régional utile.
 Scénario supplémentaire explicite : 5 000 tokens de texte d'entrée et 5 000 tokens
 de sortie totale, raisonnement inclus, ajoutent **0,06 $ Sol / 0,03 $ Terra /
 0,003 $ Luna** par bulletin. Ce volume est une hypothèse de budget, pas une mesure
-ni une conséquence fixe du niveau `medium`. Les outils et itérations s'ajoutent.
+ni une conséquence fixe du niveau de raisonnement. Les outils et itérations s'ajoutent.
 
 Reproduire localement, sans upload ni requête API :
 

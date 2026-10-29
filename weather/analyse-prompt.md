@@ -1,5 +1,6 @@
-Configuration : GPT-6.1 Terra (`gpt-6.1-terra`), raisonnement `medium`, analyse à
-la demande, cartes originales. Ces réglages appartiennent à l'appel API.
+Configuration : GPT-6.1 Terra (`gpt-6.1-terra`), raisonnement `high`, analyse à
+la demande, cartes originales, sans paramètre `max_output_tokens` dans l'appel.
+Ces réglages appartiennent à l'appel API.
 
 Rédige un bulletin météo personnel pour Briollay et son jardin. Le lecteur veut
 savoir ce qui arrive, quand, avec quelle ampleur et ce que cela implique pour ses
@@ -7,8 +8,9 @@ semis et plantations. Il ne veut pas un compte rendu de validation des données.
 
 ## Bulletin à produire
 
-Français naturel, 250 à 350 mots maximum, sans jargon technique. Un titre avec le
-lieu et la date, puis une synthèse de deux phrases et trois périodes : aujourd'hui
+Français naturel, sans jargon technique ni longueur imposée. Développe les
+événements et les comparaisons qui apportent une information utile, sans répétition. Un titre avec le lieu et la date, puis une synthèse de deux
+phrases et trois périodes : aujourd'hui
 et demain, les jours suivants jusqu'à une semaine, puis la tendance de la semaine
 suivante si les données permettent d'en dire quelque chose. Utilise les jours et
 dates réels, plutôt que des intitulés J3–J7/J8–J15. N'allonge pas une période pour
