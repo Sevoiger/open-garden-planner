@@ -452,11 +452,15 @@ class PropertiesPanel(QWidget):
     def _refresh_widget(self, widget: QWidget, setter: Callable[[], object]) -> None:
         """Push a fresh model value into ``widget`` via ``setter`` in place.
 
-        Skips a focused widget so a refresh never stomps an active edit, and
-        blocks the widget's signals while writing so the value push cannot
-        register a command (#206).
+        Protects focused text editors so a refresh never stomps an active edit.
+        A checkbox, non-editable combo or color button has already committed
+        its choice: retaining focus must not keep its pre-undo value on screen.
+        Block signals while writing so the value push cannot register a command.
         """
-        if self._is_focused(widget):
+        edits_text = isinstance(widget, (QLineEdit, QAbstractSpinBox, QTextEdit)) or (
+            isinstance(widget, QComboBox) and widget.isEditable()
+        )
+        if edits_text and self._is_focused(widget):
             return
         widget.blockSignals(True)
         try:
@@ -1207,14 +1211,28 @@ class PropertiesPanel(QWidget):
         def on_grid_check(checked: bool) -> None:
             if self._updating:
                 return
-            item.grid_enabled = checked
+            old = item.grid_enabled
+            if old == checked:
+                return
+            cmd = ChangePropertyCommand(
+                item, "grid", old, checked,
+                apply_func=lambda itm, val: setattr(itm, "grid_enabled", val),
+            )
+            self._commit_edit(item, cmd)
             if cell_count_label is not None:
                 cell_count_label.setText(str(item.grid_cell_count()))
 
         def on_spacing_changed(val: float) -> None:
             if self._updating:
                 return
-            item.grid_spacing = val
+            old = item.grid_spacing
+            if old == val:
+                return
+            cmd = ChangePropertyCommand(
+                item, "grid spacing", old, float(val),
+                apply_func=lambda itm, value: setattr(itm, "grid_spacing", value),
+            )
+            self._commit_edit(item, cmd)
             if cell_count_label is not None:
                 cell_count_label.setText(str(item.grid_cell_count()))
 
@@ -1237,6 +1255,14 @@ class PropertiesPanel(QWidget):
                 cell_count_label,
                 lambda lbl=cell_count_label, it=item: lbl.setText(str(it.grid_cell_count())),
             )
+
+    def _commit_edit(self, item: QGraphicsItem, cmd: ChangePropertyCommand) -> None:
+        """Commit a property edit through the shared undo stack (#530 upstream)."""
+        if self._command_manager is not None:
+            self._command_manager.execute(cmd)
+        else:
+            cmd.execute()
+        item.update()
 
     def _add_soil_depth_properties(self, item: QGraphicsItem) -> None:
         """Add soil fill depth control (beds only, issue #177).
@@ -1267,7 +1293,21 @@ class PropertiesPanel(QWidget):
         def on_depth_changed(val: int) -> None:
             if self._updating:
                 return
-            item.metadata["soil_depth_cm"] = val
+            old = item.metadata.get("soil_depth_cm")
+            if old == val:
+                return
+
+            def apply_depth(itm: QGraphicsItem, value: int | None) -> None:
+                if value is None:
+                    itm.metadata.pop("soil_depth_cm", None)  # type: ignore[attr-defined]
+                else:
+                    itm.metadata["soil_depth_cm"] = int(value)  # type: ignore[attr-defined]
+                itm.update()
+
+            cmd = ChangePropertyCommand(
+                item, "soil depth", old, int(val), apply_func=apply_depth,
+            )
+            self._commit_edit(item, cmd)
 
         depth_spin.valueChanged.connect(on_depth_changed)
         self._form_layout.addRow(self.tr("Soil depth:"), depth_spin)
@@ -1281,8 +1321,8 @@ class PropertiesPanel(QWidget):
 
         Containers (pots, wall planters) measure their fill by height in litres
         and carry a material + drainage that drive a watering hint. Values live
-        in ``metadata`` (additive, like bed ``soil_depth_cm``); edits mutate the
-        item directly, mirroring :meth:`_add_soil_depth_properties`.
+        in ``metadata`` (additive, like bed ``soil_depth_cm``); each edit is one
+        undoable command, like :meth:`_add_soil_depth_properties` (#530).
         """
         from open_garden_planner.core import container_model as cm
         from open_garden_planner.core.object_types import is_container_type
@@ -1367,28 +1407,78 @@ class PropertiesPanel(QWidget):
                 )
             hint_label.setText(hint)
 
+        # These four write ``metadata`` - each through a command, so the edit is
+        # one undoable step and the plan is marked modified (#530), and each
+        # announces itself and repaints the item (``_commit_edit``). The
+        # material and the height are what the 3D view builds a container from,
+        # and the height is what its shadow is cast from.
+        def write_metadata(key: str) -> Callable[[QGraphicsItem, Any], None]:
+            """An apply function for one metadata key. None means the key is
+            ABSENT again - which is what an undo of a value that was never set
+            has to restore (the model's defaults answer for an absent key, not
+            for a key holding None)."""
+            def apply(itm: QGraphicsItem, value: Any) -> None:
+                if value is None:
+                    itm.metadata.pop(key, None)  # type: ignore[attr-defined]
+                else:
+                    itm.metadata[key] = value  # type: ignore[attr-defined]
+                itm.update()
+            return apply
+
         def on_material_changed(_index: int) -> None:
             if self._updating:
                 return
-            meta["container_material"] = material_combo.currentData()
+            old = meta.get("container_material")
+            new = material_combo.currentData()
+            if old == new:
+                return
+            cmd = ChangePropertyCommand(
+                item, "container material", old, new,
+                apply_func=write_metadata("container_material"),
+            )
+            self._commit_edit(item, cmd)
             update_feedback()
 
         def on_drainage_changed(checked: bool) -> None:
             if self._updating:
                 return
-            meta["container_drainage"] = bool(checked)
+            old = meta.get("container_drainage")
+            new = bool(checked)
+            if old == new:
+                return
+            cmd = ChangePropertyCommand(
+                item, "container drainage", old, new,
+                apply_func=write_metadata("container_drainage"),
+            )
+            self._commit_edit(item, cmd)
             update_feedback()
 
         def on_height_changed(val: int) -> None:
             if self._updating:
                 return
-            meta["container_height_cm"] = float(val)
+            old = meta.get("container_height_cm")
+            new = float(val)
+            if old == new:
+                return
+            cmd = ChangePropertyCommand(
+                item, "container height", old, new,
+                apply_func=write_metadata("container_height_cm"),
+            )
+            self._commit_edit(item, cmd)
             update_feedback()
 
         def on_volume_changed(val: float) -> None:
             if self._updating:
                 return
-            meta["container_soil_volume_l"] = None if val <= 0 else float(val)
+            old = meta.get("container_soil_volume_l")
+            new = None if val <= 0 else float(val)
+            if old == new:
+                return
+            cmd = ChangePropertyCommand(
+                item, "container soil volume", old, new,
+                apply_func=write_metadata("container_soil_volume_l"),
+            )
+            self._commit_edit(item, cmd)
             update_feedback()
 
         material_combo.currentIndexChanged.connect(on_material_changed)
