@@ -54,7 +54,13 @@ Exemple de paramètres d'analyse, sans activer un appel :
 {"model":"gpt-6.1-terra","reasoning":{"effort":"medium"}}
 ```
 
-Le prompt est dans `analyse-prompt.md`. Pour un bulletin numérique économique,
+Le prompt est dans `analyse-prompt.md`. Il demande un bulletin de 250–350 mots,
+centré sur les événements, leurs dates et les conséquences météo pour le jardin.
+Les contrôles de provenance et de couverture restent des règles de travail : ils
+ne sont exposés que si un défaut change concrètement la conclusion. Aucun bloc
+générique « Limites », audit des runs ou rappel systématique sur le sol.
+
+Pour un bulletin numérique économique,
 fournir le petit JSON ; pour une analyse spatiale des cartes, fournir également
 les images souhaitées. Ne jamais affirmer avoir lu une carte non fournie.
 
