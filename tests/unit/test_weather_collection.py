@@ -179,6 +179,8 @@ def test_daily_cron_runs_next_local_day(tmp_path, monkeypatch, last_attempt):
     monkeypatch.setattr(wc.CurlClient, "get", get)
     report = wc.collect(config(), tmp_path)
     report["attempted_at"] = last_attempt
+    report["sources"]["meteofrance_arome_france"]["fetched_at"] = last_attempt
+    report["sources"]["meteofrance_arome_france"]["attempted_at"] = last_attempt
     wc.atomic_json(tmp_path / "latest.json", report)
     today = "2026-10-29T07:15:00+00:00" if "10-28" in last_attempt else "2026-03-29T06:15:00+00:00"
 

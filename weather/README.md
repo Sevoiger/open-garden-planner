@@ -1,8 +1,18 @@
 # Collecte météo du jardin — Briollay
 
-Collecteur autonome, sans Qt ni ouverture du jardin. Archives personnelles dans
-`.local/weather/briollay/`, ignoré par Git. La configuration de ce dossier est
-indépendante de l'onglet météo existant ; aucun plan ni bibliothèque n'est modifié.
+L’onglet **Météo** d’OGP utilise le collecteur sans ouvrir ni modifier le plan.
+Les prévisions numériques se chargent sans IA ; **Générer le bulletin** demande
+les cartes et une réponse JSON de GPT-6.1 Sol high, rendue en composants Qt.
+Prévisions et appel IA sont limités à une tentative quotidienne chacun ; les
+sources numériques du jour sont réutilisées lors de la collecte des cartes.
+L’échec d’un appel IA n’autorise pas un second appel le même jour (pas de double
+facturation après timeout). Les derniers résultats valides restent disponibles.
+
+Les archives vivent dans `get_app_data_dir()/weather`, sur macOS
+`~/Library/Application Support/OpenGardenPlanner/weather`. Les anciens essais du
+dossier `.local/weather/briollay` restent des fichiers locaux indépendants tant
+qu’ils n’ont pas été transférés dans ce dossier. La clé privée reste dans
+`.local/weather/openai.env` (ou `OPENAI_API_KEY`), jamais dans le JSON météo.
 
 ## Exécution
 
@@ -17,7 +27,7 @@ Commande directe pour voir le résultat :
 
 ```sh
 .venv/bin/python -m open_garden_planner.services.weather_collection \
-  --config weather/config.json --output .local/weather/briollay
+  --config weather/config.json --output "$HOME/Library/Application Support/OpenGardenPlanner/weather"
 ```
 
 `--status` lit les archives et recalcule leur ancienneté sans réseau ; `--force`

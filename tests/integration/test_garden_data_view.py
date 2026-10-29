@@ -1,4 +1,4 @@
-"""Garden records live in a page; enriched weather stays in the calendar."""
+"""Garden records live in a page; weather lives in a dedicated tab."""
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QPushButton
 
@@ -17,7 +17,8 @@ def test_properties_open_records_page_on_selected_plant(qtbot, monkeypatch, tmp_
     win._update_properties_panel()
     win.show()
     page = win.garden_data_view
-    assert win.calendar_view.isAncestorOf(win.calendar_view._weather)
+    assert not win.calendar_view.findChildren(WeatherWidget)
+    assert win._tab_widget.indexOf(win.weather_view) >= 0
     assert not page.findChildren(WeatherWidget)
     button = next(b for b in win.properties_panel.findChildren(QPushButton)
                   if b.text() == 'Garden records…')

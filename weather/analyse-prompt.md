@@ -1,4 +1,4 @@
-Configuration : GPT-6.1 Terra (`gpt-6.1-terra`), raisonnement `high`, analyse à
+Configuration : GPT-6.1 Sol (`gpt-6.1-sol`), raisonnement `high`, analyse à
 la demande, cartes originales, sans paramètre `max_output_tokens` dans l'appel.
 Ces réglages appartiennent à l'appel API.
 

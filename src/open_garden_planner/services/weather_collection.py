@@ -281,15 +281,19 @@ def freshness(report: dict[str, Any]) -> dict[str, Any]:
     return report
 
 
-def collect(config: dict[str, Any], output: Path, force: bool = False) -> dict[str, Any]:
+def collect(
+    config: dict[str, Any], output: Path, force: bool = False, *, include_maps: bool = True
+) -> dict[str, Any]:
     validate_config(config)
     output.mkdir(parents=True, exist_ok=True)
     with (output / ".collect.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return _collect_locked(config, output, force)
+        return _collect_locked(config, output, force, include_maps=include_maps)
 
 
-def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[str, Any]:
+def _collect_locked(
+    config: dict[str, Any], output: Path, force: bool, *, include_maps: bool = True
+) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     fingerprint = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     latest = output / "latest.json"
@@ -306,7 +310,11 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
             config["refresh_hours"] == 24
             and started_at.astimezone(zone).date() > last_attempt.astimezone(zone).date()
         )
-        if age.total_seconds() < config["refresh_hours"] * 3600 and not next_daily_date:
+        if (
+            age.total_seconds() < config["refresh_hours"] * 3600
+            and not next_daily_date
+            and (not include_maps or previous.get("collection_scope", "full") == "full")
+        ):
             return freshness(previous)
     if (output / "runs").is_symlink():
         raise ValueError("Weather runs directory must not be a symlink")
@@ -314,7 +322,7 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
     run.mkdir(parents=True)
     (run / MARKER).write_text("OpenGardenPlanner weather archive v1\n")
     client = CurlClient(config["request_spacing_seconds"])
-    sources = {}
+    sources = dict(previous.get("sources", {}))
 
     def save(name: str, payload: bytes) -> dict[str, Any]:
         path = run / name
@@ -325,8 +333,21 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
         }
 
     def attempt(key: str, action: Callable[[], dict[str, Any]]) -> None:
+        old_source = previous.get("sources", {}).get(key, {})
+        last_attempt = old_source.get("attempted_at", old_source.get("fetched_at"))
+        if not force and last_attempt:
+            zone = ZoneInfo(config["location"]["timezone"])
+            fetched = datetime.fromisoformat(last_attempt)
+            if fetched.astimezone(zone).date() == started_at.astimezone(zone).date():
+                sources[key] = dict(old_source)
+                return
         try:
-            sources[key] = {**action(), "state": "ok", "fetched_at": iso_now()}
+            sources[key] = {
+                **action(),
+                "state": "ok",
+                "fetched_at": iso_now(),
+                "attempted_at": started_at.isoformat(),
+            }
         except (
             OSError,
             ValueError,
@@ -340,6 +361,7 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
                 **old,
                 "state": "fallback" if old.get("fetched_at") else "unavailable",
                 "error": str(exc),
+                "attempted_at": started_at.isoformat(),
             }
 
     for model, hours in config["models"].items():
@@ -401,7 +423,7 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
         attempt(f"ensemble_{model}", fetch_ensemble)
 
     mc = config["meteociel"]
-    if mc["enabled"]:
+    if mc["enabled"] and include_maps:
 
         def fetch_local() -> dict[str, Any]:
             raw = client.get(mc["local_page"])
@@ -431,6 +453,7 @@ def _collect_locked(config: dict[str, Any], output: Path, force: bool) -> dict[s
     report = freshness(
         {
             "schema_version": 2,
+            "collection_scope": "full" if include_maps else "forecast",
             "attempted_at": started_at.isoformat(),
             "config_sha256": fingerprint,
             "refresh_hours": config["refresh_hours"],

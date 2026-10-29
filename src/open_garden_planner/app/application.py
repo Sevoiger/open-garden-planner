@@ -52,6 +52,7 @@ from open_garden_planner.services.soil_service import (
     PARAM_PH,
     SoilService,
 )
+from open_garden_planner.services.weather_service import WeatherForecast
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
 from open_garden_planner.ui.icons import get_icon, get_pixmap
@@ -5188,6 +5189,14 @@ class GardenPlannerApp(QMainWindow):
         self._tab_widget.addTab(self.garden_data_view, self.tr("Garden Data"))
         self._set_tab_icon(self.garden_data_view, "tab_calendar")
 
+        from open_garden_planner.ui.views.weather_view import WeatherView
+
+        self.weather_view = WeatherView()
+        self._tab_widget.addTab(self.weather_view, self.tr("Weather"))
+        self._set_tab_icon(self.weather_view, "sun")
+        self.weather_view.forecast_ready.connect(self._on_local_weather_forecast)
+        self._project_manager.location_changed.connect(lambda _: self._on_local_weather_forecast(None))
+
         # Keyboard shortcuts: Ctrl+1 / Ctrl+2 / Ctrl+3 to switch tabs.
         # (The "Layout / Paper Space" tab was dropped — `pdf_report_service`
         # already produces multi-page PDFs at chosen paper sizes, so a
@@ -5225,8 +5234,8 @@ class GardenPlannerApp(QMainWindow):
         self._frost_badge = QPushButton(self._tab_widget)
         self._frost_badge.setFlat(True)
         self._frost_badge.setFixedHeight(24)
-        self._frost_badge.setToolTip(self.tr("Frost alert — click to view details in Planting Calendar"))
-        self._frost_badge.clicked.connect(lambda: self._tab_widget.setCurrentIndex(1))
+        self._frost_badge.setToolTip(self.tr("Frost alert — click to view weather"))
+        self._frost_badge.clicked.connect(lambda: self._tab_widget.setCurrentWidget(self.weather_view))
         self._frost_badge.hide()
         self._tab_widget.setCornerWidget(self._frost_badge, Qt.Corner.TopRightCorner)
         self.calendar_view.frost_alert_ready.connect(self._on_frost_alert_ready)
@@ -6611,6 +6620,7 @@ class GardenPlannerApp(QMainWindow):
             # Shut down calendar background workers and services (#483).
             if getattr(self, "calendar_view", None) is not None and hasattr(self.calendar_view, "shutdown"):
                 self.calendar_view.shutdown()
+                self.weather_view.shutdown()
             # Close any open/pending 3D viewer so the app can actually quit —
             # a visible parentless top-level Qt3DWindow keeps the process alive
             # under Qt's default quitOnLastWindowClosed. Hide (not delete): the
@@ -9603,6 +9613,16 @@ class GardenPlannerApp(QMainWindow):
                     item.set_rotation_status(status_str)
         except RuntimeError:
             pass
+
+    def _on_local_weather_forecast(self, forecast: WeatherForecast | None) -> None:
+        if forecast is None:
+            forecast = self.weather_view.forecast()
+        location = self._project_manager.location or {}
+        point = self.weather_view.workspace.config['location']
+        matches = (location.get('latitude') is not None and location.get('longitude') is not None
+                   and abs(float(location['latitude'])-point['latitude']) < 0.1
+                   and abs(float(location['longitude'])-point['longitude']) < 0.1)
+        self.calendar_view.set_weather_forecast(forecast if matches else None)
 
     def _on_tab_changed(self, index: int) -> None:
         """Refresh tab views when they become active."""

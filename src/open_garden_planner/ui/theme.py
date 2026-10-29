@@ -1158,6 +1158,16 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         border-radius: 6px;
     }}
 
+    QFrame[weatherHero="true"] {{
+        background-color: {colors['section_header']};
+        border: 1px solid {colors['accent']};
+        border-radius: 8px;
+    }}
+    QFrame[weatherHighlight="rain"] {{ border-top: 3px solid {colors['info']}; }}
+    QFrame[weatherHighlight="temperature"] {{ border-top: 3px solid {colors['warning']}; }}
+    QFrame[weatherHighlight="wind"] {{ border-top: 3px solid {colors['accent']}; }}
+    QFrame[weatherHighlight="outlook"] {{ border-top: 3px solid {colors['text_secondary']}; }}
+
     QFrame[weatherCard="true"][frostSeverity="orange"] {{
         background-color: {colors['warning_bg']};
         border-color: {colors['warning']};

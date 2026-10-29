@@ -6,7 +6,7 @@ demande ont aussi été réalisés ; leurs tokens et bulletins sont conservés d
 `.local/weather/briollay/analyses/`. Un coût calculé depuis ces tokens ne constitue
 pas une facture mesurée.
 
-**Choix retenu par le propriétaire : GPT-6.1 Terra, raisonnement `high`, analyse
+**Choix retenu pour l’onglet OGP : GPT-6.1 Sol, raisonnement `high`, analyse
 occasionnelle à la demande, images aux dimensions d'origine.** Aucune réduction
 ni analyse automatique n'est activée. Le gain financier d'un redimensionnement
 paraît faible pour cet usage face au risque de rendre les légendes illisibles.
@@ -54,7 +54,7 @@ Ces usages sont des recommandations pour ce dossier, pas un benchmark météo.
 Exemple de paramètres d'analyse, sans activer un appel :
 
 ```json
-{"model":"gpt-6.1-terra","reasoning":{"effort":"high"}}
+{"model":"gpt-6.1-sol","reasoning":{"effort":"high"}}
 ```
 
 Le prompt est dans `analyse-prompt.md`. Il demande un bulletin sans longueur imposée,
