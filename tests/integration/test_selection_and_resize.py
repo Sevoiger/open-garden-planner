@@ -18,13 +18,18 @@ Workflow per test:
 from unittest.mock import MagicMock
 
 import pytest
-from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt
 from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtTest import QTest
 
 from open_garden_planner.core.tools import ToolType
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
 from open_garden_planner.ui.canvas.items import RectangleItem
-from open_garden_planner.ui.canvas.items.resize_handle import HandlePosition
+from open_garden_planner.ui.canvas.items.resize_handle import (
+    HandlePosition,
+    ResizeHandle,
+    RotationHandle,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -197,3 +202,118 @@ class TestResizeHandleConstraints:
         handle._apply_resize(QPointF(-500.0, 0.0))
 
         assert item.rect().width() >= 1.0, "Width must not drop below 1 cm minimum"
+
+
+@pytest.mark.parametrize("angle", [0.0, 37.0, 143.0])
+@pytest.mark.parametrize("handle_type", [ResizeHandle, RotationHandle])
+def test_shift_drag_handle_does_not_select_the_item_behind(
+    canvas: CanvasView, qtbot, angle: float, handle_type: type,
+) -> None:
+    """#522: see through locked objects, but deliver handle presses to Qt."""
+    canvas.resize(1000, 800)
+    canvas.set_active_tool(ToolType.SELECT)
+    background = RectangleItem(600, 600, 1200, 1200)
+    foreground = RectangleItem(1000, 1000, 400, 300)
+    canvas.scene().addItem(background)
+    canvas.scene().addItem(foreground)
+    foreground._apply_rotation(angle)
+    foreground.setSelected(True)
+    canvas.show()
+    qtbot.waitExposed(canvas)
+    canvas.centerOn(foreground.mapToScene(foreground.rect().center()))
+    handle = next(
+        child for child in foreground.childItems()
+        if isinstance(child, handle_type)
+        and canvas.scene().itemAt(child.scenePos(), canvas.transform()) is child
+    )
+    start = canvas.mapFromScene(handle.scenePos())
+    before_rect = QRectF(foreground.rect())
+    before_pos = QPointF(foreground.pos())
+    before_angle = foreground.rotation()
+    undo_count = len(canvas.command_manager._undo_stack)
+    modifiers = Qt.KeyboardModifier.ShiftModifier
+    QTest.mousePress(canvas.viewport(), Qt.MouseButton.LeftButton, modifiers, start)
+    try:
+        assert canvas.scene().mouseGrabberItem() is handle
+        assert canvas._active_drag_handle is handle
+        assert not background.isSelected()
+        target = canvas.mapFromScene(handle.scenePos() + QPointF(80, 65))
+        QTest.mouseMove(canvas.viewport(), target)
+    finally:
+        QTest.mouseRelease(canvas.viewport(), Qt.MouseButton.LeftButton, modifiers, start)
+    assert foreground.isSelected()
+    assert not background.isSelected()
+    if handle_type is RotationHandle:
+        assert foreground.rotation() != pytest.approx(before_angle)
+    else:
+        assert foreground.rect() != before_rect
+    assert len(canvas.command_manager._undo_stack) == undo_count + 1
+    canvas.command_manager.undo()
+    assert foreground.rect() == before_rect
+    assert foreground.pos() == before_pos
+    assert foreground.rotation() == pytest.approx(before_angle)
+
+
+@pytest.mark.parametrize("angle", [0.0, 37.0])
+def test_shift_click_through_locked_item_toggles(canvas, qtbot, angle):
+    background = RectangleItem(1000, 1000, 400, 300)
+    locked = RectangleItem(1000, 1000, 400, 300)
+    other = RectangleItem(1500, 1000, 100, 100)
+    for item in (background, locked, other):
+        canvas.scene().addItem(item)
+    background.rotation_angle = angle
+    locked.rotation_angle = angle
+    locked.setZValue(100)
+    from PyQt6.QtWidgets import QGraphicsItem
+    locked.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+    other.setSelected(True)
+    canvas.set_active_tool(ToolType.SELECT)
+    canvas.resize(1000, 800)
+    canvas.show()
+    qtbot.waitExposed(canvas)
+    point = background.mapToScene(background.rect().center())
+    canvas.centerOn(point)
+    position = canvas.mapFromScene(point)
+    for selected in (True, False):
+        QTest.mouseClick(canvas.viewport(), Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.ShiftModifier, position)
+        assert background.isSelected() is selected
+        assert other.isSelected()
+        assert not locked.isSelected()
+
+
+@pytest.mark.parametrize("zoom", [0.4, 1.0, 2.0])
+@pytest.mark.parametrize("target", ["label", "symbol"])
+def test_shift_click_reference_keeps_its_selection_handler(
+    canvas, qtbot, monkeypatch, zoom, target,
+):
+    from open_garden_planner.core.reference_points import is_reference_point
+    from open_garden_planner.ui import reference_points
+    from open_garden_planner.ui.canvas.items import PolygonItem
+
+    terrain = PolygonItem([QPointF(0, 0), QPointF(2000, 0),
+                           QPointF(2000, 1200), QPointF(0, 1200)])
+    canvas.scene().addItem(terrain)
+    monkeypatch.setattr(reference_points, "point_dialog",
+                        lambda *_args: reference_points.PointProperties("Borne", fixed_size=False))
+    assert reference_points.place_reference_point(canvas, QPointF(500, 400))
+    point = next(item for item in canvas.scene().items() if is_reference_point(item))
+    canvas.scene().clearSelection()
+    canvas.set_active_tool(ToolType.SELECT)
+    canvas.resize(850, 600)
+    canvas.show()
+    qtbot.waitExposed(canvas)
+    canvas.set_zoom(zoom)
+    canvas.centerOn(point.pos())
+    label = point._label_item
+    position = label.deviceTransform(canvas.viewportTransform()).map(
+        label.boundingRect().center()).toPoint()
+    if target == "symbol":
+        position = canvas.mapFromScene(point.pos()) + QPoint(-8, 0)
+    expected = point if target == "symbol" else label
+    assert canvas.scene().itemAt(canvas.mapToScene(position), canvas.viewportTransform()) is expected
+    for selected in (True, False):
+        QTest.mouseClick(canvas.viewport(), Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.ShiftModifier, position)
+        assert point.isSelected() is selected
+        assert not terrain.isSelected()

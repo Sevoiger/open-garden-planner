@@ -1,5 +1,20 @@
 # Progression — fork personnel macOS
 
+## Ports sélectifs des évolutions amont — 29 octobre 2026
+
+Les versions depuis notre base 1.30.10 jusqu’à 1.34.5 ont été examinées.
+Trois corrections du lot amont #556 sont portées : propriétés de bacs/pots
+annulables, sélection avec Maj à travers un objet verrouillé et résolution
+des illustrations par mots entiers. Les adaptations personnelles et le moteur
+Qt3D sont conservés. Le [relevé des évolutions](UPSTREAM_UPDATES.md) précise
+la provenance, les éléments déjà couverts et les migrations différées.
+
+Choix confirmé par le propriétaire le 30 octobre : conserver l’interface actuelle
+et Qt3D ; les modes amont Plan/3D/Split et la barre timeline/soleil ne sont pas
+souhaités. Le relevé fixe la borne du prochain contrôle à `v1.34.5`, distingue
+ces choix des correctifs restant à évaluer et référence la
+[draft PR #40](https://github.com/Sevoiger/open-garden-planner/pull/40).
+
 ## Lecture MCP des textures personnelles de structures — 27 octobre 2026
 
 Une texture est persistée dans `metadata.personal_fill_pattern.png`. Ce champ

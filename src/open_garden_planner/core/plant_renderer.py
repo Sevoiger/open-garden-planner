@@ -10,6 +10,7 @@ import functools
 import hashlib
 import json
 import math
+import re
 from enum import Enum, auto
 from pathlib import Path
 
@@ -353,6 +354,78 @@ def _get_renderer(svg_path: Path) -> QSvgRenderer | None:
     return renderer
 
 
+def _normalise(name: str) -> str:
+    """A species name folded to the form the tables are keyed by: lower case,
+    blanks collapsed, and ``-`` and ``_`` read as the blank they stand for.
+
+    The tables spell a name in words ("apple tree"), the gallery and the
+    database spell the same name in a file stem ("apple_tree") or with a
+    hyphen ("apple-tree"). All three are one name.
+    """
+    return re.sub(r"[\s\-_]+", " ", name.lower()).strip()
+
+
+#: Every species key, normalised, to the sprite it names. The first key wins
+#: when two keys normalise to the same string.
+_NORMALISED_SPECIES: dict[str, str] = {}
+
+#: Every species key as (its words, its length, the sprite it names), in table
+#: order. The table's order is the tie-break of the last matching rule.
+_SPECIES_WORDS: list[tuple[frozenset[str], int, str]] = []
+
+for _key, _stem in _SPECIES_FILES.items():
+    _normalised = _normalise(_key)
+    _NORMALISED_SPECIES.setdefault(_normalised, _stem)
+    _SPECIES_WORDS.append((frozenset(_normalised.split()), len(_normalised), _stem))
+
+
+def species_candidates(species: str) -> list[str]:
+    """The sprite stems a species name can mean, best first.
+
+    Three rules, in order (#446):
+
+    1. **The whole name.** The name, normalised, is a key of the table.
+    2. **The name contains a key.** Every word of a key is a word of the name
+       — "Broad Bean" names the bean, "Winter Squash" the squash. The key with
+       the most words wins, so "prunus persica" beats "prunus".
+    3. **A key contains the name.** Every word of the name is a word of the key
+       — "Solanum" names the tomato. The key with the fewest extra words wins;
+       a tie keeps the table's order.
+
+    A name that matches none of them is no species the sprites know, and the
+    caller falls back to the plant's category sprite.
+
+    The length tie-break in rule 2 is a real one: two one-word keys inside one
+    name ("lavender rose") are both one word, and the longer key wins.
+    """
+    if not species:
+        return []
+    wanted = _normalise(species)
+    if not wanted:
+        return []
+    found: list[str] = []
+    exact = _NORMALISED_SPECIES.get(wanted)
+    if exact is not None:
+        found.append(exact)
+    words = frozenset(wanted.split())
+    contained = sorted(
+        ((len(key_words), length, index, stem)
+         for index, (key_words, length, stem) in enumerate(_SPECIES_WORDS)
+         if key_words <= words),
+        key=lambda row: (-row[0], -row[1], row[2]),
+    )
+    found.extend(row[3] for row in contained)
+    supersets = sorted(
+        ((len(key_words) - len(words), index, stem)
+         for index, (key_words, _length, stem) in enumerate(_SPECIES_WORDS)
+         if words <= key_words),
+        key=lambda row: (row[0], row[1]),
+    )
+    found.extend(row[2] for row in supersets)
+    return list(dict.fromkeys(found))
+
+
+
 @functools.lru_cache(maxsize=256)
 def _resolve_svg_path(
     object_type: ObjectType,
@@ -377,20 +450,11 @@ def _resolve_svg_path(
     if object_type not in _OBJECT_TYPE_DEFAULT_CATEGORY:
         return None
 
-    # 1. Try species-specific SVG
-    if species:
-        species_lower = species.lower().strip()
-        # Check direct match first
-        if species_lower in _SPECIES_FILES:
-            path = _SPECIES_DIR / f"{_SPECIES_FILES[species_lower]}.svg"
-            if path.exists():
-                return path
-        # Check partial match (species name contains a known key)
-        for key, filename in _SPECIES_FILES.items():
-            if key in species_lower or species_lower in key:
-                path = _SPECIES_DIR / f"{filename}.svg"
-                if path.exists():
-                    return path
+    # Whole-name / whole-word matches avoid melon -> eggplant (#446 upstream).
+    for filename in species_candidates(species):
+        path = _SPECIES_DIR / f"{filename}.svg"
+        if path.exists():
+            return path
 
     # 2. Try category SVG
     if category is not None:

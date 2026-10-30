@@ -360,3 +360,17 @@ class TestHelperFunctions:
         # Loading again should still work
         pixmap = render_plant_pixmap(ObjectType.TREE, diameter=64.0)
         assert pixmap is not None
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    ("melon", "herb.svg"),
+    ("Petroselinum crispum", "parsley.svg"),
+    ("   ", "herb.svg"),
+    ("apple_tree", "apple_tree.svg"),
+    ("apple-tree", "apple_tree.svg"),
+    ("Broad Bean", "broad_bean.svg"),
+])
+def test_species_matching_uses_whole_words(qtbot, name, expected):  # noqa: ARG001
+    path = _resolve_svg_path(ObjectType.PERENNIAL, name, PlantCategory.HERB)
+    assert path is not None
+    assert path.name == expected
