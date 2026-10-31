@@ -182,7 +182,7 @@ _SOIL_REPORT = _field(
             "type": "object", "additionalProperties": False,
             "required": ["parameter", "value"],
             "properties": {key: {"type": "string"} for key in
-                           ("parameter", "value", "unit", "method", "reference", "interpretation")}
+                           ("parameter", "parameter_code", "value", "unit", "method", "reference", "interpretation")}
                           | {"previous_index": {"type": "integer", "minimum": 0,
                                                 "description": "Zero-based index of the previous row; input only."}},
         }),
@@ -193,6 +193,8 @@ _SOIL_SAMPLE_FIELDS = {
     "test_date": _field("string", "2025-04-12", description="Explicit observation date."),
     "ph": _field(["number", "null"], 6.5, minimum=0, maximum=14),
     "position": _SOIL_POINT,
+    "positions": _field("array", [{"x_cm": 100, "y_cm": 200}], items=_SOIL_POINT,
+                        description="One to fifteen locations for one laboratory analysis."),
     "report": _SOIL_REPORT,
     "notes": _field("string", ""),
 }
@@ -201,7 +203,7 @@ _SOIL_SAMPLE_FIELDS = {
 DOCUMENT_OPERATION_CONTRACTS: dict[str, dict[str, Any]] = {
     "record_soil_sample": _op(
         "record_soil_sample", fields={**_SOIL_SAMPLE_FIELDS}, fields_required=True,
-        required_fields=("test_date", "position"), any_of_fields=("ph", "report"),
+        required_fields=("test_date",), any_of_fields=("ph", "report"),
         example={"operation": "record_soil_sample", "fields": {"test_date": "2025-04-12",
                  "ph": 6.5, "position": {"x_cm": 100, "y_cm": 200}}},
         notes="Omit target_id for a new sample point; reuse the returned sample:<UUID> for further readings.",
@@ -428,6 +430,11 @@ JOURNAL_NOTE_FIELDS = frozenset({
     "id", "date", "text", "photo_path", "scene_x", "scene_y", "tags",
 })
 
+
+# A record accepts the legacy single position or an analysis with several positions.
+DOCUMENT_OPERATION_CONTRACTS["record_soil_sample"]["properties"]["fields"]["allOf"] = [
+    {"anyOf": [{"required": ["position"]}, {"required": ["positions"]}]}
+]
 
 def document_operation_schemas(operations: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Return detached per-operation schemas in the service's supported order."""

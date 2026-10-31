@@ -2,6 +2,193 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="fr" sourcelanguage="en">
     <context>
+        <name>AcquisitionEditor</name>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="29" />
+            <source>Acquisition</source>
+            <translation>Acquisition</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="57" />
+            <source>Cancel</source>
+            <translation>Annuler</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="50" />
+            <source>Compost</source>
+            <translation>Compost</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="37" />
+            <source>Currency</source>
+            <translation>Devise</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="50" />
+            <source>Fertilizer</source>
+            <translation>Engrais</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="40" />
+            <source>Initial condition</source>
+            <translation>État initial</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="35" />
+            <source>Name</source>
+            <translation>Nom</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="40" />
+            <source>Notes</source>
+            <translation>Notes</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="51" />
+            <source>Other</source>
+            <translation>Autre</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="36" />
+            <source>Purchase date (YYYY-MM-DD, optional)</source>
+            <translation>Date d’achat (AAAA-MM-JJ, facultative)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="38" />
+            <source>Quantity purchased</source>
+            <translation>Quantité achetée</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="39" />
+            <source>Quantity remaining</source>
+            <translation>Quantité restante</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="56" />
+            <source>Save</source>
+            <translation>Enregistrer</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="51" />
+            <source>Soil amendment</source>
+            <translation>Amendement</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="35" />
+            <source>Supplier</source>
+            <translation>Fournisseur</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="51" />
+            <source>Tool</source>
+            <translation>Outil</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="53" />
+            <source>Type</source>
+            <translation>Type</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="39" />
+            <source>Unit</source>
+            <translation>Unité</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="37" />
+            <source>Unit price</source>
+            <translation>Prix unitaire</translation>
+        </message>
+    </context>
+    <context>
+        <name>AcquisitionInventoryDialog</name>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="74" />
+            <source>Acquisitions and supplies</source>
+            <translation>Acquisitions et consommables</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="87" />
+            <source>Add…</source>
+            <translation>Ajouter…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="149" />
+            <source>Could not load acquisitions</source>
+            <translation>Impossible de charger les acquisitions</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="120" />
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="141" />
+            <source>Could not save acquisition</source>
+            <translation>Impossible d’enregistrer l’acquisition</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="135" />
+            <source>Delete acquisition</source>
+            <translation>Supprimer l’acquisition</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="136" />
+            <source>Delete this acquisition history?</source>
+            <translation>Supprimer cet historique d’acquisition ?</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="88" />
+            <source>Delete…</source>
+            <translation>Supprimer…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="87" />
+            <source>Edit…</source>
+            <translation>Modifier…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="79" />
+            <source>Name</source>
+            <translation>Nom</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="80" />
+            <source>Purchase date</source>
+            <translation>Date d’achat</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="80" />
+            <source>Purchased</source>
+            <translation>Acheté</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="77" />
+            <source>Purchased lots and quantities remaining; separate from the shopping list.</source>
+            <translation>Lots achetés et quantités restantes, distincts de la liste de courses.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="88" />
+            <source>Reload</source>
+            <translation>Recharger</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="80" />
+            <source>Remaining</source>
+            <translation>Restant</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="79" />
+            <source>Supplier</source>
+            <translation>Fournisseur</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="79" />
+            <source>Type</source>
+            <translation>Type</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/acquisition_inventory_dialog.py" line="80" />
+            <source>Unit price</source>
+            <translation>Prix unitaire</translation>
+        </message>
+    </context>
+    <context>
         <name>AddPlantingRecordDialog</name>
         <message>
             <location filename="../../ui/dialogs/add_planting_record_dialog.py" line="41" />
@@ -5657,6 +5844,11 @@ Voulez-vous le récupérer ?</translation>
             <translation>À propos de cette application</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4801" />
+            <source>Acquisitions and supplies…</source>
+            <translation>Acquisitions et consommables…</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="5491" />
             <source>Active Pest/Disease Issues</source>
             <translation>Ravageurs et maladies actifs</translation>
@@ -5787,6 +5979,11 @@ Voulez-vous le récupérer ?</translation>
             <translation>Enregistré automatiquement</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4127" />
+            <source>Backup created. It contains the current plan, its media and the saved personal data.</source>
+            <translation>Sauvegarde créée. Elle contient le plan courant, ses pièces jointes et les données personnelles enregistrées.</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="4237" />
             <source>Bring F&amp;orward</source>
             <translation>A&amp;vancer d’un plan</translation>
@@ -5843,6 +6040,11 @@ Voulez-vous le récupérer ?</translation>
             <translation>Vérifier le &amp;compagnonnage...</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4139" />
+            <source>Choose restoration parent folder</source>
+            <translation>Choisir le dossier de destination de la restauration</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="6214" />
             <source>Clear Recent Projects</source>
             <translation>Effacer les projets récents</translation>
@@ -5871,6 +6073,11 @@ Voulez-vous le récupérer ?</translation>
             <location filename="../../app/application.py" line="4119" />
             <source>Copy selected objects</source>
             <translation>Copier les objets sélectionnés</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4835" />
+            <source>Could not load acquisitions</source>
+            <translation>Impossible de charger les acquisitions</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="3946" />
@@ -6096,6 +6303,18 @@ Voulez-vous le récupérer ?</translation>
             <translation>Exporté : {path}</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4135" />
+            <location filename="../../app/application.py" line="4146" />
+            <location filename="../../app/application.py" line="4148" />
+            <source>Extract global backup</source>
+            <translation>Extraire une sauvegarde globale</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="3993" />
+            <source>Extract global backup…</source>
+            <translation>Extraire une sauvegarde globale…</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="9537" />
             <source>Failed to create season file:
 {error}</source>
@@ -6266,6 +6485,20 @@ Voulez-vous le récupérer ?</translation>
             <location filename="../../app/application.py" line="6548" />
             <source>Generating PDF…</source>
             <translation>Génération du PDF…</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4109" />
+            <location filename="../../app/application.py" line="4112" />
+            <location filename="../../app/application.py" line="4115" />
+            <location filename="../../app/application.py" line="4124" />
+            <location filename="../../app/application.py" line="4126" />
+            <source>Global backup</source>
+            <translation>Sauvegarde globale</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="3990" />
+            <source>Global backup…</source>
+            <translation>Sauvegarde globale…</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="5181" />
@@ -6531,6 +6764,11 @@ Redémarrer l’application pour appliquer la modification.</translation>
             <translation>Coller les objets du presse-papiers</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4113" />
+            <source>Personal lists or seed stock contain unsaved changes. Save or resolve them before backing up.</source>
+            <translation>Des listes personnelles ou le stock de semences contiennent des modifications non enregistrées. Enregistrez-les ou résolvez le problème avant la sauvegarde.</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="8973" />
             <source>Pest/disease log recorded</source>
             <translation>Relevé de ravageur ou maladie enregistré</translation>
@@ -6651,6 +6889,19 @@ Redémarrer l’application pour appliquer la modification.</translation>
             <translation>Redimensionner le plan</translation>
         </message>
         <message>
+            <source>Restored plan: {path}
+Personal data are in the app-data folder beside it. Close OGP before restoring them manually.</source>
+            <translation type="vanished">Plan restauré : {path}
+Les données personnelles se trouvent dans le dossier app-data voisin. Fermez OGP avant de les restaurer manuellement.</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4149" />
+            <source>Restored plan: {path}
+Personal data are in the app-data folder beside it. Close OGP before restoring them manually. Keep the personal-media folder in place for seed photos.</source>
+            <translation>Plan restauré : {path}
+Les données personnelles se trouvent dans le dossier app-data voisin. Fermez OGP avant de les restaurer manuellement. Conservez le dossier personal-media pour les photos des semences.</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="4733" />
             <source>S&amp;hopping List…</source>
             <translation>Liste d’ac&amp;hats…</translation>
@@ -6684,6 +6935,11 @@ Redémarrer l’application pour appliquer la modification.</translation>
             <location filename="../../app/application.py" line="3969" />
             <source>Save the current project</source>
             <translation>Enregistrer le projet actuel</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4109" />
+            <source>Save the garden plan before creating a global backup.</source>
+            <translation>Enregistrez le plan avant de créer une sauvegarde globale.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="3977" />
@@ -6891,6 +7147,11 @@ Ouvrir la nouvelle saison maintenant ?</translation>
             <location filename="../../app/application.py" line="4565" />
             <source>Show recommended spacing zones around plants</source>
             <translation>Afficher les zones d’espacement recommandées autour des plantes</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4787" />
+            <source>Show soil sampling points</source>
+            <translation>Afficher les points de prélèvement du sol</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="4488" />
@@ -7164,6 +7425,12 @@ Please save your project to a permanent location.</source>
             <translation>Votre travail a été récupéré depuis la sauvegarde automatique.
 
 Enregistrer le projet dans un emplacement permanent.</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4116" />
+            <location filename="../../app/application.py" line="4136" />
+            <source>ZIP archives (*.zip)</source>
+            <translation>Archives ZIP (*.zip)</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="9455" />
@@ -13939,6 +14206,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <translation>Cliquez sur le lieu de prélèvement sur le plan ; Échap annule.</translation>
         </message>
         <message>
+            <location filename="../../ui/controllers/soil_points.py" line="103" />
+            <source>Click up to 15 sampling locations; Enter finishes, Esc cancels.</source>
+            <translation>Cliquez sur 15 lieux de prélèvement au maximum ; Entrée termine, Échap annule.</translation>
+        </message>
+        <message>
             <location filename="../../ui/controllers/soil_points.py" line="191" />
             <source>Delete soil point</source>
             <translation>Supprimer le point de sol</translation>
@@ -13968,6 +14240,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <location filename="../../ui/controllers/soil_points.py" line="131" />
             <source>No soil points in this plan.</source>
             <translation>Aucun point de sol dans ce plan.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="160" />
+            <source>Sampling locations: %1 / 15. Enter finishes; Esc cancels.</source>
+            <translation>Lieux de prélèvement : %1 / 15. Entrée termine, Échap annule.</translation>
         </message>
         <message>
             <location filename="../../ui/controllers/soil_points.py" line="140" />
@@ -14000,6 +14277,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <translation>Le plan ou ce point a changé pendant la saisie. Rouvrez le formulaire pour continuer.</translation>
         </message>
         <message>
+            <location filename="../../ui/controllers/soil_points.py" line="153" />
+            <source>The sampling location must be inside the plan.</source>
+            <translation>Le lieu de prélèvement doit se trouver dans le plan.</translation>
+        </message>
+        <message>
             <location filename="../../ui/controllers/soil_points.py" line="203" />
             <source>This observation is no longer available.</source>
             <translation>Cette observation n’est plus disponible.</translation>
@@ -14008,14 +14290,39 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
     <context>
         <name>SoilSampleDialog</name>
         <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="125" />
+            <source>Active limestone</source>
+            <translation>Calcaire actif</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="96" />
+            <source>Add location</source>
+            <translation>Ajouter un lieu</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="88" />
             <source>Add result</source>
             <translation>Ajouter un résultat</translation>
         </message>
         <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="126" />
+            <source>Calcium</source>
+            <translation>Calcium</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="107" />
             <source>Cancel</source>
             <translation>Annuler</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="126" />
+            <source>Cation exchange capacity</source>
+            <translation>Capacité d’échange cationique</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="123" />
+            <source>Clay</source>
+            <translation>Argile</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="96" />
@@ -14049,6 +14356,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <translation>Laboratoire</translation>
         </message>
         <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="127" />
+            <source>Magnesium</source>
+            <translation>Magnésium</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="73" />
             <source>Method</source>
             <translation>Méthode</translation>
@@ -14059,9 +14371,29 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <translation>Notes</translation>
         </message>
         <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="124" />
+            <source>Organic carbon</source>
+            <translation>Carbone organique</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="124" />
+            <source>Organic matter</source>
+            <translation>Matière organique</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="72" />
             <source>Parameter</source>
             <translation>Paramètre</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="121" />
+            <source>Phosphorus</source>
+            <translation>Phosphore</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="122" />
+            <source>Potassium</source>
+            <translation>Potassium</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="73" />
@@ -14072,6 +14404,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="90" />
             <source>Remove result</source>
             <translation>Supprimer le résultat</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="98" />
+            <source>Remove selected location</source>
+            <translation>Retirer le lieu sélectionné</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="67" />
@@ -14094,9 +14431,29 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <translation>Profondeur de prélèvement</translation>
         </message>
         <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="93" />
+            <source>Sampling locations (up to 15)</source>
+            <translation>Lieux de prélèvement (15 maximum)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="122" />
+            <source>Sand</source>
+            <translation>Sable</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="106" />
             <source>Save</source>
             <translation>Enregistrer</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="123" />
+            <source>Silt</source>
+            <translation>Limon</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="127" />
+            <source>Sodium</source>
+            <translation>Sodium</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="40" />
@@ -14109,6 +14466,16 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <translation>Fichiers texte (*.txt *.md)</translation>
         </message>
         <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="125" />
+            <source>Total limestone</source>
+            <translation>Calcaire total</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="121" />
+            <source>Total nitrogen</source>
+            <translation>Azote total</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="72" />
             <source>Unit</source>
             <translation>Unité</translation>
@@ -14117,6 +14484,16 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="72" />
             <source>Value</source>
             <translation>Valeur</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="82" />
+            <source>X (cm)</source>
+            <translation>X (cm)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="82" />
+            <source>Y (cm)</source>
+            <translation>Y (cm)</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/soil_sample_dialog.py" line="51" />

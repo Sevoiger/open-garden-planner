@@ -2302,6 +2302,13 @@ class GardenPlannerApp(QMainWindow):
             return [packet.to_dict() for packet in get_seed_inventory().all()]
         return self._agent_bridge.run_on_main(read)
 
+    def _agent_get_acquisitions(self) -> list[dict[str, Any]]:
+        def read():
+            from open_garden_planner.services.acquisition_inventory import AcquisitionInventory
+            from open_garden_planner.services.plant_library import get_app_data_dir
+            return AcquisitionInventory(get_app_data_dir() / AcquisitionInventory.FILENAME).all()
+        return self._agent_bridge.run_on_main(read)
+
     def _do_agent_get_plant_lists(self) -> list[dict[str, Any]]:
         from open_garden_planner.models.plant_lists import get_plant_list_store
 
@@ -3827,6 +3834,7 @@ class GardenPlannerApp(QMainWindow):
             record_soil_test=self._agent_record_soil_test,
             get_plant_lists=self._agent_get_plant_lists,
             get_seed_inventory=self._agent_get_seed_inventory,
+            get_acquisitions=self._agent_get_acquisitions,
         )
 
     def _stop_agent_api(self) -> None:
@@ -3979,6 +3987,13 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(save_as_action, "file_save_as")
         menu.addAction(save_as_action)
 
+        full_backup = QAction(self.tr("Global backup…"), self)
+        full_backup.triggered.connect(self._on_global_backup)
+        menu.addAction(full_backup)
+        restore_backup = QAction(self.tr("Extract global backup…"), self)
+        restore_backup.triggered.connect(self._on_extract_global_backup)
+        menu.addAction(restore_backup)
+
         menu.addSeparator()
 
         # Manage Seasons (US-10.7)
@@ -4082,6 +4097,56 @@ class GardenPlannerApp(QMainWindow):
         exit_action.triggered.connect(self.close)
         self._set_action_icon(exit_action, "exit")
         menu.addAction(exit_action)
+
+    def _on_global_backup(self) -> None:
+        from open_garden_planner.models.plant_lists import get_plant_list_store
+        from open_garden_planner.models.seed_inventory import get_seed_inventory
+        from open_garden_planner.services.garden_archive import portable_backup
+        from open_garden_planner.services.plant_library import get_app_data_dir
+
+        project = self._project_manager.current_file
+        if project is None:
+            QMessageBox.information(self, self.tr("Global backup"), self.tr("Save the garden plan before creating a global backup."))
+            return
+        if get_plant_list_store().is_dirty or get_seed_inventory().is_dirty:
+            QMessageBox.warning(self, self.tr("Global backup"),
+                self.tr("Personal lists or seed stock contain unsaved changes. Save or resolve them before backing up."))
+            return
+        target, _ = QFileDialog.getSaveFileName(self, self.tr("Global backup"),
+            self._default_save_path("garden-global-backup.zip"), self.tr("ZIP archives (*.zip)"))
+        if not target:
+            return
+        try:
+            portable_backup(self._project_manager.snapshot_dict(self.canvas_scene), project, Path(target),
+                            app_data=get_app_data_dir(),
+                            weather_config=Path(__file__).resolve().parents[3] / "weather" / "config.json")
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, self.tr("Global backup"), str(exc))
+            return
+        QMessageBox.information(self, self.tr("Global backup"),
+            self.tr("Backup created. It contains the current plan, its media and the saved personal data."))
+
+    def _on_extract_global_backup(self) -> None:
+        import zipfile
+        from uuid import uuid4
+
+        from open_garden_planner.services.garden_archive import restore_backup
+
+        source, _ = QFileDialog.getOpenFileName(self, self.tr("Extract global backup"),
+            str(self._default_dialog_dir()), self.tr("ZIP archives (*.zip)"))
+        if not source:
+            return
+        parent = QFileDialog.getExistingDirectory(self, self.tr("Choose restoration parent folder"),
+                                                  str(self._default_dialog_dir()))
+        if not parent:
+            return
+        try:
+            restored = restore_backup(Path(source), Path(parent) / ("garden-restored-" + uuid4().hex[:10]))
+        except (ValueError, OSError, zipfile.BadZipFile, RuntimeError) as exc:
+            QMessageBox.warning(self, self.tr("Extract global backup"), str(exc))
+            return
+        QMessageBox.information(self, self.tr("Extract global backup"),
+            self.tr("Restored plan: {path}\nPersonal data are in the app-data folder beside it. Close OGP before restoring them manually. Keep the personal-media folder in place for seed photos.").format(path=restored))
 
     def _setup_edit_menu(self, menu: QMenu) -> None:
         """Set up the Edit menu actions."""
@@ -4719,6 +4784,10 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(default_soil_action, "soil_test")
         menu.addAction(default_soil_action)
 
+        self.soil_points_visible_action = QAction(self.tr("Show soil sampling points"), self)
+        self.soil_points_visible_action.setCheckable(True)
+        self.soil_points_visible_action.toggled.connect(lambda visible: self._soil_points.set_visible(visible))
+        menu.addAction(self.soil_points_visible_action)
         point_ph = QAction(self.tr("Place pH point…"), self)
         point_ph.triggered.connect(lambda: self._soil_points.start(False))
         menu.addAction(point_ph)
@@ -4728,6 +4797,10 @@ class GardenPlannerApp(QMainWindow):
         manage_soil_points = QAction(self.tr("Manage soil points…"), self)
         manage_soil_points.triggered.connect(lambda: self._soil_points.choose())
         menu.addAction(manage_soil_points)
+
+        acquisitions = QAction(self.tr("Acquisitions and supplies…"), self)
+        acquisitions.triggered.connect(self._on_acquisitions)
+        menu.addAction(acquisitions)
 
         # Amendment plan (US-12.10c) — aggregated cross-bed shopping list.
         menu.addSeparator()
@@ -4747,6 +4820,21 @@ class GardenPlannerApp(QMainWindow):
         shopping_list_action.triggered.connect(self._on_shopping_list)
         self._set_action_icon(shopping_list_action, "shopping_list")
         menu.addAction(shopping_list_action)
+
+    def _on_acquisitions(self) -> None:
+        from open_garden_planner.core.personal_store import PersonalStoreError
+        from open_garden_planner.services.acquisition_inventory import AcquisitionInventory
+        from open_garden_planner.services.plant_library import get_app_data_dir
+        from open_garden_planner.ui.dialogs.acquisition_inventory_dialog import (
+            AcquisitionInventoryDialog,
+        )
+
+        try:
+            store = AcquisitionInventory(get_app_data_dir() / AcquisitionInventory.FILENAME)
+        except (OSError, PersonalStoreError) as exc:
+            QMessageBox.warning(self, self.tr("Could not load acquisitions"), str(exc))
+            return
+        AcquisitionInventoryDialog(store, self).exec()
 
     def _setup_help_menu(self, menu: QMenu) -> None:
         """Set up the Help menu actions."""

@@ -236,6 +236,8 @@ class CanvasView(QGraphicsView):
     # Args: scene_x, scene_y (canvas coords, cm).
     journal_note_requested = pyqtSignal(float, float)
     soil_point_requested = pyqtSignal(float, float)
+    soil_points_finished = pyqtSignal()
+    soil_points_cancelled = pyqtSignal()
     # US-12.9: emitted when an existing pin is double-clicked or the user picks
     # "Edit Note…" from its context menu. Args: note_id (string).
     journal_note_edit_requested = pyqtSignal(str)

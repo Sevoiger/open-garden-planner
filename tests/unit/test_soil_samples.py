@@ -112,3 +112,39 @@ def test_duplicate_lab_parameters_never_lose_or_copy_unknown_extensions():
     operation["fields"]["report"]["removed_reading_indices"] = [0]
     result, _ = prepare_operations(doc, [operation])
     assert result["soil_tests"][target]["records"][0]["laboratory_report"]["readings"][0]["uncertainty"] == "± 0.2"
+
+
+def test_full_analysis_accepts_up_to_fifteen_locations_but_simple_ph_does_not():
+    positions = [{"x_cm": 10 * i, "y_cm": 40} for i in range(15)]
+    fields = {"test_date": "2025-01-02", "positions": positions,
+              "report": {"readings": [{"parameter": "Sable", "value": "40", "unit": "%"}]}}
+    result, rows = prepare_operations(_document(), [{"operation": "record_soil_sample", "fields": fields}])
+    record = result["soil_tests"][rows[0]["target_id"]]["records"][0]
+    assert record["sample_positions"] == positions and record["sample_position"] == positions[0]
+    with pytest.raises(ValueError, match="1 to 15"):
+        prepare_operations(_document(), [{"operation": "record_soil_sample",
+            "fields": {**fields, "positions": positions + [positions[0]]}}])
+    with pytest.raises(ValueError, match="require a laboratory"):
+        prepare_operations(_document(), [{"operation": "record_soil_sample", "fields": {
+            "test_date": "2025-01-02", "positions": positions, "ph": 7}}])
+
+
+def test_previous_parameter_code_is_not_lost_when_editing_reading():
+    document, rows = prepare_operations(_document(), [{"operation": "record_soil_sample", "fields": {
+        "test_date": "2025-01-02", "position": {"x_cm": 100, "y_cm": 200},
+        "report": {"readings": [{"parameter": "Azote", "parameter_code": "nitrogen_total", "value": "1"}]}}}])
+    target, identity = rows[0]["target_id"], rows[0]["record_id"]
+    updated, _ = prepare_operations(document, [{"operation": "edit_soil_sample", "target_id": target,
+        "fields": {"record_id": identity, "report": {"readings": [
+            {"parameter": "Azote", "value": "2", "previous_index": 0}]}}}])
+    assert updated["soil_tests"][target]["records"][0]["laboratory_report"]["readings"][0]["parameter_code"] == "nitrogen_total"
+
+
+def test_standard_parameter_cannot_be_renamed_through_mcp():
+    document, rows = prepare_operations(_document(), [{"operation": "record_soil_sample", "fields": {
+        "test_date": "2025-01-02", "position": {"x_cm": 100, "y_cm": 200},
+        "report": {"readings": [{"parameter": "Azote", "parameter_code": "nitrogen_total", "value": "1"}]}}}])
+    with pytest.raises(ValueError, match="Cannot rename"):
+        prepare_operations(document, [{"operation": "edit_soil_sample", "target_id": rows[0]["target_id"],
+            "fields": {"record_id": rows[0]["record_id"], "report": {"readings": [
+                {"parameter": "Potassium", "value": "2", "previous_index": 0}]}}}])

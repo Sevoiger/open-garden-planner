@@ -872,19 +872,25 @@ localement selon les plantes du plan sans nouvel appel réseau.
 
 ## Points de prélèvement et analyses de sol
 
-Dans **Jardin**, choisir **Placer un point pH…** ou **Placer une analyse de sol…**,
-puis cliquer sur le lieu du prélèvement dans le plan (Échap annule le placement).
-Le point et la date apparaissent sur le dessin. Double-cliquer sur le point pour
-consulter ou modifier le relevé ; son menu contextuel permet aussi de le supprimer.
+Dans **Jardin**, les points sont masqués par défaut ; **Afficher les points de
+prélèvement du sol** les affiche ou les masque. **Placer un point pH…** demande
+un seul clic. **Placer une analyse de sol…** permet de cliquer sur 1 à 15 lieux
+pour une même analyse, puis Entrée ou clic droit termine le placement ; Échap
+annule. Le quinzième point termine automatiquement. Les points sont petits ;
+leur infobulle indique la date et le pH. Double-cliquer pour consulter ou
+modifier le relevé ; son menu contextuel permet aussi de le supprimer.
 La commande **Gérer les points de sol…** donne accès à tous les relevés au clavier,
 et lorsqu’un point comporte plusieurs observations, elle permet de les choisir.
 Les coordonnées peuvent aussi être saisies au clavier pendant le placement.
 Ces opérations sont annulables et enregistrées dans le fichier `.ogp`.
 
 Le point pH demande une date et une mesure. L’analyse complète accepte en outre
-le laboratoire, sa référence, la profondeur, des lignes libres (paramètre,
-valeur, unité, méthode, intervalle et interprétation) et le texte intégral du
-rapport. Un fichier texte ou Markdown UTF-8 peut être importé dans ce champ ; le
+le laboratoire, sa référence, la profondeur, les lieux de prélèvement, et des
+lignes préremplies pour l’azote, le phosphore, le potassium, la granulométrie
+(sable, limon, argile), la matière organique, le carbone, le calcaire, la CEC et
+les éléments secondaires. Chaque mesure conserve valeur, unité, méthode,
+intervalle et interprétation ; d’autres lignes libres et le texte intégral du
+rapport restent possibles. Un fichier texte ou Markdown UTF-8 peut être importé dans ce champ ; le
 PDF et l’extraction automatique ne sont pas pris en charge. Les résultats et
 signes comme « < » sont conservés tels que saisis : vérifier la transcription
 avant d’enregistrer. Le texte importé est inclus dans le `.ogp`, donc partagé
@@ -896,3 +902,39 @@ un massif ni au sol par défaut du jardin. Les mesures du laboratoire ne sont
 pas converties en niveaux de kit et ne produisent pas automatiquement de conseils
 d’amendement. Les rapports existants de massif et le sol par défaut restent
 indépendants de ces points.
+
+
+## Acquisitions et consommables
+
+**Jardin > Acquisitions et consommables…** tient un historique global des lots
+achetés, séparé de la liste de courses et des semences. Un lot peut indiquer
+type libre, fournisseur, date, prix unitaire et devise, quantités achetée et
+restante, unité, état initial et notes. Une valeur non renseignée reste inconnue.
+L’enregistrement est immédiat ; une erreur ou un conflit de fichier laisse les
+données précédentes intactes. Après une modification extérieure, fermer la
+fiche puis utiliser **Recharger** avant de recommencer. Les lectures MCP
+authentifiées de `get_acquisitions` sont en lecture seule.
+
+## Sauvegarde globale
+
+**Fichier > Sauvegarde globale…** crée une archive ZIP contenant le plan courant
+et ses pièces jointes, les bibliothèques et listes personnelles enregistrées,
+les stocks globaux de semences et d’acquisitions, les règles et symboles
+personnels, les fichiers météo et leur configuration. Les photos externes
+référencées par les semences sont copiées dans l’archive. Les autres plans `.ogp`
+ne sont pas recherchés automatiquement : créer une archive pour chacun. Les
+clés et secrets ainsi que les préférences Qt ne sont pas inclus. La création
+refuse un stock global avec des modifications non enregistrées, un média
+manquant ou des fichiers qui changent pendant la copie. La limite est de 1 Go
+non compressé et 20 000 fichiers.
+
+**Fichier > Extraire une sauvegarde globale…** vérifie les empreintes et extrait
+dans un nouveau dossier, sans toucher aux données actives. Le plan extrait
+s’ouvre normalement. Les fichiers globaux sont dans `app-data` ; pour les
+réinstaller, fermer OGP, sauvegarder le dossier personnel existant, puis copier
+le contenu de `app-data` dans le dossier de données de l’application
+(`~/Library/Application Support/OpenGardenPlanner` sur macOS). La configuration
+météo est dans `configuration/weather-config.json` ; la replacer dans
+`weather/config.json` si nécessaire. Les photos des semences sont réassociées
+aux copies dans `personal-media` : conserver le dossier extrait à cet emplacement.
+La restauration n’écrase jamais automatiquement les données personnelles.

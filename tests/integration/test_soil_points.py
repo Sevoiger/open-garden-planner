@@ -272,7 +272,7 @@ def test_soil_sample_over_authenticated_mcp_http(tmp_path):
                 await client.initialize()
                 preview = await client.call_tool("prepare_document_operations", {"operations": [{
                     "operation": "record_soil_sample", "fields": {"test_date": "2025-01-01",
-                    "position": {"x_cm": 200, "y_cm": 300}, "report": {
+                    "positions": [{"x_cm": 200, "y_cm": 300}, {"x_cm": 250, "y_cm": 320}], "report": {
                         "source_text": "Rapport fictif", "readings": [
                             {"parameter": "P₂O₅", "value": "< 0.01", "unit": "g/kg"}]}}}]})
                 assert not preview.isError, preview.content
@@ -285,9 +285,132 @@ def test_soil_sample_over_authenticated_mcp_http(tmp_path):
                 target = prepared["results"][0]["target_id"]
                 record = read_plan(path)["soil_tests"][target]["records"][0]
                 assert record["laboratory_report"]["readings"][0]["value"] == "< 0.01"
+                assert len(record["sample_positions"]) == 2
 
         try:
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pool.submit(lambda: asyncio.run(run())).result(timeout=30)
         finally:
             server.stop()
+
+
+def test_multi_point_analysis_placement_and_visibility(qtbot, monkeypatch):
+    from PyQt6.QtGui import QKeyEvent
+
+    from open_garden_planner.core.tools.base_tool import ToolType
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+
+    def accept_report(dialog):
+        dialog.ph.setText("6.5")
+        dialog.ph_enabled.setChecked(True)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(SoilSampleDialog, "exec", accept_report)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    controller = window._soil_points
+    assert not window.soil_points_visible_action.isChecked()
+    controller.start(True)
+    assert window.soil_points_visible_action.isChecked()
+    tool = window.canvas_view._tool_manager.active_tool
+    tool.commit_typed_coordinate(QPointF(100, 150))
+    tool.commit_typed_coordinate(QPointF(200, 250))
+    assert len(controller._pending_positions) == 2
+    assert not window._project_manager.soil_tests
+    tool.key_press(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+    record = next(iter(window._project_manager.soil_tests.values()))["records"][0]
+    assert record["sample_positions"] == [{"x_cm": 100.0, "y_cm": 150.0}, {"x_cm": 200.0, "y_cm": 250.0}]
+    assert len(controller._markers) == 2 and all(m.isVisible() for m in controller._markers)
+    window.soil_points_visible_action.setChecked(False)
+    assert all(not m.isVisible() for m in controller._markers)
+    window._agent_undo()
+    assert not window._project_manager.soil_tests
+    window._agent_redo()
+    assert len(controller._markers) == 2 and all(not m.isVisible() for m in controller._markers)
+    controller.start(True)
+    window.canvas_view.commit_typed_coordinate(QPointF(300, 300))
+    window.canvas_view._tool_manager.active_tool.key_press(
+        QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
+    assert not controller._pending_positions and window.canvas_view._tool_manager.active_tool.tool_type == ToolType.SELECT
+    window.close()
+
+
+def test_common_lab_parameters_remain_available_after_reopening(qtbot):
+    record = {"date": "2025-01-01", "sample_position": {"x_cm": 10, "y_cm": 20},
+              "laboratory_report": {"readings": [{"parameter": "Total nitrogen", "value": "0.2", "unit": "%"}]}}
+    dialog = SoilSampleDialog(full=True, record=record)
+    qtbot.addWidget(dialog)
+    names = [dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount())]
+    assert names.count("Total nitrogen") == 1
+    assert all(name in names for name in ("Phosphorus", "Potassium", "Sand", "Silt", "Clay"))
+    values = dialog.fields()
+    assert len(values["report"]["readings"]) == 1
+    assert values["report"]["readings"][0]["value"] == "0.2"
+
+
+def test_two_analysis_locations_via_viewport_clicks(qtbot, monkeypatch):
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    monkeypatch.setattr(SoilSampleDialog, "exec", lambda dialog: dialog.ph.setText("6.2")
+                        or dialog.ph_enabled.setChecked(True) or QDialog.DialogCode.Accepted)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    window.canvas_view.fit_in_view()
+    window._soil_points.start(True)
+    for point in (QPointF(1500, 1200), QPointF(2500, 1500)):
+        qtbot.mouseClick(window.canvas_view.viewport(), Qt.MouseButton.LeftButton,
+                         pos=window.canvas_view.mapFromScene(point))
+    qtbot.keyClick(window.canvas_view, Qt.Key.Key_Return)
+    record = next(iter(window._project_manager.soil_tests.values()))["records"][0]
+    assert len(record["sample_positions"]) == 2
+    assert abs(record["sample_positions"][0]["x_cm"] - 1500) < 20
+    assert abs(record["sample_positions"][1]["y_cm"] - 1500) < 20
+    window.close()
+
+
+def test_standard_parameter_identity_cannot_be_renamed(qtbot):
+    record = {"sample_position": {"x_cm": 10, "y_cm": 20}, "laboratory_report": {"readings": [
+        {"parameter": "Azote total", "parameter_code": "nitrogen_total", "value": "0.1"}]}}
+    dialog = SoilSampleDialog(full=True, record=record)
+    qtbot.addWidget(dialog)
+    assert not dialog.table.item(0, 0).flags() & Qt.ItemFlag.ItemIsEditable
+    fields = dialog.fields()
+    assert fields["report"]["readings"][0]["parameter_code"] == "nitrogen_total"
+    labels = [dialog.table.item(i, 0).text() for i in range(dialog.table.rowCount())]
+    assert "Total nitrogen" not in labels
+
+
+def test_opaque_legacy_extensions_remain_readable_and_unchanged(qtbot, monkeypatch):
+    from open_garden_planner.services.soil_samples import prepare_sample
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    controller = window._soil_points
+    doc, result = prepare_sample(controller._document(), "record_soil_sample", None, {
+        "test_date": "2025-01-01", "position": {"x_cm": 100, "y_cm": 100},
+        "report": {"readings": [{"parameter": "Custom", "value": "3"}]}})
+    target = result["target_id"]
+    history = doc["soil_tests"][target]
+    record = history["records"][0]
+    record["sample_positions"] = {"legacy": True}
+    record["laboratory_report"]["readings"][0]["parameter_code"] = ["legacy", 1]
+    window._project_manager.restore_soil_test_history(target, history)
+    assert len(controller._markers) == 1
+    dialog = SoilSampleDialog(full=True, record=record)
+    qtbot.addWidget(dialog)
+    fields = dialog.fields()
+    assert fields["report"]["readings"][0]["parameter_code"] == ["legacy", 1]
+    assert "positions" not in fields
+    fields["record_id"] = record["id"]
+    updated, _ = prepare_sample(controller._document(), "edit_soil_sample", target, fields)
+    result_record = updated["soil_tests"][target]["records"][0]
+    assert result_record["sample_positions"] == {"legacy": True}
+    assert result_record["laboratory_report"]["readings"][0]["parameter_code"] == ["legacy", 1]
+    window.close()

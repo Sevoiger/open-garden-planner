@@ -13,12 +13,14 @@ class SoilPointTool(BaseTool):
     skip_anchor_snap = True
 
     def mouse_press(self, event: QMouseEvent, scene_pos: QPointF) -> bool:
+        if event.button() == Qt.MouseButton.RightButton:
+            self._view.soil_points_finished.emit()
+            return True
         if event.button() != Qt.MouseButton.LeftButton:
             return False
         return self.commit_typed_coordinate(scene_pos)
 
     def commit_typed_coordinate(self, point: QPointF) -> bool:
-        self._view.set_active_tool(ToolType.SELECT)
         self._view.soil_point_requested.emit(point.x(), point.y())
         return True
 
@@ -30,6 +32,10 @@ class SoilPointTool(BaseTool):
 
     def key_press(self, event: QKeyEvent) -> bool:
         if event.key() == Qt.Key.Key_Escape:
+            self._view.soil_points_cancelled.emit()
             self._view.set_active_tool(ToolType.SELECT)
+            return True
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._view.soil_points_finished.emit()
             return True
         return False

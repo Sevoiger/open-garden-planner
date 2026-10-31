@@ -410,7 +410,7 @@ def _cached_capability_details(
         ),
     }
     personal_tool_names = (
-        "get_custom_plant_library", "get_plant_lists", "get_plant_list", "get_seed_inventory",
+        "get_custom_plant_library", "get_plant_lists", "get_plant_list", "get_seed_inventory", "get_acquisitions",
     )
     personal_data = {
         "read_only_tools": [name for name in personal_tool_names if name in names],
@@ -418,6 +418,7 @@ def _cached_capability_details(
             "plant_library": "Personal botanical records in custom_plants.json; separate from project snapshots.",
             "plant_lists": "Cross-project personal plant lists in plant_lists.json.",
             "seed_inventory": "Project-linked or cross-project seed packets, selected by scope.",
+            "acquisitions": "Global purchased supplies and tools, separate from shopping lists.",
         },
         "read_policy": {
             "get_custom_plant_library": {
@@ -435,6 +436,8 @@ def _cached_capability_details(
                 "requires_write_token": True,
                 "scope": "global",
             },
+            "get_acquisitions": {"available": "get_acquisitions" in names,
+                                 "requires_write_token": True, "scope": "global"},
             "get_seed_inventory": {
                 "available": "get_seed_inventory" in names,
                 "scopes": {
@@ -3286,7 +3289,8 @@ def build_server(
 
     register_personal_catalog_tools(
         mcp, snapshot=providers.snapshot, plant_lists=providers.get_plant_lists,
-        global_seeds=providers.get_seed_inventory, writes_active=writes_active,
+        global_seeds=providers.get_seed_inventory, global_acquisitions=providers.get_acquisitions,
+        writes_active=writes_active,
         authorize=lambda: _require_write_auth(write_token))
     _finalize_tool_schemas(mcp)
     return mcp

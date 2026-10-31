@@ -20,7 +20,9 @@ POINT_PREFIX = "sample:"
 MAX_REPORT_TEXT = 200_000
 MAX_READINGS = 300
 _REPORT_KEYS = {"laboratory", "reference", "sample_depth", "source_text", "readings"}
-_READING_KEYS = {"parameter", "value", "unit", "method", "reference", "interpretation"}
+_READING_KEYS = {"parameter", "parameter_code", "value", "unit", "method", "reference", "interpretation"}
+STANDARD_PARAMETER_CODES = frozenset({"nitrogen_total", "phosphorus", "potassium", "sand", "silt", "clay",
+    "organic_matter", "organic_carbon", "limestone_total", "limestone_active", "cec", "calcium", "magnesium", "sodium"})
 
 
 def _text(value: Any, label: str, limit: int = 2_000) -> str:
@@ -65,22 +67,50 @@ def validate_report(report: Any, previous: Any = None) -> dict[str, Any] | None:
                     or index >= len(old_rows) or index in used or not isinstance(old_rows[index], dict)):
                 raise ValueError("Invalid previous reading index")
             used.add(index)
+            old_code = old_rows[index].get("parameter_code")
+            if (isinstance(old_code, str) and old_code in STANDARD_PARAMETER_CODES
+                    and row.get("parameter") != old_rows[index].get("parameter")):
+                raise ValueError("Cannot rename a standard laboratory parameter")
             row_extra = {key: deepcopy(value) for key, value in old_rows[index].items()
-                         if key not in _READING_KEYS}
+                         if key not in _READING_KEYS or key == "parameter_code"}
         for key in set(row) - _READING_KEYS - {"previous_index"}:
             if key not in row_extra or row_extra[key] != row[key]:
                 raise ValueError("Laboratory reading contains unknown fields")
-        clean = {**row_extra, **{key: _text(value, key) for key, value in row.items()
-                                if key in _READING_KEYS}}
+        clean = deepcopy(row_extra)
+        for key, value in row.items():
+            if key not in _READING_KEYS:
+                continue
+            if key == "parameter_code":
+                if key in row_extra and value != row_extra[key]:
+                    raise ValueError("Cannot change an existing parameter code")
+                if not isinstance(value, str):
+                    if key not in row_extra:
+                        raise ValueError("Invalid parameter code")
+                    clean[key] = deepcopy(value)
+                else:
+                    clean[key] = _text(value, key)
+            else:
+                clean[key] = _text(value, key)
         if not clean.get("parameter", "").strip() or not clean.get("value", "").strip():
             raise ValueError("Each laboratory reading requires a parameter and reported value")
         result["readings"].append(clean)
     for index, old in enumerate(old_rows):
-        if index not in used and isinstance(old, dict) and set(old) - _READING_KEYS:
+        if index not in used and isinstance(old, dict) and (
+                set(old) - _READING_KEYS or
+                "parameter_code" in old):
             raise ValueError("Identify or explicitly remove each prior reading with extensions")
     if len(json.dumps(result).encode("utf-8")) > 200_000:
         raise ValueError("Laboratory report exceeds 200,000 bytes")
     return result
+
+
+def _finite_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _position(value: Any, document: dict[str, Any]) -> dict[str, float]:
@@ -89,7 +119,7 @@ def _position(value: Any, document: dict[str, Any]) -> dict[str, float]:
     result = {}
     for key in ("x_cm", "y_cm"):
         number = value[key]
-        if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number):
+        if not _finite_number(number):
             raise ValueError(f"{key} must be a finite number")
         result[key] = float(number)
     canvas = document.get("canvas", {})
@@ -99,13 +129,25 @@ def _position(value: Any, document: dict[str, Any]) -> dict[str, float]:
     return result
 
 
+
+def positions_from_record(record: dict[str, Any]) -> list[dict[str, float]]:
+    """Read recognized positions without consuming opaque legacy extensions."""
+    def valid(point: Any) -> bool:
+        return (isinstance(point, dict) and set(point) == {"x_cm", "y_cm"}
+                and all(_finite_number(point[k]) for k in ("x_cm", "y_cm")))
+    points = record.get("sample_positions")
+    if isinstance(points, list) and 1 <= len(points) <= 15 and all(valid(point) for point in points):
+        return deepcopy(points)
+    point = record.get("sample_position")
+    return [deepcopy(point)] if valid(point) else []
+
 def prepare_sample(
     document: dict[str, Any], operation: str, target_id: str | None, fields: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Prepare one point observation, preserving other histories and extensions."""
     if operation not in {"record_soil_sample", "edit_soil_sample", "delete_soil_sample"}:
         raise ValueError("Unsupported soil sample operation")
-    allowed = {"test_date", "ph", "position", "report", "notes"}
+    allowed = {"test_date", "ph", "position", "positions", "report", "notes"}
     if operation == "edit_soil_sample":
         allowed.add("record_id")
     elif operation == "delete_soil_sample":
@@ -156,12 +198,30 @@ def prepare_sample(
             raise ValueError("An explicit test_date is required")
         if "ph" in fields:
             ph = fields["ph"]
-            if ph is not None and (isinstance(ph, bool) or not isinstance(ph, (int, float))
-                                   or not math.isfinite(ph) or not 0 <= ph <= 14):
+            if ph is not None and (not _finite_number(ph) or not 0 <= ph <= 14):
                 raise ValueError("pH must be a finite number between 0 and 14")
             record.ph = float(ph) if ph is not None else None
-        if "position" in fields:
-            record.extra_fields["sample_position"] = _position(fields["position"], candidate)
+        if "position" in fields and "positions" in fields:
+            raise ValueError("Use either position or positions")
+        if "positions" in fields:
+            if ("sample_positions" in record.extra_fields and
+                    record.extra_fields["sample_positions"] != positions_from_record(record.extra_fields)):
+                raise ValueError("Cannot replace an unrecognized sampling-position extension")
+            positions = fields["positions"]
+            if not isinstance(positions, list) or not 1 <= len(positions) <= 15:
+                raise ValueError("An analysis requires 1 to 15 sampling positions")
+            positions = [_position(pos, candidate) for pos in positions]
+            record.extra_fields["sample_positions"] = positions
+            record.extra_fields["sample_position"] = deepcopy(positions[0])
+        elif "position" in fields:
+            point = _position(fields["position"], candidate)
+            record.extra_fields["sample_position"] = point
+            if "sample_positions" in record.extra_fields:
+                raw_positions = record.extra_fields["sample_positions"]
+                positions = positions_from_record(record.extra_fields)
+                if isinstance(raw_positions, list) and positions == raw_positions:
+                    positions[0] = deepcopy(point)
+                    record.extra_fields["sample_positions"] = positions
         elif "sample_position" not in record.extra_fields:
             raise ValueError("A sampling position is required")
         if "report" in fields:
@@ -177,6 +237,8 @@ def prepare_sample(
         report = record.extra_fields.get("laboratory_report") or {}
         if record.ph is None and not report.get("source_text", "").strip() and not report.get("readings"):
             raise ValueError("Enter a pH, laboratory reading or source report")
+        if len(positions_from_record(record.extra_fields)) > 1 and not report:
+            raise ValueError("Multiple sampling positions require a laboratory analysis")
         record.mode = "lab" if report else "kit"
         change = prepare_soil_test_change(histories, operation="add" if operation == "record_soil_sample" else "edit",
                                           target_id=target_id, record=record)

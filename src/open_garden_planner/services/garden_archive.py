@@ -18,7 +18,7 @@ from open_garden_planner.core.plan_io import read_plan, validate_plan_data, writ
 from open_garden_planner.services.garden_queries import garden_cards, search_events
 
 MAX_ARCHIVE_BYTES = 1_000_000_000
-MAX_ARCHIVE_FILES = 2000
+MAX_ARCHIVE_FILES = 20_000
 
 
 def _atomic_bytes(path: Path, data: bytes) -> None:
@@ -67,6 +67,20 @@ def _media_references(value: Any) -> Iterator[tuple[Any, str | int, str]]:
     elif isinstance(value, list):
         for child in value:
             yield from _media_references(child)
+
+
+def _seed_photo_references(records: Any) -> Iterator[tuple[dict[str, Any], str]]:
+    """Recognize seed photos only; arbitrary extension fields stay opaque."""
+    if not isinstance(records, list):
+        raise ValueError("Invalid seed inventory")
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("Invalid seed inventory record")
+        photo = record.get("photo_path", "")
+        if not isinstance(photo, str):
+            raise ValueError("Invalid seed photo reference")
+        if photo:
+            yield record, photo
 
 
 def copy_relative_media(snapshot: dict[str, Any], source_dir: Path, destination_dir: Path) -> None:
@@ -124,29 +138,154 @@ def export_csv(snapshot: dict[str, Any], destination: Path) -> None:
     _atomic_bytes(destination, buffer.getvalue().encode("utf-8-sig"))
 
 
-def portable_backup(snapshot: dict[str, Any], project: Path, destination: Path) -> None:
-    """Bundle one canonical plan and every referenced photo/document; backgrounds embed PNG."""
-    if destination.resolve() == project.resolve():
-        raise ValueError("A backup cannot overwrite the open project")
+def _file_digest(path: Path) -> tuple[str, int]:
+    """Hash a file with bounded memory, refusing oversized inputs as they grow."""
+    if path.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise ValueError("Portable archive exceeds supported size")
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_ARCHIVE_BYTES:
+                raise ValueError("Portable archive exceeds supported size")
+            digest.update(chunk)
+    return digest.hexdigest(), size
+
+
+def portable_backup(snapshot: dict[str, Any], project: Path, destination: Path, *,
+                    app_data: Path | None = None, weather_config: Path | None = None) -> None:
+    """Stream one plan, attachments and optional saved personal stores to a ZIP."""
+    if destination.resolve() == project.resolve() or destination.suffix.lower() == ".ogp":
+        raise ValueError("A backup cannot overwrite a garden project")
     candidate = deepcopy(snapshot)
     files: dict[str, bytes] = {}
+    sources: dict[str, Path] = {}
+    fingerprints: dict[str, tuple[str, int]] = {}
+
+    def add_source(name: str, path: Path, fingerprint: tuple[str, int] | None = None) -> None:
+        if path.resolve() == destination.resolve():
+            raise ValueError("A backup cannot overwrite an attached document or personal data")
+        digest = fingerprint or _file_digest(path)
+        if name in fingerprints and fingerprints[name] != digest:
+            raise ValueError("Archive name collision")
+        sources[name] = path
+        fingerprints[name] = digest
+
     for container, key, reference in _media_references(candidate):
-        data = (project.parent / reference).read_bytes()
+        source = project.parent / reference
+        digest = _file_digest(source)
         suffix = Path(reference).suffix.lower()
         if not suffix.isascii() or len(suffix) > 12 or any(c not in ".abcdefghijklmnopqrstuvwxyz0123456789" for c in suffix):
             suffix = ".bin"
-        name = "media/" + hashlib.sha256(data).hexdigest() + suffix
-        files[name] = data
+        name = "media/" + digest[0] + suffix
+        add_source(name, source, digest)
         container[key] = name
     validate_plan_data(candidate)
     files["garden.ogp"] = json.dumps(candidate, ensure_ascii=False, allow_nan=False, indent=2).encode("utf-8")
-    if len(files) > MAX_ARCHIVE_FILES or sum(len(data) for data in files.values()) > MAX_ARCHIVE_BYTES:
+    personal_files = None
+    originals: list[Path] = []
+    external_media: dict[str, str] = {}
+    if app_data is not None:
+        root = Path(app_data)
+        allowed = {"custom_plants.json", "plant_lists.json", "seed_inventory.json",
+                   "acquisitions.json", "custom_companion_rules.json"}
+        directories = {"weather", "guilds", "smart_symbols"}
+
+        def personal_files():
+            if not root.exists():
+                return []
+            paths = [path for path in root.iterdir() if path.name in allowed
+                     or (path.name.startswith("weather_cache_") and path.suffix == ".json")]
+            for name in directories:
+                folder = root / name
+                if folder.is_symlink():
+                    raise ValueError("A personal data directory is a symbolic link")
+                if folder.exists():
+                    for path in folder.rglob("*"):
+                        if path.is_symlink():
+                            raise ValueError("A personal data path is a symbolic link")
+                        if path.is_file():
+                            paths.append(path)
+            return sorted(p for p in paths if (not p.name.startswith(".") or p.name == ".ogp-weather-run")
+                          and not p.name.endswith((".lock", ".tmp", ".env")))
+
+        originals = personal_files()
+        if len(originals) + len(sources) + len(files) + 1 > MAX_ARCHIVE_FILES:
+            raise ValueError("Portable archive exceeds supported size")
+        if (sum(p.stat().st_size for p in originals) + sum(size for _, size in fingerprints.values())
+                + sum(map(len, files.values())) > MAX_ARCHIVE_BYTES):
+            raise ValueError("Portable archive exceeds supported size")
+        for path in originals:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("A personal data file is not a regular file")
+            path.resolve().relative_to(root.resolve())
+            add_source("app-data/" + path.relative_to(root).as_posix(), path)
+        seed_path = sources.get("app-data/seed_inventory.json")
+        if seed_path is not None:
+            from open_garden_planner.core.personal_store import loads_json
+            if seed_path.stat().st_size > 64_000_000:
+                raise ValueError("Seed inventory exceeds supported size")
+            with seed_path.open("rb") as seed_stream:
+                seed_bytes = seed_stream.read(64_000_001)
+            if len(seed_bytes) > 64_000_000:
+                raise ValueError("Seed inventory exceeds supported size")
+            if (hashlib.sha256(seed_bytes).hexdigest(), len(seed_bytes)) != fingerprints["app-data/seed_inventory.json"]:
+                raise ValueError("Seed inventory changed during backup; retry")
+            seeds = loads_json(seed_bytes.decode("utf-8"))
+            for _, reference in _seed_photo_references(seeds):
+                path = Path(reference).expanduser()
+                if not path.is_absolute():
+                    path = project.parent / path
+                if not path.is_file():
+                    raise ValueError(f"Referenced seed photo is unavailable: {reference}")
+                digest = _file_digest(path)
+                suffix = path.suffix.lower()
+                if not suffix.isascii() or len(suffix) > 12 or any(c not in ".abcdefghijklmnopqrstuvwxyz0123456789" for c in suffix):
+                    suffix = ".bin"
+                name = "personal-media/" + digest[0] + suffix
+                add_source(name, path, digest)
+                external_media[reference] = name
+        if weather_config is not None and weather_config.exists():
+            if weather_config.is_symlink() or not weather_config.is_file():
+                raise ValueError("Weather configuration is not a regular file")
+            add_source("configuration/weather-config.json", weather_config)
+        manifest = {"version": 1, "external_media": external_media,
+                    "files": {**{name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
+                              **{name: digest for name, (digest, _size) in fingerprints.items()}}}
+        files["backup-manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+        if len(files["backup-manifest.json"]) > 8_000_000:
+            raise ValueError("Backup manifest exceeds supported size")
+    if (len(files) + len(sources) > MAX_ARCHIVE_FILES or
+            sum(map(len, files.values())) + sum(size for _, size in fingerprints.values()) > MAX_ARCHIVE_BYTES):
         raise ValueError("Portable archive exceeds supported size")
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, data in files.items():
-            archive.writestr(name, data)
-    _atomic_bytes(destination, buffer.getvalue())
+
+    fd, temporary = tempfile.mkstemp(prefix=".garden-backup-", dir=destination.parent)
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+            for name, path in sources.items():
+                digest = hashlib.sha256()
+                size = 0
+                with path.open("rb") as source, archive.open(name, "w", force_zip64=True) as target:
+                    while chunk := source.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > fingerprints[name][1]:
+                            raise ValueError("Backup source changed during backup; retry")
+                        digest.update(chunk)
+                        target.write(chunk)
+                if (digest.hexdigest(), size) != fingerprints[name]:
+                    raise ValueError("Backup source changed during backup; retry")
+        if (personal_files is not None and personal_files() != originals) or any(
+                _file_digest(path) != fingerprints[name] for name, path in sources.items()):
+            raise ValueError("Backup source changed during backup; retry")
+        with open(temporary, "rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def restore_backup(archive_path: Path, destination: Path) -> Path:
@@ -169,14 +308,52 @@ def restore_backup(archive_path: Path, destination: Path) -> Path:
                         or info.is_dir() or (info.external_attr >> 16) & 0o170000 == 0o120000):
                     raise ValueError("Unsafe archive member")
                 names.add(relative.as_posix())
-                with archive.open(info) as source:
-                    data = source.read(remaining + 1)
-                remaining -= len(data)
-                if remaining < 0:
-                    raise ValueError("Portable archive exceeds supported size")
                 target = staging.joinpath(*relative.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
+                with archive.open(info) as source, target.open("xb") as output:
+                    while chunk := source.read(min(1024 * 1024, remaining + 1)):
+                        remaining -= len(chunk)
+                        if remaining < 0:
+                            raise ValueError("Portable archive exceeds supported size")
+                        output.write(chunk)
+        manifest_path = staging / "backup-manifest.json"
+        if manifest_path.exists():
+            if manifest_path.stat().st_size > 8_000_000:
+                raise ValueError("Backup manifest exceeds supported size")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict) or manifest.get("version") != 1 or not isinstance(manifest.get("files"), dict):
+                raise ValueError("Invalid backup manifest")
+            expected = manifest["files"]
+            actual = {p.relative_to(staging).as_posix() for p in staging.rglob("*") if p.is_file()}
+            if set(expected) != actual - {"backup-manifest.json"}:
+                raise ValueError("Backup contents do not match the manifest")
+            for name, digest in expected.items():
+                if not isinstance(digest, str) or _file_digest(staging / name)[0] != digest:
+                    raise ValueError("Backup integrity check failed")
+        # Rebase external seed photographs to the restored copy, not the old machine.
+        if manifest_path.exists():
+            media_map = manifest.get("external_media", {})
+            if not isinstance(media_map, dict):
+                raise ValueError("Invalid backup media mapping")
+            seed_path = staging / "app-data" / "seed_inventory.json"
+            if media_map:
+                from open_garden_planner.core.personal_store import loads_json
+                if not seed_path.is_file():
+                    raise ValueError("Missing seed inventory for archived media")
+                if seed_path.stat().st_size > 64_000_000:
+                    raise ValueError("Seed inventory exceeds supported size")
+                seeds = loads_json(seed_path.read_text(encoding="utf-8"))
+                for container, reference in _seed_photo_references(seeds):
+                    if reference in media_map:
+                        name = media_map[reference]
+                        if (not isinstance(name, str) or not name.startswith("personal-media/")
+                                or name not in expected or not (staging / name).is_file()):
+                            raise ValueError("Invalid archived seed photo")
+                        container["photo_path"] = str(destination.resolve() / name)
+                seed_path.write_text(json.dumps(seeds, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                manifest["files"]["app-data/seed_inventory.json"] = _file_digest(seed_path)[0]
+                manifest["restored_media_base"] = str(destination.resolve())
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         payload = read_plan(staging / "garden.ogp")
         for _, _, reference in _media_references(payload):
             path = (staging / reference).resolve()

@@ -138,3 +138,28 @@ def test_personal_pages_detect_insertions_and_edits_before_continuation():
 def test_invalid_page_bounds(offset, limit):
     with pytest.raises(ValueError):
         page_records([], offset=offset, limit=limit)
+
+
+def test_acquisitions_are_authenticated_bounded_and_read_only():
+    async def run():
+        mcp = FastMCP("synthetic")
+        allowed = False
+        rows = [{"id": "lot-1", "name": "Compost", "kind": "compost", "remaining_quantity": 2,
+                 "unit_price": 7, "secret_extension": "not projected"}]
+
+        def authorize():
+            if not allowed:
+                raise ValueError("Unauthorized")
+
+        register_personal_catalog_tools(mcp, snapshot=lambda: {}, global_acquisitions=lambda: rows,
+                                        writes_active=True, authorize=authorize)
+        with pytest.raises(Exception, match="Unauthorized"):
+            await mcp.call_tool("get_acquisitions", {})
+        allowed = True
+        page = json.loads((await mcp.call_tool("get_acquisitions", {}))[0].text)
+        assert page["read_only"] and page["records"][0]["remaining_quantity"] == 2
+        assert "secret_extension" not in page["records"][0]
+        rows.append({"id": "lot-2", "name": "Tool", "kind": "tool"})
+        with pytest.raises(Exception, match="revision changed"):
+            await mcp.call_tool("get_acquisitions", {"expected_revision": page["revision"]})
+    asyncio.run(run())

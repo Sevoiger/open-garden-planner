@@ -345,13 +345,15 @@ Voir aussi la [couverture MCP](MCP_COUVERTURE.md), le
 
 Les opérations préparées `record_soil_sample`, `edit_soil_sample` et
 `delete_soil_sample` partagent la validation avec l’interface. Un ajout exige
-`test_date` (date ISO explicite), `position` (`x_cm`, `y_cm`, coordonnées du
-plan) et un pH ou un rapport non vide. Le résultat fournit un `target_id`
+`test_date` (date ISO explicite), `position` ou `positions` (`x_cm`, `y_cm`,
+coordonnées du plan) et un pH ou un rapport non vide. Une analyse de laboratoire
+peut associer de 1 à 15 positions ; un simple pH en utilise une. Le résultat fournit un `target_id`
 `sample:<UUID>` et un `record_id` ; les modifications et suppressions utilisent
 ces identifiants. Un ajout peut réutiliser le même `target_id` pour un nouveau
 relevé. Les rapports structurés contiennent `laboratory`, `reference`,
 `sample_depth`, `source_text` et `readings` ; chaque mesure garde `parameter`,
-`value`, `unit`, `method`, `reference` et `interpretation` en texte, sans
+`value`, `unit`, `method`, `reference` et `interpretation` en texte ; les lignes
+classiques créées par Qt possèdent aussi un `parameter_code` stable, sans
 conversion ni déduction. En remplaçant un rapport contenant des extensions de
 lignes inconnues, fournir pour chaque ligne conservée son `previous_index`
 (indice initial à partir de zéro) et pour chaque ligne supprimée son indice dans
@@ -362,3 +364,9 @@ pour un rapport. Les points sont lisibles dans le domaine `soil` et ne changent
 ni le défaut global ni les conseils de massif. La préparation reste sans effet ;
 l’application conserve authentification, protection contre les conflits et rejeu.
 Les limites de taille sont documentées dans `PLANTES_ET_DESSIN.md`.
+
+
+Les acquisitions globales sont lisibles via l’outil MCP authentifié paginé
+`get_acquisitions` ; elles sont enregistrées séparément du plan et de la liste
+de courses. Cet outil est en lecture seule : les changements se font dans la
+fenêtre Qt et sont publiés atomiquement avec contrôle de conflit.

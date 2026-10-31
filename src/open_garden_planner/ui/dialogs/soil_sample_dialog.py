@@ -19,18 +19,24 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
-from open_garden_planner.services.soil_samples import MAX_REPORT_TEXT
+from open_garden_planner.services.soil_samples import (
+    MAX_REPORT_TEXT,
+    STANDARD_PARAMETER_CODES,
+    positions_from_record,
+)
 
 
 class SoilSampleDialog(QDialog):
     """Optional pH and a faithful, open-ended laboratory report."""
 
-    def __init__(self, parent=None, *, full=False, record=None):
+    def __init__(self, parent=None, *, full=False, record=None, positions=None):
         super().__init__(parent)
         record = record or {}
         report = record.get("laboratory_report") or {}
@@ -38,8 +44,17 @@ class SoilSampleDialog(QDialog):
                               if k not in {"laboratory", "reference", "sample_depth", "source_text", "readings"}}
         self._full = full or bool(report)
         self.setWindowTitle(self.tr("Soil analysis") if self._full else self.tr("pH point"))
-        self.resize(780 if self._full else 360, 650 if self._full else 160)
-        layout = QVBoxLayout(self)
+        self.resize(780 if self._full else 360, 580 if self._full else 160)
+        outer = QVBoxLayout(self)
+        if self._full:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            content = QWidget()
+            scroll.setWidget(content)
+            outer.addWidget(scroll)
+            layout = QVBoxLayout(content)
+        else:
+            layout = outer
         form = QFormLayout()
         self.date = QDateEdit(QDate.currentDate())
         self.date.setCalendarPopup(True)
@@ -67,7 +82,32 @@ class SoilSampleDialog(QDialog):
             form.addRow(self.tr("Report reference"), self.reference)
             form.addRow(self.tr("Sampling depth"), self.depth)
         layout.addLayout(form)
+        self.positions = QTableWidget(0, 2)
+        self.positions.setHorizontalHeaderLabels([self.tr("X (cm)"), self.tr("Y (cm)")])
+        initial_positions = positions if positions is not None else positions_from_record(record)
+        self._initial_positions = deepcopy(initial_positions)
+        self._opaque_positions = ("sample_positions" in record and record["sample_positions"] != initial_positions)
+        if self._full:
+            for point in initial_positions:
+                row = self.positions.rowCount()
+                self.positions.insertRow(row)
+                for col, key in enumerate(("x_cm", "y_cm")):
+                    self.positions.setItem(row, col, QTableWidgetItem(str(point[key])))
+            self.positions.setMaximumHeight(80)
+            layout.addWidget(QLabel(self.tr("Sampling locations (up to 15)")))
+            layout.addWidget(self.positions)
+            position_buttons = QHBoxLayout()
+            add_position = QPushButton(self.tr("Add location"))
+            add_position.clicked.connect(self._add_position)
+            remove_position = QPushButton(self.tr("Remove selected location"))
+            remove_position.clicked.connect(lambda: self.positions.removeRow(self.positions.currentRow()) if self.positions.currentRow() >= 0 else None)
+            position_buttons.addWidget(add_position)
+            position_buttons.addWidget(remove_position)
+            position_buttons.addStretch()
+            layout.addLayout(position_buttons)
         self.table = QTableWidget(0, 6)
+        if self._full:
+            self.table.setMinimumHeight(150)
         self.table.setHorizontalHeaderLabels([
             self.tr("Parameter"), self.tr("Value"), self.tr("Unit"),
             self.tr("Method"), self.tr("Reference range"), self.tr("Interpretation"),
@@ -80,6 +120,20 @@ class SoilSampleDialog(QDialog):
         self._original_row_count = len(report.get("readings", []))
         for original_index, row in enumerate(report.get("readings", [])):
             self._add_row(row, original_index)
+        if self._full:
+            existing_labels = {str(row.get("parameter", "")).casefold() for row in report.get("readings", [])}
+            existing_codes = {row.get("parameter_code") for row in report.get("readings", [])
+                              if isinstance(row.get("parameter_code"), str) and row.get("parameter_code") in STANDARD_PARAMETER_CODES}
+            presets = (("nitrogen_total", self.tr("Total nitrogen")), ("phosphorus", self.tr("Phosphorus")),
+                       ("potassium", self.tr("Potassium")), ("sand", self.tr("Sand")),
+                       ("silt", self.tr("Silt")), ("clay", self.tr("Clay")),
+                       ("organic_matter", self.tr("Organic matter")), ("organic_carbon", self.tr("Organic carbon")),
+                       ("limestone_total", self.tr("Total limestone")), ("limestone_active", self.tr("Active limestone")),
+                       ("cec", self.tr("Cation exchange capacity")), ("calcium", self.tr("Calcium")),
+                       ("magnesium", self.tr("Magnesium")), ("sodium", self.tr("Sodium")))
+            for code, label in presets:
+                if code not in existing_codes and label.casefold() not in existing_labels:
+                    self._add_row({"parameter": label, "parameter_code": code}, preset=True)
         self.source = QPlainTextEdit(report.get("source_text", ""))
         if self._full:
             layout.addWidget(QLabel(self.tr("Reported results (keep the original units and qualifiers)")))
@@ -107,9 +161,9 @@ class SoilSampleDialog(QDialog):
         box.button(QDialogButtonBox.StandardButton.Cancel).setText(self.tr("Cancel"))
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
-        layout.addWidget(box)
+        outer.addWidget(box)
 
-    def _add_row(self, row=None, original_index=None):
+    def _add_row(self, row=None, original_index=None, preset=False):
         row = row or {}
         index = self.table.rowCount()
         self.table.insertRow(index)
@@ -117,9 +171,25 @@ class SoilSampleDialog(QDialog):
             item = QTableWidgetItem(row.get(key, ""))
             if column == 0:
                 item.setData(Qt.ItemDataRole.UserRole, {k: deepcopy(v) for k, v in row.items()
-                    if k not in {"parameter", "value", "unit", "method", "reference", "interpretation"}})
+                    if k not in {"parameter", "value", "unit", "method", "reference", "interpretation"}
+                    and (k != "parameter_code" or not isinstance(v, str) or v not in STANDARD_PARAMETER_CODES)})
                 item.setData(Qt.ItemDataRole.UserRole + 1, original_index)
+                item.setData(Qt.ItemDataRole.UserRole + 2, preset)
+                code = row.get("parameter_code")
+                recognized = isinstance(code, str) and code in STANDARD_PARAMETER_CODES
+                item.setData(Qt.ItemDataRole.UserRole + 3, code if recognized else None)
+                if preset or recognized:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(index, column, item)
+
+    def _add_position(self):
+        if self.positions.rowCount() >= 15:
+            return
+        row = self.positions.rowCount()
+        self.positions.insertRow(row)
+        for column in range(2):
+            self.positions.setItem(row, column, QTableWidgetItem(""))
+        self.positions.setCurrentCell(row, 0)
 
     def _remove_row(self):
         row = self.table.currentRow()
@@ -146,16 +216,30 @@ class SoilSampleDialog(QDialog):
                   if self.ph_enabled.isChecked() and self.ph.text().strip() else None,
                   "notes": self.notes.text()}
         if self._full:
+            current_positions = [
+                {key: float(self.positions.item(row, col).text().strip().replace(",", "."))
+                 for col, key in enumerate(("x_cm", "y_cm"))}
+                for row in range(self.positions.rowCount())
+            ]
+            if self._opaque_positions:
+                if current_positions != self._initial_positions:
+                    raise ValueError("Existing sampling-position extension cannot be replaced")
+            else:
+                fields["positions"] = current_positions
             keys = ("parameter", "value", "unit", "method", "reference", "interpretation")
             readings = []
             used_indices = set()
             for row in range(self.table.rowCount()):
                 values = {key: self.table.item(row, col).text() if self.table.item(row, col) else ""
                           for col, key in enumerate(keys)}
-                if any(values.values()):
-                    first = self.table.item(row, 0)
+                first = self.table.item(row, 0)
+                preset = first.data(Qt.ItemDataRole.UserRole + 2) if first else False
+                if any(values.values()) and (not preset or any(values[key] for key in keys[1:])):
                     extras = first.data(Qt.ItemDataRole.UserRole) if first else None
                     reading = {**(extras or {}), **values}
+                    code = first.data(Qt.ItemDataRole.UserRole + 3) if first else None
+                    if code:
+                        reading["parameter_code"] = code
                     previous_index = first.data(Qt.ItemDataRole.UserRole + 1) if first else None
                     if previous_index is not None:
                         used_indices.add(previous_index)

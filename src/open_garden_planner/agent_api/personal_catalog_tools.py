@@ -49,6 +49,7 @@ def register_personal_catalog_tools(
     mcp: Any, *, snapshot: Callable[[], dict[str, Any]],
     plant_lists: Callable[[], list[dict[str, Any]]] | None = None,
     global_seeds: Callable[[], list[dict[str, Any]]] | None = None,
+    global_acquisitions: Callable[[], list[dict[str, Any]]] | None = None,
     writes_active: bool, authorize: Callable[[], None],
 ) -> None:
     """Global stores require auth; autonomous hosts expose only project seeds."""
@@ -92,6 +93,23 @@ def register_personal_catalog_tools(
                         **page_records(entries, offset=offset, limit=limit, query=query,
                                        expected_revision=expected_revision,
                                        revision_context=["global:list", summary])}
+            return await anyio.to_thread.run_sync(read)
+
+    if global_acquisitions is not None and writes_active:
+        @mcp.tool(structured_output=False)
+        async def get_acquisitions(query: str = "", offset: int = 0, limit: int = 25,
+                                   expected_revision: str | None = None) -> dict[str, Any]:
+            """Read purchased supplies and tools, not the shopping list; authenticated and read-only."""
+            authorize()
+            def read():
+                keys = ("id", "name", "kind", "supplier", "purchase_date", "unit_price", "currency",
+                        "purchased_quantity", "remaining_quantity", "unit", "initial_condition", "notes")
+                rows = [_small(row, keys) for row in global_acquisitions()]
+                page = {"scope": "global", **page_records(rows, offset=offset, limit=limit, query=query,
+                        expected_revision=expected_revision, revision_context="global:acquisitions")}
+                if len(json.dumps(page).encode("utf-8")) > 512_000:
+                    raise ValueError("Acquisition page is too large; retry with a smaller limit")
+                return page
             return await anyio.to_thread.run_sync(read)
 
     @mcp.tool(structured_output=False)
