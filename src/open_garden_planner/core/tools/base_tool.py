@@ -109,6 +109,7 @@ class ToolType(Enum):
     # Garden journal map-linked note pin (US-12.9)
     REFERENCE_POINT = auto()
     JOURNAL_PIN = auto()
+    SOIL_POINT = auto()
 
     # Construction geometry (helper lines/circles, not in exports)
     CONSTRUCTION_LINE = auto()

@@ -235,6 +235,7 @@ class CanvasView(QGraphicsView):
     # US-12.9: emitted when the Journal Pin tool drops a new pin.
     # Args: scene_x, scene_y (canvas coords, cm).
     journal_note_requested = pyqtSignal(float, float)
+    soil_point_requested = pyqtSignal(float, float)
     # US-12.9: emitted when an existing pin is double-clicked or the user picks
     # "Edit Note…" from its context menu. Args: note_id (string).
     journal_note_edit_requested = pyqtSignal(str)
@@ -512,6 +513,12 @@ class CanvasView(QGraphicsView):
         self._tool_manager.register_tool(
             journal_pin_tool,
             display_name=QCoreApplication.translate("JournalPinTool", 'Journal Pin'),
+        )
+
+        from open_garden_planner.core.tools.soil_point_tool import SoilPointTool
+        self._tool_manager.register_tool(
+            SoilPointTool(self),
+            display_name=QCoreApplication.translate("SoilPointTool", "Soil sampling point"),
         )
 
         # Register property object tools (polygon-based)

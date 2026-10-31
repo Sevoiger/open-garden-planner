@@ -6551,6 +6551,11 @@ Please restart the application for the change to take effect.</translation>
             <translation type="vanished">Manage &amp;Seasons...</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4728" />
+            <source>Manage soil points…</source>
+            <translation>Manage soil points…</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="9545" />
             <source>New Season Created</source>
             <translation>New Season Created</translation>
@@ -6702,6 +6707,16 @@ Please restart the application for the change to take effect.</translation>
             <location filename="../../app/application.py" line="8292" />
             <source>Pick an area on Google Maps and load it as a true-to-scale satellite background</source>
             <translation>Pick an area on Google Maps and load it as a true-to-scale satellite background</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4722" />
+            <source>Place pH point…</source>
+            <translation>Place pH point…</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4725" />
+            <source>Place soil analysis…</source>
+            <translation>Place soil analysis…</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="2022" />
@@ -14129,6 +14144,218 @@ Symbol: {size} {unit}; stroke: {width} px</translation>
             <location filename="../../ui/canvas/items/soil_badge_item.py" line="46" />
             <source>Soil test overdue — click to record</source>
             <translation>Soil test overdue — click to record</translation>
+        </message>
+    </context>
+    <context>
+        <name>SoilPointTool</name>
+        <message>
+            <location filename="../../core/tools/soil_point_tool.py" line="10" />
+            <location filename="../../ui/canvas/canvas_view.py" line="521" />
+            <source>Soil sampling point</source>
+            <translation>Soil sampling point</translation>
+        </message>
+    </context>
+    <context>
+        <name>SoilPointsController</name>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="186" />
+            <source>Check the date, position and pH. Each result needs a parameter and a value; reports are limited to 200,000 bytes.</source>
+            <translation>Check the date, position and pH. Each result needs a parameter and a value; reports are limited to 200,000 bytes.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="95" />
+            <source>Click the sampling location on the plan; Esc cancels.</source>
+            <translation>Click the sampling location on the plan; Esc cancels.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="191" />
+            <source>Delete soil point</source>
+            <translation>Delete soil point</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="68" />
+            <source>Delete soil point…</source>
+            <translation>Delete soil point…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="192" />
+            <source>Delete this soil observation?</source>
+            <translation>Delete this soil observation?</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="67" />
+            <source>Edit soil point…</source>
+            <translation>Edit soil point…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="185" />
+            <location filename="../../ui/controllers/soil_points.py" line="202" />
+            <source>Invalid soil point</source>
+            <translation>Invalid soil point</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="131" />
+            <source>No soil points in this plan.</source>
+            <translation>No soil points in this plan.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="140" />
+            <source>Select an observation</source>
+            <translation>Select an observation</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="147" />
+            <location filename="../../ui/controllers/soil_points.py" line="167" />
+            <location filename="../../ui/controllers/soil_points.py" line="196" />
+            <source>Soil point changed</source>
+            <translation>Soil point changed</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="38" />
+            <source>Soil point — %1 — pH %2</source>
+            <translation>Soil point — %1 — pH %2</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="131" />
+            <location filename="../../ui/controllers/soil_points.py" line="139" />
+            <source>Soil points</source>
+            <translation>Soil points</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="148" />
+            <location filename="../../ui/controllers/soil_points.py" line="168" />
+            <location filename="../../ui/controllers/soil_points.py" line="197" />
+            <source>The plan or this point changed while the form was open. Reopen it to continue.</source>
+            <translation>The plan or this point changed while the form was open. Reopen it to continue.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/controllers/soil_points.py" line="203" />
+            <source>This observation is no longer available.</source>
+            <translation>This observation is no longer available.</translation>
+        </message>
+    </context>
+    <context>
+        <name>SoilSampleDialog</name>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="88" />
+            <source>Add result</source>
+            <translation>Add result</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="107" />
+            <source>Cancel</source>
+            <translation>Cancel</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="96" />
+            <source>Complete source report</source>
+            <translation>Complete source report</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="139" />
+            <source>Could not read this UTF-8 text file or it is too large.</source>
+            <translation>Could not read this UTF-8 text file or it is too large.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="130" />
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="139" />
+            <source>Import report</source>
+            <translation>Import report</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="98" />
+            <source>Import text or Markdown…</source>
+            <translation>Import text or Markdown…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="73" />
+            <source>Interpretation</source>
+            <translation>Interpretation</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="66" />
+            <source>Laboratory</source>
+            <translation>Laboratory</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="73" />
+            <source>Method</source>
+            <translation>Method</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="103" />
+            <source>Notes</source>
+            <translation>Notes</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="72" />
+            <source>Parameter</source>
+            <translation>Parameter</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="73" />
+            <source>Reference range</source>
+            <translation>Reference range</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="90" />
+            <source>Remove result</source>
+            <translation>Remove result</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="67" />
+            <source>Report reference</source>
+            <translation>Report reference</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="85" />
+            <source>Reported results (keep the original units and qualifiers)</source>
+            <translation>Reported results (keep the original units and qualifiers)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="50" />
+            <source>Sample date</source>
+            <translation>Sample date</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="68" />
+            <source>Sampling depth</source>
+            <translation>Sampling depth</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="106" />
+            <source>Save</source>
+            <translation>Save</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="40" />
+            <source>Soil analysis</source>
+            <translation>Soil analysis</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="130" />
+            <source>Text files (*.txt *.md)</source>
+            <translation>Text files (*.txt *.md)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="72" />
+            <source>Unit</source>
+            <translation>Unit</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="72" />
+            <source>Value</source>
+            <translation>Value</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="51" />
+            <source>pH measured</source>
+            <translation>pH measured</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/soil_sample_dialog.py" line="40" />
+            <source>pH point</source>
+            <translation>pH point</translation>
         </message>
     </context>
     <context>

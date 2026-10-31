@@ -4719,6 +4719,16 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(default_soil_action, "soil_test")
         menu.addAction(default_soil_action)
 
+        point_ph = QAction(self.tr("Place pH point…"), self)
+        point_ph.triggered.connect(lambda: self._soil_points.start(False))
+        menu.addAction(point_ph)
+        point_analysis = QAction(self.tr("Place soil analysis…"), self)
+        point_analysis.triggered.connect(lambda: self._soil_points.start(True))
+        menu.addAction(point_analysis)
+        manage_soil_points = QAction(self.tr("Manage soil points…"), self)
+        manage_soil_points.triggered.connect(lambda: self._soil_points.choose())
+        menu.addAction(manage_soil_points)
+
         # Amendment plan (US-12.10c) — aggregated cross-bed shopping list.
         menu.addSeparator()
         amendment_plan_action = QAction(self.tr("&Amendment Plan…"), self)
@@ -4896,6 +4906,8 @@ class GardenPlannerApp(QMainWindow):
         # ── Soil service (US-12.10a/b/d) — long-lived, shared by overlay & dialog ──
         self._soil_service = SoilService(self._project_manager)
         self.canvas_view.set_soil_service(self._soil_service)
+        from open_garden_planner.ui.controllers.soil_points import SoilPointsController
+        self._soil_points = SoilPointsController(self)
 
         # Soil overlay parameter toolbar (US-12.10b) — hidden until overlay on.
         self._setup_soil_overlay_toolbar()

@@ -161,8 +161,65 @@ _NOTE_FIELDS = {
     "tags": _field("array", ["suivi"], items={"type": "string"}),
 }
 
+_SOIL_POINT = _field(
+    "object", {"x_cm": 100, "y_cm": 200}, additional_properties=False,
+    properties={"x_cm": _field("number", 100), "y_cm": _field("number", 200)},
+    description="Exact point in plan coordinates, in centimetres.",
+)
+_SOIL_POINT["required"] = ["x_cm", "y_cm"]
+_SOIL_REPORT = _field(
+    ["object", "null"], {"laboratory": "Laboratoire", "readings": [
+        {"parameter": "Phosphore P₂O₅", "value": "< 0.01", "unit": "g/kg", "method": "Olsen"}
+    ]}, additional_properties=False,
+    properties={
+        "laboratory": _field("string", "Laboratoire"),
+        "reference": _field("string", "Référence"),
+        "sample_depth": _field("string", "0–30 cm"),
+        "source_text": _field("string", "Texte intégral du rapport"),
+        "removed_reading_indices": _field("array", [], items={"type": "integer", "minimum": 0},
+            description="Zero-based previous row indices intentionally deleted; input only."),
+        "readings": _field("array", [], items={
+            "type": "object", "additionalProperties": False,
+            "required": ["parameter", "value"],
+            "properties": {key: {"type": "string"} for key in
+                           ("parameter", "value", "unit", "method", "reference", "interpretation")}
+                          | {"previous_index": {"type": "integer", "minimum": 0,
+                                                "description": "Zero-based index of the previous row; input only."}},
+        }),
+    },
+    description="Reported values are text, preserving inequalities, units and methods; no kit level is inferred.",
+)
+_SOIL_SAMPLE_FIELDS = {
+    "test_date": _field("string", "2025-04-12", description="Explicit observation date."),
+    "ph": _field(["number", "null"], 6.5, minimum=0, maximum=14),
+    "position": _SOIL_POINT,
+    "report": _SOIL_REPORT,
+    "notes": _field("string", ""),
+}
+
 
 DOCUMENT_OPERATION_CONTRACTS: dict[str, dict[str, Any]] = {
+    "record_soil_sample": _op(
+        "record_soil_sample", fields={**_SOIL_SAMPLE_FIELDS}, fields_required=True,
+        required_fields=("test_date", "position"), any_of_fields=("ph", "report"),
+        example={"operation": "record_soil_sample", "fields": {"test_date": "2025-04-12",
+                 "ph": 6.5, "position": {"x_cm": 100, "y_cm": 200}}},
+        notes="Omit target_id for a new sample point; reuse the returned sample:<UUID> for further readings.",
+    ),
+    "edit_soil_sample": _op(
+        "edit_soil_sample", target_required=True, fields_required=True,
+        fields={**_SOIL_SAMPLE_FIELDS, "record_id": _UUID_STRING}, required_fields=("record_id",),
+        example={"operation": "edit_soil_sample", "target_id": f"sample:{_UUID}",
+                 "fields": {"record_id": _RECORD_UUID, "ph": 6.7}},
+        notes=("Patch only supplied fields; report null clears it. On report replacement, identify "
+               "previous rows by index and explicitly list removed indices to preserve unknown extensions."),
+    ),
+    "delete_soil_sample": _op(
+        "delete_soil_sample", target_required=True, fields_required=True,
+        fields={"record_id": _UUID_STRING}, required_fields=("record_id",),
+        example={"operation": "delete_soil_sample", "target_id": f"sample:{_UUID}",
+                 "fields": {"record_id": _RECORD_UUID}},
+    ),
     "add_manual_task": _op(
         "add_manual_task", fields=_TASK_FIELDS, required_fields=("title",), fields_required=True,
         example={"operation": "add_manual_task", "fields": {"title": "Planter les laitues", "date": "2025-04-12"}},

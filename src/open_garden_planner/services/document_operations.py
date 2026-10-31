@@ -174,7 +174,12 @@ def prepare_operations(document: dict[str, Any], operations: list[dict[str, Any]
         fields = operation.get("fields", {})
         if not isinstance(fields, dict):
             raise ValueError(f"Invalid fields at row {index + 1}")
-        if name in {"add_manual_task", "edit_manual_task", "delete_manual_task"}:
+        if name in {"record_soil_sample", "edit_soil_sample", "delete_soil_sample"}:
+            from open_garden_planner.services.soil_samples import prepare_sample
+
+            candidate, result = prepare_sample(candidate, name, target_id, fields)
+            results.append({"row": index + 1, "operation": name, **result})
+        elif name in {"add_manual_task", "edit_manual_task", "delete_manual_task"}:
             if set(fields) - document_operation_field_names(name):
                 raise ValueError("Unknown manual task field")
             action = str(name).split("_", 1)[0]

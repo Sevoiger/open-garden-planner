@@ -77,7 +77,7 @@ La liste des noms admis est publiée par
   <code>edit_plant_measurement</code>, <code>delete_plant_measurement</code>,
   <code>add_garden_intervention</code>,
   <code>edit_garden_intervention</code>, <code>delete_garden_intervention</code> ;
-- sol : <code>record_soil_test</code> ;
+- sol : <code>record_soil_test</code>, <code>record_soil_sample</code>, <code>edit_soil_sample</code>, <code>delete_soil_sample</code> ;
 - récoltes, ravageurs et journal : <code>add_harvest_record</code>,
   <code>edit_harvest_record</code>, <code>delete_harvest_record</code>,
   <code>add_pest_log</code>, <code>edit_pest_log</code>,
@@ -340,3 +340,25 @@ d'acceptation visuelle ou artistique de l'application.
 
 Voir aussi la [couverture MCP](MCP_COUVERTURE.md), le
 [plan de réalisation](PLAN_METIER_PARTAGE.md) et l'[ADR-065](../09-architecture-decisions/README.md#adr-065-shared-document-operations-and-explicit-hosts).
+
+## Points d’analyse de sol localisés
+
+Les opérations préparées `record_soil_sample`, `edit_soil_sample` et
+`delete_soil_sample` partagent la validation avec l’interface. Un ajout exige
+`test_date` (date ISO explicite), `position` (`x_cm`, `y_cm`, coordonnées du
+plan) et un pH ou un rapport non vide. Le résultat fournit un `target_id`
+`sample:<UUID>` et un `record_id` ; les modifications et suppressions utilisent
+ces identifiants. Un ajout peut réutiliser le même `target_id` pour un nouveau
+relevé. Les rapports structurés contiennent `laboratory`, `reference`,
+`sample_depth`, `source_text` et `readings` ; chaque mesure garde `parameter`,
+`value`, `unit`, `method`, `reference` et `interpretation` en texte, sans
+conversion ni déduction. En remplaçant un rapport contenant des extensions de
+lignes inconnues, fournir pour chaque ligne conservée son `previous_index`
+(indice initial à partir de zéro) et pour chaque ligne supprimée son indice dans
+`removed_reading_indices`. Ces indices ne sont pas stockés. Sans correspondance
+explicite, une extension inconnue ne peut pas être effacée ni attribuée à une
+autre mesure : la préparation est refusée. Le pH explicite est un nombre distinct et facultatif
+pour un rapport. Les points sont lisibles dans le domaine `soil` et ne changent
+ni le défaut global ni les conseils de massif. La préparation reste sans effet ;
+l’application conserve authentification, protection contre les conflits et rejeu.
+Les limites de taille sont documentées dans `PLANTES_ET_DESSIN.md`.

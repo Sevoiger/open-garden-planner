@@ -233,7 +233,7 @@ limitations sont recensées séparément ci-dessus.
 | Dimensions des plantes | `get_garden_record`, `add_plant_measurement`, `edit_plant_measurement`, `delete_plant_measurement` ; historique, dates par dimension et valeurs non datées | Fiche : **Mesures et historique…**, mêmes commandes annulables |
 | Retours du jardin | CRUD/recherche d’interventions | Fiches et dialogues de suivi ; le récit conversationnel utilise les outils métier |
 | Tâches | Calendrier, CRUD manuel | Cases d’état des tâches automatiques et dialogues du calendrier |
-| Sol | État/incompatibilités, recommandations, `record_soil_test` | Édition/suppression des relevés et sol par défaut du projet |
+| Sol | État/incompatibilités, recommandations, `record_soil_test` ; points localisés : `record_soil_sample`, `edit_soil_sample`, `delete_soil_sample` | Édition/suppression des relevés historiques par massif et sol par défaut du projet |
 | Associations/succession | Suggestions, ensembles, placement, plans et lacunes | Guildes, rotation culturale, propagation via leurs panneaux/dialogues |
 | Récoltes/ravageurs | Export des récoltes et observations génériques | CRUD des journaux spécialisés, tableaux et formulaires |
 | Journal avec épingles | Suivi d’interventions distinct | Création, modification, suppression de notes et de leurs épingles par l’outil/panneau Journal |

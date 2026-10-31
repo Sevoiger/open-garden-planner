@@ -869,3 +869,30 @@ plan. 1 mm représente 1 L/m². Une valeur indisponible reste inconnue.
 Les dates d’actualisation sont indiquées dans l’onglet Météo. Les alertes de gel
 du calendrier et des tâches utilisent la même prévision numérique, recalculée
 localement selon les plantes du plan sans nouvel appel réseau.
+
+## Points de prélèvement et analyses de sol
+
+Dans **Jardin**, choisir **Placer un point pH…** ou **Placer une analyse de sol…**,
+puis cliquer sur le lieu du prélèvement dans le plan (Échap annule le placement).
+Le point et la date apparaissent sur le dessin. Double-cliquer sur le point pour
+consulter ou modifier le relevé ; son menu contextuel permet aussi de le supprimer.
+La commande **Gérer les points de sol…** donne accès à tous les relevés au clavier,
+et lorsqu’un point comporte plusieurs observations, elle permet de les choisir.
+Les coordonnées peuvent aussi être saisies au clavier pendant le placement.
+Ces opérations sont annulables et enregistrées dans le fichier `.ogp`.
+
+Le point pH demande une date et une mesure. L’analyse complète accepte en outre
+le laboratoire, sa référence, la profondeur, des lignes libres (paramètre,
+valeur, unité, méthode, intervalle et interprétation) et le texte intégral du
+rapport. Un fichier texte ou Markdown UTF-8 peut être importé dans ce champ ; le
+PDF et l’extraction automatique ne sont pas pris en charge. Les résultats et
+signes comme « < » sont conservés tels que saisis : vérifier la transcription
+avant d’enregistrer. Le texte importé est inclus dans le `.ogp`, donc partagé
+avec celui-ci. La taille du rapport encodé est limitée à 200 000 octets et
+celle de l’historique du point à 240 000 octets.
+
+Un point est une observation localisée, pas un résultat attribué implicitement à
+un massif ni au sol par défaut du jardin. Les mesures du laboratoire ne sont
+pas converties en niveaux de kit et ne produisent pas automatiquement de conseils
+d’amendement. Les rapports existants de massif et le sol par défaut restent
+indépendants de ces points.
