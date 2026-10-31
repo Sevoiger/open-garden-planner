@@ -370,8 +370,8 @@ class ShoppingListService:
     def prune_stale_prices(self) -> None:
         """Drop price entries whose item ID is no longer in the current list.
 
-        Called on project save (issue #178) to prevent indefinite growth of the
-        prices dict when plants or amendments are removed from the canvas.
+        Explicit cleanup for callers that no longer need removed-item prices.
+        Saving does not call this: a removed plant may still return via undo.
         Only marks the project dirty if stale keys were actually found.
         """
         current_ids = {item.id for item in self.build()}

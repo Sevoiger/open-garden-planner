@@ -58,6 +58,20 @@ modifications de sommets peuvent ensuite être effectués indépendamment.
 
 ## Suivre les dimensions d’une plantation
 
+Dans **Détails de la plante**, la date de plantation peut être corrigée ou rendue
+inconnue avec **Date inconnue**. Chaque changement s’annule et se rétablit avec
+l’historique du plan. Une période partielle, comme « Automne 2023 », se corrige
+dans **Données du jardin**, qui conserve sa précision ; la fiche botanique ne
+la remplace pas silencieusement par un jour. Le placement d’une nouvelle plante
+propose toujours la date du jour : la corriger si elle n’est pas connue.
+
+Les prix saisis dans la liste d’achats restent enregistrés même si l’article
+disparaît provisoirement : annuler la suppression d’une plante retrouve ainsi
+son prix, y compris après une sauvegarde. Les anciennes clés restent donc aussi
+dans le fichier partagé ; elles peuvent s’accumuler. Les plantes sans identité
+partagent une clé générique : vérifier le prix proposé lorsqu’une autre plante
+non identifiée est ajoutée. Il n’existe pas encore de purge sélective dans l’UI.
+
 Dans la fiche d’une plante, **Mesures et historique…** permet d’ajouter un relevé
 avec une date exacte, une hauteur et/ou une envergure en cm, et une note facultative.
 Les champs « actuels » affichent la dernière mesure connue de chaque dimension ;

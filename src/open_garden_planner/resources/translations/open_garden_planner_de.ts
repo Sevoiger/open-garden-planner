@@ -10416,6 +10416,11 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation>Die Änderungen an der Pflanzenbibliothek konnten nicht gespeichert werden. Die Pflanzen- und Plandaten wurden nicht verändert.</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1057" />
+            <source>Could not update the planting date: {error}</source>
+            <translation>Das Pflanzdatum konnte nicht geändert werden: {error}</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="341" />
             <source>Create</source>
             <translation>Erstellen</translation>
@@ -10807,6 +10812,11 @@ oder 'Eigene erstellen', um Ihre eigene zu definieren.</translation>
             <translation>Gepflanzt:</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1056" />
+            <source>Planting date</source>
+            <translation>Pflanzdatum</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="2181" />
             <location filename="../../ui/panels/plant_database_panel.py" line="2227" />
             <source>Please select a plant object (tree, shrub, or perennial) first.</source>
@@ -10887,6 +10897,12 @@ oder 'Eigene erstellen', um Ihre eigene zu definieren.</translation>
             <location filename="../../ui/panels/plant_database_panel.py" line="542" />
             <source>Self-sterile (needs partner)</source>
             <translation>Selbststeril (braucht Partner)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="765" />
+            <location filename="../../ui/panels/plant_database_panel.py" line="766" />
+            <source>Set planting date to unknown</source>
+            <translation>Pflanzdatum auf unbekannt setzen</translation>
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="570" />

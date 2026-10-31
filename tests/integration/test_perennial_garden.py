@@ -596,3 +596,57 @@ def test_planting_date_accepts_unnamed_plant_without_renaming(garden):
     assert plant.metadata["plant_instance"]["planting_date"] == "2023-10-15"
     with pytest.raises(ValueError, match="label"):
         service.set_card(str(plant.item_id), {"state": "in_place"})
+
+
+def test_planting_date_preserves_legacy_card_fields_and_later_notes(garden):
+    _scene, _pm, commands, service, _bed, plant = garden
+    plant.metadata["garden_tracking"] = {"notes": "ancienne note", "cultivar": "ancienne variété"}
+    plant.metadata["plant_instance"] = {"notes": "note distincte", "variety_cultivar": "variété distincte"}
+    original = deepcopy(plant.metadata)
+    candidate, _result = service._prepare("set_planting_date", {"planting_date": "2023-10-15"}, str(plant.item_id))
+    prepared = next(record for record in candidate["objects"] if record["item_id"] == str(plant.item_id))
+    service.set_planting_date(str(plant.item_id), "2023-10-15")
+    assert plant.metadata == prepared["metadata"]
+    assert plant.metadata["garden_tracking"]["notes"] == "ancienne note"
+    assert plant.metadata["garden_tracking"]["cultivar"] == "ancienne variété"
+    assert plant.metadata["plant_instance"]["notes"] == "note distincte"
+    assert plant.metadata["plant_instance"]["variety_cultivar"] == "variété distincte"
+    plant.metadata["plant_instance"]["notes"] = "note modifiée ensuite"
+    commands.undo()
+    assert plant.metadata["garden_tracking"] == original["garden_tracking"]
+    assert plant.metadata["plant_instance"]["notes"] == "note modifiée ensuite"
+    commands.redo()
+    assert plant.metadata["garden_tracking"]["notes"] == "ancienne note"
+    assert plant.metadata["plant_instance"]["notes"] == "note modifiée ensuite"
+
+
+def test_legacy_card_is_readable_and_saved_without_losing_its_cultivar(garden, qtbot):
+    from open_garden_planner.services.garden_queries import card_for
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
+
+    scene, pm, _commands, service, _bed, plant = garden
+    plant.metadata["garden_tracking"] = {"notes": "ancienne note", "cultivar": "ancienne variété"}
+    service.set_planting_date(str(plant.item_id), "2023-10-15")
+    card = card_for(pm.snapshot_dict(scene), str(plant.item_id))
+    assert card["notes"] == "ancienne note"
+    assert card["cultivar"] == "ancienne variété"
+    panel = GardenMemoryPanel(service, str(plant.item_id))
+    qtbot.addWidget(panel)
+    assert panel.notes_edit.toPlainText() == "ancienne note"
+    panel.save_card_button.click()
+    assert plant.metadata["plant_instance"]["notes"] == "ancienne note"
+    assert plant.metadata["garden_tracking"]["cultivar"] == "ancienne variété"
+
+
+@pytest.mark.parametrize("instance", [{}, {"variety_cultivar": None}])
+def test_card_save_preserves_missing_or_null_cultivar(garden, qtbot, instance):
+    from open_garden_planner.ui.widgets.garden_memory_panel import GardenMemoryPanel
+
+    _scene, _pm, _commands, service, _bed, plant = garden
+    plant.metadata["plant_instance"] = deepcopy(instance)
+    panel = GardenMemoryPanel(service, str(plant.item_id))
+    qtbot.addWidget(panel)
+    panel.notes_edit.setPlainText("Nouvelle note")
+    panel.save_card_button.click()
+    assert plant.metadata["plant_instance"]["notes"] == "Nouvelle note"
+    assert plant.metadata["plant_instance"].get("variety_cultivar", "absent") == instance.get("variety_cultivar", "absent")

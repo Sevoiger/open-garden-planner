@@ -43,8 +43,8 @@ def _card_for_object(obj: dict[str, Any]) -> dict[str, Any]:
     card.setdefault("state", "uncertain")
     card.setdefault("period", period(instance.get("planting_date")))
     card["name"] = obj.get("name", "")
-    card["notes"] = instance.get("notes", "")
-    card["cultivar"] = instance.get("variety_cultivar", "")
+    card["notes"] = instance.get("notes", card.get("notes", ""))
+    card["cultivar"] = instance.get("variety_cultivar", card.get("cultivar", ""))
     card["item_id"] = obj["item_id"]
     return card
 

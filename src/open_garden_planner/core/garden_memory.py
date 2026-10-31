@@ -60,6 +60,27 @@ class GardenEditCommand(Command):
         self._apply(self.old, self.old_metadata, self.old_name)
 
 
+class PlantingDateCommand(GardenEditCommand):
+    """Restore only date-owned metadata, retaining later legacy field edits."""
+
+    def _apply(self, memory: dict[str, Any], metadata: dict[str, Any] | None, _name: str | None) -> None:
+        assert self.item is not None and metadata is not None
+        current = deepcopy(self.item.metadata)
+        if "garden_tracking" in metadata:
+            current["garden_tracking"] = deepcopy(metadata["garden_tracking"])
+        else:
+            current.pop("garden_tracking", None)
+        target_instance = metadata.get("plant_instance", {})
+        instance = current.get("plant_instance", {})
+        if "planting_date" in target_instance:
+            current.setdefault("plant_instance", {})["planting_date"] = target_instance["planting_date"]
+        elif "plant_instance" in current:
+            instance.pop("planting_date", None)
+            if not instance and "plant_instance" not in metadata:
+                current.pop("plant_instance")
+        super()._apply(memory, current, self.item.name)
+
+
 class GardenMemoryService:
     """Qt main-thread adapter. Never call this from the MCP server thread."""
 
@@ -127,7 +148,8 @@ class GardenMemoryService:
         metadata = deepcopy(record.get("metadata", {}))
         name = record.get("name", "")
         if metadata != target.metadata or name != target.name:
-            self.commands.execute(GardenEditCommand(
+            command = PlantingDateCommand if operation == "set_planting_date" else GardenEditCommand
+            self.commands.execute(command(
                 self.project,
                 candidate.get("garden_memory", self._memory()),
                 target,

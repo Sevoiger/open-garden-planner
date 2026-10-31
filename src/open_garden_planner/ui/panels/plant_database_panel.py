@@ -757,9 +757,16 @@ class PlantDatabasePanel(QWidget):
         self.planting_date_edit.setDisplayFormat("yyyy-MM-dd")
         self.planting_date_edit.setSpecialValueText(self.tr("Unknown date"))
         self.planting_date_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        # Date is already initialized to minimum date in __init__, shows as empty
         self.planting_date_edit.dateChanged.connect(self._on_planting_date_changed)
         planting_layout.addWidget(self.planting_date_edit, 1)
+
+        self.clear_planting_date_button = QToolButton()
+        self.clear_planting_date_button.setText(self.tr("Unknown date"))
+        self.clear_planting_date_button.setToolTip(self.tr("Set planting date to unknown"))
+        self.clear_planting_date_button.setAccessibleName(self.tr("Set planting date to unknown"))
+        self.clear_planting_date_button.clicked.connect(
+            lambda: self.planting_date_edit.setDate(self.planting_date_edit.minimumDate())
+        )
 
         # Age label (calculated from planting date)
         self.age_label = QLabel("")
@@ -768,6 +775,10 @@ class PlantDatabasePanel(QWidget):
         planting_layout.addWidget(self.age_label)
 
         self.details_form.addRow(self.tr("Planted:"), planting_layout)
+        clear_date_layout = QHBoxLayout()
+        clear_date_layout.addWidget(self.clear_planting_date_button)
+        clear_date_layout.addStretch()
+        self.details_form.addRow("", clear_date_layout)
 
         # === NOTES ===
 
@@ -1031,15 +1042,52 @@ class PlantDatabasePanel(QWidget):
 
     def _on_planting_date_changed(self) -> None:
         """Handle planting date change."""
-        if not self._current_plant_item:
+        item = self._current_plant_item
+        if not item:
             return
         d = self.planting_date_edit.date()
-        # Save the selected date
         known = d != self.planting_date_edit.minimumDate()
         value = d.toPyDate().isoformat() if known else None
-        self._update_instance_metadata("planting_date", value)
-        # Update age display without inventing a sentinel planting date.
-        self._update_age_label(d.toPyDate() if known else None)
+        service = getattr(self, "measurement_service", None)
+        if service is None:
+            self._refresh_planting_date(item)
+            return
+        try:
+            service.set_planting_date(str(item.item_id), value)
+        except (ValueError, TypeError) as exc:
+            self._refresh_planting_date(item)
+            QMessageBox.warning(self, self.tr("Planting date"),
+                                self.tr("Could not update the planting date: {error}").format(error=exc))
+            return
+        self._refresh_planting_date(item)
+
+    def _refresh_planting_date(self, item: Any) -> None:
+        """Show the date from the current command state without emitting edits."""
+        metadata = item.metadata
+        tracking = metadata.get("garden_tracking") or {}
+        period = tracking.get("period") or {}
+        precision = period.get("precision") if isinstance(period, dict) else None
+        # Partial periods must be edited in Garden records, where their precision
+        # is visible; selecting a day here would silently replace that information.
+        editable = not tracking or precision in (None, "unknown", "day")
+        self.planting_date_edit.setEnabled(editable)
+        self.planting_date_edit.setToolTip(
+            self.tr("Edit exact or partial dates in Garden records.") if not editable else ""
+        )
+        value = metadata.get("plant_instance", {}).get("planting_date")
+        try:
+            planting_date = date.fromisoformat(value) if value else None
+        except (ValueError, TypeError):
+            planting_date = None
+        previous = self.planting_date_edit.blockSignals(True)
+        try:
+            self.planting_date_edit.setDate(
+                QDate(planting_date) if planting_date else self.planting_date_edit.minimumDate()
+            )
+        finally:
+            self.planting_date_edit.blockSignals(previous)
+        self.clear_planting_date_button.setEnabled(editable and planting_date is not None)
+        self._update_age_label(planting_date)
 
     def _update_age_label(self, planting_date: date | None) -> None:
         """Update the age label based on planting date.
@@ -1473,6 +1521,7 @@ class PlantDatabasePanel(QWidget):
                     if before == after:
                         self._current_plant_data = data
                         self._refresh_measurement_fields(items[0].metadata.get("plant_instance", {}))
+                        self._refresh_planting_date(items[0])
                         return
         if (
             len(items) == 1
@@ -1824,29 +1873,7 @@ class PlantDatabasePanel(QWidget):
         # Variety
         self.variety_edit.setText(instance_data.get("variety_cultivar") or "")
 
-        # Planting date
-        tracked = bool(getattr(self._current_plant_item, "metadata", {}).get("garden_tracking"))
-        self.planting_date_edit.setEnabled(not tracked)
-        self.planting_date_edit.setToolTip(
-            self.tr("Edit exact or partial dates in Garden records.") if tracked else ""
-        )
-        planting_date_str = instance_data.get("planting_date")
-        planting_date_val = None
-        self.planting_date_edit.blockSignals(True)
-        if planting_date_str:
-            try:
-                planting_date_val = date.fromisoformat(planting_date_str)
-                self.planting_date_edit.setDate(QDate(planting_date_val))
-            except (ValueError, TypeError):
-                # If invalid date, default to today
-                self.planting_date_edit.setDate(self.planting_date_edit.minimumDate())
-        else:
-            # Preserve unknown dates rather than displaying an invented day.
-            self.planting_date_edit.setDate(self.planting_date_edit.minimumDate())
-        self.planting_date_edit.blockSignals(False)
-
-        # Update age label
-        self._update_age_label(planting_date_val)
+        self._refresh_planting_date(plant_item)
 
         # Current height
         self._refresh_measurement_fields(instance_data)

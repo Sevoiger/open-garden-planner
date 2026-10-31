@@ -10270,6 +10270,11 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Could not save changes to the plant library. The plant and canvas data were left unchanged.</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1057" />
+            <source>Could not update the planting date: {error}</source>
+            <translation>Could not update the planting date: {error}</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="341" />
             <source>Create</source>
             <translation>Create</translation>
@@ -10653,6 +10658,11 @@ or 'Create Custom' to define your own.</translation>
             <translation>Planted:</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1056" />
+            <source>Planting date</source>
+            <translation>Planting date</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="2181" />
             <location filename="../../ui/panels/plant_database_panel.py" line="2227" />
             <source>Please select a plant object (tree, shrub, or perennial) first.</source>
@@ -10733,6 +10743,12 @@ or 'Create Custom' to define your own.</translation>
             <location filename="../../ui/panels/plant_database_panel.py" line="542" />
             <source>Self-sterile (needs partner)</source>
             <translation>Self-sterile (needs partner)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="765" />
+            <location filename="../../ui/panels/plant_database_panel.py" line="766" />
+            <source>Set planting date to unknown</source>
+            <translation>Set planting date to unknown</translation>
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="570" />

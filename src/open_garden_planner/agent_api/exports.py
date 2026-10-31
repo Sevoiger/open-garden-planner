@@ -141,7 +141,7 @@ def validate_open_plan(file_path: str) -> Path:
 def save_plan_file(
     scene: CanvasScene,
     project_manager: ProjectManager,
-    soil_service: SoilService,
+    soil_service: SoilService,  # noqa: ARG001 - retained for existing providers
     file_path: str | None,
 ) -> dict[str, Any]:
     """Save the live plan to ``.ogp`` — ``ProjectManager.save``, Save / Save As semantics.
@@ -154,9 +154,7 @@ def save_plan_file(
     ``QFileDialog`` would give a human — acceptable only under the loopback
     trust model (ADR-033), same as every other file-producing tool here.
 
-    Mirrors ``application._save_to_file`` exactly, including pruning stale
-    shopping-list price entries (issue #178) before writing, so an agent-saved
-    ``.ogp`` doesn't drift from what the GUI would have produced.
+    Like the GUI, retains shopping-list prices for items that may return via undo.
     """
     previous_file_path = project_manager.current_file
     if file_path is None:
@@ -167,7 +165,6 @@ def save_plan_file(
         resolved = previous_file_path
     else:
         resolved = resolve_export_path(file_path, suffix=".ogp", project_manager=project_manager)
-    ShoppingListService(scene, soil_service, project_manager).prune_stale_prices()
     project_manager.save(scene, resolved)
     final_path = project_manager.current_file
     if final_path is None:

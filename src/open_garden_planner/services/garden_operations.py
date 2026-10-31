@@ -166,9 +166,14 @@ def _prepare_card(
     previous_media = old_tracking.get("media", []) if isinstance(old_tracking, dict) else []
     _check_new_media(card.get("media", []), previous_media, media_check)
 
-    for key, legacy_key in (("notes", "notes"), ("cultivar", "variety_cultivar")):
-        if key in card:
-            metadata.setdefault("plant_instance", {})[legacy_key] = card.pop(key)
+    if operation != "set_planting_date":
+        for key, legacy_key in (("notes", "notes"), ("cultivar", "variety_cultivar")):
+            if key in incoming:
+                metadata.setdefault("plant_instance", {})[legacy_key] = card.pop(key)
+            elif isinstance(old_tracking, dict) and key in old_tracking:
+                # A card editor that does not expose this field must not erase
+                # a historical value that still lives in tracking metadata.
+                card[key] = deepcopy(old_tracking[key])
     metadata["garden_tracking"] = card
     if "period" in incoming:
         instance = metadata.setdefault("plant_instance", {})

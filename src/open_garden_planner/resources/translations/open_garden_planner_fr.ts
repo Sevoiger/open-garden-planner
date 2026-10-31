@@ -10071,6 +10071,11 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Impossible d’enregistrer les modifications dans la bibliothèque de plantes. Les données de la plante et du plan n’ont pas été modifiées.</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1057" />
+            <source>Could not update the planting date: {error}</source>
+            <translation>Impossible de modifier la date de plantation : {error}</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="341" />
             <source>Create</source>
             <translation>Créer</translation>
@@ -10444,6 +10449,11 @@ ou sur « Créer une plante » pour définir la vôtre.</translation>
             <translation>Planté le :</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1056" />
+            <source>Planting date</source>
+            <translation>Date de plantation</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="2181" />
             <location filename="../../ui/panels/plant_database_panel.py" line="2227" />
             <source>Please select a plant object (tree, shrub, or perennial) first.</source>
@@ -10524,6 +10534,12 @@ ou sur « Créer une plante » pour définir la vôtre.</translation>
             <location filename="../../ui/panels/plant_database_panel.py" line="542" />
             <source>Self-sterile (needs partner)</source>
             <translation>Autostérile (partenaire nécessaire)</translation>
+        </message>
+        <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="765" />
+            <location filename="../../ui/panels/plant_database_panel.py" line="766" />
+            <source>Set planting date to unknown</source>
+            <translation>Rendre la date de plantation inconnue</translation>
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="570" />
