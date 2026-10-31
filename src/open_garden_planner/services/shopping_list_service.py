@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import QCoreApplication
 
 from open_garden_planner.core import container_model as _container_model
+from open_garden_planner.core.commands import ChangePropertyCommand
 from open_garden_planner.core.measurements import calculate_area_and_perimeter
 from open_garden_planner.core.object_types import ObjectType, is_bed_type, is_container_type
 from open_garden_planner.models.amendment import Amendment
@@ -39,6 +40,18 @@ if TYPE_CHECKING:
 
 
 _PLANT_OBJECT_TYPES = (ObjectType.TREE, ObjectType.SHRUB, ObjectType.PERENNIAL)
+
+
+class _RemoveUnusedPricesCommand(ChangePropertyCommand):
+    @property
+    def description(self) -> str:
+        return QCoreApplication.translate("ShoppingListService", "Remove unused prices")
+
+
+class _ClearLegacyOwnedCommand(ChangePropertyCommand):
+    @property
+    def description(self) -> str:
+        return QCoreApplication.translate("ShoppingListService", "Clear former owned status")
 
 
 def _tr(text: str) -> str:
@@ -172,6 +185,11 @@ class ShoppingListService:
             plant_instance = metadata.get("plant_instance") or {}
 
             species_id = species_key(plant_species)
+            if species_id == "_unknown":
+                # Unknown plants are not evidence that they are the same item.
+                # A stable canvas identity prevents one placeholder's price
+                # from being silently attributed to a different placeholder.
+                species_id = f"_unknown:{item.item_id}"
             display_name = (
                 plant_species.get("common_name")
                 or plant_species.get("scientific_name")
@@ -381,6 +399,57 @@ class ShoppingListService:
             self._project_manager.set_shopping_list_prices(
                 {k: v for k, v in saved.items() if k in current_ids}
             )
+
+    def unused_prices(self) -> dict[str, float]:
+        """Return saved prices that do not currently correspond to a row."""
+        current_ids = {item.id for item in self.build()}
+        return {key: value for key, value in self._project_manager.shopping_list_prices.items()
+                if key not in current_ids}
+
+    def remove_unused_prices(self) -> int:
+        """Remove explicitly selected orphan prices as one undoable gesture."""
+        removed = self.unused_prices()
+        if not removed:
+            return 0
+
+        def apply(project: ProjectManager, restore: bool) -> None:
+            prices = project.shopping_list_prices
+            if restore:
+                for key, value in removed.items():
+                    prices.setdefault(key, value)
+            else:
+                for key, value in removed.items():
+                    if prices.get(key) == value:
+                        prices.pop(key)
+            project.set_shopping_list_prices(prices)
+
+        command = _RemoveUnusedPricesCommand(self._project_manager, "shopping prices", True, False, apply)
+        manager = self._scene.get_command_manager() if hasattr(self._scene, "get_command_manager") else None
+        if manager is not None:
+            manager.execute(command)
+        else:
+            command.execute()
+        return len(removed)
+
+    def clear_legacy_owned_status(self) -> None:
+        """Clear the ambiguous historical status without changing current rows."""
+        if not self._project_manager.is_shopping_item_excluded("plant:_unknown"):
+            return
+
+        def apply(project: ProjectManager, restore: bool) -> None:
+            current = project.excluded_shopping_items
+            if restore:
+                current.add("plant:_unknown")
+            else:
+                current.discard("plant:_unknown")
+            project.set_excluded_shopping_items(current)
+
+        command = _ClearLegacyOwnedCommand(self._project_manager, "legacy owned", True, False, apply)
+        manager = self._scene.get_command_manager() if hasattr(self._scene, "get_command_manager") else None
+        if manager is not None:
+            manager.execute(command)
+        else:
+            command.execute()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

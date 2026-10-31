@@ -5,7 +5,7 @@ Covers:
   * Drag-to-canvas creation reusing gallery drop orchestration:
     - Auto-parenting to underlying bed.
     - Sizing according to spread/height.
-    - Planting date stamped to today.
+    - Planting date remains unknown.
     - Single undo/redo step.
   * JSON export and import round-trip across independent stores.
   * 'Update from plan' explicit snapshot update without silent overwrites.
@@ -14,7 +14,6 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 import pytest
@@ -146,8 +145,7 @@ class TestPlantListsIntegration:
         assert plant.metadata.get("plant_species") is not None
         assert plant.metadata["plant_species"]["common_name"] == "Tomato"
 
-        # Verify default planting date stamped to today (US-E8)
-        assert plant.metadata.get("plant_instance", {}).get("planting_date") == date.today().isoformat()
+        assert "planting_date" not in plant.metadata.get("plant_instance", {})
 
         # Verify single undo step reverses plant addition and unparents from bed
         cmd_mgr = canvas._command_manager
@@ -167,6 +165,18 @@ class TestPlantListsIntegration:
         restored = plant_items_after_redo[0]
         assert restored.parent_bed_id == bed.item_id
         assert restored.item_id in bed.child_item_ids
+        from open_garden_planner.core.project import ProjectManager
+        from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
+
+        path = tmp_path / "placed.ogp"
+        manager = ProjectManager()
+        manager.save(scene, path)
+        manager.release_document_ownership()
+        reopened, other = CanvasScene(), ProjectManager()
+        other.load(reopened, path)
+        found = next(item for item in reopened.items() if getattr(item, "item_id", None) == plant.item_id)
+        assert "planting_date" not in found.metadata.get("plant_instance", {})
+        other.release_document_ownership()
 
     def test_json_export_and_import_roundtrip(self, tmp_path: Any) -> None:
         store1 = PlantListStore(storage_path=tmp_path / "store1.json")

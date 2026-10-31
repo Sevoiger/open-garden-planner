@@ -42,6 +42,7 @@ def guild_canvas(qtbot, tmp_path):
 def test_insert_delete_missing_role_and_roundtrip(guild_canvas, tmp_path):
     scene, view, coordinator, library = guild_canvas
     command = prepare_guild(scene, library.templates["apple-guild"], offline_catalog(), "Orchard", QPointF(1500, 1500))
+    assert all("planting_date" not in item.metadata.get("plant_instance", {}) for item in command.items)
     view.command_manager.execute(command)
     assert len(view.command_manager._undo_stack) == 1
     identities = [plant.item_id for plant in command.items]

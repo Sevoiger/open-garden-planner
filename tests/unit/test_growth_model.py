@@ -22,7 +22,6 @@ from open_garden_planner.core.growth_model import (
     grown_height_cm,
     grown_spread_cm,
     planting_date_from_metadata,
-    stamp_default_planting_date,
     years_to_maturity,
 )
 
@@ -253,24 +252,3 @@ class TestMetadataAccessors:
         ) is None
         assert current_height_from_metadata({}) is None
         assert current_height_from_metadata(None) is None
-
-
-class TestDefaultPlantingDateStamp:
-    def test_stamps_today_when_absent(self) -> None:
-        metadata: dict = {}
-        stamp_default_planting_date(metadata, date(2026, 7, 23))
-        assert metadata["plant_instance"]["planting_date"] == "2026-07-23"
-
-    def test_never_overwrites_an_existing_date(self) -> None:
-        metadata = {"plant_instance": {"planting_date": "2020-03-01"}}
-        stamp_default_planting_date(metadata, date(2026, 7, 23))
-        assert metadata["plant_instance"]["planting_date"] == "2020-03-01"
-
-    def test_preserves_other_instance_keys(self) -> None:
-        metadata = {"plant_instance": {"current_height_cm": 150.0}}
-        stamp_default_planting_date(metadata, date(2026, 7, 23))
-        assert metadata["plant_instance"]["current_height_cm"] == 150.0
-        assert metadata["plant_instance"]["planting_date"] == "2026-07-23"
-
-    def test_none_metadata_is_a_noop(self) -> None:
-        stamp_default_planting_date(None, date(2026, 7, 23))  # must not raise

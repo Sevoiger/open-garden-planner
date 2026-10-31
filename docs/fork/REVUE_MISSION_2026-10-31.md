@@ -1,5 +1,10 @@
 # Revue du parcours jardin — 31 octobre 2026
 
+**Suivi :** le propriétaire a demandé la suppression de la date automatique et
+la correction des dettes ci-dessous. Voir le guide [Plantes et dessin](PLANTES_ET_DESSIN.md)
+pour le comportement actuel ; les constats et chiffres de cette revue restent
+ceux de sa première livraison.
+
 Base examinée : `b3f347d3`, puis corrections locales de cette mission. Cette
 revue confronte les rapports précédents aux points d’entrée et à des essais
 isolés ; elle ne certifie ni chaque outil de dessin, ni chaque formule métier.

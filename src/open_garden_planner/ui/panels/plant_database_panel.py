@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
-from PyQt6.QtCore import QDate, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QDate, QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QResizeEvent
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from open_garden_planner.core.commands import ChangePropertyCommand
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.personal_store import (
     PersonalStoreError,
@@ -64,6 +65,29 @@ from open_garden_planner.ui.plant_species_assignment import (
 )
 from open_garden_planner.ui.theme import set_text_role, theme_color
 from open_garden_planner.ui.widgets.personal_store_status import PersonalStoreStatus
+
+
+class _PlantInstanceCommand(ChangePropertyCommand):
+    """One coalescible edit of a single field on a selected plant."""
+
+    @property
+    def description(self) -> str:
+        return QCoreApplication.translate("PlantDatabasePanel", "Edit plant details")
+
+    def update_value(self, value: tuple) -> bool:
+        if self._new_value == value:
+            return False
+        self._new_value = deepcopy(value)
+        self.execute()
+        return True
+
+    @property
+    def original_had_instance(self) -> bool:
+        return bool(self._old_value[0])
+
+    @property
+    def is_noop(self) -> bool:
+        return self._old_value == self._new_value
 
 
 class ClickableDateEdit(QDateEdit):
@@ -242,6 +266,14 @@ class PlantDatabasePanel(QWidget):
         self._plant_revision_target: tuple[QGraphicsItem, str, str] | None = None
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._current_plant_item: QGraphicsItem | None = None
+        self._custom_fields_invalid = False
+        self._restoring_selection = False
+        self._pending_instance_edit: tuple[Any, str, Any, Any] | None = None
+        self._instance_edit_manager: Any = None
+        self._instance_edit_timer = QTimer(self)
+        self._instance_edit_timer.setSingleShot(True)
+        self._instance_edit_timer.setInterval(600)
+        self._instance_edit_timer.timeout.connect(self._finish_instance_edit)
 
         from open_garden_planner.models.plant_lists import get_plant_list_store  # noqa: PLC0415
         self._list_store = get_plant_list_store()
@@ -493,7 +525,8 @@ class PlantDatabasePanel(QWidget):
         self.variety_edit = QLineEdit()
         self.variety_edit.setPlaceholderText(self.tr("Enter variety or cultivar..."))
         self.variety_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.variety_edit.editingFinished.connect(self._on_instance_field_changed)
+        self.variety_edit.textChanged.connect(lambda _text: self._on_instance_field_changed())
+        self.variety_edit.editingFinished.connect(self._finish_instance_edit)
         self.details_form.addRow(self.tr("Variety:"), self.variety_edit)
 
         # === PLANT CHARACTERISTICS ===
@@ -788,6 +821,7 @@ class PlantDatabasePanel(QWidget):
         self.notes_edit.setMaximumHeight(60)
         self.notes_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.notes_edit.textChanged.connect(self._on_notes_changed)
+        self.notes_edit.installEventFilter(self)
         self.details_form.addRow(self.tr("Notes:"), self.notes_edit)
 
         # === CUSTOM FIELDS ===
@@ -805,6 +839,10 @@ class PlantDatabasePanel(QWidget):
         self.custom_fields_layout.addWidget(add_field_btn)
 
         self.details_form.addRow(self.tr("Custom:"), self.custom_fields_widget)
+        self.custom_fields_status = QLabel(self.tr("Custom field names must be non-empty and unique."))
+        self.custom_fields_status.setWordWrap(True)
+        self.custom_fields_status.setVisible(False)
+        self.details_form.addRow("", self.custom_fields_status)
 
         # === SEED PACKET LINK (US-9.6) ===
         seed_link_widget = QWidget()
@@ -1038,7 +1076,7 @@ class PlantDatabasePanel(QWidget):
         if not self._current_plant_item:
             return
         variety = self.variety_edit.text().strip() or None
-        self._update_instance_metadata("variety_cultivar", variety)
+        self._live_instance_change("variety_cultivar", variety)
 
     def _on_planting_date_changed(self) -> None:
         """Handle planting date change."""
@@ -1162,9 +1200,85 @@ class PlantDatabasePanel(QWidget):
 
     def _on_notes_changed(self) -> None:
         """Handle notes change."""
-        if not self._current_plant_item:
+        self._live_instance_change("notes", self.notes_edit.toPlainText() or None)
+
+    def _live_instance_change(self, key: str, value: Any) -> None:
+        """Publish immediately, grouping successive changes of one field."""
+        item = self._current_plant_item
+        if not item:
             return
-        self._update_instance_metadata("notes", self.notes_edit.toPlainText() or None)
+        scene = item.scene()
+        manager = scene.get_command_manager() if scene and hasattr(scene, "get_command_manager") else None
+        if manager is None:
+            self._update_instance_metadata(key, value)
+            return
+        self._connect_edit_manager(manager)
+        if self._pending_instance_edit is not None and self._pending_instance_edit[:2] != (item, key):
+            self._finish_instance_edit()
+        present = value not in (None, "")
+        if self._pending_instance_edit is None:
+            before = self._instance_value(item, key)
+            after = (before[0] or present, present, deepcopy(value) if present else None)
+            if before == after:
+                return
+            command = self._instance_command(item, key, before, after)
+            manager.execute(command)
+            self._pending_instance_edit = (item, key, command, manager)
+        else:
+            _item, _key, command, _manager = self._pending_instance_edit
+            after = (command.original_had_instance or present, present, deepcopy(value) if present else None)
+            if command.update_value(after):
+                service = getattr(self, "measurement_service", None)
+                if service is not None and service.commands is manager:
+                    service.project.mark_dirty()
+                else:
+                    manager.refresh_applied(command)
+        self._instance_edit_timer.start()
+
+    def eventFilter(self, watched: Any, event: QEvent) -> bool:
+        if watched is self.notes_edit and event.type() == QEvent.Type.FocusOut:
+            self._finish_instance_edit()
+        return super().eventFilter(watched, event)
+
+    def _finish_instance_edit(self) -> None:
+        self._instance_edit_timer.stop()
+        pending, self._pending_instance_edit = self._pending_instance_edit, None
+        if pending is None:
+            return
+        _item, _key, command, manager = pending
+        if command.is_noop:
+            manager.discard_applied_noop(command)
+        else:
+            manager.refresh_applied(command)
+
+    def _connect_edit_manager(self, manager: Any) -> None:
+        if manager is self._instance_edit_manager:
+            return
+        if self._instance_edit_manager is not None:
+            self._instance_edit_manager.before_transition.disconnect(self._flush_instance_edits)
+            self._instance_edit_manager.set_save_validator(None)
+        self._instance_edit_manager = manager
+        if manager is not None:
+            manager.before_transition.connect(self._flush_instance_edits)
+            manager.set_save_validator(self._validate_instance_save)
+
+    def _validate_instance_save(self) -> None:
+        if self._custom_fields_invalid:
+            raise ValueError(self.tr("Custom field names must be non-empty and unique."))
+
+    def discard_invalid_draft(self) -> None:
+        """Forget invalid editor input when its document or item is removed."""
+        self._custom_fields_invalid = False
+        self.custom_fields_status.hide()
+        self._finish_instance_edit()
+
+    def _flush_instance_edits(self) -> None:
+        self._finish_instance_edit()
+        if self._custom_fields_invalid and self._current_plant_item is not None:
+            self._custom_fields_invalid = False
+            self._refresh_instance_fields(self._current_plant_item)
+            self.custom_fields_status.setText(self.tr("Invalid custom field changes were discarded; the last valid names were restored."))
+            self.custom_fields_status.show()
 
     def _populate_seed_packet_combo(
         self, plant_data: PlantSpeciesData, instance_data: dict
@@ -1327,14 +1441,16 @@ class PlantDatabasePanel(QWidget):
         key_edit.setPlaceholderText(self.tr("Field name"))
         key_edit.setText(key)
         key_edit.setMaximumWidth(100)
-        key_edit.editingFinished.connect(lambda: self._on_custom_field_changed())
+        key_edit.editingFinished.connect(self._finish_instance_edit)
+        key_edit.textChanged.connect(lambda _text: self._on_custom_field_changed())
         row_layout.addWidget(key_edit)
 
         # Value input
         value_edit = QLineEdit()
         value_edit.setPlaceholderText(self.tr("Value"))
         value_edit.setText(value)
-        value_edit.editingFinished.connect(lambda: self._on_custom_field_changed())
+        value_edit.editingFinished.connect(self._finish_instance_edit)
+        value_edit.textChanged.connect(lambda _text: self._on_custom_field_changed())
         row_layout.addWidget(value_edit, 1)
 
         # Remove button
@@ -1347,6 +1463,11 @@ class PlantDatabasePanel(QWidget):
         # Store references for later retrieval
         row_widget.key_edit = key_edit
         row_widget.value_edit = value_edit
+        row_widget._field_key = key
+        instance = getattr(self._current_plant_item, "metadata", {}).get("plant_instance", {})
+        fields = instance.get("custom_fields") or {}
+        row_widget._field_had_value = key in fields
+        row_widget._field_value = deepcopy(fields.get(key))
 
         # Insert before the "Add Field" button
         insert_index = self.custom_fields_layout.count() - 1
@@ -1369,8 +1490,26 @@ class PlantDatabasePanel(QWidget):
         if not self._current_plant_item:
             return
 
+        rows = [self.custom_fields_layout.itemAt(i).widget()
+                for i in range(self.custom_fields_layout.count() - 1)]
+        names = [row.key_edit.text().strip() for row in rows if row and hasattr(row, "key_edit")]
+        incomplete = any(not row.key_edit.text().strip() and (row._field_key or row.value_edit.text().strip())
+                         for row in rows if row and hasattr(row, "key_edit"))
+        nonempty = [name for name in names if name]
+        self._custom_fields_invalid = incomplete or len(nonempty) != len(set(nonempty))
+        self.custom_fields_status.setText(self.tr("Custom field names must be non-empty and unique."))
+        self.custom_fields_status.setVisible(self._custom_fields_invalid)
+        if self._custom_fields_invalid:
+            # An invalid draft must not change stored fields, but it must still
+            # invalidate prepared MCP operations and trigger the close guard.
+            service = getattr(self, "measurement_service", None)
+            if service is not None:
+                service.project.mark_dirty()
+            return
+
         # Collect all custom fields
         custom_fields = {}
+        existing = self._current_plant_item.metadata.get("plant_instance", {}).get("custom_fields") or {}
         for i in range(self.custom_fields_layout.count() - 1):  # -1 to skip Add button
             item = self.custom_fields_layout.itemAt(i)
             if item and item.widget():
@@ -1379,66 +1518,106 @@ class PlantDatabasePanel(QWidget):
                     key = row_widget.key_edit.text().strip()
                     value = row_widget.value_edit.text().strip()
                     if key:  # Only save if key is not empty
-                        custom_fields[key] = value
+                        previous_key = getattr(row_widget, "_field_key", key)
+                        prior_key = previous_key if previous_key in existing else key
+                        has_prior = prior_key in existing or row_widget._field_had_value
+                        prior = existing.get(prior_key, row_widget._field_value)
+                        shown = "" if prior is None else str(prior)
+                        custom_fields[key] = deepcopy(prior) if has_prior and value == shown else value
+                        row_widget._field_key = key
+                        row_widget._field_had_value = True
+                        row_widget._field_value = deepcopy(custom_fields[key])
 
-        self._update_instance_metadata("custom_fields", custom_fields if custom_fields else None)
+        self._live_instance_change("custom_fields", custom_fields if custom_fields else None)
 
     def _update_instance_metadata(self, key: str, value) -> None:
-        """Update plant instance metadata and mark project dirty.
-
-        Args:
-            key: The metadata key to update
-            value: The new value (None to remove)
-        """
-        if not self._current_plant_item:
+        """Update one instance field through the document command history."""
+        item = self._current_plant_item
+        if not item:
             return
-
-        # metadata is a read-only property backed by a dict that always exists,
-        # so there's nothing to initialize here.
-        # Get or create plant_instance dict
-        if "plant_instance" not in self._current_plant_item.metadata:
-            self._current_plant_item.metadata["plant_instance"] = {}
-
-        # boundingRect() only actually changes for the rare case of a
-        # current measurement exceeding the species max (the common shrink
-        # case is floored to stay byte-identical -- see
-        # CircleItem.boundingRect()), but any of these three keys can trigger
-        # that case: current_spread_cm and current_height_cm directly (a
-        # measured height implies a spread via
-        # growth_model._derive_from_other when spread is unset), and
-        # planting_date because more elapsed time means more growth even
-        # with no other field touched (issue #299 review -- an earlier cut
-        # gated this on `key == "current_spread_cm"` alone and missed the
-        # other two). Scoped rather than unconditional so it doesn't fire on
-        # every Notes/variety/custom-field keystroke, which cannot affect
-        # geometry. Must be called BEFORE the value changes, or Qt's scene
-        # index keeps the old rect and leaves a paint ghost.
-        if key in ("current_spread_cm", "current_height_cm", "planting_date"):
-            self._current_plant_item.prepareGeometryChange()
-
-        # Update value
-        if value is None or value == "":
-            self._current_plant_item.metadata["plant_instance"].pop(key, None)
+        before = self._instance_value(item, key)
+        present = value not in (None, "")
+        after = (before[0] or present, present, deepcopy(value) if present else None)
+        if before == after:
+            return
+        command = self._instance_command(item, key, before, after)
+        scene = item.scene()
+        manager = scene.get_command_manager() if scene and hasattr(scene, "get_command_manager") else None
+        if manager is not None:
+            manager.execute(command)
         else:
-            self._current_plant_item.metadata["plant_instance"][key] = value
+            command.execute()
 
-        # A metadata-only write repaints nothing, so QGraphicsScene.changed
-        # never fires; and because this edit bypasses the command manager,
-        # stack_changed does not fire either. Derived overlays subscribe to
-        # exactly those two, so without this nudge the sun/shade shadow keeps
-        # showing the OLD size after the user edits Current height/spread
-        # (US-E8 reads both straight off this dict). See §11.4.
-        self._current_plant_item.update()
+    @staticmethod
+    def _instance_value(item: Any, key: str) -> tuple:
+        instance = item.metadata.get("plant_instance", {})
+        return ("plant_instance" in item.metadata, key in instance, deepcopy(instance.get(key)))
 
-        # Mark project as dirty
-        scene = self._current_plant_item.scene()
-        if scene and hasattr(scene, "views"):
-            for view in scene.views():
-                if hasattr(view, "window"):
-                    window = view.window()
-                    if hasattr(window, "_project_manager"):
-                        window._project_manager.mark_dirty()
-                        break
+    @staticmethod
+    def _apply_instance_value(item: Any, key: str, state: tuple) -> None:
+        had_instance, present, value = state
+        if key in ("current_spread_cm", "current_height_cm", "planting_date"):
+            item.prepareGeometryChange()
+        instance = item.metadata.setdefault("plant_instance", {})
+        if present:
+            instance[key] = deepcopy(value)
+        else:
+            instance.pop(key, None)
+        if not had_instance and not instance:
+            item.metadata.pop("plant_instance", None)
+        item.update()
+
+    def _instance_command(self, item: Any, key: str, before: tuple, after: tuple) -> Any:
+        def apply(target: Any, state: tuple) -> None:
+            self._apply_instance_value(target, key, state)
+            if self._current_plant_item is target:
+                self._refresh_instance_fields(target)
+
+        return _PlantInstanceCommand(item, key, before, after, apply)
+
+    def _refresh_instance_fields(self, item: Any) -> None:
+        instance = item.metadata.get("plant_instance", {})
+        if self._pending_instance_edit is None:
+            notes = instance.get("notes") or ""
+            if self.notes_edit.toPlainText() != notes:
+                previous = self.notes_edit.blockSignals(True)
+                self.notes_edit.setPlainText(notes)
+                self.notes_edit.blockSignals(previous)
+        variety = instance.get("variety_cultivar") or ""
+        if self.variety_edit.text().strip() != variety:
+            previous = self.variety_edit.blockSignals(True)
+            self.variety_edit.setText(variety)
+            self.variety_edit.blockSignals(previous)
+        if self._custom_fields_invalid:
+            return
+        current = {}
+        rows = []
+        for i in range(self.custom_fields_layout.count() - 1):
+            row = self.custom_fields_layout.itemAt(i).widget()
+            if row and hasattr(row, "key_edit"):
+                rows.append(row)
+                name = row.key_edit.text().strip()
+                if name:
+                    current[name] = row.value_edit.text().strip()
+        wanted = {str(name): "" if value is None else str(value)
+                  for name, value in (instance.get("custom_fields") or {}).items()}
+        if current != wanted:
+            if len(rows) == len(wanted):
+                for row, (name, value) in zip(rows, wanted.items(), strict=True):
+                    for edit, text in ((row.key_edit, name), (row.value_edit, value)):
+                        previous = edit.blockSignals(True)
+                        edit.setText(text)
+                        edit.blockSignals(previous)
+                    row._field_key = name
+                    row._field_had_value = True
+                    row._field_value = deepcopy(instance["custom_fields"][name])
+                return
+            while self.custom_fields_layout.count() > 1:
+                row = self.custom_fields_layout.takeAt(0).widget()
+                if row:
+                    row.deleteLater()
+            for name, value in wanted.items():
+                self._add_custom_field_row(name, value)
 
     def _register_refresh(self, widget: QWidget, refresher: Callable[[PlantSpeciesData], None]) -> None:
         self._trait_refreshers.append((widget, refresher))
@@ -1499,6 +1678,22 @@ class PlantDatabasePanel(QWidget):
         Args:
             items: List of selected graphics items
         """
+        if self._restoring_selection:
+            return
+        if len(items) != 1 or items[0] is not self._current_plant_item:
+            old = self._current_plant_item
+            scene = old.scene() if old is not None else None
+            if self._custom_fields_invalid and scene is not None:
+                self._restoring_selection = True
+                try:
+                    scene.clearSelection()
+                    old.setSelected(True)
+                finally:
+                    self._restoring_selection = False
+                return
+            if self._custom_fields_invalid:
+                self.discard_invalid_draft()
+            self._flush_instance_edits()
         # Defensive backstop (#206): this panel reuses persistent widgets and
         # re-pushes values via _show_plant_data on every call. If it is called
         # for the *same* item that is already displayed while one of its own
@@ -1522,6 +1717,7 @@ class PlantDatabasePanel(QWidget):
                         self._current_plant_data = data
                         self._refresh_measurement_fields(items[0].metadata.get("plant_instance", {}))
                         self._refresh_planting_date(items[0])
+                        self._refresh_instance_fields(items[0])
                         return
         if (
             len(items) == 1
@@ -1549,6 +1745,9 @@ class PlantDatabasePanel(QWidget):
 
         # Store current plant item for Create Custom functionality
         self._current_plant_item = item
+        scene = item.scene()
+        manager = scene.get_command_manager() if scene and hasattr(scene, "get_command_manager") else None
+        self._connect_edit_manager(manager)
 
         # Check if it has plant metadata
         if not hasattr(item, "metadata") or not item.metadata:
@@ -1743,6 +1942,8 @@ class PlantDatabasePanel(QWidget):
                         if widget:
                             widget.setVisible(True)
 
+        self.custom_fields_status.setVisible(self._custom_fields_invalid)
+
         # Scroll to top to show basic identity fields
         # Find the scroll area parent
         scroll_parent = self.info_widget.parent()
@@ -1871,7 +2072,9 @@ class PlantDatabasePanel(QWidget):
             instance_data = plant_item.metadata.get("plant_instance", {})
 
         # Variety
+        previous = self.variety_edit.blockSignals(True)
         self.variety_edit.setText(instance_data.get("variety_cultivar") or "")
+        self.variety_edit.blockSignals(previous)
 
         self._refresh_planting_date(plant_item)
 
@@ -1895,7 +2098,7 @@ class PlantDatabasePanel(QWidget):
         custom_fields = instance_data.get("custom_fields", {})
         if custom_fields:
             for key, value in custom_fields.items():
-                self._add_custom_field_row(key, str(value) if value else "")
+                self._add_custom_field_row(key, "" if value is None else str(value))
 
         # === SEED PACKET LINK (US-9.6) ===
         self._populate_seed_packet_combo(plant_data, instance_data)

@@ -1,5 +1,30 @@
 # Progression — fork personnel macOS
 
+## Fiches, dates et prix — 31 octobre 2026
+
+Une nouvelle plante placée depuis la galerie, un outil, une liste ou une guilde
+ne reçoit plus automatiquement la date du jour. Les dates existantes restent
+intactes. Les notes, la variété et les champs personnalisés passent par l’undo ;
+la saisie est regroupée sans perdre les modifications en cas de changement de
+sélection, commande MCP ou fermeture. Les modifications intermédiaires invalident
+les préparations MCP même si leur valeur revient ensuite à son état précédent.
+
+Les plantes sans espèce ont chacune leur propre clé de prix. L’ancien prix et
+l’ancien état « déjà possédé » génériques restent visibles sans réattribution
+arbitraire ; l’action explicite de suppression des prix inutilisés présente les
+valeurs et s’annule. Le test d’envergure utilise désormais le dialogue de mesure
+réel. Les noms de champs personnalisés vides ou dupliqués ne publient pas de
+perte de données et bloquent la sauvegarde jusqu’à correction ; un autre geste
+rétablit les derniers noms valides avec un message. Les données et réglages des
+essais sont isolés. Voir aussi les nouvelles
+[pistes produit](PISTES_PRODUIT_2026-10-31.md).
+
+Validation finale en mode headless : 260 tests ciblés et 40 tests MCP/guildes
+passent ; Ruff et les traductions EN/DE/FR compilées passent. La revue
+indépendante a vérifié notamment les brouillons invalides, les écritures MCP,
+le rejeu de l’historique et les anciennes clés de prix. La suite complète n’a
+pas été lancée.
+
 ## Ports sélectifs des évolutions amont — 29 octobre 2026
 
 Les versions depuis notre base 1.30.10 jusqu’à 1.34.5 ont été examinées.

@@ -770,6 +770,10 @@ class ProjectManager(QObject):
             disk_version,
         )
 
+        manager = scene.get_command_manager() if hasattr(scene, "get_command_manager") else None
+        if manager is not None:
+            manager.validate_pending_save()
+            manager.flush_pending()
         destination = file_path.with_suffix(".ogp").resolve()
         current = getattr(self, "_document_ownership", None)
         ownership = current if current is not None and current.path == destination else DocumentOwnership(destination, gui=True)

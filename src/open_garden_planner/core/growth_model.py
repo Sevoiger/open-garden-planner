@@ -139,26 +139,6 @@ def effective_current_spread_cm(
     )
 
 
-def stamp_default_planting_date(
-    metadata: dict[str, Any] | None, today: date
-) -> None:
-    """Default a fresh plant's planting date to ``today`` (US-E8).
-
-    Writes ``metadata["plant_instance"]["planting_date"]`` (ISO) only when
-    absent, so growth-over-time engages for newly placed plants without the
-    user opening the Plant Details panel. Never overwrites a user-set or
-    loaded date; idempotent. Called ONLY at fresh-creation sites — never on
-    file load, which must preserve saved metadata verbatim.
-    """
-    if metadata is None:
-        return
-    instance = metadata.setdefault("plant_instance", {})
-    if not isinstance(instance, dict):
-        return
-    if not instance.get("planting_date"):
-        instance["planting_date"] = today.isoformat()
-
-
 def _parse_iso_date(value: Any) -> date | None:
     # datetime subclasses date, so narrow it FIRST — otherwise a datetime
     # would flow through and `at_date - planted` raises TypeError.

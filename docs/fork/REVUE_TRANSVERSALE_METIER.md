@@ -123,8 +123,8 @@ constitue pas une garantie générale contre des callbacks arbitraires.
 
 - Une date partielle reste une période de suivi ; seule une date exacte est
   projetée dans l'ancien champ `planting_date`. Une date inconnue reste inconnue.
-- Création graphique Qt depuis catalogue peut proposer aujourd'hui ; MCP crée
-  une date inconnue. Ce défaut historique de saisie est documenté, pas migré.
+- Suivi du 31 octobre : la création graphique et MCP laisse la date de
+  plantation inconnue. Les dates déjà enregistrées ne sont pas modifiées.
 - Le relevé sol MCP direct conserve aujourd'hui si date omise ; D exige une date
   explicite. Kit qualitatif, ppm et dosage selon surface ne sont pas confondus.
 - Le dialogue succession peut accepter un chevauchement avec avertissement ;

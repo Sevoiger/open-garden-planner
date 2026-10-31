@@ -1,12 +1,10 @@
 """Build-only canonical plant constructor shared by drops and guild stamps."""
 
 from copy import deepcopy
-from datetime import date
 from typing import Any
 
 from PyQt6.QtCore import QPointF
 
-from open_garden_planner.core.growth_model import stamp_default_planting_date
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.core.permaculture_commands import placement_layer
 from open_garden_planner.core.plant_renderer import PlantCategory
@@ -27,7 +25,6 @@ def build_plant(scene: Any, position: QPointF, object_type: ObjectType, radius: 
         item.metadata["plant_species"] = deepcopy(species_dict)
     elif species_name:
         populate_item_species_metadata(item, species_name)
-    stamp_default_planting_date(item.metadata, date.today())
     layer = placement_layer(scene, item.metadata.get("plant_species", {}), auto_assign)
     if layer is not None:
         item.layer_id = layer.id

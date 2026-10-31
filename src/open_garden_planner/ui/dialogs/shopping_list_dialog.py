@@ -80,6 +80,8 @@ class ShoppingListDialog(ResponsiveDialog):
         )
 
         self._setup_ui()
+        self._service.project_manager.shopping_list_prices_changed.connect(self._refresh_unused_status)
+        self._service.project_manager.excluded_shopping_items_changed.connect(self._refresh_unused_status)
         self._populate_table()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -95,6 +97,13 @@ class ShoppingListDialog(ResponsiveDialog):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+
+        self._legacy_unknown_label = QLabel()
+        self._legacy_unknown_label.setWordWrap(True)
+        layout.addWidget(self._legacy_unknown_label)
+        self._clear_legacy_owned_button = QPushButton(self.tr("Clear former owned status…"))
+        self._clear_legacy_owned_button.clicked.connect(self._on_clear_legacy_owned)
+        layout.addWidget(self._clear_legacy_owned_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self._table = QTableWidget(0, 8, self)
         self._table.setHorizontalHeaderLabels([
@@ -129,6 +138,10 @@ class ShoppingListDialog(ResponsiveDialog):
         self._grand_total_label.setFont(font)
         self._grand_total_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self._grand_total_label)
+
+        self._remove_unused_button = QPushButton(self.tr("Remove unused prices…"))
+        self._remove_unused_button.clicked.connect(self._on_remove_unused_prices)
+        layout.addWidget(self._remove_unused_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
 
@@ -195,6 +208,46 @@ class ShoppingListDialog(ResponsiveDialog):
         finally:
             self._suppress_changes = False
         self._update_grand_total()
+        self._refresh_unused_status()
+
+    def _refresh_unused_status(self, *_args) -> None:
+        self._remove_unused_button.setEnabled(bool(self._service.unused_prices()))
+        project = self._service.project_manager
+        legacy_price = project.shopping_list_prices.get("plant:_unknown")
+        legacy_owned = project.is_shopping_item_excluded("plant:_unknown")
+        messages = []
+        if legacy_price is not None:
+            messages.append(self.tr("Former unidentified-plant price: {price}. It is not assigned to a plant; enter it on the intended row if needed.").format(price=f"{legacy_price:.2f}"))
+        if legacy_owned:
+            messages.append(self.tr("An unidentified plant was previously marked as owned. Check the intended row; this old status is not assigned automatically."))
+        self._legacy_unknown_label.setText("\n".join(messages))
+        self._legacy_unknown_label.setVisible(bool(messages))
+        self._clear_legacy_owned_button.setVisible(legacy_owned)
+
+    def _on_clear_legacy_owned(self) -> None:
+        answer = QMessageBox.question(
+            self, self.tr("Clear former owned status"),
+            self.tr("Clear the old unidentified-plant owned status? Current rows will not change. This can be undone."),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._service.clear_legacy_owned_status()
+
+    def _on_remove_unused_prices(self) -> None:
+        unused = self._service.unused_prices()
+        if not unused:
+            return
+        answer = QMessageBox.question(
+            self, self.tr("Remove unused prices"),
+            self.tr("Remove these prices not used by the current plan? This can be undone.\n\n{prices}").format(
+                prices="\n".join(f"{key}: {value:.2f}" for key, value in sorted(unused.items()))),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._service.remove_unused_prices()
+            self._populate_table()
 
     def _set_category_header(self, row: int, label: str) -> None:
         cell = QTableWidgetItem(label)

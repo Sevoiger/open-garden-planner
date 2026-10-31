@@ -62,15 +62,23 @@ Dans **Détails de la plante**, la date de plantation peut être corrigée ou re
 inconnue avec **Date inconnue**. Chaque changement s’annule et se rétablit avec
 l’historique du plan. Une période partielle, comme « Automne 2023 », se corrige
 dans **Données du jardin**, qui conserve sa précision ; la fiche botanique ne
-la remplace pas silencieusement par un jour. Le placement d’une nouvelle plante
-propose toujours la date du jour : la corriger si elle n’est pas connue.
+la remplace pas silencieusement par un jour. Une plante nouvellement placée
+commence avec une date inconnue ; renseigner la date réelle lorsqu’elle est connue.
+Les notes, la variété et les champs personnalisés s’annulent aussi dans l’historique.
+Pendant le renommage d’un champ personnalisé, un nom vide ou déjà utilisé ne
+modifie pas les données ; corriger le nom avant d’enregistrer ou de changer de
+sélection. Si une autre commande est lancée entre-temps, le dernier nom valide
+est rétabli et un message le signale.
 
 Les prix saisis dans la liste d’achats restent enregistrés même si l’article
 disparaît provisoirement : annuler la suppression d’une plante retrouve ainsi
-son prix, y compris après une sauvegarde. Les anciennes clés restent donc aussi
-dans le fichier partagé ; elles peuvent s’accumuler. Les plantes sans identité
-partagent une clé générique : vérifier le prix proposé lorsqu’une autre plante
-non identifiée est ajoutée. Il n’existe pas encore de purge sélective dans l’UI.
+son prix, y compris après une sauvegarde. Les plantes non identifiées possèdent
+chacune une clé propre. Un ancien prix ou état « déjà possédé » générique est
+affiché séparément, sans être attribué arbitrairement ; le reporter sur la ligne
+voulue si nécessaire. **Supprimer les prix inutilisés…** présente les clés et
+montants avant confirmation. L’ancien état peut être effacé séparément ; les
+deux actions s’annulent. Les anciennes clés restent dans le fichier tant que
+leur suppression explicite n’est pas demandée.
 
 Dans la fiche d’une plante, **Mesures et historique…** permet d’ajouter un relevé
 avec une date exacte, une hauteur et/ou une envergure en cm, et une note facultative.

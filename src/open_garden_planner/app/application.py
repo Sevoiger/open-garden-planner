@@ -607,9 +607,9 @@ class GardenPlannerApp(QMainWindow):
         build the item, apply the species, auto-populate its species metadata
         from the bundled DB (so the plant-detail panel and US-12.10d
         soil-mismatch warnings light up without a manual "Suchen"), and assign
-        the active layer. Unlike the GUI's drawing convenience, agent creation
-        leaves the planting date unknown: drawing a plant is not evidence it
-        was planted today. set_planting_date records an explicitly known date.
+        the active layer. Like GUI placement, agent creation leaves the planting
+        date unknown: drawing a plant is not evidence it was planted today.
+        set_planting_date records an explicitly known date.
 
         The item itself is built by ``_deserialize_item_core`` — the file
         loader's own factory — so an agent-created object is constructed by
@@ -5458,6 +5458,7 @@ class GardenPlannerApp(QMainWindow):
 
         self.plant_database_panel.measurement_service = GardenMemoryService(
             self._project_manager, self.canvas_view.command_manager, self.canvas_scene)
+        self.canvas_scene.document_replaced.connect(self.plant_database_panel.discard_invalid_draft)
         self.plant_database_panel.search_button.clicked.connect(self._on_search_plant_database)
         self.plant_details_collapsible = CollapsiblePanel(self.tr("Plant Details"), self.plant_database_panel, expanded=True)
         sidebar_layout.addWidget(self.plant_details_collapsible)

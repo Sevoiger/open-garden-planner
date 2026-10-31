@@ -86,6 +86,13 @@ class CommandHistory:
         self._undo_stack.append(command)
         self._redo_stack.clear()
 
+    def discard_applied_noop(self, command: Command) -> bool:
+        """Discard a coalesced no-op only while it is the latest command."""
+        if self._undo_stack and self._undo_stack[-1] is command:
+            self._undo_stack.pop()
+            return True
+        return False
+
     def undo(self) -> Command | None:
         """Undo the latest command and return it, if one exists.
 

@@ -44,11 +44,36 @@ class CommandManager(QObject):
     can_redo_changed = pyqtSignal(bool)
     command_executed = pyqtSignal(str)
     stack_changed = pyqtSignal()
+    before_transition = pyqtSignal()
+
+    def flush_pending(self) -> None:
+        """Commit live edits before a history transition or document save."""
+        self.before_transition.emit()
+
+    def set_save_validator(self, validator: Callable[[], None] | None) -> None:
+        """Attach the active editor's synchronous pre-save validation."""
+        self._save_validator = validator
+
+    def validate_pending_save(self) -> None:
+        if self._save_validator is not None:
+            self._save_validator()
+
+    def refresh_applied(self, command: Command) -> None:
+        """Publish a coalesced live edit already represented by the top command."""
+        if self._history.undo_stack and self._history.undo_stack[-1] is command:
+            self.stack_changed.emit()
+
+    def discard_applied_noop(self, command: Command) -> None:
+        """Publish removal of a coalesced edit that returned to its start."""
+        if self._history.discard_applied_noop(command):
+            self.can_undo_changed.emit(self._history.can_undo)
+            self.stack_changed.emit()
 
     def __init__(self, parent: QObject | None = None) -> None:
         """Initialize the command manager."""
         super().__init__(parent)
         self._history = CommandHistory()
+        self._save_validator: Callable[[], None] | None = None
 
     @property
     def _undo_stack(self) -> list[Command]:
@@ -65,6 +90,7 @@ class CommandManager(QObject):
 
         Clears the redo stack since we've branched off.
         """
+        self.flush_pending()
         had_redo = self._history.can_redo
         self._history.execute(command)
 
@@ -86,6 +112,7 @@ class CommandManager(QObject):
         every "already applied" call site in sync with :meth:`execute`; do NOT
         hand-roll ``_undo_stack.append`` + signal emits at call sites (issue #209).
         """
+        self.flush_pending()
         had_redo = self._history.can_redo
         self._history.register_applied(command)
 
@@ -97,6 +124,7 @@ class CommandManager(QObject):
 
     def undo(self) -> None:
         """Undo the last command."""
+        self.flush_pending()
         command = self._history.undo()
         if command is None:
             return
@@ -107,6 +135,7 @@ class CommandManager(QObject):
 
     def redo(self) -> None:
         """Redo the last undone command."""
+        self.flush_pending()
         command = self._history.redo()
         if command is None:
             return

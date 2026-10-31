@@ -341,7 +341,7 @@ def test_permapeople_species_resizes_footprint_and_enables_height(
 
 
 def test_editing_current_spread_shrinks_icon_without_shrinking_footprint(
-    panel: PlantDatabasePanel, generic_plant: CircleItem, monkeypatch
+    panel: PlantDatabasePanel, generic_plant: CircleItem, canvas: CanvasView, qtbot, monkeypatch
 ) -> None:
     """Regression pin (#299): the Plant Details panel's "Current
     Spread" field must shrink the rendered icon -- matching the shadow, which
@@ -355,7 +355,15 @@ def test_editing_current_spread_shrinks_icon_without_shrinking_footprint(
     generic_plant.metadata["plant_instance"] = {
         "planting_date": date.today().isoformat(),
     }
-    panel.current_spread_spin.setValue(10.0)
+    from open_garden_planner.core.garden_memory import GardenMemoryService
+    from open_garden_planner.core.project import ProjectManager
+    from open_garden_planner.ui.dialogs.plant_measurements_dialog import PlantMeasurementsDialog
+
+    service = GardenMemoryService(ProjectManager(), canvas.command_manager, canvas.scene())
+    dialog = PlantMeasurementsDialog(service, generic_plant)
+    qtbot.addWidget(dialog)
+    dialog.spread.setText("10")
+    dialog._save()
 
     assert generic_plant.rect().width() == pytest.approx(footprint_before)
     assert generic_plant.radius == pytest.approx(_DB_RADIUS)

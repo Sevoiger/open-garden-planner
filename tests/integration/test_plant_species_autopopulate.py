@@ -12,7 +12,6 @@ automatically. Misses fall through to the existing API search button.
 
 from __future__ import annotations
 
-from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
@@ -217,16 +216,11 @@ class TestAutopopulateUnlocksSoilWarnings:
 
 
 # ---------------------------------------------------------------------------
-# US-E8: a freshly placed plant gets today's planting date
+# Drawing a plant does not establish a planting date.
 
 
 class TestPlantingDateDefault:
-    """Both creation paths stamp ``plant_instance.planting_date`` = today.
-
-    Without this the growth-over-time timeline never engages: the owner
-    reported that placing a tree set no planting date and no current size,
-    so every plant shadowed at its mature height forever.
-    """
+    """Creation leaves planting dates unknown until explicitly entered."""
 
     def _click(self, tool: CircleTool, x: float, y: float) -> None:
         event = MagicMock()
@@ -235,16 +229,14 @@ class TestPlantingDateDefault:
         event.modifiers.return_value = Qt.KeyboardModifier.NoModifier
         tool.mouse_press(event, QPointF(x, y))
 
-    def test_gallery_drop_stamps_today(self, canvas: CanvasView) -> None:
+    def test_gallery_drop_leaves_date_unknown(self, canvas: CanvasView) -> None:
         _drop(canvas, "gallery:TREE:species=Solanum lycopersicum:category=fruit")
 
         item = _find_circle(canvas)
         assert item is not None
-        instance = item.metadata.get("plant_instance")
-        assert instance is not None, "a new plant must carry a planting date"
-        assert instance["planting_date"] == date.today().isoformat()
+        assert "planting_date" not in item.metadata.get("plant_instance", {})
 
-    def test_tool_draw_stamps_today(self, canvas: CanvasView) -> None:
+    def test_tool_draw_leaves_date_unknown(self, canvas: CanvasView) -> None:
         canvas.set_active_tool(ToolType.TREE)
         tool = canvas.tool_manager.active_tool
         assert isinstance(tool, CircleTool)
@@ -255,32 +247,21 @@ class TestPlantingDateDefault:
 
         item = _find_circle(canvas)
         assert item is not None
-        assert (
-            item.metadata["plant_instance"]["planting_date"]
-            == date.today().isoformat()
-        )
+        assert "planting_date" not in item.metadata.get("plant_instance", {})
 
-    def test_unknown_species_still_gets_a_date(self, canvas: CanvasView) -> None:
+    def test_unknown_species_leaves_date_unknown(self, canvas: CanvasView) -> None:
         """Species lookup misses, but a later assignment should just work."""
         _drop(canvas, "gallery:TREE:species=Imaginus plantus:category=fruit")
 
         item = _find_circle(canvas)
         assert item is not None
         assert "plant_species" not in item.metadata  # lookup missed
-        assert (
-            item.metadata["plant_instance"]["planting_date"]
-            == date.today().isoformat()
-        )
+        assert "planting_date" not in item.metadata.get("plant_instance", {})
 
-    def test_tool_drawn_plant_without_species_still_gets_a_date(
+    def test_tool_drawn_plant_without_species_leaves_date_unknown(
         self, canvas: CanvasView
     ) -> None:
-        """A species-less placeholder must not be a permanent dead end.
-
-        It needs a date NOW so that assigning a species later makes growth
-        work immediately — the stamp therefore sits outside the species
-        guard at both creation sites.
-        """
+        """A placeholder is not evidence of a real planting date."""
         canvas.set_active_tool(ToolType.TREE)
         tool = canvas.tool_manager.active_tool
         assert isinstance(tool, CircleTool)
@@ -291,17 +272,12 @@ class TestPlantingDateDefault:
         item = _find_circle(canvas)
         assert item is not None
         assert "plant_species" not in item.metadata  # no species was chosen
-        assert (
-            item.metadata["plant_instance"]["planting_date"]
-            == date.today().isoformat()
-        )
+        assert "planting_date" not in item.metadata.get("plant_instance", {})
 
     def test_current_height_is_not_invented(self, canvas: CanvasView) -> None:
-        """Only the DATE is defaulted — an un-measured plant must keep
-        showing its mature size (growth stays disengaged until the user
-        types a current height)."""
+        """Placement also leaves measurements unknown."""
         _drop(canvas, "gallery:TREE:species=Solanum lycopersicum:category=fruit")
 
         item = _find_circle(canvas)
         assert item is not None
-        assert "current_height_cm" not in item.metadata["plant_instance"]
+        assert "current_height_cm" not in item.metadata.get("plant_instance", {})

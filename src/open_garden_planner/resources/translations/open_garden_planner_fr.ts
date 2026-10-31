@@ -10110,6 +10110,13 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Espèce personnelle</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1267" />
+            <location filename="../../ui/panels/plant_database_panel.py" line="1500" />
+            <location filename="../../ui/panels/plant_database_panel.py" line="842" />
+            <source>Custom field names must be non-empty and unique.</source>
+            <translation>Les noms des champs personnalisés doivent être renseignés et uniques.</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="796" />
             <source>Custom:</source>
             <translation>Personnalisé :</translation>
@@ -10163,6 +10170,11 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <location filename="../../ui/panels/plant_database_panel.py" line="1831" />
             <source>Edit exact or partial dates in Garden records.</source>
             <translation>Modifier les dates exactes ou partielles dans Données du jardin.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="75" />
+            <source>Edit plant details</source>
+            <translation>Modifier les détails de la plante</translation>
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="473" />
@@ -10260,6 +10272,11 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <location filename="../../ui/panels/plant_database_panel.py" line="371" />
             <source>Import personal PNG…</source>
             <translation>Importer un PNG personnel…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1280" />
+            <source>Invalid custom field changes were discarded; the last valid names were restored.</source>
+            <translation>Les modifications invalides des champs personnalisés ont été abandonnées ; les derniers noms valides ont été rétablis.</translation>
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="1410" />
@@ -13226,6 +13243,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
     <context>
         <name>ShoppingListDialog</name>
         <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="222" />
+            <source>An unidentified plant was previously marked as owned. Check the intended row; this old status is not assigned automatically.</source>
+            <translation>Une plante non identifiée était indiquée comme déjà possédée. Cochez la ligne voulue : cet ancien état n’est pas attribué automatiquement.</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="453" />
             <source>CSV files (*.csv)</source>
             <translation>Fichiers CSV (*.csv)</translation>
@@ -13234,6 +13256,21 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="425" />
             <source>Category</source>
             <translation>Catégorie</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="229" />
+            <source>Clear former owned status</source>
+            <translation>Effacer l’ancien état « déjà possédé »</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="104" />
+            <source>Clear former owned status…</source>
+            <translation>Effacer l’ancien état « déjà possédé »…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="230" />
+            <source>Clear the old unidentified-plant owned status? Current rows will not change. This can be undone.</source>
+            <translation>Effacer l’ancien état « déjà possédé » de la plante non identifiée ? Les lignes actuelles ne changeront pas. Cette action peut être annulée.</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="135" />
@@ -13265,6 +13302,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="482" />
             <source>Export failed</source>
             <translation>Échec de l’export</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="220" />
+            <source>Former unidentified-plant price: {price}. It is not assigned to a plant; enter it on the intended row if needed.</source>
+            <translation>Ancien prix de plante non identifiée : {price}. Il n’est attribué à aucune plante ; reportez-le sur la ligne voulue si nécessaire.</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="406" />
@@ -13325,6 +13367,29 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="427" />
             <source>Quantity</source>
             <translation>Quantité</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="243" />
+            <source>Remove these prices not used by the current plan? This can be undone.
+
+{prices}</source>
+            <translation>Supprimer ces prix absents du plan actuel ? Cette action peut être annulée.
+
+{prices}</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="242" />
+            <source>Remove unused prices</source>
+            <translation>Supprimer les prix inutilisés</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="142" />
+            <source>Remove unused prices…</source>
+            <translation>Supprimer les prix inutilisés…</translation>
+        </message>
+        <message>
+            <source>Remove {count} prices not used by the current plan? This can be undone.</source>
+            <translation type="vanished" />
         </message>
         <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="174" />
@@ -13388,6 +13453,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <translation>Planche de culture</translation>
         </message>
         <message>
+            <location filename="../../services/shopping_list_service.py" line="54" />
+            <source>Clear former owned status</source>
+            <translation>Effacer l’ancien état « déjà possédé »</translation>
+        </message>
+        <message>
             <location filename="../../services/shopping_list_service.py" line="340" />
             <source>Mulch</source>
             <translation>Paillis</translation>
@@ -13396,6 +13466,11 @@ Symbole : {size} {unit} ; trait : {width} px</translation>
             <location filename="../../services/shopping_list_service.py" line="256" />
             <source>Not in project seed inventory</source>
             <translation>Absent du stock de semences du projet</translation>
+        </message>
+        <message>
+            <location filename="../../services/shopping_list_service.py" line="48" />
+            <source>Remove unused prices</source>
+            <translation>Supprimer les prix inutilisés</translation>
         </message>
         <message>
             <location filename="../../services/shopping_list_service.py" line="330" />

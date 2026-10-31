@@ -91,3 +91,48 @@ def test_failed_save_cancels_close_and_preserves_prices(garden, monkeypatch, tmp
     assert manager.is_dirty
     assert manager.shopping_list_prices[item_id] == 12.5
     monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+
+
+def test_unknown_plants_have_distinct_prices_and_explicit_cleanup_is_undoable(garden, qtbot, monkeypatch, tmp_path):
+    from open_garden_planner.ui.dialogs.shopping_list_dialog import ShoppingListDialog
+
+    window, _plant, _item_id, shopping = garden
+    manager = window._project_manager
+    first = CircleItem(100, 100, 20, object_type=ObjectType.TREE, name="Arbre inconnu")
+    window.canvas_scene.addItem(first)
+    first_row = next(item for item in shopping.build() if item.id == f"plant:_unknown:{first.item_id}")
+    shopping.update_price(first_row, 200)
+    window.canvas_view.command_manager.execute(DeleteItemsCommand(window.canvas_scene, [first]))
+    second = CircleItem(200, 100, 20, object_type=ObjectType.SHRUB, name="Arbuste inconnu")
+    window.canvas_scene.addItem(second)
+    second_row = next(item for item in shopping.build() if item.id == f"plant:_unknown:{second.item_id}")
+    assert second_row.price_each is None
+    manager.set_shopping_list_prices({**manager.shopping_list_prices, "plant:_unknown": 33})
+    manager.set_excluded_shopping_items({"plant:_unknown"})
+    path = tmp_path / "prices.ogp"
+    manager.save(window.canvas_scene, path)
+    assert manager.shopping_list_prices[first_row.id] == 200
+    assert manager.shopping_list_prices["plant:_unknown"] == 33
+    dialog = ShoppingListDialog(shopping)
+    qtbot.addWidget(dialog)
+    assert "33.00" in dialog._legacy_unknown_label.text()
+    assert "previously marked as owned" in dialog._legacy_unknown_label.text()
+    assert not manager.is_shopping_item_excluded(second_row.id)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.No)
+    dialog._remove_unused_button.click()
+    assert manager.shopping_list_prices[first_row.id] == 200
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Yes)
+    dialog._remove_unused_button.click()
+    assert first_row.id not in manager.shopping_list_prices
+    assert "plant:_unknown" not in manager.shopping_list_prices
+    window.canvas_view.command_manager.undo()
+    assert manager.shopping_list_prices[first_row.id] == 200
+    assert manager.shopping_list_prices["plant:_unknown"] == 33
+    assert "33.00" in dialog._legacy_unknown_label.text()
+    assert dialog._remove_unused_button.isEnabled()
+    dialog._clear_legacy_owned_button.click()
+    assert not manager.is_shopping_item_excluded("plant:_unknown")
+    assert not manager.is_shopping_item_excluded(second_row.id)
+    window.canvas_view.command_manager.undo()
+    assert manager.is_shopping_item_excluded("plant:_unknown")
+    assert "previously marked as owned" in dialog._legacy_unknown_label.text()

@@ -779,9 +779,8 @@ def build_server(
             "retry_policy": details["retry_policy"],
             "limitations": [
                 "Write workflows require writes_enabled and the write token.",
-                "Garden edits are in memory until save_plan. Dedicated tracking tools never infer dates; "
-                "create_object leaves planting dates unknown. GUI catalogue/drop/guild creation can default "
-                "to today: inspect and clear with set_planting_date(null) if unknown.",
+                "Garden edits are in memory until save_plan. Plant creation through the GUI or "
+                "create_object leaves planting dates unknown until explicitly entered.",
                 "For desktop features without a dedicated domain tool, use desktop_features: "
                 "discover the actual actions/controls, invoke/fill them, finish dialogs and read back results.",
                 "UI operation receipts and handles last for the running session only. Queued/running "

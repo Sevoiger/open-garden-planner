@@ -10309,6 +10309,13 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Custom Species</translation>
         </message>
         <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1267" />
+            <location filename="../../ui/panels/plant_database_panel.py" line="1500" />
+            <location filename="../../ui/panels/plant_database_panel.py" line="842" />
+            <source>Custom field names must be non-empty and unique.</source>
+            <translation>Custom field names must be non-empty and unique.</translation>
+        </message>
+        <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="796" />
             <source>Custom:</source>
             <translation>Custom:</translation>
@@ -10362,6 +10369,11 @@ You can capture the satellite view directly from the map below instead.</transla
             <location filename="../../ui/panels/plant_database_panel.py" line="1831" />
             <source>Edit exact or partial dates in Garden records.</source>
             <translation>Edit exact or partial dates in Garden records.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="75" />
+            <source>Edit plant details</source>
+            <translation>Edit plant details</translation>
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="473" />
@@ -10459,6 +10471,11 @@ You can capture the satellite view directly from the map below instead.</transla
             <location filename="../../ui/panels/plant_database_panel.py" line="371" />
             <source>Import personal PNG…</source>
             <translation>Import personal PNG…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/panels/plant_database_panel.py" line="1280" />
+            <source>Invalid custom field changes were discarded; the last valid names were restored.</source>
+            <translation>Invalid custom field changes were discarded; the last valid names were restored.</translation>
         </message>
         <message>
             <location filename="../../ui/panels/plant_database_panel.py" line="1410" />
@@ -13455,6 +13472,11 @@ Symbol: {size} {unit}; stroke: {width} px</translation>
     <context>
         <name>ShoppingListDialog</name>
         <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="222" />
+            <source>An unidentified plant was previously marked as owned. Check the intended row; this old status is not assigned automatically.</source>
+            <translation>An unidentified plant was previously marked as owned. Check the intended row; this old status is not assigned automatically.</translation>
+        </message>
+        <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="453" />
             <source>CSV files (*.csv)</source>
             <translation>CSV files (*.csv)</translation>
@@ -13463,6 +13485,21 @@ Symbol: {size} {unit}; stroke: {width} px</translation>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="425" />
             <source>Category</source>
             <translation>Category</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="229" />
+            <source>Clear former owned status</source>
+            <translation>Clear former owned status</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="104" />
+            <source>Clear former owned status…</source>
+            <translation>Clear former owned status…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="230" />
+            <source>Clear the old unidentified-plant owned status? Current rows will not change. This can be undone.</source>
+            <translation>Clear the old unidentified-plant owned status? Current rows will not change. This can be undone.</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="135" />
@@ -13494,6 +13531,11 @@ Symbol: {size} {unit}; stroke: {width} px</translation>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="482" />
             <source>Export failed</source>
             <translation>Export failed</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="220" />
+            <source>Former unidentified-plant price: {price}. It is not assigned to a plant; enter it on the intended row if needed.</source>
+            <translation>Former unidentified-plant price: {price}. It is not assigned to a plant; enter it on the intended row if needed.</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="406" />
@@ -13554,6 +13596,29 @@ Symbol: {size} {unit}; stroke: {width} px</translation>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="427" />
             <source>Quantity</source>
             <translation>Quantity</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="243" />
+            <source>Remove these prices not used by the current plan? This can be undone.
+
+{prices}</source>
+            <translation>Remove these prices not used by the current plan? This can be undone.
+
+{prices}</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="242" />
+            <source>Remove unused prices</source>
+            <translation>Remove unused prices</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/shopping_list_dialog.py" line="142" />
+            <source>Remove unused prices…</source>
+            <translation>Remove unused prices…</translation>
+        </message>
+        <message>
+            <source>Remove {count} prices not used by the current plan? This can be undone.</source>
+            <translation type="vanished">Remove {count} prices not used by the current plan? This can be undone.</translation>
         </message>
         <message>
             <location filename="../../ui/dialogs/shopping_list_dialog.py" line="174" />
@@ -13617,6 +13682,11 @@ Symbol: {size} {unit}; stroke: {width} px</translation>
             <translation>Bed</translation>
         </message>
         <message>
+            <location filename="../../services/shopping_list_service.py" line="54" />
+            <source>Clear former owned status</source>
+            <translation>Clear former owned status</translation>
+        </message>
+        <message>
             <location filename="../../services/shopping_list_service.py" line="340" />
             <source>Mulch</source>
             <translation>Mulch</translation>
@@ -13625,6 +13695,11 @@ Symbol: {size} {unit}; stroke: {width} px</translation>
             <location filename="../../services/shopping_list_service.py" line="256" />
             <source>Not in project seed inventory</source>
             <translation>Not in project seed inventory</translation>
+        </message>
+        <message>
+            <location filename="../../services/shopping_list_service.py" line="48" />
+            <source>Remove unused prices</source>
+            <translation>Remove unused prices</translation>
         </message>
         <message>
             <location filename="../../services/shopping_list_service.py" line="330" />
