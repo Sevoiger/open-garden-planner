@@ -187,7 +187,10 @@ def _canonical_hash(value: Any) -> str:
 
 
 def _read_path_bytes(path: Path) -> bytes | None:
+    from open_garden_planner.core.workspace_guard import check_workspace_path
+
     try:
+        check_workspace_path(path)
         return path.read_bytes()
     except FileNotFoundError:
         return None

@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from types import TracebackType
 
+from open_garden_planner.core.workspace_guard import check_workspace_path
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - exercised on unsupported platforms
@@ -49,6 +51,7 @@ class FileLock:
                 "This platform does not provide flock; refusing an unlocked write"
             )
 
+        check_workspace_path(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
         try:

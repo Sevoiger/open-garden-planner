@@ -233,8 +233,14 @@ def portable_backup(snapshot: dict[str, Any], project: Path, destination: Path, 
             if (hashlib.sha256(seed_bytes).hexdigest(), len(seed_bytes)) != fingerprints["app-data/seed_inventory.json"]:
                 raise ValueError("Seed inventory changed during backup; retry")
             seeds = loads_json(seed_bytes.decode("utf-8"))
+            from open_garden_planner.services.workspace_media import (
+                relocated_seed_photo,
+                seed_photo_relocation,
+            )
+
+            relocation = seed_photo_relocation(root)
             for _, reference in _seed_photo_references(seeds):
-                path = Path(reference).expanduser()
+                path = Path(relocated_seed_photo(reference, relocation)).expanduser()
                 if not path.is_absolute():
                     path = project.parent / path
                 if not path.is_file():
@@ -294,7 +300,7 @@ def restore_backup(archive_path: Path, destination: Path) -> Path:
         raise FileExistsError("Restore requires a new destination directory")
     with tempfile.TemporaryDirectory(prefix=".garden-restore-", dir=destination.parent) as temporary:
         staging = Path(temporary) / "restored"
-        staging.mkdir()
+        staging.mkdir(mode=0o700)
         with zipfile.ZipFile(archive_path) as archive:
             infos = archive.infolist()
             if len(infos) > MAX_ARCHIVE_FILES or sum(info.file_size for info in infos) > MAX_ARCHIVE_BYTES:

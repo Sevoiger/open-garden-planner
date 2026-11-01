@@ -357,7 +357,7 @@ class GardenPlannerApp(QMainWindow):
             from open_garden_planner.services.library_port import LibraryPort
 
             if getattr(self, "_library_operations", None) is None:
-                path = plant_library._default_app_data_dir() / plant_library.PlantLibrary.LIBRARY_FILENAME
+                path = plant_library.get_app_data_dir() / plant_library.PlantLibrary.LIBRARY_FILENAME
                 self._library_operations = LibraryPort(path)
             return self._library_operations
 
@@ -3987,12 +3987,18 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(save_as_action, "file_save_as")
         menu.addAction(save_as_action)
 
-        full_backup = QAction(self.tr("Global backup…"), self)
+        full_backup = QAction(self.tr("Export garden and personal data…"), self)
         full_backup.triggered.connect(self._on_global_backup)
         menu.addAction(full_backup)
-        restore_backup = QAction(self.tr("Extract global backup…"), self)
+        restore_backup = QAction(self.tr("Import garden and personal data…"), self)
         restore_backup.triggered.connect(self._on_extract_global_backup)
         menu.addAction(restore_backup)
+        existing_data = QAction(self.tr("Use an imported data folder…"), self)
+        existing_data.triggered.connect(self._on_use_imported_folder)
+        menu.addAction(existing_data)
+        default_data = QAction(self.tr("Use local personal data…"), self)
+        default_data.triggered.connect(self._on_use_local_data)
+        menu.addAction(default_data)
 
         menu.addSeparator()
 
@@ -4103,50 +4109,121 @@ class GardenPlannerApp(QMainWindow):
         from open_garden_planner.models.seed_inventory import get_seed_inventory
         from open_garden_planner.services.garden_archive import portable_backup
         from open_garden_planner.services.plant_library import get_app_data_dir
+        from open_garden_planner.services.weather_workspace import weather_config_path
 
         project = self._project_manager.current_file
         if project is None:
-            QMessageBox.information(self, self.tr("Global backup"), self.tr("Save the garden plan before creating a global backup."))
+            QMessageBox.information(self, self.tr("Export garden and data"), self.tr("Save the garden plan before exporting."))
             return
         if get_plant_list_store().is_dirty or get_seed_inventory().is_dirty:
-            QMessageBox.warning(self, self.tr("Global backup"),
-                self.tr("Personal lists or seed stock contain unsaved changes. Save or resolve them before backing up."))
+            QMessageBox.warning(self, self.tr("Export garden and data"),
+                self.tr("Personal lists or seed stock contain unsaved changes. Save or resolve them before exporting."))
             return
-        target, _ = QFileDialog.getSaveFileName(self, self.tr("Global backup"),
-            self._default_save_path("garden-global-backup.zip"), self.tr("ZIP archives (*.zip)"))
+        target, _ = QFileDialog.getSaveFileName(self, self.tr("Export garden and data"),
+            self._default_save_path("garden-export.zip"), self.tr("ZIP archives (*.zip)"))
         if not target:
             return
         try:
             portable_backup(self._project_manager.snapshot_dict(self.canvas_scene), project, Path(target),
-                            app_data=get_app_data_dir(),
-                            weather_config=Path(__file__).resolve().parents[3] / "weather" / "config.json")
+                            app_data=get_app_data_dir(), weather_config=weather_config_path())
         except (ValueError, OSError) as exc:
-            QMessageBox.warning(self, self.tr("Global backup"), str(exc))
+            QMessageBox.warning(self, self.tr("Export garden and data"), str(exc))
             return
-        QMessageBox.information(self, self.tr("Global backup"),
-            self.tr("Backup created. It contains the current plan, its media and the saved personal data."))
+        QMessageBox.information(self, self.tr("Export garden and data"),
+            self.tr("Export created. It contains the current plan, its media and the saved personal data."))
 
     def _on_extract_global_backup(self) -> None:
         import zipfile
-        from uuid import uuid4
 
-        from open_garden_planner.services.garden_archive import restore_backup
+        from open_garden_planner.core.personal_store import PersonalStoreError
+        from open_garden_planner.services.library_operations import LibraryOperationError
+        from open_garden_planner.services.workspace_transfer import prepare_workspace_import
 
-        source, _ = QFileDialog.getOpenFileName(self, self.tr("Extract global backup"),
+        source, _ = QFileDialog.getOpenFileName(self, self.tr("Import garden and data"),
             str(self._default_dialog_dir()), self.tr("ZIP archives (*.zip)"))
         if not source:
             return
-        parent = QFileDialog.getExistingDirectory(self, self.tr("Choose restoration parent folder"),
+        parent = QFileDialog.getExistingDirectory(self, self.tr("Choose a folder for imported data"),
                                                   str(self._default_dialog_dir()))
         if not parent:
             return
         try:
-            restored = restore_backup(Path(source), Path(parent) / ("garden-restored-" + uuid4().hex[:10]))
-        except (ValueError, OSError, zipfile.BadZipFile, RuntimeError) as exc:
-            QMessageBox.warning(self, self.tr("Extract global backup"), str(exc))
+            plan, data = prepare_workspace_import(Path(source), Path(parent))
+            if not self._schedule_imported_workspace(plan, data):
+                return
+        except (ValueError, OSError, RuntimeError, zipfile.BadZipFile, PersonalStoreError, LibraryOperationError) as exc:
+            QMessageBox.warning(self, self.tr("Import garden and data"), str(exc))
             return
-        QMessageBox.information(self, self.tr("Extract global backup"),
-            self.tr("Restored plan: {path}\nPersonal data are in the app-data folder beside it. Close OGP before restoring them manually. Keep the personal-media folder in place for seed photos.").format(path=restored))
+        QMessageBox.information(self, self.tr("Import garden and data"),
+            self.tr("Import is ready. Restart OGP to open the imported plan and use its personal data. Keep the imported folder in place."))
+
+    def _schedule_imported_workspace(self, plan: Path, data: Path) -> bool:
+        from open_garden_planner.app.settings import get_settings
+        from open_garden_planner.services.plant_library import workspace_data_dir
+
+        settings = get_settings()
+        previous = settings.workspace_selection
+        default_plan = (previous["default_plan"] if previous and workspace_data_dir() is not None else
+                        str(self._project_manager.current_file or settings.last_saved_project or ""))
+        question = self.tr("Import is ready in {path}. On the next restart, OGP will use this plan and its personal data. Existing local data will be kept. Continue?").format(path=data.parent)
+        if QMessageBox.question(self, self.tr("Import garden and data"), question) != QMessageBox.StandardButton.Yes:
+            return False
+        settings.compare_and_set_workspace_selection(previous, {
+            "data_dir": str(data), "plan_path": str(plan), "default_plan": default_plan, "pending": True})
+        return True
+
+    def _on_use_imported_folder(self) -> None:
+        from open_garden_planner.app.settings import get_settings
+        from open_garden_planner.core.personal_store import PersonalStoreError
+        from open_garden_planner.services.library_operations import LibraryOperationError
+        from open_garden_planner.services.workspace_transfer import validate_workspace
+
+        folder = QFileDialog.getExistingDirectory(self, self.tr("Choose an imported data folder"),
+                                                 str(self._default_dialog_dir()))
+        if not folder:
+            return
+        try:
+            remembered = get_settings().last_saved_project_for(Path(folder) / "app-data")
+        except OSError as exc:
+            QMessageBox.warning(self, self.tr("Import garden and data"), str(exc))
+            return
+        if remembered and Path(remembered).is_file():
+            plan = Path(remembered)
+        else:
+            selected, _ = QFileDialog.getOpenFileName(self, self.tr("Choose the garden plan for this data"),
+                str(Path(folder) / "garden.ogp"), self.tr("Garden Projects (*.ogp)"))
+            if not selected:
+                return
+            plan = Path(selected)
+        try:
+            plan, data = validate_workspace(Path(folder), plan)
+            if not self._schedule_imported_workspace(plan, data):
+                return
+        except (ValueError, OSError, PersonalStoreError, LibraryOperationError) as exc:
+            QMessageBox.warning(self, self.tr("Import garden and data"), str(exc))
+            return
+        QMessageBox.information(self, self.tr("Import garden and data"),
+            self.tr("Import is ready. Restart OGP to open the imported plan and use its personal data. Keep the imported folder in place."))
+
+    def _on_use_local_data(self) -> None:
+        from open_garden_planner.app.settings import get_settings
+
+        settings = get_settings()
+        try:
+            previous = settings.workspace_selection
+            if not previous or not previous["data_dir"]:
+                QMessageBox.information(self, self.tr("Personal data"), self.tr("Local personal data are already selected."))
+                return
+            if QMessageBox.question(self, self.tr("Personal data"),
+                    self.tr("Use the previous local personal data after restarting? Imported data will be kept in their folder.")) != QMessageBox.StandardButton.Yes:
+                return
+            settings.compare_and_set_workspace_selection(previous, {
+                "data_dir": "", "plan_path": previous["default_plan"],
+                "default_plan": previous["default_plan"], "pending": True})
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, self.tr("Personal data"), str(exc))
+            return
+        QMessageBox.information(self, self.tr("Personal data"), self.tr("Restart OGP to use the local personal data."))
 
     def _setup_edit_menu(self, menu: QMenu) -> None:
         """Set up the Edit menu actions."""
@@ -4822,19 +4899,7 @@ class GardenPlannerApp(QMainWindow):
         menu.addAction(shopping_list_action)
 
     def _on_acquisitions(self) -> None:
-        from open_garden_planner.core.personal_store import PersonalStoreError
-        from open_garden_planner.services.acquisition_inventory import AcquisitionInventory
-        from open_garden_planner.services.plant_library import get_app_data_dir
-        from open_garden_planner.ui.dialogs.acquisition_inventory_dialog import (
-            AcquisitionInventoryDialog,
-        )
-
-        try:
-            store = AcquisitionInventory(get_app_data_dir() / AcquisitionInventory.FILENAME)
-        except (OSError, PersonalStoreError) as exc:
-            QMessageBox.warning(self, self.tr("Could not load acquisitions"), str(exc))
-            return
-        AcquisitionInventoryDialog(store, self).exec()
+        self._tab_widget.setCurrentWidget(self.acquisition_inventory_view)
 
     def _setup_help_menu(self, menu: QMenu) -> None:
         """Set up the Help menu actions."""
@@ -5265,6 +5330,11 @@ class GardenPlannerApp(QMainWindow):
         self.seed_inventory_view.set_canvas_scene(self.canvas_scene)  # US-9.6: bidirectional links
         self._tab_widget.addTab(self.seed_inventory_view, self.tr("Seed Inventory"))
         self._set_tab_icon(self.seed_inventory_view, "seedling")
+
+        from open_garden_planner.ui.views.acquisition_inventory_view import AcquisitionInventoryView
+        self.acquisition_inventory_view = AcquisitionInventoryView()
+        self._tab_widget.addTab(self.acquisition_inventory_view, self.tr("Supplies"))
+        self._set_tab_icon(self.acquisition_inventory_view, "shopping_list")
 
         # Tab: Tasks (US-C2, #188) — appended last (keeps existing tab indices,
         # the frost-badge setCurrentIndex(1), and Ctrl+1..4 valid).
@@ -9724,6 +9794,8 @@ class GardenPlannerApp(QMainWindow):
             self.calendar_view.refresh()
         elif index == 2:
             self.seed_inventory_view.refresh()
+        elif index == self._tab_widget.indexOf(self.acquisition_inventory_view):
+            self.acquisition_inventory_view.refresh()
         elif index == self._tab_widget.indexOf(self.tasks_view):
             self.tasks_view.refresh()
         elif index == self._tab_widget.indexOf(self.harvest_view):

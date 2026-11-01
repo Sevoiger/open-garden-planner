@@ -17,6 +17,7 @@ from typing import Any
 
 from open_garden_planner.core.file_lock import ProcessFileLock
 from open_garden_planner.core.plan_io import write_bytes_atomically
+from open_garden_planner.core.workspace_guard import check_workspace_path
 
 
 class PersonalStoreLoadState(StrEnum):
@@ -61,6 +62,7 @@ def read_json(path: Path) -> LoadedJSON:
     """Read JSON bytes without treating corruption or I/O errors as emptiness."""
     path = Path(path)
     try:
+        check_workspace_path(path)
         payload = path.read_bytes()
     except FileNotFoundError:
         return LoadedJSON(PersonalStoreLoadState.ABSENT)
@@ -130,6 +132,7 @@ def write_json(path: Path, value: Any, *, expected_fingerprint: str | None) -> s
     payload = (
         json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     ).encode("utf-8")
+    check_workspace_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with ProcessFileLock(lock_path):

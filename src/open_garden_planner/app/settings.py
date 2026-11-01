@@ -5,6 +5,8 @@ Provides persistent storage for user preferences using QSettings, and owns
 is constructed (issue #285, ADR-041).
 """
 
+import hashlib
+import json
 import os
 import stat
 import sys
@@ -26,6 +28,11 @@ from open_garden_planner.ui.theme import ThemeMode
 # there before changing anything here. Decision + alternatives: ADR-041.
 ORGANIZATION_NAME = "cofade"
 APPLICATION_NAME = "Open Garden Planner"
+SETTINGS_NO_ERROR = QSettings.Status.NoError
+
+
+class WorkspaceSelectionConflictError(OSError):
+    """A different process changed the next-start workspace selection."""
 
 
 class SettingsSecurityError(OSError):
@@ -97,6 +104,7 @@ class AppSettings:
     KEY_AUTOSAVE_INTERVAL_MINUTES = "autosave/interval_minutes"
     KEY_RECENT_FILES = "recent_files"
     KEY_LAST_SAVED_PROJECT = "startup/last_saved_project"
+    KEY_WORKSPACE_SELECTION = "workspace/selection"
     KEY_SHOW_WELCOME = "startup/show_welcome"
     KEY_THEME_MODE = "appearance/theme_mode"
     KEY_SHOW_SHADOWS = "appearance/show_shadows"
@@ -250,14 +258,140 @@ class AppSettings:
         self._settings.setValue(self.KEY_RECENT_FILES, files)
 
     @property
+    def workspace_selection(self) -> dict | None:
+        """Saved next-start selection; malformed selections must never fall back silently."""
+        raw = self._settings.value(self.KEY_WORKSPACE_SELECTION, "", type=str)
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid workspace selection") from exc
+        self._validate_workspace_selection(value)
+        return value
+
+    def workspace_selection_token(self) -> str:
+        return str(self._settings.value(self.KEY_WORKSPACE_SELECTION, "", type=str))
+
+    def clear_workspace_selection_if_token(self, expected: str) -> None:
+        """Recover even malformed settings, without erasing a concurrent choice."""
+        from open_garden_planner.core.file_lock import ProcessFileLock
+        from open_garden_planner.services.plant_library import _default_app_data_dir
+
+        with ProcessFileLock(_default_app_data_dir() / ".workspace-selection.lock"):
+            self._settings.sync()
+            if self._settings.status() != SETTINGS_NO_ERROR:
+                raise OSError("Unable to read workspace selection")
+            if self.workspace_selection_token() != expected:
+                raise WorkspaceSelectionConflictError("Workspace selection changed in another instance")
+            self._settings.setValue(self.KEY_WORKSPACE_SELECTION, "")
+            self._settings.sync()
+            if self._settings.status() != SETTINGS_NO_ERROR:
+                self._settings.setValue(self.KEY_WORKSPACE_SELECTION, expected)
+                self._settings.sync()
+                raise OSError("Unable to clear workspace selection")
+
+    @staticmethod
+    def _validate_workspace_selection(value: dict) -> None:
+        if (not isinstance(value, dict) or set(value) != {"data_dir", "plan_path", "default_plan", "pending"}
+                or any(not isinstance(value[key], str) for key in ("data_dir", "plan_path", "default_plan"))
+                or not isinstance(value["pending"], bool)):
+            raise ValueError("Invalid workspace selection")
+        if value["data_dir"]:
+            root = Path(value["data_dir"])
+            plan = Path(value["plan_path"])
+            if (not root.is_absolute() or root.name != "app-data" or
+                    not plan.is_absolute() or plan.suffix.lower() != ".ogp"):
+                raise ValueError("Invalid workspace selection")
+
+    @workspace_selection.setter
+    def workspace_selection(self, value: dict | None) -> None:
+        self.compare_and_set_workspace_selection(self.workspace_selection, value)
+
+    def compare_and_set_workspace_selection(self, expected: dict | None, value: dict | None) -> None:
+        """Serialize workspace choices and refuse stale cross-process selections."""
+        from open_garden_planner.core.file_lock import ProcessFileLock
+        from open_garden_planner.services.plant_library import _default_app_data_dir
+
+        if value is not None:
+            self._validate_workspace_selection(value)
+        with ProcessFileLock(_default_app_data_dir() / ".workspace-selection.lock"):
+            self._settings.sync()
+            if self._settings.status() != SETTINGS_NO_ERROR:
+                raise OSError("Unable to read workspace selection")
+            if self.workspace_selection != expected:
+                raise WorkspaceSelectionConflictError("Workspace selection changed in another instance")
+            previous = self._settings.value(self.KEY_WORKSPACE_SELECTION, "", type=str)
+            self._settings.setValue(self.KEY_WORKSPACE_SELECTION, json.dumps(value) if value is not None else "")
+            self._settings.sync()
+            if self._settings.status() != SETTINGS_NO_ERROR:
+                self._settings.setValue(self.KEY_WORKSPACE_SELECTION, previous)
+                self._settings.sync()
+                raise OSError("Unable to save workspace selection")
+
+    def activate_scheduled_workspace(self, expected: dict) -> None:
+        """Commit a pending selection and its plan under the same process lock."""
+        from open_garden_planner.core.file_lock import ProcessFileLock
+        from open_garden_planner.services.plant_library import _default_app_data_dir
+
+        self._validate_workspace_selection(expected)
+        if not expected["pending"]:
+            raise ValueError("Workspace selection is not pending")
+        with ProcessFileLock(_default_app_data_dir() / ".workspace-selection.lock"):
+            self._settings.sync()
+            if self._settings.status() != SETTINGS_NO_ERROR:
+                raise OSError("Unable to read workspace selection")
+            if self.workspace_selection != expected:
+                raise WorkspaceSelectionConflictError("Workspace selection changed in another instance")
+            root = Path(expected["data_dir"]) if expected["data_dir"] else None
+            plan_key = self._last_saved_project_key_for(root)
+            previous_plan = self._settings.value(plan_key, "", type=str)
+            if root is not None or not previous_plan:
+                self._settings.setValue(plan_key, expected["plan_path"])
+            previous_selection = self.workspace_selection_token()
+            self._settings.setValue(self.KEY_WORKSPACE_SELECTION, json.dumps({**expected, "pending": False}))
+            self._settings.sync()
+            if self._settings.status() != SETTINGS_NO_ERROR:
+                self._settings.setValue(plan_key, previous_plan)
+                self._settings.setValue(self.KEY_WORKSPACE_SELECTION, previous_selection)
+                self._settings.sync()
+                raise OSError("Unable to activate workspace selection")
+
+    @classmethod
+    def _last_saved_project_key_for(cls, root: Path | None) -> str:
+        if root is None:
+            return cls.KEY_LAST_SAVED_PROJECT
+        identity = hashlib.sha256(str(root).encode("utf-8")).hexdigest()
+        return f"workspace/last_saved_project/{identity}"
+
+    def _last_saved_project_key(self) -> str:
+        # The default and every imported workspace remember their plans separately.
+        from open_garden_planner.services.plant_library import workspace_data_dir
+
+        return self._last_saved_project_key_for(workspace_data_dir())
+
+    def last_saved_project_for(self, root: Path) -> str | None:
+        self._settings.sync()
+        if self._settings.status() != SETTINGS_NO_ERROR:
+            raise OSError("Unable to read the workspace's last plan")
+        value = self._settings.value(self._last_saved_project_key_for(root.resolve()), "", type=str)
+        return str(value) if value else None
+
+    @property
     def last_saved_project(self) -> str | None:
         """Last successful explicit save, independent of later file opens."""
-        value = self._settings.value(self.KEY_LAST_SAVED_PROJECT, "", type=str)
+        value = self._settings.value(self._last_saved_project_key(), "", type=str)
         return str(value) if value else None
 
     @last_saved_project.setter
     def last_saved_project(self, path: str | None) -> None:
-        self._settings.setValue(self.KEY_LAST_SAVED_PROJECT, path or "")
+        from open_garden_planner.core.file_lock import ProcessFileLock
+        from open_garden_planner.services.plant_library import _default_app_data_dir
+
+        with ProcessFileLock(_default_app_data_dir() / ".workspace-selection.lock"):
+            self._settings.sync()
+            self._settings.setValue(self._last_saved_project_key(), path or "")
+            self._settings.sync()
 
     def add_recent_file(self, file_path: str, max_files: int = 10) -> None:
         """Add a file to the recent files list.

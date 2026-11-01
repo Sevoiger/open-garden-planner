@@ -68,8 +68,9 @@ class AcquisitionEditor(QDialog):
 
 
 class AcquisitionInventoryDialog(QDialog):
-    def __init__(self, store: AcquisitionInventory, parent=None):
+    def __init__(self, store: AcquisitionInventory, parent=None, *, embedded=False):
         super().__init__(parent)
+        self._embedded = embedded
         self.store = store
         self.setWindowTitle(self.tr("Acquisitions and supplies"))
         self.resize(900, 520)
@@ -92,6 +93,11 @@ class AcquisitionInventoryDialog(QDialog):
         buttons.addStretch()
         layout.addLayout(buttons)
         self._populate()
+
+    def reject(self):
+        # A QDialog embedded in a tab must not disappear when Escape is pressed.
+        if not self._embedded:
+            super().reject()
 
     def _populate(self):
         self._records = self.store.all()

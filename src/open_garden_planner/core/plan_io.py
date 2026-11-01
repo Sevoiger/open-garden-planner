@@ -233,6 +233,9 @@ def write_bytes_atomically(path: Path, encoded: bytes) -> None:
     The caller owns schema validation, locking and any compare-and-swap check.
     This small seam is shared by plan and personal-store persistence.
     """
+    from open_garden_planner.core.workspace_guard import check_workspace_path
+
+    check_workspace_path(path)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as stream:

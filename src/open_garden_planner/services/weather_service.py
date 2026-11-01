@@ -255,7 +255,10 @@ class WeatherService:
     def _save_cache(self, lat: float, lon: float, forecast: WeatherForecast) -> None:
         path = self._cache_path(lat, lon)
         try:
-            path.write_text(json.dumps(forecast.to_dict(), indent=2), encoding="utf-8")
+            from open_garden_planner.core.plan_io import write_bytes_atomically
+
+            payload = json.dumps(forecast.to_dict(), indent=2).encode("utf-8")
+            write_bytes_atomically(path, payload)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to save weather cache: %s", exc)
 

@@ -327,6 +327,7 @@ class SeedInventoryStore:
         self._path = storage_path
         self._packets: dict[str, SeedPacket] = {}
         self._extra_fields: dict[str, dict[str, Any]] = {}
+        self._relocated_photos: dict[str, tuple[str, str]] = {}
         self._disk_fingerprint: str | None = None
         self._load_state = PersonalStoreLoadState.ABSENT
         self._load_error: PersonalStoreLoadError | None = None
@@ -456,6 +457,7 @@ class SeedInventoryStore:
     def _load(self) -> None:
         self._packets = {}
         self._extra_fields = {}
+        self._relocated_photos = {}
         self._disk_fingerprint = None
         self._load_error = None
         self._dirty = False
@@ -465,8 +467,19 @@ class SeedInventoryStore:
                 self._load_state = PersonalStoreLoadState.ABSENT
                 return
             records = self._validate_records(loaded.value)
+            from open_garden_planner.services.workspace_media import (
+                relocated_seed_photo,
+                seed_photo_relocation,
+            )
+
+            relocation = seed_photo_relocation(self._path.parent)
             for item in records:
                 packet = SeedPacket.from_dict(item)
+                if packet.photo_path:
+                    original_photo = packet.photo_path
+                    packet.photo_path = relocated_seed_photo(original_photo, relocation)
+                    if packet.photo_path != original_photo:
+                        self._relocated_photos[packet.id] = (original_photo, packet.photo_path)
                 self._packets[packet.id] = packet
                 known_fields = SeedPacket.__dataclass_fields__
                 self._extra_fields[packet.id] = {
@@ -512,6 +525,11 @@ class SeedInventoryStore:
         for packet in packets_list:
             record = dict(self._extra_fields.get(packet.id, {}))
             record.update(packet.to_dict())
+            relocated = self._relocated_photos.get(packet.id)
+            if relocated and packet.photo_path == relocated[1]:
+                # Keep the original reference anchored to the manifest, so a
+                # second move remains resolvable after unrelated packet edits.
+                record["photo_path"] = relocated[0]
             records.append(record)
 
         try:
@@ -551,6 +569,7 @@ class SeedInventoryStore:
         removed = self._packets.pop(packet_id, None) is not None
         if removed:
             self._extra_fields.pop(packet_id, None)
+            self._relocated_photos.pop(packet_id, None)
             self._dirty = True
         return removed
 

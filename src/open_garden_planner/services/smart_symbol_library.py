@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from open_garden_planner.models.smart_symbol import SmartSymbolDefinition
@@ -91,14 +94,28 @@ class SmartSymbolLibrary:
 
 
 _default_library: SmartSymbolLibrary | None = None
+_context_library: ContextVar[SmartSymbolLibrary | None] = ContextVar("smart_symbol_library", default=None)
+
+
+@contextmanager
+def use_smart_symbol_library(library: SmartSymbolLibrary) -> Iterator[None]:
+    """Temporarily use an explicitly supplied library in this execution context."""
+    token = _context_library.set(library)
+    try:
+        yield
+    finally:
+        _context_library.reset(token)
 
 
 def get_smart_symbol_library() -> SmartSymbolLibrary:
     """Return the process-wide singleton library (created on first access)."""
     global _default_library
+    selected = _context_library.get()
+    if selected is not None:
+        return selected
     if _default_library is None:
         _default_library = SmartSymbolLibrary()
     return _default_library
 
 
-__all__ = ["SmartSymbolLibrary", "get_smart_symbol_library"]
+__all__ = ["SmartSymbolLibrary", "get_smart_symbol_library", "use_smart_symbol_library"]

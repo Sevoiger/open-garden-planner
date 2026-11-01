@@ -77,3 +77,33 @@ def test_acquisitions_are_readable_from_live_authenticated_mcp(qtbot, monkeypatc
 
     run_cycle(window, qtbot, body)
     window.close()
+
+
+def test_acquisitions_available_in_tab_and_refreshes_external_changes(qtbot, monkeypatch, tmp_path):
+    from PyQt6.QtWidgets import QMessageBox
+
+    import open_garden_planner.services.plant_library as plant_library
+    from open_garden_planner.app.application import GardenPlannerApp
+
+    monkeypatch.setattr(GardenPlannerApp, "_startup_sequence", lambda _self: None)
+    monkeypatch.setattr(GardenPlannerApp, "_start_update_check", lambda _self: None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Discard)
+    data_dir = tmp_path / "isolated-data"
+    monkeypatch.setattr(plant_library, "_default_app_data_dir", lambda: data_dir)
+    window = GardenPlannerApp()
+    qtbot.addWidget(window)
+    tab = window.acquisition_inventory_view
+    assert window._tab_widget.indexOf(tab) == window._tab_widget.indexOf(window.seed_inventory_view) + 1
+    assert tab._view.table.rowCount() == 0
+    AcquisitionInventory(data_dir / "acquisitions.json").put({"name": "Synthetic", "kind": "Tool"})
+    window._on_acquisitions()
+    assert window._tab_widget.currentWidget() is tab
+    assert tab._view.table.item(0, 0).text() == "Synthetic"
+    from PyQt6.QtCore import Qt
+    tab._view.table.setFocus()
+    qtbot.keyClick(tab._view.table, Qt.Key.Key_Escape)
+    assert tab._view.isVisible()
+    window._tab_widget.setCurrentWidget(window.seed_inventory_view)
+    window._on_acquisitions()
+    assert tab._view.isVisible() and tab._view.table.item(0, 0).text() == "Synthetic"
+    window.close()

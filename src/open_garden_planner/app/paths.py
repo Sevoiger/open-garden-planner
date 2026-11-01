@@ -24,7 +24,9 @@ def _remembered_projects() -> list[Path]:
     saved = settings.last_saved_project
     # Migrate older sessions using their existing recent list. Once an explicit
     # save is known, a later Open must not replace it as the startup choice.
-    names = [saved] if saved else settings.recent_files
+    # A completed or pending workspace selection must not resume a recent plan
+    # from a different personal-data root when this root has no saved plan.
+    names = [saved] if saved else ([] if settings.workspace_selection is not None else settings.recent_files)
     return [Path(name) for name in names
             if Path(name).suffix.lower() == ".ogp" and not Path(name).name.startswith("~autosave_")]
 

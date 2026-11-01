@@ -906,7 +906,7 @@ indépendants de ces points.
 
 ## Acquisitions et consommables
 
-**Jardin > Acquisitions et consommables…** tient un historique global des lots
+L’onglet **Consommables**, à côté du stock de semences, tient un historique des lots
 achetés, séparé de la liste de courses et des semences. Un lot peut indiquer
 type libre, fournisseur, date, prix unitaire et devise, quantités achetée et
 restante, unité, état initial et notes. Une valeur non renseignée reste inconnue.
@@ -915,26 +915,40 @@ données précédentes intactes. Après une modification extérieure, fermer la
 fiche puis utiliser **Recharger** avant de recommencer. Les lectures MCP
 authentifiées de `get_acquisitions` sont en lecture seule.
 
-## Sauvegarde globale
+## Exporter et importer un jardin
 
-**Fichier > Sauvegarde globale…** crée une archive ZIP contenant le plan courant
-et ses pièces jointes, les bibliothèques et listes personnelles enregistrées,
-les stocks globaux de semences et d’acquisitions, les règles et symboles
-personnels, les fichiers météo et leur configuration. Les photos externes
-référencées par les semences sont copiées dans l’archive. Les autres plans `.ogp`
-ne sont pas recherchés automatiquement : créer une archive pour chacun. Les
-clés et secrets ainsi que les préférences Qt ne sont pas inclus. La création
-refuse un stock global avec des modifications non enregistrées, un média
+Pendant le travail normal, **Enregistrer** et **Enregistrer sous** continuent
+à écrire le plan `.ogp`. Pour transférer le jardin sur un autre ordinateur,
+**Fichier > Exporter le jardin et les données personnelles…** crée une archive
+ZIP contenant le plan courant, ses pièces jointes, la bibliothèque et les listes
+personnelles enregistrées, les stocks de semences et de consommables, les règles
+et symboles personnels, les archives météo et leur configuration. Les photos
+externes référencées par les semences sont incluses. Les autres plans `.ogp` ne
+sont pas recherchés automatiquement : exporter chacun si nécessaire. Les clés,
+secrets et préférences Qt restent propres à l’ordinateur et ne sont pas exportés.
+
+Sur l’autre ordinateur, choisir **Fichier > Importer le jardin et les données
+personnelles…**, sélectionner l’archive et un dossier de destination, puis
+confirmer. OGP vérifie l’archive et prépare un nouveau dossier privé ; au prochain
+redémarrage, il ouvre le plan importé et utilise les données personnelles qui
+l’accompagnent. Le dossier d’origine reste intact : l’import ne fusionne ni
+n’écrase les bibliothèques ou stocks déjà présents. Conserver ensemble les
+éléments du dossier importé, notamment `app-data`, `configuration`,
+`personal-media` et le manifeste. Si le dossier est déplacé, le sélectionner à
+nouveau : les photos de semences sont retrouvées dans sa nouvelle copie.
+
+Pour revenir à un autre import déjà installé, utiliser **Fichier > Utiliser un
+dossier de données importées…** et sélectionner son dossier ; OGP reprend son
+dernier plan enregistré après redémarrage. **Utiliser les données personnelles
+locales…** revient aux données de l’installation, également après redémarrage.
+Les derniers plans sont mémorisés séparément par dossier de données. Si un dossier
+importé n’est plus accessible au démarrage, OGP le signale et propose explicitement
+de revenir aux données locales ; il ne crée pas silencieusement une bibliothèque
+vide à sa place.
+
+L’export refuse un stock global avec des modifications non enregistrées, un média
 manquant ou des fichiers qui changent pendant la copie. La limite est de 1 Go
-non compressé et 20 000 fichiers.
-
-**Fichier > Extraire une sauvegarde globale…** vérifie les empreintes et extrait
-dans un nouveau dossier, sans toucher aux données actives. Le plan extrait
-s’ouvre normalement. Les fichiers globaux sont dans `app-data` ; pour les
-réinstaller, fermer OGP, sauvegarder le dossier personnel existant, puis copier
-le contenu de `app-data` dans le dossier de données de l’application
-(`~/Library/Application Support/OpenGardenPlanner` sur macOS). La configuration
-météo est dans `configuration/weather-config.json` ; la replacer dans
-`weather/config.json` si nécessaire. Les photos des semences sont réassociées
-aux copies dans `personal-media` : conserver le dossier extrait à cet emplacement.
-La restauration n’écrase jamais automatiquement les données personnelles.
+non compressé et 20 000 fichiers. L’application utilise la configuration météo
+de l’import. Le collecteur cron externe `weather/collect.sh` reste, lui, lié aux
+données et à la configuration locales de l’installation ; utiliser l’onglet
+Météo pour actualiser les données d’un dossier importé.

@@ -15,7 +15,8 @@ from zoneinfo import ZoneInfo
 import requests
 from dotenv import dotenv_values
 
-from open_garden_planner.services.plant_library import get_app_data_dir
+from open_garden_planner.core.workspace_guard import check_workspace_path
+from open_garden_planner.services.plant_library import get_app_data_dir, workspace_data_dir
 from open_garden_planner.services.weather_brief import build_brief
 from open_garden_planner.services.weather_collection import atomic_json, collect, freshness
 
@@ -25,6 +26,18 @@ MODELS = ("meteofrance_arome_france", "meteofrance_arpege_europe", "ecmwf_ifs025
 
 def default_archive() -> Path:
     return get_app_data_dir() / "weather"
+
+
+def weather_config_path() -> Path:
+    """Use the imported workspace's weather configuration when available."""
+    root = workspace_data_dir()
+    if root is not None:
+        candidate = root.parent / "configuration" / "weather-config.json"
+        if (candidate.parent.is_symlink() or candidate.is_symlink() or not candidate.is_file()
+                or candidate.resolve().parent != candidate.parent):
+            raise OSError("Imported weather configuration is unavailable")
+        return candidate
+    return REPO / "weather/config.json"
 
 
 def bulletin_schema() -> dict[str, Any]:
@@ -101,7 +114,7 @@ class WeatherWorkspace:
     ):
         self.root = root if root is not None else default_archive()
         self.config = (
-            config if config is not None else json.loads((REPO / "weather/config.json").read_text())
+            config if config is not None else json.loads(weather_config_path().read_text())
         )
         self.key_file = key_file if key_file is not None else REPO / ".local/weather/openai.env"
 
@@ -109,6 +122,7 @@ class WeatherWorkspace:
         return datetime.now(ZoneInfo(self.config["location"]["timezone"])).date().isoformat()
 
     def load(self) -> dict[str, Any] | None:
+        check_workspace_path(self.root / "latest.json")
         path = self.root / "latest.json"
         try:
             report = json.loads(path.read_text())
@@ -119,6 +133,7 @@ class WeatherWorkspace:
             return None
 
     def load_bulletin(self) -> dict[str, Any] | None:
+        check_workspace_path(self.root / "bulletin.json")
         try:
             record = json.loads((self.root / "bulletin.json").read_text())
             if record["location"] != self.config["location"]:
@@ -129,6 +144,7 @@ class WeatherWorkspace:
             return None
 
     def attempted_today(self) -> bool:
+        check_workspace_path(self.root / "bulletin-attempt.json")
         try:
             return bool(
                 json.loads((self.root / "bulletin-attempt.json").read_text())["date"]
@@ -138,6 +154,7 @@ class WeatherWorkspace:
             return False
 
     def refresh(self) -> dict[str, Any]:
+        check_workspace_path(self.root)
         return collect(self.config, self.root, include_maps=False)
 
     def daily(self, report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -196,6 +213,7 @@ class WeatherWorkspace:
         return rows
 
     def generate(self, language: str = "fr") -> dict[str, Any]:
+        check_workspace_path(self.root)
         self.root.mkdir(parents=True, exist_ok=True)
         with (self.root / ".bulletin.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

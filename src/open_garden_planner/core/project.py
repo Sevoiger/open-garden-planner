@@ -769,7 +769,9 @@ class ProjectManager(QObject):
             check_disk_version,
             disk_version,
         )
+        from open_garden_planner.core.workspace_guard import check_workspace_path
 
+        check_workspace_path(file_path.with_suffix(".ogp"))
         manager = scene.get_command_manager() if hasattr(scene, "get_command_manager") else None
         if manager is not None:
             manager.validate_pending_save()
@@ -989,7 +991,9 @@ class ProjectManager(QObject):
     def load(self, scene: QGraphicsScene, file_path: Path) -> None:
         """Open a document while retaining its cooperating writer lease."""
         from open_garden_planner.core.document_store import DocumentOwnership, disk_version
+        from open_garden_planner.core.workspace_guard import check_workspace_path
 
+        check_workspace_path(file_path)
         destination = file_path.resolve()
         current = getattr(self, "_document_ownership", None)
         ownership = current if current is not None and current.path == destination else DocumentOwnership(destination, gui=True)
@@ -1234,7 +1238,11 @@ class ProjectManager(QObject):
             check_disk_version,
             disk_version,
         )
+        from open_garden_planner.core.workspace_guard import check_workspace_path
 
+        check_workspace_path(new_file_path.with_suffix(".ogp"))
+        if self._current_file is not None:
+            check_workspace_path(self._current_file)
         destination = new_file_path.with_suffix(".ogp").resolve()
         # Both existing write paths participate in the same ownership protocol.
         # The historical two-file season operation still reports partial failure.

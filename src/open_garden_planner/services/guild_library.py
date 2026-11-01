@@ -6,6 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 
+from open_garden_planner.core.workspace_guard import check_workspace_path
 from open_garden_planner.models.guild import GuildTemplate
 from open_garden_planner.services.bundled_species_db import get_species_db
 from open_garden_planner.services.plant_library import get_app_data_dir
@@ -38,6 +39,7 @@ class GuildLibrary:
             if any(ref not in catalog for ref in references):
                 raise ValueError(f"Unresolved bundled guild species in {path.name}")
             templates[template.id] = template
+        check_workspace_path(self.user_dir)
         self.user_dir.mkdir(parents=True, exist_ok=True)
         for path in sorted(self.user_dir.glob("*.json")):
             try:
@@ -52,6 +54,7 @@ class GuildLibrary:
 
     def save(self, template: GuildTemplate) -> Path:
         """Atomic UTF-8 replacement; a failed write preserves the original file."""
+        check_workspace_path(self.user_dir)
         validated = GuildTemplate.from_dict(template.to_dict())
         target = self.user_paths.get(validated.id, self.user_dir / f"{validated.id}.json")
         temporary: Path | None = None

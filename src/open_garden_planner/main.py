@@ -336,6 +336,32 @@ def main() -> int:
     load_translator(app, settings.language)
     apply_theme(app, settings.theme_mode)
 
+    # Select one imported data root once, before any UI or personal store exists.
+    from open_garden_planner.services.workspace_transfer import activate_workspace
+
+    selection_token = settings.workspace_selection_token()
+    try:
+        activate_workspace(settings)
+    except (ValueError, OSError) as exc:
+        from PyQt6.QtWidgets import QMessageBox
+
+        choice = QMessageBox.question(None, app.translate("main", "Personal data unavailable"),
+            app.translate("main", "The imported data folder is unavailable or invalid: {error}\nUse the previous local data instead?").format(error=exc))
+        if choice != QMessageBox.StandardButton.Yes:
+            return 1
+        try:
+            try:
+                previous = settings.workspace_selection
+            except ValueError:
+                previous = None
+            settings.clear_workspace_selection_if_token(selection_token)
+            activate_workspace(settings)
+            if not settings.last_saved_project and previous:
+                settings.last_saved_project = previous["default_plan"] or None
+        except (ValueError, OSError) as recovery_error:
+            QMessageBox.critical(None, app.translate("main", "Personal data unavailable"), str(recovery_error))
+            return 1
+
     # Turn an uncaught slot exception into a recoverable dialog instead of a
     # silent process kill that discards unsaved work (issue #277).
     _install_excepthook()

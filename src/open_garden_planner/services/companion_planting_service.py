@@ -189,6 +189,7 @@ class CompanionPlantingService:
         Args:
             rule: The custom relationship to add.
         """
+        previous_rules = list(self._custom_rules)
         rule.is_custom = True
         rule.plant_a = rule.plant_a.lower()
         rule.plant_b = rule.plant_b.lower()
@@ -196,7 +197,12 @@ class CompanionPlantingService:
         self._remove_rule_from_lists(rule.plant_a, rule.plant_b)
         self._custom_rules.append(rule)
         self._rebuild_adjacency()
-        self._save_custom_rules()
+        try:
+            self._save_custom_rules()
+        except Exception:
+            self._custom_rules = previous_rules
+            self._rebuild_adjacency()
+            raise
 
     def remove_custom_rule(self, plant_a: str, plant_b: str) -> bool:
         """Remove a custom rule by plant pair.
@@ -210,11 +216,17 @@ class CompanionPlantingService:
         """
         can_a = self._resolve(plant_a)
         can_b = self._resolve(plant_b)
-        original_count = len(self._custom_rules)
+        previous_rules = list(self._custom_rules)
+        original_count = len(previous_rules)
         self._remove_rule_from_lists(can_a, can_b)
         if len(self._custom_rules) < original_count:
             self._rebuild_adjacency()
-            self._save_custom_rules()
+            try:
+                self._save_custom_rules()
+            except Exception:
+                self._custom_rules = previous_rules
+                self._rebuild_adjacency()
+                raise
             return True
         return False
 
@@ -436,8 +448,7 @@ class CompanionPlantingService:
                 for r in self._custom_rules
             ]
         }
-        try:
-            with open(custom_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        from open_garden_planner.core.plan_io import write_bytes_atomically
+
+        encoded = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+        write_bytes_atomically(custom_path, encoded)

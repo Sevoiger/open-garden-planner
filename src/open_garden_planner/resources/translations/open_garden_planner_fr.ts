@@ -189,6 +189,19 @@
         </message>
     </context>
     <context>
+        <name>AcquisitionInventoryView</name>
+        <message>
+            <location filename="../../ui/views/acquisition_inventory_view.py" line="30" />
+            <source>Could not load acquisitions: {error}</source>
+            <translation>Impossible de charger les acquisitions : {error}</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/acquisition_inventory_view.py" line="19" />
+            <source>Retry loading</source>
+            <translation>Réessayer le chargement</translation>
+        </message>
+    </context>
+    <context>
         <name>AddPlantingRecordDialog</name>
         <message>
             <location filename="../../ui/dialogs/add_planting_record_dialog.py" line="41" />
@@ -5981,7 +5994,7 @@ Voulez-vous le récupérer ?</translation>
         <message>
             <location filename="../../app/application.py" line="4127" />
             <source>Backup created. It contains the current plan, its media and the saved personal data.</source>
-            <translation>Sauvegarde créée. Elle contient le plan courant, ses pièces jointes et les données personnelles enregistrées.</translation>
+            <translation type="vanished">Sauvegarde créée. Elle contient le plan courant, ses pièces jointes et les données personnelles enregistrées.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="4237" />
@@ -6040,9 +6053,24 @@ Voulez-vous le récupérer ?</translation>
             <translation>Vérifier le &amp;compagnonnage...</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4146" />
+            <source>Choose a folder for imported data</source>
+            <translation>Choisir le dossier des données importées</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4180" />
+            <source>Choose an imported data folder</source>
+            <translation>Choisir un dossier de données importées</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="4139" />
             <source>Choose restoration parent folder</source>
-            <translation>Choisir le dossier de destination de la restauration</translation>
+            <translation type="vanished">Choisir le dossier de destination de la restauration</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4186" />
+            <source>Choose the garden plan for this data</source>
+            <translation>Choisir le plan associé à ces données</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="6214" />
@@ -6077,7 +6105,7 @@ Voulez-vous le récupérer ?</translation>
         <message>
             <location filename="../../app/application.py" line="4835" />
             <source>Could not load acquisitions</source>
-            <translation>Impossible de charger les acquisitions</translation>
+            <translation type="vanished">Impossible de charger les acquisitions</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="3946" />
@@ -6275,6 +6303,25 @@ Voulez-vous le récupérer ?</translation>
             <translation>Exporter en SVG</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4133" />
+            <source>Export created. It contains the current plan, its media and the saved personal data.</source>
+            <translation>Export créé : il contient le plan courant, ses pièces jointes et les données personnelles enregistrées.</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4116" />
+            <location filename="../../app/application.py" line="4119" />
+            <location filename="../../app/application.py" line="4122" />
+            <location filename="../../app/application.py" line="4130" />
+            <location filename="../../app/application.py" line="4132" />
+            <source>Export garden and data</source>
+            <translation>Exporter le jardin et les données</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="3990" />
+            <source>Export garden and personal data…</source>
+            <translation>Exporter le jardin et les données personnelles…</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="4055" />
             <source>Export the plan as a DXF file for CAD software</source>
             <translation>Exporter le plan en fichier DXF pour un logiciel de CAO</translation>
@@ -6307,12 +6354,12 @@ Voulez-vous le récupérer ?</translation>
             <location filename="../../app/application.py" line="4146" />
             <location filename="../../app/application.py" line="4148" />
             <source>Extract global backup</source>
-            <translation>Extraire une sauvegarde globale</translation>
+            <translation type="vanished">Extraire une sauvegarde globale</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="3993" />
             <source>Extract global backup…</source>
-            <translation>Extraire une sauvegarde globale…</translation>
+            <translation type="vanished">Extraire une sauvegarde globale…</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="9537" />
@@ -6457,6 +6504,11 @@ Voulez-vous le récupérer ?</translation>
             <translation>Plan du jardin</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4187" />
+            <source>Garden Projects (*.ogp)</source>
+            <translation>Projets de jardin (*.ogp)</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="4820" />
             <source>Garden location</source>
             <translation>Position du jardin</translation>
@@ -6493,12 +6545,12 @@ Voulez-vous le récupérer ?</translation>
             <location filename="../../app/application.py" line="4124" />
             <location filename="../../app/application.py" line="4126" />
             <source>Global backup</source>
-            <translation>Sauvegarde globale</translation>
+            <translation type="vanished">Sauvegarde globale</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="3990" />
             <source>Global backup…</source>
-            <translation>Sauvegarde globale…</translation>
+            <translation type="vanished">Sauvegarde globale…</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="5181" />
@@ -6550,6 +6602,32 @@ Voulez-vous le récupérer ?</translation>
             <location filename="../../app/application.py" line="3995" />
             <source>Import a background image (satellite photo, etc.)</source>
             <translation>Importer une image de fond (photo satellite, etc.)</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4142" />
+            <location filename="../../app/application.py" line="4155" />
+            <location filename="../../app/application.py" line="4157" />
+            <location filename="../../app/application.py" line="4169" />
+            <location filename="../../app/application.py" line="4196" />
+            <location filename="../../app/application.py" line="4198" />
+            <source>Import garden and data</source>
+            <translation>Importer le jardin et les données</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="3993" />
+            <source>Import garden and personal data…</source>
+            <translation>Importer le jardin et les données personnelles…</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4168" />
+            <source>Import is ready in {path}. On the next restart, OGP will use this plan and its personal data. Existing local data will be kept. Continue?</source>
+            <translation>L’import est prêt dans {path}. Au prochain redémarrage, OGP utilisera ce plan et ses données personnelles. Les données locales existantes seront conservées. Continuer ?</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4158" />
+            <location filename="../../app/application.py" line="4199" />
+            <source>Import is ready. Restart OGP to open the imported plan and use its personal data. Keep the imported folder in place.</source>
+            <translation>L’import est prêt. Redémarrez OGP pour ouvrir le plan importé et utiliser ses données personnelles. Conservez le dossier importé à son emplacement.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="6458" />
@@ -6619,6 +6697,11 @@ Redémarrer l’application pour appliquer la modification.</translation>
             <location filename="../../app/application.py" line="8832" />
             <source>Loaded satellite background ({cols}x{rows} tiles, zoom {zoom}) — canvas resized to {w_m:.0f}m x {h_m:.0f}m</source>
             <translation>Fond satellite chargé ({cols}x{rows} tuiles, zoom {zoom}) — plan redimensionné à {w_m:.0f}m x {h_m:.0f}m</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4208" />
+            <source>Local personal data are already selected.</source>
+            <translation>Les données personnelles locales sont déjà sélectionnées.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="4728" />
@@ -6764,9 +6847,22 @@ Redémarrer l’application pour appliquer la modification.</translation>
             <translation>Coller les objets du presse-papiers</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4208" />
+            <location filename="../../app/application.py" line="4210" />
+            <location filename="../../app/application.py" line="4216" />
+            <location filename="../../app/application.py" line="4218" />
+            <source>Personal data</source>
+            <translation>Données personnelles</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="4113" />
             <source>Personal lists or seed stock contain unsaved changes. Save or resolve them before backing up.</source>
-            <translation>Des listes personnelles ou le stock de semences contiennent des modifications non enregistrées. Enregistrez-les ou résolvez le problème avant la sauvegarde.</translation>
+            <translation type="vanished">Des listes personnelles ou le stock de semences contiennent des modifications non enregistrées. Enregistrez-les ou résolvez le problème avant la sauvegarde.</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4120" />
+            <source>Personal lists or seed stock contain unsaved changes. Save or resolve them before exporting.</source>
+            <translation>Des listes personnelles ou le stock de semences contiennent des modifications non enregistrées. Enregistrez-les ou résolvez le problème avant l’export.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="8973" />
@@ -6889,6 +6985,11 @@ Redémarrer l’application pour appliquer la modification.</translation>
             <translation>Redimensionner le plan</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="4218" />
+            <source>Restart OGP to use the local personal data.</source>
+            <translation>Redémarrez OGP pour utiliser les données personnelles locales.</translation>
+        </message>
+        <message>
             <source>Restored plan: {path}
 Personal data are in the app-data folder beside it. Close OGP before restoring them manually.</source>
             <translation type="vanished">Plan restauré : {path}
@@ -6898,7 +6999,7 @@ Les données personnelles se trouvent dans le dossier app-data voisin. Fermez OG
             <location filename="../../app/application.py" line="4149" />
             <source>Restored plan: {path}
 Personal data are in the app-data folder beside it. Close OGP before restoring them manually. Keep the personal-media folder in place for seed photos.</source>
-            <translation>Plan restauré : {path}
+            <translation type="vanished">Plan restauré : {path}
 Les données personnelles se trouvent dans le dossier app-data voisin. Fermez OGP avant de les restaurer manuellement. Conservez le dossier personal-media pour les photos des semences.</translation>
         </message>
         <message>
@@ -6939,7 +7040,12 @@ Les données personnelles se trouvent dans le dossier app-data voisin. Fermez OG
         <message>
             <location filename="../../app/application.py" line="4109" />
             <source>Save the garden plan before creating a global backup.</source>
-            <translation>Enregistrez le plan avant de créer une sauvegarde globale.</translation>
+            <translation type="vanished">Enregistrez le plan avant de créer une sauvegarde globale.</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4116" />
+            <source>Save the garden plan before exporting.</source>
+            <translation>Enregistrez le plan du jardin avant l’export.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="3977" />
@@ -7234,6 +7340,11 @@ Ouvrir la nouvelle saison maintenant ?</translation>
             <translation>Simulation d’ensoleillement et d’ombre</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="5328" />
+            <source>Supplies</source>
+            <translation>Consommables</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="5175" />
             <source>Tasks</source>
             <translation>Tâches</translation>
@@ -7378,6 +7489,11 @@ Détails : {error}</translation>
             <translation>Plante mise à jour avec l’espèce : {name}</translation>
         </message>
         <message>
+            <location filename="../../app/application.py" line="3996" />
+            <source>Use an imported data folder…</source>
+            <translation>Utiliser un dossier de données importées…</translation>
+        </message>
+        <message>
             <location filename="../../app/application.py" line="4635" />
             <source>Use dark color scheme</source>
             <translation>Utiliser le thème sombre</translation>
@@ -7386,6 +7502,16 @@ Détails : {error}</translation>
             <location filename="../../app/application.py" line="4628" />
             <source>Use light color scheme</source>
             <translation>Utiliser le thème clair</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="3999" />
+            <source>Use local personal data…</source>
+            <translation>Utiliser les données personnelles locales…</translation>
+        </message>
+        <message>
+            <location filename="../../app/application.py" line="4211" />
+            <source>Use the previous local personal data after restarting? Imported data will be kept in their folder.</source>
+            <translation>Utiliser les données personnelles locales précédentes après redémarrage ? Les données importées resteront dans leur dossier.</translation>
         </message>
         <message>
             <location filename="../../app/application.py" line="4726" />
@@ -16258,9 +16384,21 @@ The file must be owned by your account with owner-only read and write access. Co
 Le fichier doit appartenir à votre compte et seul son propriétaire doit pouvoir le lire et l’écrire. Corriger ses permissions puis redémarrer l’application.</translation>
         </message>
         <message>
+            <location filename="../../main.py" line="347" />
+            <source>Personal data unavailable</source>
+            <translation>Données personnelles indisponibles</translation>
+        </message>
+        <message>
             <location filename="../../main.py" line="330" />
             <source>Settings Access Error</source>
             <translation>Erreur d’accès aux réglages</translation>
+        </message>
+        <message>
+            <location filename="../../main.py" line="348" />
+            <source>The imported data folder is unavailable or invalid: {error}
+Use the previous local data instead?</source>
+            <translation>Le dossier de données importées est indisponible ou invalide : {error}
+Utiliser les données locales précédentes ?</translation>
         </message>
         <message>
             <location filename="../../main.py" line="266" />

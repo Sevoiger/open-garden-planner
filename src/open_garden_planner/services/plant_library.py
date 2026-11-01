@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from open_garden_planner.core.file_lock import ProcessFileLock
+from open_garden_planner.core.workspace_guard import check_workspace_path, pin_workspace
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.services.library_operations import (
     LibraryConflictError,
@@ -24,9 +25,33 @@ from open_garden_planner.services.library_operations import (
     serialize_species_record,
 )
 
+_workspace_data_dir: Path | None = None
+
+
+def configure_workspace_data_dir(path: Path | None) -> None:
+    """Pin a personal data root for this process before stores are opened."""
+    global _workspace_data_dir
+    if path is not None:
+        path = Path(path)
+        if not path.is_absolute() or not path.is_dir():
+            raise ValueError("Imported personal data folder is unavailable")
+        path = path.resolve()
+    pin_workspace(path)
+    _workspace_data_dir = path
+
+
+def workspace_data_dir() -> Path | None:
+    return _workspace_data_dir
+
 
 def get_app_data_dir() -> Path:
-    """Get and create the application data directory for user data."""
+    """Resolve a process-pinned imported workspace or the default personal data."""
+    if _workspace_data_dir is not None:
+        check_workspace_path(_workspace_data_dir)
+        if (_workspace_data_dir.is_symlink() or not _workspace_data_dir.is_dir()
+                or _workspace_data_dir.resolve() != _workspace_data_dir):
+            raise OSError("Imported personal data folder is unavailable or unsafe")
+        return _workspace_data_dir
     app_dir = _default_app_data_dir()
     app_dir.mkdir(parents=True, exist_ok=True)
     return app_dir
