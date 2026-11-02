@@ -23,6 +23,19 @@ avec `.venv/bin/python`. Répondre en français.
 
 ## Vérification technique
 
+**Tous les tests et validations s'exécutent en headless par défaut**, pour laisser
+le propriétaire utiliser son ordinateur en parallèle. Cette règle s'applique aux
+tests UI/Qt, captures, scripts de diagnostic, benchmarks, sous-processus et
+sous-agents. Pour Qt, utiliser `QT_QPA_PLATFORM=offscreen` ; produire les rendus
+dans des fichiers sans ouvrir de fenêtre ni prendre le focus.
+
+Une exécution graphique native est une **exception technique**, uniquement si
+le comportement à vérifier ne peut pas être établi en headless (par exemple un
+crash propre à Cocoa ou un rendu dépendant du GPU natif). Annoncer la raison avant
+le lancement, limiter la vérification au cas indispensable et à la durée minimale,
+puis fermer les fenêtres de test. Ne jamais basculer toute une suite en mode
+graphique pour un seul cas ; ne pas ouvrir l'application par simple commodité.
+
 Choisir la preuve selon ce qui peut casser, pas selon un quota de tests.
 
 | Changement | Preuve attendue |
@@ -43,9 +56,9 @@ l’acceptation visuelle native. Signaler les échecs préexistants et les contr
 
 ```bash
 bash scripts/setup_macos.sh                 # installation / dépendances seulement
-.venv/bin/python -m open_garden_planner      # lancement natif, si nécessaire
-.venv/bin/python -m pytest tests/path_to_affected_test.py
-.venv/bin/python -m pytest -c pytest-macos.ini # petit socle facultatif, non exhaustif
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/path_to_affected_test.py
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -c pytest-macos.ini # socle facultatif
+.venv/bin/python -m open_garden_planner      # exception technique native annoncée seulement
 .venv/bin/python -m ruff check src/ tests/ scripts/
 .venv/bin/python scripts/check_agent_context.py # si contexte agent modifié
 ```
