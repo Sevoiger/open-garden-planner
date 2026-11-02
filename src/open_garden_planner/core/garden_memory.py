@@ -143,6 +143,11 @@ class GardenMemoryService:
     def _apply_card(self, operation: str, item_id: str,
                     fields: dict[str, Any]) -> dict[str, Any]:
         candidate, result = self._prepare(operation, fields, item_id)
+        if item_id in self.project.plant_specimens:
+            from open_garden_planner.core.plant_specimens import SpecimenEditCommand
+
+            self.commands.execute(SpecimenEditCommand(self.project, candidate))
+            return result
         target = self._item(item_id)
         record = self._snapshot_object(candidate, item_id)
         metadata = deepcopy(record.get("metadata", {}))
@@ -162,6 +167,11 @@ class GardenMemoryService:
                           request_key: str | None = None) -> dict[str, Any]:
         candidate, result = self._prepare(operation, fields, item_id, request_key)
         if not result.get("replayed"):
+            if item_id in self.project.plant_specimens:
+                from open_garden_planner.core.plant_specimens import SpecimenEditCommand
+
+                self.commands.execute(SpecimenEditCommand(self.project, candidate))
+                return result
             target = self._item(item_id)
             metadata = self._snapshot_object(candidate, item_id)["metadata"]
             if metadata != target.metadata:

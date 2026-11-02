@@ -77,6 +77,7 @@ from open_garden_planner.ui.theme import (
 )
 from open_garden_planner.ui.views.garden_data_view import GardenDataView
 from open_garden_planner.ui.views.harvest_view import HarvestView
+from open_garden_planner.ui.views.plant_catalog_view import PlantCatalogView
 from open_garden_planner.ui.views.planting_calendar_view import PlantingCalendarView
 from open_garden_planner.ui.views.seed_inventory_view import SeedInventoryView
 from open_garden_planner.ui.views.tasks_view import TasksView
@@ -5367,6 +5368,22 @@ class GardenPlannerApp(QMainWindow):
         self.weather_view.forecast_ready.connect(self._on_local_weather_forecast)
         self._project_manager.location_changed.connect(lambda _: self._on_local_weather_forecast(None))
 
+        # The personal species catalog is the final tab so existing tab indices
+        # and shortcuts remain stable. It is intentionally independent of any
+        # selected canvas object.
+        self.plant_catalog_view = PlantCatalogView(
+            project=self._project_manager, scene=self.canvas_scene,
+            commands=self.canvas_view.command_manager,
+        )
+        self._tab_widget.addTab(self.plant_catalog_view, self.tr("Plant Catalog"))
+        self.plant_catalog_view.show_on_plan.connect(self._show_catalog_plant_on_plan)
+        self._set_tab_icon(self.plant_catalog_view, "seedling")
+        self._tab_widget.currentChanged.connect(
+            lambda index: self.plant_catalog_view.refresh()
+            if self._tab_widget.widget(index) is self.plant_catalog_view
+            else None
+        )
+
         # Keyboard shortcuts: Ctrl+1 / Ctrl+2 / Ctrl+3 to switch tabs.
         # (The "Layout / Paper Space" tab was dropped — `pdf_report_service`
         # already produces multi-page PDFs at chosen paper sizes, so a
@@ -9785,6 +9802,12 @@ class GardenPlannerApp(QMainWindow):
                    and abs(float(location['latitude'])-point['latitude']) < 0.1
                    and abs(float(location['longitude'])-point['longitude']) < 0.1)
         self.calendar_view.set_weather_forecast(forecast if matches else None)
+
+    def _show_catalog_plant_on_plan(self, item):
+        self._tab_widget.setCurrentIndex(0)
+        self.canvas_scene.clearSelection()
+        item.setSelected(True)
+        self.canvas_view.centerOn(item)
 
     def _on_tab_changed(self, index: int) -> None:
         """Refresh tab views when they become active."""

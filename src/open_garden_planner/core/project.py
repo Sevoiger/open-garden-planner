@@ -506,6 +506,21 @@ class ProjectManager(QObject):
         """Detached intervention store; only command adapters replace it."""
         return deepcopy(self._garden_memory)
 
+    @property
+    def plant_specimens(self) -> dict[str, Any]:
+        """Unplaced plants, preserved by the additive project extension format."""
+        return deepcopy(self._extra_fields.get("plant_specimens", {}))
+
+    def restore_plant_specimens(self, records: dict[str, Any]) -> None:
+        from open_garden_planner.services.plant_specimens import validate_specimens
+
+        candidate = validate_specimens(records)
+        if candidate:
+            self._extra_fields["plant_specimens"] = candidate
+        else:
+            self._extra_fields.pop("plant_specimens", None)
+        self.mark_dirty()
+
     def restore_garden_memory(self, memory: dict[str, Any]) -> None:
         """Command apply/undo seam; reject unsupported schemas before mutation."""
         candidate = validate_memory(memory)

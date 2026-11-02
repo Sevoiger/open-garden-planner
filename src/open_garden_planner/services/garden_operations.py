@@ -60,6 +60,12 @@ def _records(document: dict[str, Any]) -> dict[str, list[tuple[dict[str, Any], b
             walk(children, top_level=False)
 
     walk(objects, top_level=True)
+    from open_garden_planner.services.plant_specimens import validate_specimens
+
+    specimens = validate_specimens(document.get("plant_specimens", {}))
+    # Index the live candidate records, not the detached validation copy.
+    if specimens:
+        walk(list(document["plant_specimens"].values()), top_level=True)
     return indexed
 
 

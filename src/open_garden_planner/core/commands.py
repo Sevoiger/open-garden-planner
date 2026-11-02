@@ -660,6 +660,9 @@ class ChangePropertyCommand(Command):
             setattr(self._item, self._property_name, self._old_value)
 
 
+_UNCHANGED_LIBRARY_PLANT_LINK = object()
+
+
 class ApplySpeciesCommand(Command):
     """Command for assigning a database species to an existing plant item.
 
@@ -680,6 +683,7 @@ class ApplySpeciesCommand(Command):
         new_spacing_override: float | None,
         old_radius: float | None = None,
         new_radius: float | None = None,
+        library_plant_id: str | None | object = _UNCHANGED_LIBRARY_PLANT_LINK,
     ) -> None:
         """Initialize the apply-species command.
 
@@ -694,6 +698,10 @@ class ApplySpeciesCommand(Command):
                 footprint untouched.
             new_radius: Footprint radius (cm) after applying, or None to leave
                 the footprint untouched.
+            library_plant_id: Exact key in the personal PlantLibrary to link
+                this instance to. ``None`` removes the link; omitting this
+                argument preserves legacy command behavior. Clearing species
+                data also clears the link unless one is explicitly supplied.
         """
         self._item = item
         # Defensive copies so later mutations of the source dicts can't alias
@@ -704,6 +712,39 @@ class ApplySpeciesCommand(Command):
         self._new_spacing_override = new_spacing_override
         self._old_radius = old_radius
         self._new_radius = new_radius
+        if library_plant_id is _UNCHANGED_LIBRARY_PLANT_LINK and new_species is None:
+            library_plant_id = None
+        self._old_library_link_state: tuple[bool, bool, Any] | object = (
+            _UNCHANGED_LIBRARY_PLANT_LINK
+        )
+        self._new_library_link_state: tuple[bool, bool, Any] | object = (
+            _UNCHANGED_LIBRARY_PLANT_LINK
+        )
+        if library_plant_id is not _UNCHANGED_LIBRARY_PLANT_LINK:
+            if library_plant_id is not None and (
+                not isinstance(library_plant_id, str) or not library_plant_id
+            ):
+                raise ValueError("library_plant_id must be a non-empty string or None")
+            if new_species is None and library_plant_id is not None:
+                raise ValueError("A library plant link requires species data")
+            metadata = self._item.metadata  # type: ignore[attr-defined]
+            if not isinstance(metadata, dict):
+                raise ValueError("Plant metadata is malformed")
+            if "plant_instance" in metadata:
+                instance = metadata["plant_instance"]
+                if not isinstance(instance, dict):
+                    raise ValueError("Plant instance metadata is malformed")
+                old_state = (
+                    True,
+                    "library_plant_id" in instance,
+                    deepcopy(instance.get("library_plant_id")),
+                )
+            else:
+                old_state = (False, False, None)
+            self._old_library_link_state = old_state
+            self._new_library_link_state = (
+                old_state[0], library_plant_id is not None, library_plant_id
+            )
 
     @property
     def description(self) -> str:
@@ -715,11 +756,26 @@ class ApplySpeciesCommand(Command):
         species: dict[str, Any] | None,
         spacing_override: float | None,
         radius: float | None,
+        library_link_state: tuple[bool, bool, Any] | object,
     ) -> None:
         # ``metadata`` is a read-only property returning the item's live dict, so
         # mutate it in place (a plant item always has one; a non-plant item would
         # — correctly — raise rather than silently no-op).
         metadata = self._item.metadata  # type: ignore[attr-defined]
+        if library_link_state is not _UNCHANGED_LIBRARY_PLANT_LINK:
+            _had_instance, link_present, link_id = library_link_state
+            instance = metadata.get("plant_instance")
+            if instance is not None and not isinstance(instance, dict):
+                raise ValueError("Plant instance metadata is malformed")
+            if link_present:
+                if instance is None:
+                    instance = {}
+                    metadata["plant_instance"] = instance
+                instance["library_plant_id"] = deepcopy(link_id)
+            elif isinstance(instance, dict):
+                instance.pop("library_plant_id", None)
+                if not instance and not _had_instance:
+                    metadata.pop("plant_instance", None)
         if species is None:
             metadata.pop("plant_species", None)
         else:
@@ -734,11 +790,21 @@ class ApplySpeciesCommand(Command):
 
     def execute(self) -> None:
         """Apply the new species + spacing override + footprint radius."""
-        self._apply(self._new_species, self._new_spacing_override, self._new_radius)
+        self._apply(
+            self._new_species,
+            self._new_spacing_override,
+            self._new_radius,
+            self._new_library_link_state,
+        )
 
     def undo(self) -> None:
         """Restore the previous species + spacing override + footprint radius."""
-        self._apply(self._old_species, self._old_spacing_override, self._old_radius)
+        self._apply(
+            self._old_species,
+            self._old_spacing_override,
+            self._old_radius,
+            self._old_library_link_state,
+        )
 
 
 class ResizeItemCommand(Command):

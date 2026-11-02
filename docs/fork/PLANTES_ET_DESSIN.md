@@ -159,6 +159,73 @@ Pour une nouvelle pergola rectangulaire, utiliser `create_object` avec
 `object_type="PERGOLA"`. Après mise à jour du code, relancer OGP puis reconnecter
 le client MCP pour qu’il découvre le nouvel outil.
 
+## Catalogue personnel et périodes botaniques
+
+L'onglet **Catalogue de plantes** consulte la bibliothèque existante sans sélection
+sur le plan et sans réseau. Une carte représente une fiche botanique et affiche
+ses exemplaires du projet courant. Un clic donne l'aperçu ; Entrée, un double-clic
+ou **Ouvrir la fiche** ouvrent le même détail à cinq sections : présentation,
+culture et calendrier, exemplaires, médias et sources.
+
+**Créer manuellement** accepte un simple nom provisoire. Les autres informations
+restent inconnues. Les dimensions adultes, le cultivar, les conditions de culture
+et les conseils disposent de champs distincts ; les sections spécialisées sont
+repliables. Le résumé est séparé de la description détaillée.
+
+Les bandes de plantation, floraison et taille indiquent les mois conseillés.
+Dans l'éditeur, cliquez sur les mois pour les corriger : plusieurs périodes
+séparées et celles qui traversent décembre sont possibles. Une ligne vide signifie
+que la période est inconnue. Le texte d'origine reste visible et une correction
+est signalée. La section **Autres périodes conseillées** comprend plantation
+optimale, récolte/fructification, semis et multiplication. Les filtres par mois
+peuvent cibler une activité. Ces bandes ne changent pas les calendriers existants
+calculés par rapport aux gelées, qui restent présentés séparément.
+
+Les relations à étudier, recherchée, commandée, possédée et archivée peuvent se
+cumuler pour une fiche. Les filtres combinent catégorie, relations, mode de culture,
+emplacement, mois, fiche incomplète et absence de photo personnelle. Les états
+personnels réutilisent le suivi existant : aucune absence de pousse n'implique un décès.
+
+**Importer une fiche JSON/HTML** ouvre un fichier ; son menu propose aussi un
+répertoire. Les formats JSON des anciens générateurs sont réutilisés. L'aperçu
+permet de corriger avant enregistrement ; les identifiants de source servent au
+contrôle des doublons. Une ressemblance de nom ne fusionne pas deux cultivars.
+**Importer depuis une URL** cible les pages produit Promesse de Fleurs : robots,
+timeout, taille et redirections sont contrôlés, avec repli explicite vers un fichier
+local si nécessaire. Aucun import n'acquiert un exemplaire ni ne dessine une forme.
+L'actualisation présente les différences et conserve les corrections manuelles,
+les sources précédentes et les instantanés du plan.
+
+Dans **Mes exemplaires**, créez un exemplaire en pot ou en terre sans forme sur le
+plan. Le projet conserve son UUID, ses dates ou périodes d'acquisition et plantation,
+son prix payé et justificatif, son emplacement textuel et ses particularités locales.
+Mesures et interventions ouvrent les formulaires et l'historique existants.
+**Placer sur le plan** est une action explicite ; **Voir sur le plan** retrouve un
+objet placé. Pour une plante ancienne, l'action de liaison du panneau botanique
+conserve UUID, dimensions mesurées, géométrie et historique ; rouvrir le projet ne
+crée aucun exemplaire supplémentaire.
+
+Les photos de référence et illustrations du plan appartiennent à la fiche botanique ;
+les photos personnelles appartiennent à chaque exemplaire. Les galeries importent
+uniquement les fichiers choisis, affichent les miniatures et les fichiers manquants,
+permettent navigation, comparaison de deux photos personnelles, photo principale et
+ouverture du dossier dans le Finder. Le téléchargement d'une référence est une action
+explicite et respecte les mêmes restrictions du fournisseur. Crédit, date de prise de
+vue connue et date d'import restent distincts. Retirer une association ne supprime
+pas l'original. Le dossier des photos personnelles est configurable à l'intérieur du
+dossier du projet, avec un sous-dossier UUID par exemplaire.
+
+Enregistrez le projet pour conserver ses exemplaires non placés et pièces jointes.
+**Enregistrer sous** emporte les pièces jointes du projet. Les références botaniques
+restent relatives à la bibliothèque : l'archive globale avec données personnelles
+emporte les deux ensembles, y compris les références conservées seulement dans un
+ancien instantané. Une archive projet seule refuse explicitement de les omettre.
+
+**Exporter en PDF** imprime une fiche, une sélection ou une version personnelle
+avec les photos choisies. Le rapport distingue recommandations botaniques et
+observations, conserve les périodes connues et la provenance datée et protège
+les originaux contre un choix accidentel de destination.
+
 ## Catalogue dans les catégories du haut
 
 La barre présente trois entrées libellées tout à droite, sur la même ligne que les outils de dessin :

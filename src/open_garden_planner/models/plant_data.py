@@ -390,6 +390,12 @@ class PlantInstance:
     # Link to species data (optional - may be None for custom entries)
     species_data: PlantSpeciesData | None = None
 
+    # Exact key in the user's PlantLibrary. This is intentionally separate
+    # from the embedded botanical snapshot: the snapshot remains usable when
+    # the library entry is removed or unavailable, while the ID lets callers
+    # resolve an explicit personal-catalog entry without matching by name.
+    library_plant_id: str | None = None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.
 
@@ -406,6 +412,7 @@ class PlantInstance:
             "notes": self.notes,
             "custom_fields": self.custom_fields,
             "species_data": self.species_data.to_dict() if self.species_data else None,
+            "library_plant_id": self.library_plant_id,
         }
 
     @classmethod
@@ -426,6 +433,12 @@ class PlantInstance:
         if data.get("species_data"):
             species_data = PlantSpeciesData.from_dict(data["species_data"])
 
+        library_plant_id = data.get("library_plant_id")
+        if library_plant_id is not None and (
+            not isinstance(library_plant_id, str) or not library_plant_id
+        ):
+            raise ValueError("library_plant_id must be a non-empty string or None")
+
         # Support both old (current_diameter_cm) and new (current_spread_cm) field names
         current_spread = data.get("current_spread_cm") or data.get("current_diameter_cm")
 
@@ -439,6 +452,7 @@ class PlantInstance:
             notes=data.get("notes", ""),
             custom_fields=data.get("custom_fields", {}),
             species_data=species_data,
+            library_plant_id=library_plant_id,
         )
 
 

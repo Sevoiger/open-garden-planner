@@ -37,6 +37,23 @@ from open_garden_planner.services.library_operations import (
     read_library_document,
 )
 
+MAX_SOURCE_FILE_BYTES = 4 * 1024 * 1024
+MAX_SOURCE_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_SOURCE_FILES = 100
+
+
+def read_source_bytes(path: Path) -> bytes:
+    """Bound the actual read, including files growing after size validation."""
+    with path.open("rb") as stream:
+        original = stream.read(MAX_SOURCE_FILE_BYTES + 1)
+    if len(original) > MAX_SOURCE_FILE_BYTES:
+        raise ValueError(f"Plant source exceeds {MAX_SOURCE_FILE_BYTES} bytes: {path.name}")
+    return original
+
+
+def _invalid_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid plant source JSON constant: {value}")
+
 
 def _dimension(value: object) -> float | None:
     if value in (None, ""):
@@ -50,57 +67,88 @@ def _dimension(value: object) -> float | None:
     return number
 
 
-def read_sheets(directory: Path) -> list[PlantSpeciesData]:
-    """Map explicit fields only; retain every supplied field and its provenance."""
+def read_sheets(source: Path) -> list[PlantSpeciesData]:
+    """Map one JSON file or a directory with the established sheet format.
+
+    Explicit fields only are mapped; every supplied field and its provenance
+    remain in the original source record. This reader never writes a store.
+    """
+    source = Path(source)
     result = []
     identities: set[str] = set()
-    paths = sorted(directory.glob("*.json"))
+    if source.is_file() and source.suffix.casefold() == ".json":
+        paths = [source]
+    elif source.is_dir():
+        paths = sorted(path for path in source.iterdir()
+                       if path.is_file() and path.suffix.casefold() == ".json")
+    else:
+        paths = []
     if not paths:
         raise ValueError("No JSON plant sheets found")
+    if len(paths) > MAX_SOURCE_FILES:
+        raise ValueError(f"Too many plant sources (maximum {MAX_SOURCE_FILES})")
+    total_bytes = 0
     for path in paths:
-        original = path.read_bytes()
-        record = json.loads(original)
-        if not isinstance(record, dict) or record.get("schema_version") != "1.0":
-            raise ValueError(f"Unsupported plant sheet: {path.name}")
-        for key in ("nom_botanique", "nom_commun", "url", "safe_name"):
-            if not isinstance(record.get(key), str) or not record[key].strip():
-                raise ValueError(f"Missing {key}: {path.name}")
-        chars = record.get("characteristics")
-        if not isinstance(chars, dict):
-            raise ValueError(f"Missing characteristics: {path.name}")
-        identity = "local-sheet:" + hashlib.sha256(record["url"].strip().encode()).hexdigest()[:32]
-        if identity in identities:
+        original = read_source_bytes(path)
+        total_bytes += len(original)
+        if total_bytes > MAX_SOURCE_TOTAL_BYTES:
+            raise ValueError(f"Plant sources exceed {MAX_SOURCE_TOTAL_BYTES} bytes in total")
+        plant = read_sheet_bytes(path, original)
+        if plant.source_id in identities:
             raise ValueError(f"Duplicate source URL: {path.name}")
-        identities.add(identity)
-        # Composite ranges are preserved verbatim rather than collapsed to one
-        # supposedly definitive sun/water category. No USDA zone is inferred
-        # from a Celsius hardiness threshold, nor frost-relative task dates
-        # from calendar months. Marketing 'Double' is not sexual FlowerType.
-        plant = PlantSpeciesData(
-            scientific_name=html.unescape(record["nom_botanique"].strip()),
-            common_name=html.unescape(record["nom_commun"].strip()),
-            max_height_cm=_dimension(chars.get("Hauteur à maturité")),
-            max_spread_cm=_dimension(chars.get("Largeur à maturité")),
-            growth_rate={"lente": GrowthRate.SLOW, "normale": GrowthRate.MEDIUM,
-                         "rapide": GrowthRate.FAST, "très rapide": GrowthRate.FAST}.get(
-                             str(chars.get("Croissance", "")).strip(), GrowthRate.UNKNOWN),
-            sun_requirement={"Soleil": SunRequirement.FULL_SUN,
-                             "Mi-ombre": SunRequirement.PARTIAL_SHADE,
-                             "Ombre": SunRequirement.FULL_SHADE}.get(
-                                 str(chars.get("Exposition", "")).strip(), SunRequirement.UNKNOWN),
-            water_needs={"sol sec": WaterNeeds.LOW, "sol frais": WaterNeeds.MEDIUM}.get(
-                str(chars.get("Humidité du sol", "")).strip(), WaterNeeds.UNKNOWN),
-            soil_type=str(chars.get("Type de sol", "")),
-            flower_color=str(chars.get("Fleur de couleur", "")),
-            foliage_color=str(chars.get("Feuillage de couleur", "")),
-            description=html.unescape(str(record.get("description_text", ""))),
-            data_source="custom", source_id=identity,
-            raw_data={"local_sheet": record, "source_file": path.name,
-                      "sha256": hashlib.sha256(original).hexdigest(),
-                      "mapping_version": 1},
-        )
+        identities.add(plant.source_id)
         result.append(plant)
     return result
+
+
+def read_sheet_bytes(path: Path, original: bytes) -> PlantSpeciesData:
+    """Map already bounded sheet bytes through the single JSON adapter."""
+    if len(original) > MAX_SOURCE_FILE_BYTES:
+        raise ValueError(f"Plant source exceeds {MAX_SOURCE_FILE_BYTES} bytes: {path.name}")
+    try:
+        record = json.loads(original, parse_constant=_invalid_json_constant)
+        # Reject exponent overflow as well as explicit nonstandard constants,
+        # including in supplier fields not mapped to a horticultural value.
+        json.dumps(record, allow_nan=False)
+    except RecursionError as error:
+        raise ValueError(f"Plant source is too deeply nested: {path.name}") from error
+    if not isinstance(record, dict) or record.get("schema_version") != "1.0":
+        raise ValueError(f"Unsupported plant sheet: {path.name}")
+    for key in ("nom_botanique", "nom_commun", "url", "safe_name"):
+        if not isinstance(record.get(key), str) or not record[key].strip():
+            raise ValueError(f"Missing {key}: {path.name}")
+    chars = record.get("characteristics")
+    if not isinstance(chars, dict):
+        raise ValueError(f"Missing characteristics: {path.name}")
+    identity = "local-sheet:" + hashlib.sha256(record["url"].strip().encode()).hexdigest()[:32]
+    # Composite ranges are preserved verbatim rather than collapsed to one
+    # supposedly definitive sun/water category. No USDA zone is inferred
+    # from a Celsius hardiness threshold, nor frost-relative task dates
+    # from calendar months. Marketing 'Double' is not sexual FlowerType.
+    plant = PlantSpeciesData(
+        scientific_name=html.unescape(record["nom_botanique"].strip()),
+        common_name=html.unescape(record["nom_commun"].strip()),
+        max_height_cm=_dimension(chars.get("Hauteur à maturité")),
+        max_spread_cm=_dimension(chars.get("Largeur à maturité")),
+        growth_rate={"lente": GrowthRate.SLOW, "normale": GrowthRate.MEDIUM,
+                     "rapide": GrowthRate.FAST, "très rapide": GrowthRate.FAST}.get(
+                         str(chars.get("Croissance", "")).strip(), GrowthRate.UNKNOWN),
+        sun_requirement={"Soleil": SunRequirement.FULL_SUN,
+                         "Mi-ombre": SunRequirement.PARTIAL_SHADE,
+                         "Ombre": SunRequirement.FULL_SHADE}.get(
+                             str(chars.get("Exposition", "")).strip(), SunRequirement.UNKNOWN),
+        water_needs={"sol sec": WaterNeeds.LOW, "sol frais": WaterNeeds.MEDIUM}.get(
+            str(chars.get("Humidité du sol", "")).strip(), WaterNeeds.UNKNOWN),
+        soil_type=str(chars.get("Type de sol", "")),
+        flower_color=str(chars.get("Fleur de couleur", "")),
+        foliage_color=str(chars.get("Feuillage de couleur", "")),
+        description=html.unescape(str(record.get("description_text", ""))),
+        data_source="custom", source_id=identity,
+        raw_data={"local_sheet": record, "source_file": path.name,
+                  "sha256": hashlib.sha256(original).hexdigest(),
+                  "mapping_version": 1},
+    )
+    return plant
 
 
 def _read_custom_store(path: Path) -> tuple[dict[str, Any], bytes | None, str]:

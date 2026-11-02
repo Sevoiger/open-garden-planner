@@ -15,18 +15,22 @@ whole assignment is a single undoable step.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date
 
 import pytest
 
 from open_garden_planner.core.object_types import ObjectType
+from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.services.bundled_species_db import (
     lookup_species,
     merge_calendar_data,
 )
+from open_garden_planner.services.plant_library import PlantLibrary
 from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
 from open_garden_planner.ui.canvas.canvas_view import CanvasView
 from open_garden_planner.ui.canvas.items.circle_item import CircleItem
+from open_garden_planner.ui.panels import plant_database_panel as panel_module
 from open_garden_planner.ui.panels.plant_database_panel import PlantDatabasePanel
 from open_garden_planner.ui.plant_species_assignment import apply_species_to_item
 
@@ -200,6 +204,140 @@ def test_module_override_kept_without_confirm(
     assert generic_plant.spacing_radius_cm == pytest.approx(10.0)
     assert generic_plant.radius == pytest.approx(_PLACED_RADIUS)
     assert generic_plant.metadata.get("plant_species") is not None
+
+
+def test_link_personal_catalog_record_preserves_instance_history_and_size(
+    tmp_path, monkeypatch, canvas: CanvasView, panel: PlantDatabasePanel,
+    generic_plant: CircleItem,
+) -> None:
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    library.add_plant(
+        PlantSpeciesData(
+            "Rosa catalog", "Rose du catalogue", source_id="exact-catalog-id"
+        )
+    )
+    monkeypatch.setattr(panel_module, "get_plant_library", lambda: library)
+    before_species = deepcopy(_species_dict())
+    generic_plant.metadata["plant_species"] = before_species
+    before_instance = {
+        "variety_cultivar": "Cultivar déjà observé",
+        "notes": "Note historique",
+        "size_measurements": [{"id": "measure-1", "date": "2025-05-01", "height_cm": 55}],
+        "custom_fields": {"Pépinière": "Jardin local"},
+        "future_instance": {"keep": [1, 2]},
+        "library_plant_id": "older-catalog-id",
+    }
+    generic_plant.metadata["plant_instance"] = deepcopy(before_instance)
+    before_radius = generic_plant.radius
+
+    class SelectedCatalogDialog:
+        def __init__(self, _parent):
+            self.selected_plant_id = "exact-catalog-id"
+
+        def setWindowTitle(self, _title):
+            pass
+
+        def exec(self):
+            return True
+
+    from open_garden_planner.ui.dialogs import custom_plants_dialog
+
+    monkeypatch.setattr(
+        custom_plants_dialog, "CustomPlantsDialog", SelectedCatalogDialog
+    )
+
+    panel._on_link_custom_plant()
+
+    assert generic_plant.metadata["plant_instance"] == {
+        **before_instance, "library_plant_id": "exact-catalog-id"
+    }
+    assert generic_plant.metadata["plant_species"] == before_species
+    assert generic_plant.radius == before_radius
+    assert canvas.command_manager.can_undo
+
+    canvas.command_manager.undo()
+    assert generic_plant.metadata["plant_instance"] == before_instance
+    assert generic_plant.metadata["plant_species"] == before_species
+    assert generic_plant.radius == before_radius
+
+    canvas.command_manager.redo()
+    assert generic_plant.metadata["plant_instance"]["library_plant_id"] == "exact-catalog-id"
+    assert generic_plant.metadata["plant_instance"]["size_measurements"] == before_instance["size_measurements"]
+    assert generic_plant.metadata["plant_instance"]["future_instance"] == before_instance["future_instance"]
+    assert generic_plant.radius == before_radius
+
+
+def test_link_undo_redo_retargets_library_editor_without_overwriting_other_record(
+    qtbot, tmp_path, monkeypatch, canvas: CanvasView,
+) -> None:
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    catalog_a = PlantSpeciesData(
+        "Rosa alpha", "Rosier alpha", source_id="catalog-a", data_source="custom",
+        max_height_cm=100,
+    )
+    catalog_b = PlantSpeciesData(
+        "Rosa beta", "Rosier beta", source_id="catalog-b", data_source="custom",
+        max_height_cm=180,
+    )
+    library.add_plant(catalog_a)
+    library.add_plant(catalog_b)
+    monkeypatch.setattr(panel_module, "get_plant_library", lambda: library)
+
+    item = CircleItem(
+        100, 100, 20, object_type=ObjectType.SHRUB,
+        metadata={
+            "plant_species": catalog_a.to_dict(),
+            "plant_instance": {
+                "library_plant_id": "catalog-a",
+                "notes": "Existing notes",
+                "size_measurements": [{"id": "measurement-a", "date": "2025-06-01", "height_cm": 70}],
+            },
+        },
+    )
+    canvas.scene().addItem(item)
+    panel = PlantDatabasePanel()
+    qtbot.addWidget(panel)
+    panel.set_selected_items([item])
+    assert panel._current_plant_revision == library.revision
+    assert panel._plant_revision_target == (item, "custom", "catalog-a")
+
+    class SelectedCatalogDialog:
+        def __init__(self, _parent):
+            self.selected_plant_id = "catalog-b"
+
+        def setWindowTitle(self, _title):
+            pass
+
+        def exec(self):
+            return True
+
+    from open_garden_planner.ui.dialogs import custom_plants_dialog
+
+    monkeypatch.setattr(
+        custom_plants_dialog, "CustomPlantsDialog", SelectedCatalogDialog
+    )
+    panel._on_link_custom_plant()
+
+    assert item.metadata["plant_instance"]["library_plant_id"] == "catalog-b"
+    assert panel._plant_revision_target == (item, "custom", "catalog-b")
+    assert panel._current_plant_revision is None
+    assert panel._plant_revision_conflict
+    panel.max_height_spin.setValue(240)
+    assert library.get_plant("catalog-b").max_height_cm == 180
+
+    canvas.command_manager.undo()
+    assert item.metadata["plant_instance"]["library_plant_id"] == "catalog-a"
+    assert panel._plant_revision_target == (item, "custom", "catalog-a")
+    assert panel._current_plant_revision == library.revision
+    assert not panel._plant_revision_conflict
+
+    canvas.command_manager.redo()
+    assert item.metadata["plant_instance"]["library_plant_id"] == "catalog-b"
+    assert panel._plant_revision_target == (item, "custom", "catalog-b")
+    assert panel._current_plant_revision is None
+    assert panel._plant_revision_conflict
+    panel.max_height_spin.setValue(300)
+    assert library.get_plant("catalog-b").max_height_cm == 180
 
 
 # ---------------------------------------------------------------------------

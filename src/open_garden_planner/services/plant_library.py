@@ -13,7 +13,7 @@ from typing import Any
 
 from open_garden_planner.core.file_lock import ProcessFileLock
 from open_garden_planner.core.workspace_guard import check_workspace_path, pin_workspace
-from open_garden_planner.models.plant_data import PlantSpeciesData
+from open_garden_planner.models.plant_data import PlantInstance, PlantSpeciesData
 from open_garden_planner.services.library_operations import (
     LibraryConflictError,
     LibraryFileError,
@@ -149,6 +149,11 @@ class PlantLibrary:
         """Fingerprint of the library state currently loaded by this instance."""
         return self._ensure_writable()
 
+    @property
+    def path(self) -> Path:
+        """Location of the existing store and its explicitly associated media."""
+        return self._library_path
+
     def _commit(
         self,
         document: dict[str, Any],
@@ -280,12 +285,35 @@ class PlantLibrary:
         """Return a typed plant by its exact source/library ID."""
         return self._plants.get(plant_id)
 
+    def get_plant_for_instance(
+        self, instance: PlantInstance | dict[str, Any]
+    ) -> PlantSpeciesData | None:
+        """Resolve an explicit instance link by exact personal-library ID.
+
+        ``PlantSpeciesData`` embedded on the instance is a snapshot and remains
+        independent. An absent or stale link returns ``None``; names are never
+        used to guess a record.
+        """
+        if isinstance(instance, PlantInstance):
+            plant_id = instance.library_plant_id
+        elif isinstance(instance, dict):
+            plant_id = instance.get("library_plant_id")
+        else:
+            raise TypeError("instance must be PlantInstance or a plant_instance mapping")
+        if plant_id is None:
+            return None
+        if not isinstance(plant_id, str) or not plant_id:
+            raise ValueError("library_plant_id must be a non-empty string or None")
+        return self.get_plant(plant_id)
+
     def get_all_plants(self) -> list[tuple[str, PlantSpeciesData]]:
         """Return typed, parseable plants and their exact IDs."""
         return list(self._plants.items())
 
     def search_plants(self, query: str) -> list[PlantSpeciesData]:
         """Search visible custom plants by scientific/common name or family."""
+        from open_garden_planner.services.botanical_profile import trait
+
         query_lower = query.lower()
         return [
             plant
@@ -294,6 +322,8 @@ class PlantLibrary:
                 query_lower in plant.scientific_name.lower()
                 or query_lower in plant.common_name.lower()
                 or query_lower in plant.family.lower()
+                or any(query_lower in trait(plant, key).lower() for key in
+                       ("cultivar", "commercial_name", "synonyms", "common_names", "tags"))
             )
         ]
 

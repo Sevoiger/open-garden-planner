@@ -206,7 +206,13 @@ class GardenMemoryPanel(QWidget):
                     "metadata": {key: deepcopy(item.metadata[key])
                                  for key in ("garden_tracking", "plant_instance") if key in item.metadata},
                 })
-        return {"objects": objects, "garden_memory": self.service.project.garden_memory}
+        specimens = self.service.project.plant_specimens
+        for record in specimens.values():
+            record["display_type"] = self.tr("Unplaced plant")
+            record["layer_id"] = ""
+            record["layer_name"] = self.tr("Unplaced plants")
+        return {"objects": objects, "plant_specimens": specimens,
+                "garden_memory": self.service.project.garden_memory}
 
     def _visible_objects(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         return [obj for obj in garden_objects(snapshot)

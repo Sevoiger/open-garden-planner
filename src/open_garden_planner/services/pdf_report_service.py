@@ -825,6 +825,195 @@ class PdfReportService:
     """Generates a multi-page PDF report from a CanvasScene."""
 
     @staticmethod
+    def export_botanical_catalog(entries, file_path, *, snapshot=None, project_file=None,
+                                 selected_photos=None, export_date=None, include_personal=True, library_path=None):
+        """Export one or several species with optional canonical personal records.
+
+        Entries carry the actual library key, not a guessed botanical name.
+        Images are explicit project attachments; no network access occurs.
+        Publish atomically only after every page has been rendered successfully.
+        """
+        import os
+        import tempfile
+
+        from PyQt6.QtCore import QSize, QSizeF, QUrl
+        from PyQt6.QtGui import QAbstractTextDocumentLayout, QImageReader, QTextDocument
+
+        from open_garden_planner.services.plant_catalog_report import catalog_report_html
+        from open_garden_planner.services.plant_media import resolve_media
+
+        entries = list(entries)
+        if not entries:
+            raise ValueError("Select at least one botanical record")
+        destination = Path(file_path)
+        if destination.suffix.lower() != ".pdf":
+            raise ValueError("Catalogue reports require a .pdf destination")
+        if project_file is not None:
+            from open_garden_planner.services.garden_archive import _media_references
+
+            protected = {Path(project_file).resolve()}
+            protected.update((Path(project_file).parent / reference).resolve()
+                             for _, _, reference in _media_references(snapshot or {}))
+            if destination.resolve() in protected:
+                raise ValueError("A report cannot overwrite a project or an attached original")
+        if library_path is not None:
+            from open_garden_planner.services.botanical_media import (
+                library_reference_paths,
+                snapshot_reference_paths,
+            )
+            from open_garden_planner.services.library_operations import read_library_document
+
+            protected = {Path(library_path).resolve()}
+            library_records = {"plants": {identity: plant.to_dict() for identity, plant in entries}}
+            saved_library, _, library_revision = read_library_document(Path(library_path))
+            protected.update((Path(library_path).parent / reference).resolve()
+                             for source in (saved_library, library_records) for reference in library_reference_paths(source))
+            protected.update((Path(library_path).parent / reference).resolve()
+                             for reference in snapshot_reference_paths(snapshot or {}))
+            if destination.resolve() in protected:
+                raise ValueError("A report cannot overwrite a botanical record or attached original")
+        labels = {
+            "exported": _tr("Exported on"), "botanical": _tr("Botanical recommendations"),
+            "calendar": _tr("Recommended periods"), "sources": _tr("Sources"),
+            "personal": _tr("Personal specimens and observations"),
+            "unknown": _tr("Unknown"), "corrected": _tr("Months corrected manually"),
+            "planting": _tr("Planting"), "flowering": _tr("Flowering"), "pruning": _tr("Pruning"),
+            "planting_optimal": _tr("Optimal planting"), "harvest": _tr("Harvest and fruiting"),
+            "sowing": _tr("Sowing"), "propagation": _tr("Propagation"),
+            "frost_relative": _tr("Weeks relative to the last spring frost (start / end)"),
+            "frost_indoor_sow": _tr("Indoor sowing"), "frost_direct_sow": _tr("Direct sowing"),
+            "frost_transplant": _tr("Transplanting"), "frost_harvest": _tr("Harvest"),
+            "family": _tr("Family"), "genus": _tr("Genus"), "cycle": _tr("Life cycle"),
+            "growth_rate": _tr("Growth rate"), "sun_requirement": _tr("Exposure"),
+            "water_needs": _tr("Water needs"), "soil_type": _tr("Soil type"),
+            "ph_min": _tr("Minimum soil pH"), "ph_max": _tr("Maximum soil pH"),
+            "hardiness_zone_min": _tr("Minimum hardiness zone"), "hardiness_zone_max": _tr("Maximum hardiness zone"),
+            "flower_color": _tr("Flower color"), "foliage_color": _tr("Foliage color"),
+            "min_height_cm": _tr("Minimum adult height (cm)"), "max_height_cm": _tr("Maximum adult height (cm)"),
+            "min_spread_cm": _tr("Minimum adult spread (cm)"), "max_spread_cm": _tr("Maximum adult spread (cm)"),
+            "provider": _tr("Data provider"), "source_url": _tr("Source URL"),
+            "source_file": _tr("Source file"), "retrieved": _tr("Retrieved on"),
+            "verified_at": _tr("Last verified"), "summary": _tr("Summary"),
+            "source_id": _tr("Source identifier"), "reference_url": _tr("Reference photo URL"),
+            "cultivation_mode": _tr("Cultivation mode"), "location": _tr("Location"),
+            "acquisition_supplier": _tr("Acquisition supplier"), "acquisition_price": _tr("Acquisition price"),
+            "acquisition_period": _tr("Acquisition date or period"), "container": _tr("Container"),
+            "substrate": _tr("Substrate"), "old_number": _tr("Old number"), "alias": _tr("Alias"), "nfc_tag": _tr("NFC tag"),
+            "planting_date": _tr("Actual planting date or period"), "notes": _tr("Notes"), "state": _tr("Specimen state"),
+            "measured": _tr("Measurement date"), "height": _tr("Measured height (cm)"), "spread": _tr("Measured spread (cm)"),
+            "annual": _tr("Annual"), "biennial": _tr("Biennial"), "perennial": _tr("Perennial"),
+            "slow": _tr("Slow"), "medium": _tr("Medium"), "fast": _tr("Fast"),
+            "full_sun": _tr("Full sun"), "partial_sun": _tr("Partial sun"),
+            "partial_shade": _tr("Partial shade"), "full_shade": _tr("Full shade"),
+            "low": _tr("Low"), "high": _tr("High"), "ground": _tr("In ground"),
+            "pot": _tr("Pot with bottom"), "bottomless": _tr("Bottomless container"), "other": _tr("Other"),
+            "planned": _tr("Awaiting planting"), "in_place": _tr("In place"), "dormant": _tr("Dormant"),
+            "uncertain": _tr("Uncertain"), "confirmed_dead": _tr("Confirmed dead"),
+            "removed_moved": _tr("Removed or given away"),
+            "cultivar": _tr("Cultivar"), "species": _tr("Species"), "commercial_name": _tr("Commercial name"),
+            "common_names": _tr("Other common names"), "synonyms": _tr("Synonyms"), "category": _tr("Category"),
+            "tags": _tr("Personal tags"), "habit": _tr("Growth habit"),
+            "foliage_persistence": _tr("Foliage persistence"), "foliage_details": _tr("Foliage characteristics"),
+            "flower_details": _tr("Flower characteristics"), "fragrance": _tr("Fragrance"), "fruit": _tr("Fruiting"),
+            "seasonal_interest": _tr("Seasonal interest"), "spacing": _tr("Spacing or density with units"),
+            "uses": _tr("Uses"), "support": _tr("Support requirements"), "exposures": _tr("Possible exposures"),
+            "drainage": _tr("Drainage"), "soil_richness": _tr("Soil richness"), "soil_moisture": _tr("Soil moisture"),
+            "soil_ph": _tr("Soil pH"), "hardiness": _tr("Hardiness"), "climate": _tr("Climate context"),
+            "drought": _tr("Drought tolerance"), "excess_water": _tr("Sensitivity to excess water"),
+            "pot_suitability": _tr("Suitability for containers"), "planting_advice": _tr("Planting advice"),
+            "mulching": _tr("Mulching"), "care": _tr("Care"), "pruning_advice": _tr("Pruning advice"),
+            "pruning_group": _tr("Pruning group and warnings"), "overwintering": _tr("Overwintering"),
+            "pollination": _tr("Pollination"), "pollinators": _tr("Interest for pollinators"),
+            "edibility": _tr("Documented edible uses"),
+            "precautions": _tr("Precautions"), "safety_source": _tr("Safety source and certainty"),
+        }
+        labels["trait_keys"] = (
+            "summary",
+            "cultivar", "species", "commercial_name", "common_names", "synonyms", "category", "tags",
+            "habit", "foliage_persistence", "foliage_details", "flower_details", "fragrance", "fruit",
+            "seasonal_interest", "spacing", "uses", "support", "exposures", "drainage", "soil_richness",
+            "soil_moisture", "soil_ph", "hardiness", "climate", "drought", "excess_water", "pot_suitability",
+            "planting_advice", "mulching", "care", "pruning_advice", "pruning_group", "overwintering",
+            "pollination", "pollinators", "propagation", "edibility", "precautions", "safety_source",
+        )
+        html, images = catalog_report_html(entries, labels, export_date=export_date or date.today().isoformat(),
+                                           snapshot=snapshot if include_personal else None, selected_photos=selected_photos)
+        document = QTextDocument()
+        document.setDocumentMargin(8)
+        for uri, reference, scope in images:
+            base = library_path if scope == "library" else project_file
+            if base is None:
+                raise ValueError("The media owner location is required for selected photos")
+            path = resolve_media(Path(base), reference)
+            reader = QImageReader(str(path))
+            size = reader.size()
+            if not size.isValid() or size.width() * size.height() > 50_000_000:
+                raise ValueError(f"Invalid or oversized report image: {reference}")
+            reader.setAutoTransform(True)
+            reader.setScaledSize(size.scaled(QSize(280, 260), Qt.AspectRatioMode.KeepAspectRatio))
+            image = reader.read()
+            if image.isNull():
+                raise ValueError(f"Could not read report image: {reference}")
+            canvas = QImage(280, 260, QImage.Format.Format_RGB32)
+            canvas.fill(QColor("white"))
+            image_painter = QPainter(canvas)
+            image_painter.drawImage(QPointF((280 - image.width()) / 2, (260 - image.height()) / 2), image)
+            image_painter.end()
+            document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(uri), canvas)
+        document.setHtml(html)
+        fd, temporary = tempfile.mkstemp(prefix=".ogp-catalog-", suffix=".pdf", dir=destination.parent)
+        os.close(fd)
+        try:
+            writer = QPdfWriter(temporary)
+            writer.setResolution(_PDF_DPI)
+            writer.setPageLayout(QPageLayout(QPageSize(QPageSize.PageSizeId.A4), QPageLayout.Orientation.Portrait,
+                                             QMarginsF(_MARGIN_MM, _MARGIN_MM, _MARGIN_MM, _MARGIN_MM),
+                                             QPageLayout.Unit.Millimeter))
+            painter = QPainter(writer)
+            if not painter.isActive():
+                raise OSError("Could not create the catalogue PDF")
+            try:
+                viewport = QRectF(painter.viewport())
+                body_height = viewport.height() - 28
+                document.setPageSize(QSizeF(viewport.width(), body_height))
+                total = document.pageCount()
+                for page in range(total):
+                    if page and not writer.newPage():
+                        raise OSError("Could not create a catalogue PDF page")
+                    painter.save()
+                    painter.setClipRect(QRectF(0, 0, viewport.width(), body_height))
+                    painter.translate(0, -page * body_height)
+                    context = QAbstractTextDocumentLayout.PaintContext()
+                    context.clip = QRectF(0, page * body_height, viewport.width(), body_height)
+                    document.documentLayout().draw(painter, context)
+                    painter.restore()
+                    painter.setPen(QColor("#5c665d"))
+                    painter.setFont(QFont("Helvetica", 8))
+                    painter.drawText(QRectF(0, body_height + 8, viewport.width(), 16),
+                                     Qt.AlignmentFlag.AlignRight, f"{page + 1} / {total}")
+            finally:
+                painter.end()
+            del writer
+            with open(temporary, "rb") as stream:
+                if not stream.read(5).startswith(b"%PDF-"):
+                    raise OSError("The catalogue PDF could not be finalized")
+                os.fsync(stream.fileno())
+            if library_path is not None:
+                from open_garden_planner.core.file_lock import ProcessFileLock
+                from open_garden_planner.services.library_operations import LibraryConflictError
+                from open_garden_planner.services.plant_library import _lock_path
+
+                with ProcessFileLock(_lock_path(Path(library_path))):
+                    _, _, current_revision = read_library_document(Path(library_path))
+                    if current_revision != library_revision:
+                        raise LibraryConflictError("The botanical library changed during PDF export; retry")
+                    os.replace(temporary, destination)
+            else:
+                os.replace(temporary, destination)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+
+    @staticmethod
     def generate(
         scene: CanvasScene,
         opts: PdfReportOptions,

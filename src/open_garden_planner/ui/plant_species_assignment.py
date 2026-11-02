@@ -128,6 +128,7 @@ def apply_species_to_item(
     species_dict: dict[str, Any],
     *,
     confirm: Callable[[], bool] | None = None,
+    library_plant_id: str | None = None,
 ) -> None:
     """Assign ``species_dict`` to ``plant_item`` (undoable + repaints canvas).
 
@@ -138,6 +139,8 @@ def apply_species_to_item(
         confirm: Callable returning True to apply database values when a manual
             ``spacing_radius_cm`` override conflicts with the database. Required
             for the prompt to fire; when None a conflicting override is preserved.
+        library_plant_id: Exact key from the personal PlantLibrary when this
+            assignment came from that library. ``None`` clears any old link.
 
     The drawn footprint is resized so its diameter equals the species'
     ``max_spread_cm`` — silently in the common case (no conflicting manual
@@ -193,6 +196,7 @@ def apply_species_to_item(
         new_override,
         old_radius,
         new_radius,
+        library_plant_id=library_plant_id,
     )
 
     scene = plant_item.scene()

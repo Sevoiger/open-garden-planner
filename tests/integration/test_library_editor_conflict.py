@@ -225,6 +225,7 @@ def test_explicit_load_of_current_library_species_rearms_editor(
     class SelectedCurrentPlantDialog:
         def __init__(self, _parent):
             self.selected_plant = library.get_plant("synthetic-rose")
+            self.selected_plant_id = "synthetic-rose"
 
         def setWindowTitle(self, _title):
             pass
@@ -237,6 +238,7 @@ def test_explicit_load_of_current_library_species_rearms_editor(
     )
     panel._on_load_custom_plant()
 
+    assert item.metadata["plant_instance"]["library_plant_id"] == "synthetic-rose"
     assert panel._current_plant_revision == library.revision
     assert not panel._plant_revision_conflict
     assert panel._current_plant_data.common_name == "After MCP"

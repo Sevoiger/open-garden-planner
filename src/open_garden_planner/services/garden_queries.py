@@ -22,6 +22,7 @@ def garden_objects(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             walk(record.get("children", []))
 
     walk(snapshot.get("objects", []))
+    result.extend(snapshot.get("plant_specimens", {}).values())
     return result
 
 

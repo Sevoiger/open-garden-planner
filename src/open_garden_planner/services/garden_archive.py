@@ -34,17 +34,30 @@ def _atomic_bytes(path: Path, data: bytes) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def import_attachment(source: Path, project: Path) -> str:
+def import_attachment(source: Path, project: Path, *, subdirectory: str | None = None,
+                      expected_sha256: str | None = None, max_bytes: int | None = None) -> str:
     """Content-addressed names handle collisions; files outlive source/temp folders."""
     if not project.is_file():
         raise ValueError("Save the project before importing attachments")
-    data = source.read_bytes()
-    folder = project.parent / (project.stem + ".assets")
-    folder.mkdir(exist_ok=True)
+    with source.open("rb") as stream:
+        data = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise ValueError("Attachment exceeds the file size limit")
+    if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError("Attachment changed during import; retry with the original file")
+    relative = Path(subdirectory) if subdirectory is not None else Path(project.stem + ".assets")
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("Attachment folder must be inside the project directory")
+    folder = project.parent / relative
+    folder.resolve().relative_to(project.parent.resolve())
+    folder.mkdir(parents=True, exist_ok=True)
     suffix = source.suffix.lower()
     if not suffix.isascii() or len(suffix) > 12 or any(c not in ".abcdefghijklmnopqrstuvwxyz0123456789" for c in suffix):
         suffix = ".bin"
     destination = folder / (hashlib.sha256(data).hexdigest() + suffix)
+    destination.resolve().relative_to(project.parent.resolve())
+    if destination.is_symlink():
+        raise ValueError("Attachment destination must not be a symbolic link")
     if destination.exists():
         if destination.read_bytes() != data:
             raise ValueError("Attachment hash collision")
@@ -53,20 +66,27 @@ def import_attachment(source: Path, project: Path) -> str:
     return destination.relative_to(project.parent).as_posix()
 
 
-def _media_references(value: Any) -> Iterator[tuple[Any, str | int, str]]:
+def _media_references(value: Any, _path: tuple[str | int, ...] = ()) -> Iterator[tuple[Any, str | int, str]]:
     """Yield mutable containers and their media-reference keys without scanning disk."""
     if isinstance(value, dict):
         for key, child in value.items():
-            if key == "photo_path" and isinstance(child, str) and child:
+            if key == "reference_media" and _path[-2:] in {
+                ("plant_species", "raw_data"), ("species_data", "raw_data"),
+            }:
+                # Embedded botanical data is an immutable library snapshot.
+                # These paths belong to the botanical library, not the plan.
+                # Its declared originals are archived through app-data below.
+                continue
+            if key in {"photo_path", "thumbnail_path"} and isinstance(child, str) and child:
                 yield value, key, child
             elif key == "media" and isinstance(child, list):
                 for index, reference in enumerate(child):
                     yield child, index, reference
             else:
-                yield from _media_references(child)
+                yield from _media_references(child, (*_path, key))
     elif isinstance(value, list):
-        for child in value:
-            yield from _media_references(child)
+        for index, child in enumerate(value):
+            yield from _media_references(child, (*_path, index))
 
 
 def _seed_photo_references(records: Any) -> Iterator[tuple[dict[str, Any], str]]:
@@ -159,6 +179,11 @@ def portable_backup(snapshot: dict[str, Any], project: Path, destination: Path, 
     if destination.resolve() == project.resolve() or destination.suffix.lower() == ".ogp":
         raise ValueError("A backup cannot overwrite a garden project")
     candidate = deepcopy(snapshot)
+    from open_garden_planner.services.botanical_media import snapshot_reference_paths
+
+    snapshot_botanical_media = set(snapshot_reference_paths(candidate))
+    if snapshot_botanical_media and app_data is None:
+        raise ValueError("Use the global portable backup with the botanical library to preserve reference photos")
     files: dict[str, bytes] = {}
     sources: dict[str, Path] = {}
     fingerprints: dict[str, tuple[str, int]] = {}
@@ -221,6 +246,36 @@ def portable_backup(snapshot: dict[str, Any], project: Path, destination: Path, 
                 raise ValueError("A personal data file is not a regular file")
             path.resolve().relative_to(root.resolve())
             add_source("app-data/" + path.relative_to(root).as_posix(), path)
+        botanical_path = sources.get("app-data/custom_plants.json")
+        for reference in snapshot_botanical_media:
+            path = root / reference
+            path.resolve().relative_to(root.resolve())
+            if path.is_symlink() or not path.is_file():
+                raise ValueError(f"Referenced botanical snapshot media is unavailable: {reference}")
+            add_source("app-data/" + Path(reference).as_posix(), path)
+        if botanical_path is not None:
+            from open_garden_planner.core.personal_store import loads_json
+            from open_garden_planner.services.botanical_media import library_reference_paths
+
+            if botanical_path.stat().st_size > 64_000_000:
+                raise ValueError("Botanical library exceeds supported size")
+            with botanical_path.open("rb") as stream:
+                botanical_bytes = stream.read(64_000_001)
+            if len(botanical_bytes) > 64_000_000:
+                raise ValueError("Botanical library exceeds supported size")
+            observed = hashlib.sha256(botanical_bytes).hexdigest(), len(botanical_bytes)
+            if observed != fingerprints["app-data/custom_plants.json"]:
+                raise ValueError("Botanical library changed during backup; retry")
+            botanical = loads_json(botanical_bytes.decode("utf-8"))
+            for reference in library_reference_paths(botanical):
+                path = root / reference
+                path.resolve().relative_to(root.resolve())
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError(f"Referenced botanical media is unavailable: {reference}")
+                # Keep references relative to the restored library, whose JSON
+                # is copied byte-for-byte. Only declared originals/thumbnails
+                # enter the archive; unrelated files are never scanned.
+                add_source("app-data/" + Path(reference).as_posix(), path)
         seed_path = sources.get("app-data/seed_inventory.json")
         if seed_path is not None:
             from open_garden_planner.core.personal_store import loads_json
@@ -366,5 +421,25 @@ def restore_backup(archive_path: Path, destination: Path) -> Path:
             path.relative_to(staging.resolve())
             if not path.is_file():
                 raise ValueError("Missing archived media")
+        botanical_path = staging / "app-data" / "custom_plants.json"
+        from open_garden_planner.services.botanical_media import snapshot_reference_paths
+
+        for reference in snapshot_reference_paths(payload):
+            path = (staging / "app-data" / reference).resolve()
+            path.relative_to((staging / "app-data").resolve())
+            if not path.is_file():
+                raise ValueError("Missing archived botanical snapshot media")
+        if botanical_path.is_file():
+            from open_garden_planner.core.personal_store import loads_json
+            from open_garden_planner.services.botanical_media import library_reference_paths
+
+            if botanical_path.stat().st_size > 64_000_000:
+                raise ValueError("Botanical library exceeds supported size")
+            botanical = loads_json(botanical_path.read_text(encoding="utf-8"))
+            for reference in library_reference_paths(botanical):
+                path = (botanical_path.parent / reference).resolve()
+                path.relative_to(botanical_path.parent.resolve())
+                if not path.is_file():
+                    raise ValueError("Missing archived botanical media")
         staging.rename(destination)
     return destination / "garden.ogp"

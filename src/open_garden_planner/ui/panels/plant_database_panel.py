@@ -379,6 +379,15 @@ class PlantDatabasePanel(QWidget):
         self.load_custom_button.setToolTip(self.tr("Load a plant from your custom library"))
         self.load_custom_button.clicked.connect(self._on_load_custom_plant)
         button_layout.addWidget(self.load_custom_button)
+
+        # A catalog link is an instance field. Unlike Load, it does not copy
+        # botanical data or resize the drawn plant.
+        self.link_custom_button = QPushButton(self.tr("Link"))
+        self.link_custom_button.setToolTip(self.tr(
+            "Link this plant to a personal catalog record without changing its botanical data or size."
+        ))
+        self.link_custom_button.clicked.connect(self._on_link_custom_plant)
+        button_layout.addWidget(self.link_custom_button)
         button_layout.addWidget(self.create_custom_button)
 
         layout.addLayout(button_layout)
@@ -984,8 +993,16 @@ class PlantDatabasePanel(QWidget):
 
             try:
                 if edited_plant.data_source == "custom":
-                    # Already a custom plant - update it in the library.
-                    plant_id = edited_plant.source_id
+                    # An explicit instance link takes precedence over the
+                    # embedded snapshot's source_id. Legacy custom entries
+                    # continue to resolve by that exact source ID.
+                    instance = plant_item.metadata.get("plant_instance", {})
+                    linked_id = (
+                        instance.get("library_plant_id")
+                        if isinstance(instance, dict)
+                        else None
+                    )
+                    plant_id = linked_id or edited_plant.source_id
                     if plant_id:
                         if self._current_plant_revision is None:
                             if self._plant_revision_conflict:
@@ -1571,7 +1588,17 @@ class PlantDatabasePanel(QWidget):
         def apply(target: Any, state: tuple) -> None:
             self._apply_instance_value(target, key, state)
             if self._current_plant_item is target:
-                self._refresh_instance_fields(target)
+                if key == "library_plant_id" and self._current_plant_data is not None:
+                    # A link change switches which catalog revision an editor
+                    # targets. Re-evaluate on execute, undo and redo so a stale
+                    # snapshot for record A can never be written into record B.
+                    self._show_plant_data(
+                        self._current_plant_data,
+                        target,
+                        force_revision_refresh=True,
+                    )
+                else:
+                    self._refresh_instance_fields(target)
 
         return _PlantInstanceCommand(item, key, before, after, apply)
 
@@ -1894,14 +1921,27 @@ class PlantDatabasePanel(QWidget):
             plant_data: Plant species data to display
             plant_item: The graphics item this data belongs to
         """
-        target = (plant_item, plant_data.data_source, plant_data.source_id)
+        instance_data = {}
+        if hasattr(plant_item, "metadata") and plant_item.metadata:
+            raw_instance = plant_item.metadata.get("plant_instance", {})
+            if isinstance(raw_instance, dict):
+                instance_data = raw_instance
+        linked_id = instance_data.get("library_plant_id")
+        if not isinstance(linked_id, str) or not linked_id:
+            linked_id = ""
+        target_id = linked_id or plant_data.source_id
+        target = (plant_item, plant_data.data_source, target_id)
         if force_revision_refresh or target != self._plant_revision_target:
             self._current_plant_revision = None
             self._plant_revision_conflict = False
-            if plant_data.data_source == "custom" and plant_data.source_id:
+            if linked_id or (plant_data.data_source == "custom" and plant_data.source_id):
                 try:
                     library = get_plant_library()
-                    current_plant = library.get_plant(plant_data.source_id)
+                    current_plant = (
+                        library.get_plant_for_instance(instance_data)
+                        if linked_id
+                        else library.get_plant(plant_data.source_id)
+                    )
                     if current_plant is None:
                         self._plant_revision_conflict = True
                     elif merge_calendar_data(plant_data.to_dict()) == merge_calendar_data(
@@ -2380,7 +2420,11 @@ class PlantDatabasePanel(QWidget):
         self._update_favorite_button()
 
     def _apply_species_to_item(
-        self, plant_item: QGraphicsItem, species_dict: dict
+        self,
+        plant_item: QGraphicsItem,
+        species_dict: dict,
+        *,
+        library_plant_id: str | None = None,
     ) -> None:
         """Assign a database species dict to a plant item (undoable + repaints).
 
@@ -2391,6 +2435,7 @@ class PlantDatabasePanel(QWidget):
             plant_item,
             species_dict,
             confirm=self._confirm_apply_database_values,
+            library_plant_id=library_plant_id,
         )
 
     def _confirm_apply_database_values(self) -> bool:
@@ -2434,10 +2479,15 @@ class PlantDatabasePanel(QWidget):
         dialog = CustomPlantsDialog(self)
         dialog.setWindowTitle(self.tr("Select Custom Plant"))
         if dialog.exec() and dialog.selected_plant:
+            plant_id = dialog.selected_plant_id
+            if not plant_id:
+                return
             # Assign selected plant to the item (undoable + repaints canvas)
             plant_item = self._current_plant_item
             self._apply_species_to_item(
-                plant_item, merge_calendar_data(dialog.selected_plant.to_dict())
+                plant_item,
+                merge_calendar_data(dialog.selected_plant.to_dict()),
+                library_plant_id=plant_id,
             )
 
             # Show the plant data for editing
@@ -2445,6 +2495,40 @@ class PlantDatabasePanel(QWidget):
                 dialog.selected_plant,
                 plant_item,
                 force_revision_refresh=True,
+            )
+
+    def _on_link_custom_plant(self) -> None:
+        """Link the selected plant instance to one exact personal catalog entry."""
+        if not self._current_plant_item:
+            QMessageBox.information(
+                self,
+                self.tr("No Plant Selected"),
+                self.tr("Please select a plant object (tree, shrub, or perennial) first."),
+            )
+            return
+
+        library = get_plant_library()
+        if not library.get_all_plants():
+            QMessageBox.information(
+                self,
+                self.tr("No Custom Plants"),
+                self.tr(
+                    "Your custom plant library is empty.\n\n"
+                    "Use 'Create Custom' to add plants, or use the Plants menu "
+                    "to manage your custom plant library."
+                ),
+            )
+            return
+
+        from open_garden_planner.ui.dialogs.custom_plants_dialog import CustomPlantsDialog
+
+        dialog = CustomPlantsDialog(self)
+        dialog.setWindowTitle(self.tr("Link Plant to Library"))
+        if dialog.exec() and dialog.selected_plant_id:
+            # This command edits only the link key. Existing botanical snapshots,
+            # measurements, notes and unknown instance fields remain untouched.
+            self._update_instance_metadata(
+                "library_plant_id", dialog.selected_plant_id
             )
 
     def _on_create_custom_plant(self) -> None:
@@ -2475,7 +2559,9 @@ class PlantDatabasePanel(QWidget):
         species_dict["source_id"] = plant_id
 
         # Assign to the selected plant item (undoable + repaints canvas)
-        self._apply_species_to_item(plant_item, species_dict)
+        self._apply_species_to_item(
+            plant_item, species_dict, library_plant_id=plant_id
+        )
 
         # Show the plant data for editing
         self._show_plant_data(custom_plant, plant_item)
