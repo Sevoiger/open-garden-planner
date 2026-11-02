@@ -1,23 +1,23 @@
 """Capture the real catalogue widgets using isolated synthetic garden data."""
 import argparse
+from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from PIL import Image, ImageDraw
-from PyQt6.QtCore import QLocale, QPointF, QSettings, QThreadPool, QTimer, QTranslator
+from PyQt6.QtCore import QLocale, QPointF, QThreadPool, QTimer, QTranslator
 from PyQt6.QtWidgets import QApplication
 
 
 def capture(destination):
-    with TemporaryDirectory(prefix="ogp-catalog-ui-") as directory:
+    with TemporaryDirectory(prefix="ogp-catalog-ui-") as directory, ExitStack() as cleanup:
         root = Path(directory)
-        QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-        QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(root / "settings"))
         import open_garden_planner.app.settings as app_settings
         import open_garden_planner.services.plant_library as library_module
 
         app_settings.ORGANIZATION_NAME = "OGP-catalogue-QA"
-        app_settings.APPLICATION_NAME = "synthetic-catalogue"
+        app_settings.APPLICATION_NAME = "synthetic-catalogue-" + root.name
+        cleanup.callback(lambda: app_settings.create_qsettings().clear())
         library_module._default_app_data_dir = lambda: root / "app-data"
         from open_garden_planner.core.commands import CommandManager
         from open_garden_planner.core.plant_specimens import SpecimenEditCommand

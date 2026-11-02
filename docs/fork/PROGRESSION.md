@@ -1,5 +1,18 @@
 # Progression — fork personnel macOS
 
+## Démarrage natif restauré — 2 novembre 2026
+
+Le code 139 au lancement provenait de la réinsertion d'une barre d'outils déjà
+installée dans le layout Cocoa de Qt 6.11. Le démarrage conserve désormais
+l'ordre existant et supprime seulement les sauts de rangée ; les barres de
+dessin reviennent visibles, les barres contextuelles restent masquées.
+Aucun réglage personnel n'a besoin d'être réinitialisé.
+
+Le crash a été reproduit sur une copie isolée de la disposition, puis corrigé.
+Le test de démarrage force une collecte Python avant l'affichage et vérifie une
+ancienne disposition synthétique à deux rangées : il passe en offscreen et en
+Cocoa natif. Les 55 tests existants des barres d'outils et de l'état UI passent.
+
 ## Fiches, dates et prix — 31 octobre 2026
 
 Une nouvelle plante placée depuis la galerie, un outil, une liste ou une guilde

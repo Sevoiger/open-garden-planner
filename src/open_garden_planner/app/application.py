@@ -6854,8 +6854,10 @@ class GardenPlannerApp(QMainWindow):
             self.category_toolbar,
         ):
             toolbar.setVisible(True)
-        # Heal the previous two-row layout without resetting unrelated UI state.
-        self.insertToolBar(self.category_toolbar, self.constraint_toolbar)
+        # Creation already puts drawing tools, constraints and palettes in order.
+        # Re-inserting an installed toolbar corrupts the native Cocoa toolbar
+        # layout on Qt 6.11; the crash occurs later when the window is shown.
+        # Heal the former two-row layout by removing breaks only.
         for toolbar in (self.main_toolbar, self.category_toolbar, self.constraint_toolbar):
             self.removeToolBarBreak(toolbar)
         self._sun_toolbar.setVisible(False)
