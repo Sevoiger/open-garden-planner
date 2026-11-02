@@ -4,6 +4,7 @@ Source payloads stay immutable. Explicit manual values, including a deliberate
 blank, override a source value without losing its provenance.
 """
 from copy import deepcopy
+from hashlib import sha256
 
 from open_garden_planner.models.plant_data import PlantSpeciesData
 
@@ -23,10 +24,39 @@ def source_trait(plant: PlantSpeciesData, key: str) -> str:
     if label is None:
         return ""
     raw = plant.raw_data
+    provider = raw.get("promesse_de_fleurs")
+    active_provider = False
+    if isinstance(provider, dict):
+        url = provider.get("source_url")
+        try:
+            from open_garden_planner.services.plant_source_import import source_identity
+
+            identity = source_identity(plant)
+        except (TypeError, ValueError):
+            identity = None
+        if isinstance(url, str) and url:
+            expected = ("promesse_de_fleurs", "local-sheet:" + sha256(url.encode("utf-8")).hexdigest()[:32])
+            active_provider = identity == expected
+        elif getattr(plant, "data_source", "") == "promesse_de_fleurs":
+            active_provider = identity is not None and identity[0] == "promesse_de_fleurs"
+
+    containers = (("promesse_de_fleurs", "fields"),) if active_provider else (
+        ("local_sheet", "characteristics"), ("promesse_de_fleurs", "fields")
+    )
     values = []
-    for container, field in (("local_sheet", "characteristics"), ("promesse_de_fleurs", "fields")):
+    for container, field in containers:
         record = raw.get(container)
         fields = record.get(field) if isinstance(record, dict) else None
+        value = fields.get(label) if isinstance(fields, dict) else None
+        candidates = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+        for item in candidates:
+            if isinstance(item, str) and item.strip() and item not in values:
+                values.append(item)
+    if active_provider and not values:
+        # An absent value in the active refresh does not erase an older
+        # captured source detail; that payload remains a safe fallback.
+        record = raw.get("local_sheet")
+        fields = record.get("characteristics") if isinstance(record, dict) else None
         value = fields.get(label) if isinstance(fields, dict) else None
         candidates = [value] if isinstance(value, str) else value if isinstance(value, list) else []
         for item in candidates:

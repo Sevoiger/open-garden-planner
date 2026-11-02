@@ -19,6 +19,11 @@ def capture(destination):
         app_settings.APPLICATION_NAME = "synthetic-catalogue-" + root.name
         cleanup.callback(lambda: app_settings.create_qsettings().clear())
         library_module._default_app_data_dir = lambda: root / "app-data"
+        from open_garden_planner.app.application import (
+            TAB_PLAN,
+            TAB_PLANT_CATALOG,
+            GardenPlannerApp,
+        )
         from open_garden_planner.core.commands import CommandManager
         from open_garden_planner.core.plant_specimens import SpecimenEditCommand
         from open_garden_planner.core.project import ProjectManager
@@ -34,7 +39,9 @@ def capture(destination):
         from open_garden_planner.services.plant_specimens import add_specimen
         from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
         from open_garden_planner.ui.dialogs.plant_sheet_dialog import PlantSheetDialog
+        from open_garden_planner.ui.dialogs.tab_configuration_dialog import TabConfigurationDialog
         from open_garden_planner.ui.specimen_placement import place_specimen
+        from open_garden_planner.ui.theme import ThemeMode, apply_theme
         from open_garden_planner.ui.views.plant_catalog_view import PlantCatalogView
 
         application = QApplication.instance() or QApplication([])
@@ -42,9 +49,10 @@ def capture(destination):
         translator = QTranslator()
         translator.load(str(Path(__file__).resolve().parents[1] / "src/open_garden_planner/resources/translations/open_garden_planner_fr.qm"))
         application.installTranslator(translator)
+        apply_theme(application, ThemeMode.DARK)
         library = library_module.PlantLibrary(root / "app-data/custom_plants.json")
         identity = library.add_plant(PlantSpeciesData("Hibiscus syriacus", "Althéa blanc", max_height_cm=200,
-            max_spread_cm=150, family="Malvaceae", description="Fiche de validation sur données fictives.",
+            max_spread_cm=150, family="Malvaceae", description="Fiche de validation sur données fictives. " * 12,
             raw_data={"botanical_profile": {"cultivar": "Diana", "exposures": "Soleil, mi-ombre", "category": "Arbuste"},
                       "catalog_relations": ["wanted"], "local_sheet": {"characteristics": {
                           "Période de floraison": "Août à Octobre", "Période raisonnable de plantation": "Mars à Mai"}}}))
@@ -80,10 +88,21 @@ def capture(destination):
         view._request_thumbnail(identity)
         sheet = PlantSheetDialog(library, identity, project=project, scene=scene, commands=commands)
         sheet.resize(1100, 850)
+        GardenPlannerApp._startup_sequence = lambda _self: None
+        GardenPlannerApp._start_update_check = lambda _self: None
+        dashboard = GardenPlannerApp()
+        dashboard.showNormal()
+        dashboard.resize(1100, 800)
+        dashboard._navigate_to_tab(TAB_PLANT_CATALOG)
+        entries = [(tab_id, dashboard._tab_widget.tabText(dashboard._tab_widget.indexOf(dashboard._tab_widgets_by_id[tab_id])), True)
+                   for tab_id in dashboard._tab_order_ids()]
+        tabs_dialog = TabConfigurationDialog(entries, permanent_tab_id=TAB_PLAN, parent=dashboard)
         destination.mkdir(parents=True, exist_ok=True)
-        steps = [(view, None, "catalogue"), (sheet, 0, "presentation"), (sheet, 1, "culture"),
+        steps = [(view, None, "catalogue"), (view, None, "catalogue-compact"),
+                 (sheet, 0, "presentation"), (sheet, 1, "culture"),
                  (sheet, 2, "exemplaires"), (sheet, 3, "medias"), (sheet, 3, "photos-personnelles"),
-                 (sheet, 4, "sources")]
+                 (sheet, 4, "sources"), (dashboard, None, "onglets"),
+                 (tabs_dialog, None, "configurer-onglets")]
         position = [0]
         def take():
             if QThreadPool.globalInstance().activeThreadCount():
@@ -99,6 +118,8 @@ def capture(destination):
                 application.quit()
                 return
             widget, tab, _name = steps[position[0]]
+            if _name == "catalogue-compact":
+                view.resize(1000, 720)
             widget.show()
             if tab is not None:
                 widget.tabs.setCurrentIndex(tab)
@@ -112,6 +133,9 @@ def capture(destination):
             raise RuntimeError("Catalogue capture timed out")
         sheet.close()
         view.close()
+        tabs_dialog.close()
+        dashboard._project_manager.mark_clean()
+        dashboard.close()
         QThreadPool.globalInstance().waitForDone(5000)
         print(f"Captured {position[0]} views using {application.platformName()} in {destination.resolve()}")
 

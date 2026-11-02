@@ -856,6 +856,11 @@ def generate_stylesheet(mode: ThemeMode) -> str:
         border-bottom: 2px solid {colors['accent']};
     }}
 
+    QTabBar#workspaceTabBar::tab {{
+        padding: 7px 8px;
+        margin-right: 1px;
+    }}
+
     QTabBar::tab:hover:!selected {{
         background-color: {colors['background_alt']};
     }}

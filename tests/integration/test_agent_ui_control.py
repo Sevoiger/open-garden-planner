@@ -33,7 +33,11 @@ from PyQt6.QtWidgets import (
 )
 
 from open_garden_planner.agent_api.bridge import MainThreadBridge
-from open_garden_planner.app.application import GardenPlannerApp
+from open_garden_planner.app.application import (
+    TAB_CALENDAR,
+    TAB_SEEDS,
+    GardenPlannerApp,
+)
 from open_garden_planner.core.object_types import ObjectType
 from open_garden_planner.ui.agent_control import ApplicationUiController
 from open_garden_planner.ui.canvas.items import RectangleItem
@@ -174,6 +178,55 @@ def test_special_numeric_and_date_values_remain_unknown(qtbot):
         assert temperature.value() == temperature.minimum() and day.date() == day.minimumDate()
     finally:
         controller.close()
+
+
+@pytest.mark.parametrize(
+    ("tab_id", "current_label", "legacy_label"),
+    [
+        (TAB_CALENDAR, "Calendar", "Planting Calendar"),
+        (TAB_SEEDS, "Seeds", "Seed Inventory"),
+    ],
+)
+def test_ui_tab_selection_supports_aliases_after_reorder_and_reveals_hidden(
+    qtbot, ui_window, tab_id, current_label, legacy_label
+):
+    window, controller = ui_window
+    order = window._tab_order_ids()
+    order.remove(tab_id)
+    order.append(tab_id)
+    window._apply_tab_layout(
+        order, [candidate for candidate in order if candidate != tab_id], persist=False
+    )
+    tab = window._tab_widgets_by_id[tab_id]
+    handle = controller._remember(window._tab_widget)
+
+    snapshot_choices = next(
+        node["choices"]
+        for node in snapshot(controller)["nodes"]
+        if node["class"] == "QTabWidget"
+        and any(choice["text"] == current_label for choice in node.get("choices", []))
+    )
+    assert any(choice["text"] == legacy_label for choice in snapshot_choices)
+    assert window._tab_widget.indexOf(tab) == len(order) - 1
+    tab_bar_handle = controller._remember(window._tab_widget.tabBar())
+    tab_bar_choices = next(
+        node["choices"]
+        for node in snapshot(controller)["nodes"]
+        if node["class"] == "QTabBar"
+        and any(choice["text"] == current_label for choice in node.get("choices", []))
+    )
+    assert any(choice["text"] == legacy_label for choice in tab_bar_choices)
+
+    for widget_handle in (handle, tab_bar_handle):
+        for label in (legacy_label, current_label):
+            window._set_tab_visible(tab_id, False)
+            complete(
+                controller,
+                qtbot,
+                queue(controller, "value", widget_id=widget_handle, value=label),
+            )
+            assert window._tab_widget.currentWidget() is tab
+            assert window._tab_widget.isTabVisible(window._tab_widget.indexOf(tab))
 
 
 def test_text_input_commits_when_owner_lost_activation(qtbot):

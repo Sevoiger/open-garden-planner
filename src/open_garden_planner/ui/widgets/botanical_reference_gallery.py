@@ -205,10 +205,61 @@ class BotanicalReferenceGallery(QWidget):
 
     def _download_reference(self):
         try:
-            default_url = self._plant().image_url or ""
+            plant = self._plant()
+            raw = plant.raw_data if isinstance(plant.raw_data, dict) else {}
+            provider = raw.get("promesse_de_fleurs", {})
+            provider = provider if isinstance(provider, dict) else {}
+            local_sheet = raw.get("local_sheet", {})
+            local_sheet = local_sheet if isinstance(local_sheet, dict) else {}
+            from open_garden_planner.services.plant_source_import import (
+                validate_reference_photo_url,
+                validate_source_url,
+            )
+
+            default_url = ""
+            for candidate_url in (provider.get("image_url", ""), plant.image_url):
+                if not candidate_url:
+                    continue
+                try:
+                    validate_reference_photo_url(candidate_url)
+                except (TypeError, ValueError):
+                    continue
+                default_url = candidate_url
+                break
+            page_url = provider.get("source_url", "") or local_sheet.get("url", "")
+            try:
+                validate_source_url(page_url)
+                saved_page_is_provider = True
+            except (TypeError, ValueError):
+                saved_page_is_provider = False
             revision = self.library.revision
         except (ValueError, OSError, RuntimeError) as error:
             self.status.setText(str(error))
+            return
+        if saved_page_is_provider:
+            from open_garden_planner.services.plant_source_import import (
+                fetch_reference_photo_for_plant,
+            )
+
+            caption, credit = self.caption.text().strip(), self.credit.text().strip()
+            self.download_button.setEnabled(False)
+
+            def imported(asset, error):
+                self.download_button.setEnabled(True)
+                if error:
+                    self.status.setText(self.tr("The reference photo could not be downloaded. You can import a local file.") + "\n" + error)
+                    return
+                if asset is None:
+                    self.status.setText(self.tr("The reference photo could not be downloaded. You can import a local file."))
+                    return
+                try:
+                    self._commit(asset=asset, expected_revision=revision)
+                except (ValueError, OSError, RuntimeError) as error:
+                    self.status.setText(str(error))
+
+            self._run(lambda: fetch_reference_photo_for_plant(
+                plant, self.library.path, self.library_id, caption=caption, credit=credit
+            ), imported)
             return
         url, accepted = QInputDialog.getText(self, self.tr("Download source reference photo"),
             self.tr("HTTPS photo URL from Promesse de Fleurs. If retrieval is restricted, choose a local file."),

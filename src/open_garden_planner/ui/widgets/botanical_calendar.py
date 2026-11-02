@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import QGridLayout, QGroupBox, QLabel, QToolButton, QVBoxLa
 class BotanicalCalendarWidget(QWidget):
     """Three primary bands with optional, collapsible specialized periods."""
 
-    def __init__(self, *, editable: bool, extended: bool = False, parent=None):
+    def __init__(self, *, editable: bool, extended: bool = False, quick: bool = False, parent=None):
         super().__init__(parent)
         self._editable = editable
         self._buttons = {}
@@ -16,11 +16,12 @@ class BotanicalCalendarWidget(QWidget):
         self._edited = set()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self._add_bands(layout, (
-            ("planting", self.tr("Planting")),
+        core = (
             ("flowering", self.tr("Flowering")),
             ("pruning", self.tr("Pruning")),
-        ))
+        )
+        self._add_bands(layout, core if quick else (("planting", self.tr("Planting")), *core))
+        self._quick = quick
         self.specialized_group = None
         if extended:
             group = QGroupBox(self.tr("Other recommended periods"))
@@ -46,6 +47,8 @@ class BotanicalCalendarWidget(QWidget):
         panel = QWidget()
         layout = QGridLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(4)
+        layout.setVerticalSpacing(8)
         layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         locale = QLocale()
         for column in range(1, 13):
@@ -100,6 +103,7 @@ class BotanicalCalendarWidget(QWidget):
             self._source_text[key].setText(
                 f"{self._source[key].text()} — {' · '.join(notes)}" if notes else ""
             )
+            self._source_text[key].setVisible(not self._quick and bool(notes))
             for index, button in enumerate(buttons, 1):
                 button.setChecked(index in months)
                 button.setToolTip(source)

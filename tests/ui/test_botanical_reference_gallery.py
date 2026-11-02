@@ -7,6 +7,7 @@ from open_garden_planner.services.botanical_media import (
     edit_reference_media,
     import_reference_media,
     primary_reference,
+    reference_assets,
     resolve_reference_media,
 )
 from open_garden_planner.services.plant_library import PlantLibrary
@@ -60,3 +61,87 @@ def test_stale_media_form_cannot_overwrite_a_concurrent_caption(qtbot, tmp_path)
     assert saved["credit"] == "Old credit"
     assert gallery.status.text()
     qtbot.waitUntil(lambda: not gallery._jobs)
+
+
+def test_explicit_gallery_download_uses_saved_provider_page_for_legacy_record(
+    qtbot, tmp_path, monkeypatch,
+):
+    from PyQt6.QtWidgets import QInputDialog
+
+    import open_garden_planner.services.plant_source_import as source_import
+
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData(
+        "Rosa", "Rose", raw_data={"local_sheet": {
+            "url": "https://www.promessedefleurs.com/rosier.html",
+        }},
+    ))
+    source = tmp_path / "reference.png"
+    Image.new("RGB", (32, 32), "green").save(source)
+    asset = import_reference_media(
+        source, library.path, identity,
+        source_url="https://www.promessedefleurs.com/media/rose.png",
+    )
+    gallery = BotanicalReferenceGallery(library, identity)
+    qtbot.addWidget(gallery)
+    called = {}
+
+    def fetch(plant, library_path, library_id, **fields):
+        called.update(plant=plant, library_path=library_path, library_id=library_id, fields=fields)
+        return asset
+
+    monkeypatch.setattr(source_import, "fetch_reference_photo_for_plant", fetch)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_kw: (_ for _ in ()).throw(
+        AssertionError("the saved provider page should be used directly after the button click")
+    ))
+    monkeypatch.setattr(gallery, "_run", lambda operation, callback: callback(operation(), ""))
+
+    gallery._download_reference()
+
+    assert called["plant"].source_id == identity
+    assert called["library_path"] == library.path
+    assert called["library_id"] == identity
+    assert reference_assets(library.get_plant(identity)) == [asset]
+
+
+def test_non_provider_local_sheet_keeps_manual_photo_url_dialog(qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QInputDialog
+
+    import open_garden_planner.services.plant_source_import as source_import
+
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData(
+        "Rosa", "Rose", image_url="https://example.test/personal.jpg",
+        raw_data={"local_sheet": {"url": "https://example.test/plant.json"}},
+    ))
+    source = tmp_path / "reference.png"
+    Image.new("RGB", (32, 32), "pink").save(source)
+    asset = import_reference_media(
+        source, library.path, identity,
+        source_url="https://www.promessedefleurs.com/media/rose.png",
+    )
+    gallery = BotanicalReferenceGallery(library, identity)
+    qtbot.addWidget(gallery)
+    photo_url = "https://www.promessedefleurs.com/media/rose.png"
+    prompt = {}
+    fetched = {}
+
+    def get_text(*_args, **kwargs):
+        prompt["default"] = kwargs.get("text")
+        return photo_url, True
+
+    def fetch(url, library_path, library_id, **fields):
+        fetched.update(url=url, library_path=library_path, library_id=library_id, fields=fields)
+        return asset
+
+    monkeypatch.setattr(QInputDialog, "getText", get_text)
+    monkeypatch.setattr(source_import, "fetch_reference_photo", fetch)
+    monkeypatch.setattr(gallery, "_run", lambda operation, callback: callback(operation(), ""))
+
+    gallery._download_reference()
+
+    assert prompt["default"] == ""
+    assert fetched["url"] == photo_url
+    assert fetched["library_path"] == library.path
+    assert fetched["library_id"] == identity
+    assert reference_assets(library.get_plant(identity)) == [asset]

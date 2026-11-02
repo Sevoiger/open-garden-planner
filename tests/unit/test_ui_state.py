@@ -102,3 +102,21 @@ class TestUiStateStoreSplitter:
         total = sum(sizes)
         assert total > 0
         assert abs(sizes[0] / total - 120 / 500) < 0.05
+
+
+class TestUiStateStoreTabs:
+    def test_tab_layout_roundtrip_uses_stable_ids(self, isolated_settings, qtbot) -> None:
+        order = ["garden_plan", "harvest", "calendar"]
+        visible = ["garden_plan", "calendar"]
+        UiStateStore().save_tab_layout(order, visible)
+
+        # Reconstructing the store proves the saved value was read back from
+        # QSettings rather than retained in an instance-local cache.
+        assert UiStateStore().restore_tab_layout() == (order, visible)
+
+    def test_malformed_tab_layout_is_ignored(self, isolated_settings, qtbot) -> None:
+        from open_garden_planner.app.settings import create_qsettings
+
+        settings = create_qsettings()
+        settings.setValue("UiState/tab_layout", "not-json")
+        assert UiStateStore().restore_tab_layout() is None

@@ -111,6 +111,29 @@ def _json_data(value: Any, max_length: int = 16384) -> Any:
     return json.loads(encoded) if len(encoded) <= max_length else None
 
 
+def _tab_stable_id(widget: QTabWidget | QTabBar, index: int) -> str | None:
+    if isinstance(widget, QTabWidget):
+        value = widget.widget(index).property("ogp_tab_id")
+    else:
+        value = widget.tabData(index)
+        if isinstance(value, dict):
+            value = value.get("id")
+    return value if isinstance(value, str) else None
+
+
+def _tab_aliases(widget: QTabWidget | QTabBar, index: int) -> tuple[str, ...]:
+    if isinstance(widget, QTabWidget):
+        value = widget.widget(index).property("ogp_tab_aliases")
+    else:
+        data = widget.tabData(index)
+        value = data.get("aliases", []) if isinstance(data, dict) else []
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple)):
+        return tuple(alias for alias in value if isinstance(alias, str))
+    return ()
+
+
 def _field_label(widget: QWidget) -> str:
     """Recover labels for direct and composite QFormLayout fields."""
     current = widget
@@ -451,9 +474,22 @@ class ApplicationUiController:
             if special:
                 node["raw_value"] = raw
         elif isinstance(widget, (QTabWidget, QTabBar)):
-            node.update(current_index=widget.currentIndex(), choices=[
-                {"index": i, "text": widget.tabText(i), "enabled": widget.isTabEnabled(i)}
-                for i in range(widget.count())])
+            choices = []
+            for index in range(widget.count()):
+                enabled = widget.isTabEnabled(index)
+                label = widget.tabText(index)
+                choices.append({"index": index, "text": label, "enabled": enabled})
+                choices.extend(
+                    {
+                        "index": index,
+                        "text": alias,
+                        "enabled": enabled,
+                        "alias": True,
+                    }
+                    for alias in _tab_aliases(widget, index)
+                    if alias != label
+                )
+            node.update(current_index=widget.currentIndex(), choices=choices)
         elif isinstance(widget, QColorDialog):
             node["value"] = widget.currentColor().name(QColor.NameFormat.HexArgb)
         if isinstance(widget, QAbstractItemView):
@@ -625,13 +661,36 @@ class ApplicationUiController:
         elif isinstance(widget, (QTabWidget, QTabBar)):
             if isinstance(value, dict) and set(value) == {"index"}:
                 index = _integer(value["index"])
-            else:
-                matches = [i for i in range(widget.count()) if widget.tabText(i) == _text(value)]
+            elif isinstance(value, dict) and set(value) == {"tab_id"}:
+                tab_id = _text(value["tab_id"])
+                matches = [
+                    candidate for candidate in range(widget.count())
+                    if _tab_stable_id(widget, candidate) == tab_id
+                ]
                 if len(matches) != 1:
-                    raise ValueError("Tab text must identify exactly one tab")
+                    raise ValueError("Tab ID must identify exactly one tab")
+                index = matches[0]
+            else:
+                label = _text(value)
+                matches = [
+                    candidate
+                    for candidate in range(widget.count())
+                    if widget.tabText(candidate) == label
+                    or label in _tab_aliases(widget, candidate)
+                ]
+                if len(matches) != 1:
+                    raise ValueError("Tab text or alias must identify exactly one tab")
                 index = matches[0]
             if not 0 <= index < widget.count() or not widget.isTabEnabled(index):
                 raise ValueError("Tab is missing or disabled")
+            tab_id = _tab_stable_id(widget, index)
+            navigate = getattr(widget.window(), "_navigate_to_tab", None)
+            if tab_id is not None and callable(navigate):
+                if not navigate(tab_id):
+                    raise ValueError("Application could not select the requested tab")
+                return
+            if not widget.isTabVisible(index):
+                widget.setTabVisible(index, True)
             widget.setCurrentIndex(index)
         elif isinstance(widget, QColorDialog):
             color = QColor(_text(value))

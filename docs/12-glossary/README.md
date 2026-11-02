@@ -167,8 +167,8 @@
 | Fullscreen Preview | F11 |
 | Print | Ctrl+P |
 | Garden Plan tab | Ctrl+1 |
-| Planting Calendar tab | Ctrl+2 |
-| Seed Inventory tab | Ctrl+3 |
+| Calendar tab (planting calendar) | Ctrl+2 |
+| Seeds tab (seed inventory) | Ctrl+3 |
 | Tasks tab | Ctrl+4 (was Ctrl+5 before #310) |
 | Harvest tab | Ctrl+5 (was Ctrl+6 before #310) |
 | Bezier Tool | B |

@@ -391,6 +391,7 @@ def _product_page(path: Path, source: bytes) -> PlantSpeciesData:
                 "sha256": hashlib.sha256(source).hexdigest(),
                 "mapping_version": 1,
                 "page_title": title,
+                "image_url": image_url,
                 "meta": meta,
                 "fields": fields,
                 "product_json_ld": product,

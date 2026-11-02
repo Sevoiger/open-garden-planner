@@ -5,7 +5,7 @@ from copy import deepcopy
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from PyQt6.QtCore import QCoreApplication, QLocale, Qt, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QLocale, QSize, Qt, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -639,14 +640,13 @@ class PlantCatalogView(QWidget):
         self.setObjectName("plantCatalogView")
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        header = QHBoxLayout()
         heading = QLabel(self.tr("Botanical Catalog"))
         set_text_role(heading, "h1")
-        layout.addWidget(heading)
-
-        introduction = QLabel(self.tr("Browse botanical sheets and their specimens, placed on the plan or not."))
-        introduction.setWordWrap(True)
-        set_text_role(introduction, "secondary")
-        layout.addWidget(introduction)
+        header.addWidget(heading)
+        header.addStretch(1)
+        layout.addLayout(header)
 
         search_row = QHBoxLayout()
         self.search_edit = QLineEdit()
@@ -661,13 +661,11 @@ class PlantCatalogView(QWidget):
         self.month_filter.addItem(self.tr("Any month"), None)
         for month in range(1, 13):
             self.month_filter.addItem(QLocale().monthName(month), month)
-        self.month_filter.currentIndexChanged.connect(self._populate_list)
-        search_row.addWidget(self.month_filter)
         self.add_button = QPushButton(self.tr("Create manually"))
         self.add_button.clicked.connect(self._add_plant)
-        search_row.addWidget(self.add_button)
+        header.addWidget(self.add_button)
         self.import_button = QToolButton()
-        self.import_button.setText(self.tr("Import JSON/HTML File"))
+        self.import_button.setText(self.tr("Import file"))
         self.import_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.import_button.clicked.connect(self._import_local_source_file)
         import_menu = QMenu(self.import_button)
@@ -676,16 +674,25 @@ class PlantCatalogView(QWidget):
         self.import_folder_action = import_menu.addAction(self.tr("Import Source Folder"))
         self.import_folder_action.triggered.connect(self._import_local_sources)
         self.import_button.setMenu(import_menu)
-        search_row.addWidget(self.import_button)
+        header.addWidget(self.import_button)
         self.url_button = QPushButton(self.tr("Import from URL"))
         self.url_button.clicked.connect(lambda: self._retrieve_source(False))
-        search_row.addWidget(self.url_button)
-        self.refresh_source_button = QPushButton(self.tr("Refresh source"))
+        header.addWidget(self.url_button)
+        self.refresh_source_button = QPushButton(self.tr("Enrich from source"))
         self.refresh_source_button.clicked.connect(lambda: self._retrieve_source(True))
-        search_row.addWidget(self.refresh_source_button)
+        header.addWidget(self.refresh_source_button)
+        self.filters_button = QToolButton()
+        self.filters_button.setText(self.tr("Filters"))
+        self.filters_button.setCheckable(True)
+        self.filters_button.setArrowType(Qt.ArrowType.DownArrow)
+        self.filters_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        search_row.addWidget(self.filters_button)
         layout.addLayout(search_row)
 
-        filters = QGridLayout()
+        self.filters_widget = QWidget()
+        filters = QGridLayout(self.filters_widget)
+        filters.setContentsMargins(0, 4, 0, 4)
+        filters.setSpacing(10)
         self.category_filter = QComboBox()
         self.category_filter.addItem(self.tr("All categories"), "")
         self.relation_filter = QComboBox()
@@ -713,8 +720,9 @@ class PlantCatalogView(QWidget):
         self.incomplete_filter = QCheckBox(self.tr("Incomplete sheets"))
         self.incomplete_filter.setToolTip(self.tr("Missing scientific name, adult dimensions, exposure or a known calendar period."))
         self.without_photo_filter = QCheckBox(self.tr("Without personal photo"))
+        search_row.addWidget(self.sort_combo)
         for index, widget in enumerate((self.category_filter, self.relation_filter, self.mode_filter,
-                                        self.location_filter, self.activity_filter, self.sort_combo,
+                                        self.location_filter, self.activity_filter, self.month_filter,
                                         self.incomplete_filter, self.without_photo_filter)):
             filters.addWidget(widget, index // 4, index % 4)
             if isinstance(widget, QComboBox):
@@ -723,7 +731,10 @@ class PlantCatalogView(QWidget):
                 widget.textChanged.connect(self._populate_list)
             else:
                 widget.toggled.connect(self._populate_list)
-        layout.addLayout(filters)
+        self.sort_combo.currentIndexChanged.connect(self._populate_list)
+        self.filters_widget.setVisible(False)
+        self.filters_button.toggled.connect(self.filters_widget.setVisible)
+        layout.addWidget(self.filters_widget)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.results_list = _ActivatingListWidget()
@@ -734,45 +745,75 @@ class PlantCatalogView(QWidget):
         self.results_list.setItemDelegate(self.card_delegate)
         self.results_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.results_list.setObjectName("plantCatalogResults")
+        self.results_list.setMinimumWidth(340)
+        self.results_list.setUniformItemSizes(True)
         self.results_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.results_list.itemSelectionChanged.connect(self._update_preview)
         self.results_list.itemActivated.connect(self._open_selected)
         splitter.addWidget(self.results_list)
 
+        self.preview_scroll = QScrollArea()
+        self.preview_scroll.setWidgetResizable(True)
+        self.preview_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         preview = QWidget()
+        preview.setMinimumWidth(390)
+        self.preview_scroll.setWidget(preview)
         preview_layout = QVBoxLayout(preview)
-        preview_layout.setContentsMargins(12, 4, 4, 4)
+        preview_layout.setContentsMargins(18, 8, 14, 12)
+        preview_layout.setSpacing(16)
+        identity_row = QHBoxLayout()
+        self.preview_photo = QLabel(self.tr("Reference photo"))
+        self.preview_photo.setFixedSize(150, 120)
+        self.preview_photo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_photo.setWordWrap(True)
+        self.preview_photo.setProperty("textRole", "hint")
+        photo_column = QVBoxLayout()
+        photo_column.addWidget(self.preview_photo)
+        self.photo_button = QPushButton(self.tr("Get reference photo"))
+        self.photo_button.clicked.connect(lambda: self._download_reference_photo(self._selected_id()))
+        photo_column.addWidget(self.photo_button)
+        identity_row.addLayout(photo_column)
+        self._photo_jobs = {}
+        identity_text = QVBoxLayout()
         self.preview_name = QLabel(self.tr("Select a species to view its details."))
         self.preview_name.setWordWrap(True)
         set_text_role(self.preview_name, "h2")
-        preview_layout.addWidget(self.preview_name)
+        self.preview_name.setTextFormat(Qt.TextFormat.PlainText)
+        identity_text.addWidget(self.preview_name)
         self.preview_scientific_name = QLabel()
         self.preview_scientific_name.setWordWrap(True)
         scientific_font = self.preview_scientific_name.font()
         scientific_font.setItalic(True)
         self.preview_scientific_name.setFont(scientific_font)
-        preview_layout.addWidget(self.preview_scientific_name)
+        self.preview_scientific_name.setTextFormat(Qt.TextFormat.PlainText)
+        identity_text.addWidget(self.preview_scientific_name)
+        identity_text.addStretch(1)
+        identity_row.addLayout(identity_text, 1)
+        preview_layout.addLayout(identity_row)
         self.preview_form = QFormLayout()
         self.preview_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.preview_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self.preview_form.setVerticalSpacing(10)
+        self.preview_form.setHorizontalSpacing(18)
         preview_layout.addLayout(self.preview_form)
         calendar_heading = QLabel(self.tr("Recommended periods"))
         set_text_role(calendar_heading, "h2")
         preview_layout.addWidget(calendar_heading)
-        calendar_help = QLabel(self.tr("An empty row means unknown."))
-        calendar_help.setWordWrap(True)
-        preview_layout.addWidget(calendar_help)
-        self.preview_calendar = BotanicalCalendarWidget(editable=False)
+        self.preview_calendar = BotanicalCalendarWidget(editable=False, quick=True)
         preview_layout.addWidget(self.preview_calendar)
         self.preview_description = QLabel()
         self.preview_description.setWordWrap(True)
+        self.preview_description.setTextFormat(Qt.TextFormat.PlainText)
+        self.preview_description.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.preview_description_label = QLabel(self.tr("Description"))
         set_text_role(self.preview_description_label, "hint")
         preview_layout.addWidget(self.preview_description_label)
         preview_layout.addWidget(self.preview_description)
         preview_layout.addStretch(1)
-        splitter.addWidget(preview)
+        splitter.addWidget(self.preview_scroll)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
+        splitter.setSizes([440, 660])
         layout.addWidget(splitter, 1)
 
         footer = QHBoxLayout()
@@ -822,6 +863,9 @@ class PlantCatalogView(QWidget):
         for field_label in self._preview_field_labels:
             label = QLabel(field_label)
             value = QLabel()
+            label.setContentsMargins(0, 3, 0, 3)
+            value.setContentsMargins(0, 3, 0, 3)
+            value.setTextFormat(Qt.TextFormat.PlainText)
             value.setWordWrap(True)
             self.preview_form.addRow(label, value)
             self._preview_rows.append((label, value))
@@ -955,7 +999,65 @@ class PlantCatalogView(QWidget):
                     item.setToolTip(item.toolTip() + "\n" + self.tr("Reference photo is missing or unreadable."))
                 else:
                     item.setIcon(QIcon(QPixmap.fromImage(image)))
+                    if self._selected_id() == pending[2]:
+                        self._show_reference_image(image)
                 break
+
+    def _show_reference_image(self, image):
+        from PyQt6.QtGui import QPixmap
+
+        ratio = self.devicePixelRatioF()
+        pixmap = QPixmap.fromImage(image).scaled(
+            QSize(int(150 * ratio), int(120 * ratio)), Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
+        pixmap.setDevicePixelRatio(ratio)
+        self.preview_photo.setPixmap(pixmap)
+
+    def _download_reference_photo(self, identity):
+        """Explicit network action; association is committed on the Qt thread."""
+        if not identity or self._photo_jobs:
+            return
+        try:
+            plant = self._library.get_plant(identity)
+            if plant is None:
+                return
+            revision = self._library.revision
+        except (OSError, ValueError, LibraryOperationError) as error:
+            self._show_save_error(error)
+            return
+        from open_garden_planner.services.plant_source_import import fetch_reference_photo_for_plant
+        from open_garden_planner.ui.widgets.plant_media_gallery import _MediaTask
+
+        path = self._library.path
+        job = _MediaTask(lambda: fetch_reference_photo_for_plant(plant, path, identity))
+        self._photo_jobs[id(job)] = (job, identity, revision)
+        job.signals.done.connect(self._reference_photo_ready)
+        self.photo_button.setEnabled(False)
+        self.status_label.setText(self.tr("Downloading the reference photo…"))
+        QThreadPool.globalInstance().start(job)
+
+    def _reference_photo_ready(self, job_id, asset, error):
+        pending = self._photo_jobs.pop(job_id, None)
+        if pending is None:
+            return
+        self.photo_button.setEnabled(self._selected_id() is not None)
+        if error:
+            self.status_label.setText(self.tr("Reference photo unavailable. Use a local file. {error}").format(error=error))
+            return
+        if asset is None:
+            self.status_label.setText(self.tr("No reference photo was found in this source."))
+            return
+        from open_garden_planner.services.botanical_media import edit_reference_media
+
+        try:
+            plant = self._library.get_plant(pending[1])
+            if plant is None:
+                raise LibraryConflictError(self.tr("The botanical record no longer exists."))
+            updated = edit_reference_media(plant, asset=asset)
+            self._library.update_plant(pending[1], updated, expected_revision=pending[2])
+            self._populate_list()
+        except (OSError, ValueError, LibraryOperationError) as error:
+            self.status_label.setText(self.tr("The photo could not be associated. {error}").format(error=error))
 
     def _open_specimens(self):
         identity = self._selected_id()
@@ -984,13 +1086,22 @@ class PlantCatalogView(QWidget):
         plant = self._entries.get(plant_id) if plant_id else None
         enabled = plant is not None
         self.open_button.setEnabled(enabled)
+        self.refresh_source_button.setEnabled(enabled and getattr(self, "_source_job", None) is None)
+        self.photo_button.setEnabled(enabled and not self._photo_jobs)
+        current_item = self.results_list.currentItem()
+        card = current_item.data(int(Qt.ItemDataRole.UserRole) + 1) if current_item else None
+        has_reference = isinstance(card, dict) and bool(card.get("thumbnail"))
+        self.photo_button.setVisible(enabled and not has_reference)
+        self.preview_photo.clear()
+        self.preview_photo.setText(self.tr("Reference photo"))
         self.preview_description_label.setVisible(enabled)
         self.preview_description.setVisible(enabled)
         if plant is None:
             self.preview_name.setText(self.tr("Select a species to view its details."))
             self.preview_scientific_name.clear()
-            for _, value in self._preview_rows:
+            for label, value in self._preview_rows:
                 value.clear()
+                self.preview_form.setRowVisible(label, False)
             self.preview_description.clear()
             self.preview_calendar.set_calendar({})
             return
@@ -1015,15 +1126,23 @@ class PlantCatalogView(QWidget):
             plant.flower_color,
             plant.foliage_color,
         )
-        for (_, value), text in zip(self._preview_rows, values, strict=True):
+        quick_fields = {0, 1, 5, 6, 7, 8, 9, 10}
+        for index, ((label, value), text) in enumerate(zip(self._preview_rows, values, strict=True)):
             value.setText(text)
-        summary = trait(plant, "summary") or plant.description
+            self.preview_form.setRowVisible(label, index in quick_fields and bool(text) and text != self.tr("—"))
+        summary = trait(plant, "summary") or plant.description.split("\n\n", 1)[0]
+        if len(summary) > 420:
+            summary = summary[:420].rsplit(" ", 1)[0] + "…"
         self.preview_description.setText(summary)
         from open_garden_planner.services.botanical_calendar import calendar_for_species
 
         self.preview_calendar.set_calendar(calendar_for_species(plant).to_dict())
         self.preview_description_label.setVisible(bool(summary))
         self.preview_description.setVisible(bool(summary))
+        item = self.results_list.currentItem()
+        if item and not item.icon().isNull():
+            self.preview_photo.setPixmap(item.icon().pixmap(QSize(150, 120)))
+        self._request_thumbnail(plant_id)
 
     def _enum_label(self, value) -> str:
         if value.value == "unknown":
@@ -1163,6 +1282,7 @@ class PlantCatalogView(QWidget):
             self.tr("Imported {count} new species. Existing records were not changed.")
             .format(count=imported),
         )
+        return [identity for identity in records if self._library.get_plant(identity) is not None]
 
     def _retrieve_source(self, refreshing):
         if getattr(self, "_source_job", None) is not None:
@@ -1204,12 +1324,14 @@ class PlantCatalogView(QWidget):
             return
         identity, existing, revision = self._source_context
         if existing is None:
-            self._preview_import([plant])
+            imported = self._preview_import([plant])
+            if imported:
+                self._download_reference_photo(imported[0])
             return
         try:
-            from open_garden_planner.services.plant_source_import import plan_source_refresh
+            from open_garden_planner.services.plant_source_import import plan_source_update
 
-            candidate, changes = plan_source_refresh(existing, plant)
+            candidate, changes = plan_source_update(existing, plant)
             review = ResponsiveDialog(self)
             review.setWindowTitle(self.tr("Review source changes"))
             review.resize(760, 440)
@@ -1238,6 +1360,7 @@ class PlantCatalogView(QWidget):
                 raise LibraryConflictError("The plant no longer exists")
             self.refresh()
             self._select_id(identity)
+            self._download_reference_photo(identity)
         except (ValueError, OSError, LibraryOperationError) as error:
             self._show_save_error(error)
 
@@ -1277,18 +1400,32 @@ class PlantCatalogView(QWidget):
     def _local_import_duplicate_indexes(
         self, plants: list[PlantSpeciesData]
     ) -> set[int]:
+        from open_garden_planner.services.plant_source_import import source_identity
+
+        def external_identity(plant):
+            try:
+                return source_identity(plant)
+            except ValueError:
+                # Unknown provenance is never sufficient evidence to merge.
+                return None
+
+        existing = self._library.get_all_plants()
         known_ids = {
             plant.source_id or plant_id
-            for plant_id, plant in self._library.get_all_plants()
+            for plant_id, plant in existing
         }
+        known_sources = {identity for _, plant in existing if (identity := external_identity(plant)) is not None}
         duplicates: set[int] = set()
         for index, plant in enumerate(plants):
             source_id = plant.source_id.strip()
-            if source_id and source_id in known_ids:
+            provider_id = external_identity(plant)
+            if source_id and source_id in known_ids or provider_id is not None and provider_id in known_sources:
                 duplicates.add(index)
                 continue
             if source_id:
                 known_ids.add(source_id)
+            if provider_id is not None:
+                known_sources.add(provider_id)
         return duplicates
 
     def _local_import_possible_match_indexes(

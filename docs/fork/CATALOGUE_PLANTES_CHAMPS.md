@@ -3,8 +3,9 @@
 ## Interface livrée
 
 L'onglet catalogue utilise une carte par fiche botanique, un aperçu à la sélection,
-et une fiche complète commune au bouton, à Entrée et au double-clic. Les trois
-bandes mensuelles restent compactes sur la carte. La fiche répartit les champs entre
+et une fiche complète commune au bouton, à Entrée et au double-clic. Les bandes
+de floraison et taille restent compactes sur la carte ; la plantation reste dans
+la fiche complète. La fiche répartit les champs entre
 présentation, culture/calendrier, exemplaires, médias et sources ; les champs
 spécialisés et les calendriers supplémentaires sont repliables.
 
@@ -12,6 +13,13 @@ La bibliothèque reste `PlantLibrary`. Les exemplaires sans dessin sont conserv�
 dans la clé additive `plant_specimens` du projet courant ; ils partagent les mêmes
 métadonnées et le seul `garden_memory` que les objets placés. Aucun dessin invisible,
 second stockage de mesures ou second historique d'interventions n'est créé.
+
+Le premier enrichissement d'une fiche sélectionnée complète ses inconnues et
+protège ses valeurs présentes. Le lien fournisseur est distinct de son UUID
+personnel ; les actualisations et contrôles de doublon utilisent cette identité
+externe exacte. Les anciens payloads et les corrections restent conservés. Les
+photos de référence se récupèrent explicitement depuis la source, en worker,
+puis s'associent avec contrôle de révision ; ouvrir une fiche reste hors ligne.
 
 ## Matrice champ existant / adaptation / champ nouveau
 
@@ -71,6 +79,22 @@ est `output/pdf/catalogue-exemple.pdf`. Ces artefacts ne contiennent pas de donn
 personnelles et ne sont pas intégrés au catalogue réel.
 
 ## Limites explicites et extensions
+
+La passe UI du 2 novembre allège l'aperçu et les cartes (floraison/taille,
+champs renseignés, résumé court, photo plus grande et filtres repliables).
+Affichage > Onglets conserve l'ordre et la visibilité par identifiants stables ;
+les titres Calendrier et Semences sont raccourcis. Dix captures synthétiques
+headless sont reproductibles dans `tmp/catalogue-ui-v2/`, dont le catalogue à
+1000 × 720 et les neuf onglets à 1100 pixels de large.
+
+Validation de cette passe : 177 tests ciblés réussis, un cas 3D natif ignoré et
+un cas MCP HTTP omis après refus de bind localhost dans le sandbox. Les 50
+contrôles supplémentaires du thème, du dernier correctif photo et de la largeur
+des onglets passent également. Ruff et les traductions EN/FR/DE compilées passent
+(3 637 clés actives). La revue indépendante a revalidé la protection des traits
+anciens, le dédoublonnage d'une fiche enrichie, l'ordre persistant et la saisie
+photo d'une fiche locale non fournisseur. Aucun test ni capture de cette passe
+n'a ouvert de fenêtre native sur l'ordinateur du propriétaire.
 
 - Le premier adaptateur URL est Promesse de Fleurs. Les autres fournisseurs
   utilisent une future correspondance dédiée ; aucun script arbitraire depuis l'UI.

@@ -85,6 +85,10 @@ def test_single_file_import_ignores_unselected_invalid_siblings(tmp_path, suffix
     plant, = read_local_plant_sources(path)
 
     assert plant.scientific_name == "Hibiscus syriacus 'Diana'"
+    if suffix.casefold() != ".json":
+        assert plant.raw_data["promesse_de_fleurs"]["image_url"] == (
+            "https://www.promessedefleurs.com/images/hibiscus.jpg"
+        )
     assert plant.raw_data["source_file_uri"] == path.resolve().as_uri()
     assert not (tmp_path / "custom_plants.json").exists()
 

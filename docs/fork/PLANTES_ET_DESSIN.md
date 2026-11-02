@@ -159,6 +159,19 @@ Pour une nouvelle pergola rectangulaire, utiliser `create_object` avec
 `object_type="PERGOLA"`. Après mise à jour du code, relancer OGP puis reconnecter
 le client MCP pour qu’il découvre le nouvel outil.
 
+## Organiser les onglets
+
+Le menu **Affichage > Onglets** permet de masquer ou réafficher chaque onglet.
+**Configurer les onglets…** propose les cases de visibilité et les boutons de
+déplacement vers le haut ou le bas. L'ordre affiché et la visibilité sont conservés
+au redémarrage ; le Plan reste accessible. Les libellés **Calendrier** et
+**Semences** sont raccourcis. Les onglets tiennent dans la largeur disponible,
+avec infobulle complète si un titre doit être abrégé.
+
+Les raccourcis Ctrl+1, Ctrl+2 et Ctrl+3 visent toujours le Plan, le Calendrier et
+les Semences, quel que soit leur ordre. Une navigation explicite vers un onglet
+masqué le réaffiche. Les anciens noms restent reconnus par le pilotage MCP.
+
 ## Catalogue personnel et périodes botaniques
 
 L'onglet **Catalogue de plantes** consulte la bibliothèque existante sans sélection
@@ -172,7 +185,12 @@ restent inconnues. Les dimensions adultes, le cultivar, les conditions de cultur
 et les conseils disposent de champs distincts ; les sections spécialisées sont
 repliables. Le résumé est séparé de la description détaillée.
 
-Les bandes de plantation, floraison et taille indiquent les mois conseillés.
+L'aperçu rapide affiche une photo de référence plus grande, les champs essentiels
+renseignés et un résumé court. Les filtres se déplient avec **Filtres**. Les cartes
+et l'aperçu montrent seulement floraison et taille ; les périodes de plantation
+restent dans la fiche complète.
+
+Dans la fiche complète, les bandes de plantation, floraison et taille indiquent les mois conseillés.
 Dans l'éditeur, cliquez sur les mois pour les corriger : plusieurs périodes
 séparées et celles qui traversent décembre sont possibles. Une ligne vide signifie
 que la période est inconnue. Le texte d'origine reste visible et une correction
@@ -195,6 +213,21 @@ timeout, taille et redirections sont contrôlés, avec repli explicite vers un f
 local si nécessaire. Aucun import n'acquiert un exemplaire ni ne dessine une forme.
 L'actualisation présente les différences et conserve les corrections manuelles,
 les sources précédentes et les instantanés du plan.
+
+Pour une fiche existante, **Compléter depuis la source** permet de choisir une URL
+Promesse de Fleurs et de consulter les différences avant validation. Le premier
+enrichissement complète les informations inconnues et conserve les valeurs déjà
+renseignées, l'identifiant de la fiche et ses exemplaires. Les actualisations
+suivantes utilisent le lien fournisseur exact et protègent les corrections manuelles.
+Une réimportation de cette même source est reconnue comme doublon exact, même si
+la fiche conserve son identifiant personnel. Il ne s'agit pas d'effacer la fiche.
+
+La photo type est récupérée après validation d'un import URL ou d'un enrichissement.
+Pour une ancienne fiche sans photo, **Récupérer la photo de référence** utilise sa
+page source connue. Ce téléchargement est explicite, conserve le crédit et passe
+par les mêmes limites et restrictions que l'import. Un échec laisse la fiche
+enregistrée intacte et permet le recours au fichier local. Ouvrir ou sélectionner
+une fiche ne déclenche aucun téléchargement.
 
 Dans **Mes exemplaires**, créez un exemplaire en pot ou en terre sans forme sur le
 plan. Le projet conserve son UUID, ses dates ou périodes d'acquisition et plantation,

@@ -11,6 +11,7 @@ from PyQt6.QtGui import QAction, QCloseEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QLabel,
     QMainWindow,
@@ -101,6 +102,29 @@ if TYPE_CHECKING:
     from open_garden_planner.ui.agent_control import ApplicationUiController
 
 logger = logging.getLogger(__name__)
+
+
+TAB_ID_PROPERTY = "ogp_tab_id"
+TAB_PLAN = "garden_plan"
+TAB_CALENDAR = "calendar"
+TAB_SEEDS = "seeds"
+TAB_SUPPLIES = "supplies"
+TAB_TASKS = "tasks"
+TAB_HARVEST = "harvest"
+TAB_GARDEN_DATA = "garden_data"
+TAB_WEATHER = "weather"
+TAB_PLANT_CATALOG = "plant_catalog"
+DEFAULT_TAB_ORDER = (
+    TAB_PLAN,
+    TAB_CALENDAR,
+    TAB_SEEDS,
+    TAB_SUPPLIES,
+    TAB_TASKS,
+    TAB_HARVEST,
+    TAB_GARDEN_DATA,
+    TAB_WEATHER,
+    TAB_PLANT_CATALOG,
+)
 
 
 def _entry_species_names(entry: dict[str, Any]) -> list[str]:
@@ -3880,6 +3904,165 @@ class GardenPlannerApp(QMainWindow):
             self._tab_widget.setTabIcon(index, icon)
         self._tab_icons.append((widget, icon_name))
 
+    def _add_dashboard_tab(
+        self,
+        tab_id: str,
+        widget: QWidget,
+        translated_label: str,
+        icon_name: str,
+        aliases: tuple[str, ...] = (),
+        tooltip: str | None = None,
+    ) -> None:
+        """Register a tab by stable ID and attach its translated label and icon."""
+        widget.setProperty(TAB_ID_PROPERTY, tab_id)
+        aliases = tuple(dict.fromkeys(aliases))
+        widget.setProperty("ogp_tab_aliases", list(aliases))
+        self._tab_widgets_by_id[tab_id] = widget
+        index = self._tab_widget.addTab(widget, translated_label)
+        self._tab_widget.setTabToolTip(index, tooltip or translated_label)
+        self._tab_widget.tabBar().setTabData(
+            index, {"id": tab_id, "aliases": list(aliases)}
+        )
+        self._set_tab_icon(widget, icon_name)
+
+    def _tab_order_ids(self) -> list[str]:
+        return [
+            str(self._tab_widget.widget(index).property(TAB_ID_PROPERTY))
+            for index in range(self._tab_widget.count())
+        ]
+
+    def _visible_tab_ids(self) -> list[str]:
+        return [
+            str(self._tab_widget.widget(index).property(TAB_ID_PROPERTY))
+            for index in range(self._tab_widget.count())
+            if self._tab_widget.isTabVisible(index)
+        ]
+
+    def _normalise_tab_layout(
+        self, order: list[str], visible_ids: list[str]
+    ) -> tuple[list[str], set[str]]:
+        known_ids = set(self._tab_widgets_by_id)
+        default_order = [tab_id for tab_id in DEFAULT_TAB_ORDER if tab_id in known_ids]
+        default_order.extend(
+            tab_id for tab_id in self._tab_widgets_by_id if tab_id not in default_order
+        )
+        result: list[str] = []
+        for tab_id in (*order, *default_order):
+            if tab_id in known_ids and tab_id not in result:
+                result.append(tab_id)
+
+        visible = set(visible_ids) & known_ids
+        visible.add(TAB_PLAN)
+        if not visible.intersection(known_ids):
+            visible.update(known_ids)
+        return result, visible
+
+    def _apply_tab_layout(
+        self, order: list[str], visible_ids: list[str], *, persist: bool
+    ) -> None:
+        order, visible = self._normalise_tab_layout(order, visible_ids)
+        tab_bar = self._tab_widget.tabBar()
+        for target_index, tab_id in enumerate(order):
+            widget = self._tab_widgets_by_id[tab_id]
+            current_index = self._tab_widget.indexOf(widget)
+            if current_index != target_index:
+                tab_bar.moveTab(current_index, target_index)
+
+        plan_index = self._tab_widget.indexOf(self._tab_widgets_by_id[TAB_PLAN])
+        self._tab_widget.setTabVisible(plan_index, True)
+        current_widget = self._tab_widget.currentWidget()
+        current_tab_id = str(current_widget.property(TAB_ID_PROPERTY))
+        if current_tab_id not in visible:
+            self._tab_widget.setCurrentWidget(self._tab_widgets_by_id[TAB_PLAN])
+
+        for tab_id, widget in self._tab_widgets_by_id.items():
+            self._tab_widget.setTabVisible(
+                self._tab_widget.indexOf(widget), tab_id in visible
+            )
+        self._populate_tabs_menu()
+        if persist:
+            self._persist_tab_layout()
+
+    def _persist_tab_layout(self) -> None:
+        self._ui_state.save_tab_layout(self._tab_order_ids(), self._visible_tab_ids())
+
+    def _restore_tab_layout(self) -> None:
+        saved = self._ui_state.restore_tab_layout()
+        if saved is None:
+            order, visible = list(DEFAULT_TAB_ORDER), list(DEFAULT_TAB_ORDER)
+        else:
+            order, visible = saved
+        self._apply_tab_layout(order, visible, persist=False)
+
+    def _populate_tabs_menu(self) -> None:
+        for action in self._tab_visibility_actions.values():
+            self._tabs_menu.removeAction(action)
+        self._tab_visibility_actions.clear()
+        for tab_id in self._tab_order_ids():
+            widget = self._tab_widgets_by_id[tab_id]
+            action = QAction(self._tab_widget.tabText(self._tab_widget.indexOf(widget)), self)
+            action.setCheckable(True)
+            action.setChecked(self._tab_widget.isTabVisible(self._tab_widget.indexOf(widget)))
+            action.setEnabled(tab_id != TAB_PLAN)
+            action.triggered.connect(
+                lambda checked, stable_id=tab_id: self._set_tab_visible(
+                    stable_id, checked
+                )
+            )
+            self._tabs_menu.addAction(action)
+            self._tab_visibility_actions[tab_id] = action
+
+    def _update_tab_visibility_actions(self) -> None:
+        for tab_id, action in self._tab_visibility_actions.items():
+            widget = self._tab_widgets_by_id[tab_id]
+            index = self._tab_widget.indexOf(widget)
+            action.setChecked(self._tab_widget.isTabVisible(index))
+
+    def _set_tab_visible(self, tab_id: str, visible: bool) -> None:
+        widget = self._tab_widgets_by_id.get(tab_id)
+        if widget is None:
+            return
+        if tab_id == TAB_PLAN:
+            visible = True
+        if not visible and self._tab_widget.currentWidget() is widget:
+            self._tab_widget.setCurrentWidget(self._tab_widgets_by_id[TAB_PLAN])
+        self._tab_widget.setTabVisible(self._tab_widget.indexOf(widget), visible)
+        self._update_tab_visibility_actions()
+        self._persist_tab_layout()
+
+    def _navigate_to_tab(self, tab_id: str) -> bool:
+        """Select a tab, restoring it to the visible set when needed."""
+        widget = self._tab_widgets_by_id.get(tab_id)
+        if widget is None:
+            return False
+        index = self._tab_widget.indexOf(widget)
+        if not self._tab_widget.isTabVisible(index):
+            self._tab_widget.setTabVisible(index, True)
+            self._update_tab_visibility_actions()
+            self._persist_tab_layout()
+        self._tab_widget.setCurrentWidget(widget)
+        return True
+
+    def _on_configure_tabs(self) -> None:
+        from open_garden_planner.ui.dialogs.tab_configuration_dialog import (
+            TabConfigurationDialog,
+        )
+
+        entries = []
+        for tab_id in self._tab_order_ids():
+            widget = self._tab_widgets_by_id[tab_id]
+            index = self._tab_widget.indexOf(widget)
+            entries.append(
+                (tab_id, self._tab_widget.tabText(index), self._tab_widget.isTabVisible(index))
+            )
+        dialog = TabConfigurationDialog(
+            entries, permanent_tab_id=TAB_PLAN, parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_tab_layout(
+                dialog.tab_order, dialog.visible_tab_ids, persist=True
+            )
+
     def eventFilter(self, obj: Any, event: QEvent) -> bool:  # noqa: N802 — Qt override
         """The status-bar sun icon follows the transient sun hint's visibility
         (the hint is shown/hidden from the sun-sim controller; #310)."""
@@ -4485,6 +4668,16 @@ class GardenPlannerApp(QMainWindow):
         self._set_action_icon(fit_action, "zoom_fit")
         menu.addAction(fit_action)
 
+        # Dashboard tabs can be hidden and reordered without removing their
+        # widgets. The submenu gets its per-tab actions after the tab widgets
+        # have been created in _setup_central_widget().
+        self._tabs_menu = menu.addMenu(self.tr("&Tabs"))
+        configure_tabs_action = QAction(self.tr("Configure Tabs…"), self)
+        configure_tabs_action.triggered.connect(self._on_configure_tabs)
+        self._tabs_menu.addAction(configure_tabs_action)
+        self._tabs_menu.addSeparator()
+        self._tab_visibility_actions: dict[str, QAction] = {}
+
         menu.addSeparator()
 
         # Grouped submenus (#310, owner decision 2026-08-17): the flat list of
@@ -4842,7 +5035,7 @@ class GardenPlannerApp(QMainWindow):
 
     def _on_garden_records(self, target_id: str | None = None) -> None:
         """Show the garden data page, focused on a shape or the whole garden."""
-        self._tab_widget.setCurrentWidget(self.garden_data_view)
+        self._navigate_to_tab(TAB_GARDEN_DATA)
         self.garden_data_view.select_target(target_id)
 
     def _setup_garden_menu(self, menu: QMenu) -> None:
@@ -4900,7 +5093,7 @@ class GardenPlannerApp(QMainWindow):
         menu.addAction(shopping_list_action)
 
     def _on_acquisitions(self) -> None:
-        self._tab_widget.setCurrentWidget(self.acquisition_inventory_view)
+        self._navigate_to_tab(TAB_SUPPLIES)
 
     def _setup_help_menu(self, menu: QMenu) -> None:
         """Set up the Help menu actions."""
@@ -5308,10 +5501,13 @@ class GardenPlannerApp(QMainWindow):
         # ── Tab-based main window (US-8.7) ──────────────────────────────────────
         self._tab_widget = QTabWidget()
         self._tab_widget.setDocumentMode(True)
+        self._tab_widget.tabBar().setObjectName("workspaceTabBar")
+        self._tab_widget.setUsesScrollButtons(False)
+        self._tab_widget.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
+        self._tab_widgets_by_id: dict[str, QWidget] = {}
 
         # Tab 0: Garden Plan (existing canvas + sidebar)
-        self._tab_widget.addTab(splitter, self.tr("Garden Plan"))
-        self._set_tab_icon(splitter, "tab_plan")
+        self._add_dashboard_tab(TAB_PLAN, splitter, self.tr("Garden Plan"), "tab_plan")
 
         # Tab 1: Planting Calendar (US-8.5)
         self.calendar_view = PlantingCalendarView(
@@ -5323,61 +5519,81 @@ class GardenPlannerApp(QMainWindow):
         # message should come from the tab rather than from the canvas view.
         self.calendar_view.status_message.connect(self._show_status_message)
         self.calendar_view.set_soil_service(self._soil_service)
-        self._tab_widget.addTab(self.calendar_view, self.tr("Planting Calendar"))
-        self._set_tab_icon(self.calendar_view, "tab_calendar")
+        self._add_dashboard_tab(
+            TAB_CALENDAR,
+            self.calendar_view,
+            self.tr("Calendar"),
+            "tab_calendar",
+            aliases=(self.tr("Planting Calendar"), "Planting Calendar"),
+            tooltip=self.tr("Planting Calendar"),
+        )
 
         # Tab 2: Seed Inventory (US-9.4)
         self.seed_inventory_view = SeedInventoryView()
         self.seed_inventory_view.set_canvas_scene(self.canvas_scene)  # US-9.6: bidirectional links
-        self._tab_widget.addTab(self.seed_inventory_view, self.tr("Seed Inventory"))
-        self._set_tab_icon(self.seed_inventory_view, "seedling")
+        self._add_dashboard_tab(
+            TAB_SEEDS,
+            self.seed_inventory_view,
+            self.tr("Seeds"),
+            "seedling",
+            aliases=(self.tr("Seed Inventory"), "Seed Inventory"),
+            tooltip=self.tr("Seed Inventory"),
+        )
 
         from open_garden_planner.ui.views.acquisition_inventory_view import AcquisitionInventoryView
         self.acquisition_inventory_view = AcquisitionInventoryView()
-        self._tab_widget.addTab(self.acquisition_inventory_view, self.tr("Supplies"))
-        self._set_tab_icon(self.acquisition_inventory_view, "shopping_list")
+        self._add_dashboard_tab(
+            TAB_SUPPLIES,
+            self.acquisition_inventory_view,
+            self.tr("Supplies"),
+            "shopping_list",
+        )
 
-        # Tab: Tasks (US-C2, #188) — appended last (keeps existing tab indices,
-        # the frost-badge setCurrentIndex(1), and Ctrl+1..4 valid).
+        # Task and harvest shortcuts keep targeting their stable tabs after reorder.
         self.tasks_view = TasksView(
             self.canvas_scene, self._project_manager, cmd_mgr
         )
         self.tasks_view.set_soil_service(self._soil_service)
-        self._tab_widget.addTab(self.tasks_view, self.tr("Tasks"))
-        self._set_tab_icon(self.tasks_view, "tab_tasks")
+        self._add_dashboard_tab(TAB_TASKS, self.tasks_view, self.tr("Tasks"), "tab_tasks")
 
-        # Tab: Harvest (US-C1, #188) — appended last (keeps existing tab indices
-        # and the frost-badge setCurrentIndex(1) valid).
+        # Tab: Harvest (US-C1, #188).
         self.harvest_view = HarvestView(self.canvas_scene, self._project_manager)
-        self._tab_widget.addTab(self.harvest_view, self.tr("Harvest"))
-        self._set_tab_icon(self.harvest_view, "tab_harvest")
+        self._add_dashboard_tab(
+            TAB_HARVEST, self.harvest_view, self.tr("Harvest"), "tab_harvest"
+        )
 
         from open_garden_planner.core.garden_memory import GardenMemoryService
 
         self.garden_data_view = GardenDataView(GardenMemoryService(
             self._project_manager, cmd_mgr, self.canvas_scene,
         ))
-        self._tab_widget.addTab(self.garden_data_view, self.tr("Garden Data"))
-        self._set_tab_icon(self.garden_data_view, "tab_calendar")
+        self._add_dashboard_tab(
+            TAB_GARDEN_DATA,
+            self.garden_data_view,
+            self.tr("Garden Data"),
+            "tab_calendar",
+        )
 
         from open_garden_planner.ui.views.weather_view import WeatherView
 
         self.weather_view = WeatherView()
-        self._tab_widget.addTab(self.weather_view, self.tr("Weather"))
-        self._set_tab_icon(self.weather_view, "sun")
+        self._add_dashboard_tab(TAB_WEATHER, self.weather_view, self.tr("Weather"), "sun")
         self.weather_view.forecast_ready.connect(self._on_local_weather_forecast)
         self._project_manager.location_changed.connect(lambda _: self._on_local_weather_forecast(None))
 
-        # The personal species catalog is the final tab so existing tab indices
-        # and shortcuts remain stable. It is intentionally independent of any
-        # selected canvas object.
+        # The personal species catalog is independent of any selected canvas object.
         self.plant_catalog_view = PlantCatalogView(
             project=self._project_manager, scene=self.canvas_scene,
             commands=self.canvas_view.command_manager,
         )
-        self._tab_widget.addTab(self.plant_catalog_view, self.tr("Plant Catalog"))
+        self._add_dashboard_tab(
+            TAB_PLANT_CATALOG,
+            self.plant_catalog_view,
+            self.tr("Plant Catalog"),
+            "seedling",
+        )
         self.plant_catalog_view.show_on_plan.connect(self._show_catalog_plant_on_plan)
-        self._set_tab_icon(self.plant_catalog_view, "seedling")
+        self._populate_tabs_menu()
         self._tab_widget.currentChanged.connect(
             lambda index: self.plant_catalog_view.refresh()
             if self._tab_widget.widget(index) is self.plant_catalog_view
@@ -5390,15 +5606,15 @@ class GardenPlannerApp(QMainWindow):
         # second-space CAD-style print workflow added no value on top.)
         tab0_shortcut = QAction(self)
         tab0_shortcut.setShortcut(QKeySequence("Ctrl+1"))
-        tab0_shortcut.triggered.connect(lambda: self._tab_widget.setCurrentIndex(0))
+        tab0_shortcut.triggered.connect(lambda: self._navigate_to_tab(TAB_PLAN))
         self.addAction(tab0_shortcut)
         tab1_shortcut = QAction(self)
         tab1_shortcut.setShortcut(QKeySequence("Ctrl+2"))
-        tab1_shortcut.triggered.connect(lambda: self._tab_widget.setCurrentIndex(1))
+        tab1_shortcut.triggered.connect(lambda: self._navigate_to_tab(TAB_CALENDAR))
         self.addAction(tab1_shortcut)
         tab2_shortcut = QAction(self)
         tab2_shortcut.setShortcut(QKeySequence("Ctrl+3"))
-        tab2_shortcut.triggered.connect(lambda: self._tab_widget.setCurrentIndex(2))
+        tab2_shortcut.triggered.connect(lambda: self._navigate_to_tab(TAB_SEEDS))
         self.addAction(tab2_shortcut)
 
         # Refresh calendar on tab switch and on canvas/location/status changes.
@@ -5422,20 +5638,16 @@ class GardenPlannerApp(QMainWindow):
         self._frost_badge.setFlat(True)
         self._frost_badge.setFixedHeight(24)
         self._frost_badge.setToolTip(self.tr("Frost alert — click to view weather"))
-        self._frost_badge.clicked.connect(lambda: self._tab_widget.setCurrentWidget(self.weather_view))
+        self._frost_badge.clicked.connect(lambda: self._navigate_to_tab(TAB_WEATHER))
         self._frost_badge.hide()
         self._tab_widget.setCornerWidget(self._frost_badge, Qt.Corner.TopRightCorner)
         self.calendar_view.frost_alert_ready.connect(self._on_frost_alert_ready)
 
         # ── Tasks tab wiring (US-C2, #188) ───────────────────────────────────
-        # Ctrl shortcut for the Tasks tab — resolve its index (don't hardcode).
+        # Ctrl shortcut for the Tasks tab, independent of display order.
         tasks_shortcut = QAction(self)
-        tasks_shortcut.setShortcut(QKeySequence("Ctrl+4"))  # contiguous 1–5 (#310)
-        tasks_shortcut.triggered.connect(
-            lambda: self._tab_widget.setCurrentIndex(
-                self._tab_widget.indexOf(self.tasks_view)
-            )
-        )
+        tasks_shortcut.setShortcut(QKeySequence("Ctrl+4"))
+        tasks_shortcut.triggered.connect(lambda: self._navigate_to_tab(TAB_TASKS))
         self.addAction(tasks_shortcut)
         # Reuse the calendar's single weather fetch for frost tasks.
         self.calendar_view.frost_alerts_ready.connect(self.tasks_view.set_frost_alerts)
@@ -5465,12 +5677,8 @@ class GardenPlannerApp(QMainWindow):
 
         # ── Harvest tab wiring (US-C1, #188) ─────────────────────────────────
         harvest_shortcut = QAction(self)
-        harvest_shortcut.setShortcut(QKeySequence("Ctrl+5"))  # contiguous 1–5 (#310)
-        harvest_shortcut.triggered.connect(
-            lambda: self._tab_widget.setCurrentIndex(
-                self._tab_widget.indexOf(self.harvest_view)
-            )
-        )
+        harvest_shortcut.setShortcut(QKeySequence("Ctrl+5"))
+        harvest_shortcut.triggered.connect(lambda: self._navigate_to_tab(TAB_HARVEST))
         self.addAction(harvest_shortcut)
         # Regenerate (debounced inside the view) when harvest logs change or on
         # undo/redo (stack_changed); skipped while the tab is hidden.
@@ -5486,9 +5694,7 @@ class GardenPlannerApp(QMainWindow):
         # Overdue-task reminder bar (US-C2, #188) — persistent, dismissible.
         self._task_reminder_bar = TaskReminderBar(self)
         self._task_reminder_bar.show_tasks_requested.connect(
-            lambda: self._tab_widget.setCurrentIndex(
-                self._tab_widget.indexOf(self.tasks_view)
-            )
+            lambda: self._navigate_to_tab(TAB_TASKS)
         )
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -6107,7 +6313,7 @@ class GardenPlannerApp(QMainWindow):
         itemClicked processing (which triggers selectionChanged → panel clear mid-click).
         """
         def _do_select() -> None:
-            self._tab_widget.setCurrentIndex(0)
+            self._navigate_to_tab(TAB_PLAN)
             self.canvas_scene.clearSelection()
             matched: list = []
             for item in self.canvas_scene.items():
@@ -6831,6 +7037,7 @@ class GardenPlannerApp(QMainWindow):
         """
         self._geometry_restored = self._ui_state.restore_geometry(self)
         self._ui_state.restore_splitter("main", self._main_splitter)
+        self._restore_tab_layout()
         self._enforce_toolbar_visibility()
 
     def _enforce_toolbar_visibility(self) -> None:
@@ -6882,6 +7089,7 @@ class GardenPlannerApp(QMainWindow):
         """
         self._ui_state.save_geometry(self)
         self._ui_state.save_splitter("main", self._main_splitter)
+        self._persist_tab_layout()
 
     def _on_undo(self) -> None:
         """Handle Undo action."""
@@ -9806,24 +10014,25 @@ class GardenPlannerApp(QMainWindow):
         self.calendar_view.set_weather_forecast(forecast if matches else None)
 
     def _show_catalog_plant_on_plan(self, item):
-        self._tab_widget.setCurrentIndex(0)
+        self._navigate_to_tab(TAB_PLAN)
         self.canvas_scene.clearSelection()
         item.setSelected(True)
         self.canvas_view.centerOn(item)
 
     def _on_tab_changed(self, index: int) -> None:
         """Refresh tab views when they become active."""
-        if self._tab_widget.widget(index) is self.garden_data_view:
+        widget = self._tab_widget.widget(index)
+        if widget is self.garden_data_view:
             self.garden_data_view.refresh()
-        if index == 1:
+        if widget is self.calendar_view:
             self.calendar_view.refresh()
-        elif index == 2:
+        elif widget is self.seed_inventory_view:
             self.seed_inventory_view.refresh()
-        elif index == self._tab_widget.indexOf(self.acquisition_inventory_view):
+        elif widget is self.acquisition_inventory_view:
             self.acquisition_inventory_view.refresh()
-        elif index == self._tab_widget.indexOf(self.tasks_view):
+        elif widget is self.tasks_view:
             self.tasks_view.refresh()
-        elif index == self._tab_widget.indexOf(self.harvest_view):
+        elif widget is self.harvest_view:
             self.harvest_view.refresh()
 
     def _on_frost_alert_ready(self, count: int, max_severity: str) -> None:
@@ -9851,7 +10060,7 @@ class GardenPlannerApp(QMainWindow):
         """Switch to Garden Plan tab and select all items matching species_key."""
         if species_key.startswith("frost_items:"):
             ids = set(species_key[len("frost_items:"):].split(","))
-            self._tab_widget.setCurrentIndex(0)
+            self._navigate_to_tab(TAB_PLAN)
             def _do_select(ids: set = ids) -> None:
                 self.canvas_scene.clearSelection()
                 first = None
@@ -9873,7 +10082,7 @@ class GardenPlannerApp(QMainWindow):
 
         from open_garden_planner.models.plant_data import species_key as _species_key
 
-        self._tab_widget.setCurrentIndex(0)
+        self._navigate_to_tab(TAB_PLAN)
         self.canvas_scene.clearSelection()
         # The signal carries a canonical species_key (ADR-016: source_id →
         # scientific → common, lowercased) — emitted identically by the planting
@@ -9898,7 +10107,7 @@ class GardenPlannerApp(QMainWindow):
 
     def _select_items_by_id(self, ids: set[str]) -> None:
         """Switch to Garden Plan and select/center the items with these UUIDs."""
-        self._tab_widget.setCurrentIndex(0)
+        self._navigate_to_tab(TAB_PLAN)
 
         def _do_select() -> None:
             self.canvas_scene.clearSelection()
