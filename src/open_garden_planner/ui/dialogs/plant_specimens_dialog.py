@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -26,6 +25,7 @@ from open_garden_planner.services.plant_specimens import (
     prepare_personal_specimen_fields,
     specimen_record,
 )
+from open_garden_planner.ui.dialogs.copyable_error_dialog import show_copyable_error
 
 
 class PlantSpecimensDialog(QDialog):
@@ -256,7 +256,7 @@ class PlantSpecimensDialog(QDialog):
             self.commands.execute(SpecimenEditCommand(self.project, candidate))
             self._reload(selected_id=identity)
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, self.tr("Could not save specimen"), str(error))
+            show_copyable_error(self, self.tr("Could not save specimen"), str(error))
 
     def _save(self):
         row = self.list.currentRow()
@@ -280,7 +280,7 @@ class PlantSpecimensDialog(QDialog):
                 self.commands.execute(SpecimenEditCommand(self.project, candidate))
             self._reload()
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, self.tr("Could not save specimen"), str(error))
+            show_copyable_error(self, self.tr("Could not save specimen"), str(error))
 
     def _place(self):
         row = self.list.currentRow()
@@ -304,7 +304,7 @@ class PlantSpecimensDialog(QDialog):
             if not self.embedded:
                 self.accept()
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, self.tr("Could not save specimen"), str(error))
+            show_copyable_error(self, self.tr("Could not save specimen"), str(error))
 
     def _show(self):
         row = self.list.currentRow()
@@ -374,4 +374,4 @@ class PlantSpecimensDialog(QDialog):
             try:
                 GardenMemoryService(self.project, self.commands, self.scene).add_event(editor.value, str(uuid4()))
             except (OSError, ValueError, TypeError) as error:
-                QMessageBox.warning(self, self.tr("Could not save specimen"), str(error))
+                show_copyable_error(self, self.tr("Could not save specimen"), str(error))

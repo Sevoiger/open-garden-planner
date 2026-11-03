@@ -285,7 +285,7 @@ def test_edit_conflict_reloads_latest_library_record(qtbot, tmp_path, monkeypatc
 
     monkeypatch.setattr(PlantSpeciesEditDialog, "exec", stale_edit)
     monkeypatch.setattr(
-        "open_garden_planner.ui.views.plant_catalog_view.QMessageBox.warning",
+        "open_garden_planner.ui.dialogs.plant_sheet_dialog.show_copyable_error",
         lambda *_args: None,
     )
     qtbot.mouseClick(view.open_button, Qt.MouseButton.LeftButton)

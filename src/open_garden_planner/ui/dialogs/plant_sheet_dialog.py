@@ -9,7 +9,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -25,6 +24,7 @@ from open_garden_planner.services.library_operations import (
     LibraryConflictError,
     LibraryOperationError,
 )
+from open_garden_planner.ui.dialogs.copyable_error_dialog import show_copyable_error
 from open_garden_planner.ui.widgets.botanical_calendar import BotanicalCalendarWidget
 from open_garden_planner.ui.widgets.responsive_dialog import bounded_dialog_rect
 
@@ -308,7 +308,7 @@ class PlantSheetDialog(QDialog):
                         gallery.refresh()
                     self.photo_stack.setCurrentWidget(gallery)
                 except (ValueError, OSError) as error:
-                    QMessageBox.warning(self, self.tr("Photos and documents"), str(error))
+                    show_copyable_error(self, self.tr("Photos and documents"), str(error))
             chooser.currentIndexChanged.connect(selected)
             layout.addWidget(chooser)
             layout.addWidget(self.photo_stack, 1)
@@ -335,10 +335,10 @@ class PlantSheetDialog(QDialog):
         except LibraryConflictError as error:
             self.library._load()
             self._refresh()
-            QMessageBox.warning(self, self.tr("Could not save botanical sheet"), str(error))
+            show_copyable_error(self, self.tr("Could not save botanical sheet"), str(error))
             return
         except (LibraryOperationError, OSError) as error:
-            QMessageBox.warning(self, self.tr("Could not save botanical sheet"), str(error))
+            show_copyable_error(self, self.tr("Could not save botanical sheet"), str(error))
             return
         self._refresh()
         self.species_saved.emit(self.identity)

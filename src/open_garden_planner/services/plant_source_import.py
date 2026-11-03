@@ -15,6 +15,17 @@ from open_garden_planner.services.local_plant_sources import (
     _product_page,
     collect_reference_photo_candidates,
 )
+from open_garden_planner.services.plant_source_errors import (
+    SOURCE_HTTP_ERROR,
+    SOURCE_IDENTITY_MISMATCH,
+    SOURCE_NETWORK_ERROR,
+    SOURCE_PARSE_ERROR,
+    SOURCE_ROBOTS_DENIED,
+    SOURCE_TIMEOUT,
+    SOURCE_TOO_LARGE,
+    SOURCE_UNSUPPORTED_URL,
+    PlantSourceError,
+)
 
 USER_AGENT = "OpenGardenPlanner/plant-catalog"
 _PROVIDER = "promesse_de_fleurs"
@@ -27,21 +38,37 @@ _PROVIDER_PHOTO_HOSTS = _PROVIDER_PAGE_HOSTS
 
 
 def validate_source_url(url):
-    parts = urlsplit(url)
-    if (parts.scheme != "https" or parts.username or parts.password
-            or parts.port not in (None, 443)
-            or parts.hostname not in _PROVIDER_PAGE_HOSTS):
-        raise ValueError("Only HTTPS Promesse de Fleurs product URLs are supported")
+    try:
+        parts = urlsplit(url)
+        permitted = (parts.scheme == "https" and not parts.username and not parts.password
+                     and parts.port in (None, 443)
+                     and parts.hostname in _PROVIDER_PAGE_HOSTS)
+    except (TypeError, ValueError):
+        permitted = False
+    if not permitted:
+        raise PlantSourceError(
+            "Only HTTPS Promesse de Fleurs product URLs are supported",
+            code=SOURCE_UNSUPPORTED_URL, url=url if isinstance(url, str) else "",
+            stage="validation",
+        )
     return url
 
 
 def validate_reference_photo_url(url):
     """Accept images hosted only by the exact Promesse de Fleurs hosts."""
-    parts = urlsplit(url)
-    if (parts.scheme != "https" or parts.username or parts.password
-            or parts.port not in (None, 443)
-            or parts.hostname not in _PROVIDER_PHOTO_HOSTS):
-        raise ValueError("Only HTTPS Promesse de Fleurs reference photos are supported")
+    try:
+        parts = urlsplit(url)
+        permitted = (parts.scheme == "https" and not parts.username and not parts.password
+                     and parts.port in (None, 443)
+                     and parts.hostname in _PROVIDER_PHOTO_HOSTS)
+    except (TypeError, ValueError):
+        permitted = False
+    if not permitted:
+        raise PlantSourceError(
+            "Only HTTPS Promesse de Fleurs reference photos are supported",
+            code=SOURCE_UNSUPPORTED_URL, url=url if isinstance(url, str) else "",
+            stage="validation",
+        )
     return url
 
 
@@ -54,7 +81,10 @@ class _ProviderRedirects(HTTPRedirectHandler):
         # A different URL may have a different robots rule. Refuse it before
         # urllib sends the redirected request, and offer the local-file path.
         if _request_identity(newurl) != _request_identity(req.full_url):
-            raise ValueError("Source redirects are restricted; use a local file")
+            raise PlantSourceError(
+                "Source redirects are restricted; use a local file",
+                code=SOURCE_UNSUPPORTED_URL, url=newurl, stage="redirect",
+            )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -68,12 +98,17 @@ def _retrieve(url, limit, opener, *, validator=validate_source_url, accept="text
     with opener.open(request, timeout=12) as response:
         validator(response.url)
         if _request_identity(response.url) != _request_identity(url):
-            raise ValueError("Source redirects are restricted; use a local file")
+            raise PlantSourceError(
+                "Source redirects are restricted; use a local file",
+                code=SOURCE_UNSUPPORTED_URL, url=response.url, stage="redirect",
+            )
         if response.headers.get("Content-Encoding", "identity") not in ("", "identity"):
-            raise ValueError("Compressed source responses are not supported")
+            raise PlantSourceError("Compressed source responses are not supported",
+                                   code=SOURCE_PARSE_ERROR, url=response.url, stage="fetch")
         data = response.read(limit + 1)
         if len(data) > limit:
-            raise ValueError("Plant source exceeds the download size limit")
+            raise PlantSourceError("Plant source exceeds the download size limit",
+                                   code=SOURCE_TOO_LARGE, url=url, stage="fetch")
         return data
 
 
@@ -85,6 +120,7 @@ def _permitted_payload(url, limit, opener, *, validator=validate_source_url,
                         else _ProviderPhotoRedirects())
     opener = opener or build_opener(redirect_handler)
     origin = "https://" + urlsplit(url).netloc
+    stage = "robots"
     try:
         try:
             policy = _retrieve(origin + "/robots.txt", 128 * 1024, opener, validator=validator)
@@ -95,10 +131,28 @@ def _permitted_payload(url, limit, opener, *, validator=validate_source_url,
         robots = RobotFileParser()
         robots.parse(policy.decode("utf-8", errors="replace").splitlines())
         if not robots.can_fetch(USER_AGENT, url):
-            raise ValueError("The source does not permit automated retrieval; use a local file")
+            raise PlantSourceError(
+                "The source does not permit automated retrieval; use a local file",
+                code=SOURCE_ROBOTS_DENIED, url=url, stage="robots",
+            )
+        stage = "fetch"
         return _retrieve(url, limit, opener, validator=validator, accept=accept)
-    except (HTTPError, URLError, TimeoutError, OSError) as error:
-        raise ValueError(f"Could not retrieve the source; use a local file: {error}") from error
+    except PlantSourceError:
+        raise
+    except HTTPError as error:
+        raise PlantSourceError(
+            f"Could not retrieve the source; use a local file: {error}",
+            code=SOURCE_HTTP_ERROR, url=url, http_status=error.code, stage=stage,
+            retryable=error.code == 429 or 500 <= error.code < 600,
+        ) from error
+    except (URLError, TimeoutError, OSError) as error:
+        reason = getattr(error, "reason", None)
+        timed_out = isinstance(error, TimeoutError) or isinstance(reason, TimeoutError)
+        raise PlantSourceError(
+            f"Could not retrieve the source; use a local file: {error}",
+            code=SOURCE_TIMEOUT if timed_out else SOURCE_NETWORK_ERROR,
+            url=url, stage=stage, retryable=True,
+        ) from error
 
 
 class _ProviderPhotoRedirects(_ProviderRedirects):
@@ -107,7 +161,10 @@ class _ProviderPhotoRedirects(_ProviderRedirects):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         validate_reference_photo_url(newurl)
         if _request_identity(newurl) != _request_identity(req.full_url):
-            raise ValueError("Source redirects are restricted; use a local file")
+            raise PlantSourceError(
+                "Source redirects are restricted; use a local file",
+                code=SOURCE_UNSUPPORTED_URL, url=newurl, stage="redirect",
+            )
         return HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, headers, newurl)
 
 
@@ -204,14 +261,36 @@ def _same_product_page(requested_url, canonical_url):
     )
 
 
+def _source_url_hint(plant):
+    raw = getattr(plant, "raw_data", None)
+    if not isinstance(raw, dict):
+        return ""
+    provider_record = raw.get(_PROVIDER)
+    if isinstance(provider_record, dict) and isinstance(provider_record.get("source_url"), str):
+        return provider_record["source_url"]
+    local_sheet = raw.get("local_sheet")
+    if isinstance(local_sheet, dict) and isinstance(local_sheet.get("url"), str):
+        return local_sheet["url"]
+    return ""
+
+
 def _page_reference_photo_candidates(page_url, opener):
     """Read a provider product page, then retain only exact-host image URLs."""
     validate_source_url(page_url)
     payload = _permitted_payload(page_url, MAX_HTML_FILE_BYTES, opener)
-    canonical_url, candidates = collect_reference_photo_candidates(payload, page_url)
+    try:
+        canonical_url, candidates = collect_reference_photo_candidates(payload, page_url)
+    except PlantSourceError:
+        raise
+    except ValueError as error:
+        raise PlantSourceError(str(error), code=SOURCE_PARSE_ERROR,
+                               url=page_url, stage="parse") from error
     validate_source_url(canonical_url)
     if not _same_product_page(page_url, canonical_url):
-        raise ValueError("The downloaded product identity differs from the requested URL")
+        raise PlantSourceError(
+            "The downloaded product identity differs from the requested URL",
+            code=SOURCE_IDENTITY_MISMATCH, url=canonical_url, stage="identity",
+        )
 
     safe_candidates = []
     seen = set()
@@ -288,7 +367,7 @@ def fetch_reference_photo_for_plant(plant, library_path, library_id, *, opener=N
 def fetch_plant_source(url, *, opener=None):
     """Check provider policy, then fetch once. Never writes a store or photos."""
     payload = _permitted_payload(url, MAX_HTML_FILE_BYTES, opener)
-    plant = _product_page(Path("download.html"), payload)
+    plant = _product_page(Path("download.html"), payload, requested_url=url)
     # The returned canonical identity must be the requested product, not a
     # different record reached through a marketing redirect.
     source = plant.raw_data["promesse_de_fleurs"]
@@ -296,7 +375,10 @@ def fetch_plant_source(url, *, opener=None):
     requested = urlsplit(url)
     validate_source_url(source["source_url"])
     if (canonical.path.rstrip("/"), canonical.query) != (requested.path.rstrip("/"), requested.query):
-        raise ValueError("The downloaded product identity differs from the requested URL")
+        raise PlantSourceError(
+            "The downloaded product identity differs from the requested URL",
+            code=SOURCE_IDENTITY_MISMATCH, url=source["source_url"], stage="identity",
+        )
     return mark_import_baseline(plant)
 
 
@@ -328,7 +410,10 @@ def plan_source_refresh(existing, incoming):
     else:
         identity_matches = bool(existing.source_id) and existing.source_id == incoming.source_id
     if not identity_matches:
-        raise ValueError("Source identity mismatch; a similar name is not sufficient")
+        raise PlantSourceError(
+            "Source identity mismatch; a similar name is not sufficient",
+            code=SOURCE_IDENTITY_MISMATCH, url=_source_url_hint(incoming), stage="identity",
+        )
     current = existing.to_dict()
     offered = incoming.to_dict()
     state_key = "catalog_enrichment" if "catalog_enrichment" in existing.raw_data else "catalog_import"
@@ -501,11 +586,15 @@ def plan_source_enrichment(existing, incoming):
         raise ValueError("The selected source is missing its provider record")
     source_url = provider_record.get("source_url")
     if not isinstance(source_url, str) or not source_url:
-        raise ValueError("The selected source is missing its product URL")
+        raise PlantSourceError("The selected source is missing its product URL",
+                               code=SOURCE_IDENTITY_MISMATCH, stage="identity")
     validate_source_url(source_url)
     expected_identity = (_PROVIDER, "local-sheet:" + sha256(source_url.encode("utf-8")).hexdigest()[:32])
     if incoming_identity != expected_identity:
-        raise ValueError("The selected source identity does not match its product URL")
+        raise PlantSourceError(
+            "The selected source identity does not match its product URL",
+            code=SOURCE_IDENTITY_MISMATCH, url=source_url, stage="identity",
+        )
 
     candidate = deepcopy(existing)
     current = existing.to_dict()
@@ -650,5 +739,8 @@ def plan_source_update(existing, incoming):
     if current_identity is None:
         return plan_source_enrichment(existing, incoming)
     if current_identity != offered_identity:
-        raise ValueError("Source identity mismatch; a similar name is not sufficient")
+        raise PlantSourceError(
+            "Source identity mismatch; a similar name is not sufficient",
+            code=SOURCE_IDENTITY_MISMATCH, url=_source_url_hint(incoming), stage="identity",
+        )
     return plan_source_refresh(existing, incoming)

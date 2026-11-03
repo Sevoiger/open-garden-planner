@@ -1,12 +1,14 @@
 """Explicit source imports do not mutate the library and preserve corrections."""
+import hashlib
 import json
 from copy import deepcopy
 from io import BytesIO
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
 from open_garden_planner.models.plant_data import PlantSpeciesData
+from open_garden_planner.services.plant_source_errors import plant_source_error_info
 from open_garden_planner.services.plant_source_import import (
     ReferencePhotoSelectionRequired,
     fetch_plant_source,
@@ -78,8 +80,9 @@ def test_size_limit_and_network_failure_are_explicit():
         def open(self, *_args, **_kwargs):
             raise URLError("offline")
 
-    with pytest.raises(ValueError, match="local file"):
+    with pytest.raises(ValueError, match="local file") as raised:
         fetch_plant_source(URL, opener=Offline())
+    assert raised.value.code == "SOURCE_NETWORK_ERROR"
 
 
 def test_refresh_keeps_manual_fields_and_accepts_unchanged_source_fields():
@@ -108,9 +111,10 @@ def test_refresh_keeps_manual_fields_and_accepts_unchanged_source_fields():
 
 
 def test_near_names_never_authorize_refresh():
-    with pytest.raises(ValueError, match="identity mismatch"):
+    with pytest.raises(ValueError, match="identity mismatch") as raised:
         plan_source_refresh(PlantSpeciesData("Rosa", "Rose", source_id="a"),
                             PlantSpeciesData("Rosa", "Rose", source_id="b"))
+    assert raised.value.code == "SOURCE_IDENTITY_MISMATCH"
 
 
 def test_manual_correction_survives_supplier_agreement_then_another_refresh():
@@ -306,13 +310,260 @@ def test_reference_photo_fallback_rejects_mismatched_canonical_page(tmp_path):
     assert not (tmp_path / "botanical-media").exists()
 
 
-def test_strict_plant_source_import_still_rejects_multiple_products():
+def test_reference_photo_fallback_classifies_malformed_page_as_parse_error():
+    from open_garden_planner.services.plant_source_errors import SOURCE_PARSE_ERROR
+
+    nested = "<div>" * 1400 + "<img src='/media/rose.jpg'>" + "</div>" * 1400
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:site_name" content="Promesse de Fleurs"></head>
+      <body>{nested}</body></html>'''.encode()
+    plant = PlantSpeciesData("Rosa", "Rose", raw_data={"local_sheet": {"url": URL}})
+
+    with pytest.raises(ValueError, match="too deeply nested") as raised:
+        fetch_reference_photo_for_plant(plant, "unused", "unused", opener=FakeOpener(payload=page))
+    assert raised.value.code == SOURCE_PARSE_ERROR
+    assert raised.value.stage == "parse"
+    assert raised.value.url == URL
+
+
+def test_import_still_rejects_ambiguous_products_without_matching_urls():
     page = f'''<html><head><link rel="canonical" href="{URL}">
       <script type="application/ld+json">[{{"@type":"Product","name":"Rose"}},
         {{"@type":"Product","name":"Tulipe recommandée"}}]</script>
       </head><body><h1>Rose</h1></body></html>'''.encode()
-    with pytest.raises(ValueError, match="multiple product records"):
+    with pytest.raises(ValueError, match="multiple product records") as raised:
         fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert raised.value.code == "SOURCE_PRODUCT_AMBIGUOUS"
+
+
+def test_import_selects_only_canonical_product_and_deduplicates_identical_jsonld():
+    main = {
+        "@type": "Product",
+        "url": URL + "#offer",
+        "name": "Rosier anglais",
+        "description": "Description du rosier principal.",
+        "image": "/media/rosier-principal.jpg",
+    }
+    recommendation = {
+        "@type": "Product",
+        "url": "https://www.promessedefleurs.com/rosier-anglais-compact.html",
+        "name": "Rosier anglais compact",
+        "description": "Description de la recommandation.",
+        "image": "/media/rosier-recommande.jpg",
+    }
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:site_name" content="Promesse de Fleurs">
+      <script type="application/ld+json">{json.dumps([main, recommendation, main])}</script>
+      </head><body><h1>Rosier anglais</h1></body></html>'''.encode()
+
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    source = plant.raw_data["promesse_de_fleurs"]
+    assert source["product_json_ld"] == main
+    assert source["source_url"] == URL
+    assert plant.description == "Description du rosier principal."
+    assert plant.image_url == "https://www.promessedefleurs.com/media/rosier-principal.jpg"
+    assert plant.source_id == "local-sheet:" + hashlib.sha256(
+        URL.encode("utf-8")
+    ).hexdigest()[:32]
+
+
+def test_import_excludes_recommendation_dom_fields_and_title_from_main_product():
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:site_name" content="Promesse de Fleurs">
+      <script type="application/ld+json">[
+        {{"@type":"Product","url":"{URL}#main","name":"Rosier principal"}},
+        {{"@type":"Product","url":"https://www.promessedefleurs.com/recommande.html",
+          "name":"Rosier recommandé"}}]
+      </script></head><body>
+      <article itemscope itemtype="https://schema.org/Product"
+          itemid="https://www.promessedefleurs.com/recommande.html#product">
+        <h1>Rosier recommandé</h1><dl>
+          <dt>Hauteur à maturité</dt><dd>40 cm</dd>
+        </dl>
+      </article>
+      <aside><article itemscope itemtype="https://schema.org/Product"
+          itemid="https://www.promessedefleurs.com/recommande.html#product">
+        <h2>Autre recommandation</h2><dl>
+          <dt>Période de floraison</dt><dd>Avril</dd>
+        </dl>
+      </article></aside>
+      <main><h1>Rosier principal</h1></main>
+      </body></html>'''.encode()
+
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert plant.common_name == "Rosier principal"
+    assert plant.max_height_cm is None
+    assert "Hauteur à maturité" not in plant.raw_data["promesse_de_fleurs"]["fields"]
+    from open_garden_planner.services.botanical_calendar import calendar_for_species
+
+    flowering = calendar_for_species(plant).flowering
+    assert flowering.months is None
+    assert flowering.source_text == ""
+
+
+def test_canonical_product_scope_wins_inside_aside_and_keeps_secondary_product_out():
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:site_name" content="Promesse de Fleurs">
+      <script type="application/ld+json">[
+        {{"@type":"Product","url":"{URL}","name":"Rosier principal"}},
+        {{"@type":"Product","url":"https://www.promessedefleurs.com/recommande.html",
+          "name":"Rosier recommandé"}}]
+      </script></head><body>
+      <aside class="product-sidebar"><div class="details">
+        <article itemscope itemtype="https://schema.org/Product" itemid="{URL}#product">
+          <h1>Rosier principal</h1><dl>
+            <dt>Hauteur à maturité</dt><dd>60 cm</dd>
+          </dl>
+        </article>
+      </div><article itemscope itemtype="https://schema.org/Product"
+          itemid="https://www.promessedefleurs.com/recommande.html#product">
+        <h1>Rosier recommandé</h1><dl>
+          <dt>Période de floraison</dt><dd>Avril</dd>
+        </dl>
+      </article></aside>
+      </body></html>'''.encode()
+
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert plant.common_name == "Rosier principal"
+    assert plant.max_height_cm == 60
+    assert "Période de floraison" not in plant.raw_data["promesse_de_fleurs"]["fields"]
+
+
+def test_canonical_aside_product_scope_keeps_its_fields_and_prunes_secondary_product():
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:site_name" content="Promesse de Fleurs">
+      <script type="application/ld+json">[
+        {{"@type":"Product","url":"{URL}","name":"Rosier principal"}},
+        {{"@type":"Product","url":"https://www.promessedefleurs.com/recommande.html",
+          "name":"Rosier recommandé"}}]
+      </script></head><body>
+      <aside itemscope itemtype="https://schema.org/Product" itemid="{URL}#product">
+        <h1>Rosier principal</h1><dl>
+          <dt>Hauteur à maturité</dt><dd>60 cm</dd>
+        </dl>
+        <article itemscope itemtype="https://schema.org/Product"
+            itemid="https://www.promessedefleurs.com/recommande.html#product">
+          <h1>Rosier recommandé</h1><dl>
+            <dt>Période de floraison</dt><dd>Avril</dd>
+          </dl>
+        </article>
+      </aside></body></html>'''.encode()
+
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert plant.common_name == "Rosier principal"
+    assert plant.max_height_cm == 60
+    assert "Période de floraison" not in plant.raw_data["promesse_de_fleurs"]["fields"]
+
+
+@pytest.mark.parametrize("reference_kind", ["@id", "mainEntityOfPage"])
+def test_product_id_and_main_entity_page_can_link_a_product_to_the_canonical_url(reference_kind):
+    main = {
+        "@type": "Product",
+        "name": "Rosier canonique",
+        "url": "https://www.promessedefleurs.com/autre-reference.html#offer",
+    }
+    if reference_kind == "@id":
+        main["@id"] = URL + "#product"
+    else:
+        main["mainEntityOfPage"] = {"@type": "WebPage", "@id": URL + "#webpage"}
+    recommendation = {
+        "@type": "Product",
+        "url": "https://www.promessedefleurs.com/rosier-proche.html",
+        "name": "Rosier canonique compact",
+    }
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:site_name" content="Promesse de Fleurs">
+      <script type="application/ld+json">{json.dumps([recommendation, main])}</script>
+      </head><body><h1>Rosier canonique</h1></body></html>'''.encode()
+
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert plant.raw_data["promesse_de_fleurs"]["product_json_ld"] == main
+
+
+def test_import_keeps_similarly_named_products_ambiguous_without_url_evidence():
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:site_name" content="Promesse de Fleurs">
+      <script type="application/ld+json">[
+        {{"@type":"Product","name":"Rosier anglais",
+          "url":"https://www.promessedefleurs.com/rosier-anglais.html"}},
+        {{"@type":"Product","name":"Rosier anglais compact",
+          "url":"https://www.promessedefleurs.com/rosier-anglais-compact.html"}}]
+      </script></head><body><h1>Rosier anglais</h1></body></html>'''.encode()
+
+    from open_garden_planner.services.plant_source_errors import SOURCE_PRODUCT_AMBIGUOUS
+
+    with pytest.raises(ValueError, match="multiple product records") as raised:
+        fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert raised.value.code == SOURCE_PRODUCT_AMBIGUOUS
+    assert "Rosier anglais (https://www.promessedefleurs.com/rosier-anglais.html)" in str(raised.value)
+    assert "Rosier anglais compact (https://www.promessedefleurs.com/rosier-anglais-compact.html)" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_code", "expected_status"),
+    [
+        ("http", "SOURCE_HTTP_ERROR", 429),
+        ("timeout", "SOURCE_TIMEOUT", None),
+        ("offline", "SOURCE_NETWORK_ERROR", None),
+    ],
+)
+def test_worker_error_info_reports_stable_network_code_and_sanitized_url(
+    failure, expected_code, expected_status,
+):
+    url = URL + "?token=secret&variant=rose"
+
+    class FailingOpener(FakeOpener):
+        def open(self, request, timeout):
+            self.calls.append(request.full_url)
+            if request.full_url.endswith("robots.txt"):
+                response = Response(self.policy)
+                response.url = request.full_url
+                return response
+            if failure == "http":
+                raise HTTPError(request.full_url, 429, "Too Many Requests", {}, None)
+            if failure == "timeout":
+                raise URLError(TimeoutError("timed out"))
+            raise URLError("offline")
+
+    with pytest.raises(ValueError) as raised:
+        fetch_plant_source(url, opener=FailingOpener())
+    info = plant_source_error_info(raised.value, url=url)
+    assert info.code == expected_code
+    assert info.http_status == expected_status
+    assert info.url == URL + "?token=%5Bredacted%5D&variant=rose"
+    assert "secret" not in info.message
+    assert info.stage == "fetch"
+
+
+def test_worker_error_info_reports_robots_policy_denial_with_url():
+    url = URL + "?api_key=private"
+    opener = FakeOpener(policy=b"User-agent: *\nDisallow: /")
+    with pytest.raises(ValueError) as raised:
+        fetch_plant_source(url, opener=opener)
+    info = plant_source_error_info(raised.value, url=url)
+    assert info.code == "SOURCE_ROBOTS_DENIED"
+    assert info.url == URL + "?api_key=%5Bredacted%5D"
+    assert info.stage == "robots"
+    assert info.http_status is None
+
+
+def test_worker_error_url_removes_userinfo_and_password():
+    from open_garden_planner.services.plant_source_errors import (
+        PlantSourceErrorInfo,
+        format_plant_source_error,
+        sanitize_url,
+    )
+
+    assert sanitize_url("https://gardener:pass@www.promessedefleurs.com/rose?key=hidden") == (
+        "https://www.promessedefleurs.com/rose?key=%5Bredacted%5D"
+    )
+    info = PlantSourceErrorInfo("SOURCE_UNKNOWN", "legacy detail", URL, stage="unknown")
+    assert plant_source_error_info(info) is info
+    legacy = plant_source_error_info(ValueError("legacy failure"), url=URL + "?token=secret")
+    assert legacy.code == "SOURCE_UNKNOWN"
+    assert legacy.message == "legacy failure"
+    assert legacy.url == URL + "?token=%5Bredacted%5D"
+    assert format_plant_source_error(legacy) == "[SOURCE_UNKNOWN] legacy failure"
 
 
 def test_provider_redirect_cannot_fetch_a_path_outside_the_robots_check():
@@ -515,8 +766,9 @@ def test_custom_enrichment_is_fill_only_and_later_refresh_uses_provider_identity
         "https://www.promessedefleurs.com/rosier-autre.html",
         opener=FakeOpener(payload=_source_page("https://www.promessedefleurs.com/rosier-autre.html")),
     )
-    with pytest.raises(ValueError, match="identity mismatch"):
+    with pytest.raises(ValueError, match="identity mismatch") as raised:
         plan_source_update(candidate, other_source)
+    assert raised.value.code == "SOURCE_IDENTITY_MISMATCH"
 
 
 def test_enrichment_refuses_missing_provider_identity_and_invalid_source_payload():
@@ -528,6 +780,14 @@ def test_enrichment_refuses_missing_provider_identity_and_invalid_source_payload
     incoming.raw_data["promesse_de_fleurs"]["source_url"] = "https://example.test/rose"
     with pytest.raises(ValueError):
         plan_source_update(existing, incoming)
+
+    incoming = fetch_plant_source(URL, opener=FakeOpener(payload=_source_page()))
+    incoming.raw_data["promesse_de_fleurs"]["source_url"] = (
+        "https://www.promessedefleurs.com/autre-rose.html"
+    )
+    with pytest.raises(ValueError) as raised:
+        plan_source_update(existing, incoming)
+    assert raised.value.code == "SOURCE_IDENTITY_MISMATCH"
 
 
 def test_reference_photo_helper_uses_suggested_image_before_personal_image(tmp_path):

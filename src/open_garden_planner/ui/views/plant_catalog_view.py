@@ -58,6 +58,10 @@ from open_garden_planner.services.plant_catalog_filters import (
     specimen_summaries,
     update_catalogue_relations,
 )
+from open_garden_planner.ui.dialogs.copyable_error_dialog import (
+    CopyableErrorDialog,
+    show_copyable_error,
+)
 from open_garden_planner.ui.theme import set_text_role
 from open_garden_planner.ui.widgets.botanical_calendar import BotanicalCalendarWidget
 from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
@@ -1273,10 +1277,11 @@ class PlantCatalogView(QWidget):
         try:
             plants = read_local_plant_sources(source)
         except (OSError, ValueError) as error:
-            QMessageBox.warning(
+            show_copyable_error(
                 self,
                 self.tr("Could Not Read Plant Sources"),
                 self.tr("No records were imported.\n\n{error}").format(error=str(error)),
+                code=getattr(error, "code", "CATALOG_SOURCE_FILE"),
             )
             return
 
@@ -1322,20 +1327,22 @@ class PlantCatalogView(QWidget):
             imported = self._library.import_from_dict(records)
         except LibraryConflictError as error:
             self.refresh()
-            QMessageBox.warning(
+            show_copyable_error(
                 self,
                 self.tr("Catalog Changed"),
                 self.tr(
                     "The library changed while the import was being prepared. "
                     "No imported records were saved. Refresh the catalog and retry.\n\n{error}"
                 ).format(error=str(error)),
+                code="CATALOG_CONFLICT",
             )
             return
         except (LibraryOperationError, OSError) as error:
-            QMessageBox.warning(
+            show_copyable_error(
                 self,
                 self.tr("Could Not Save Plant"),
                 self.tr("No records were imported.\n\n{error}").format(error=str(error)),
+                code="CATALOG_STORAGE",
             )
             return
 
@@ -1377,15 +1384,14 @@ class PlantCatalogView(QWidget):
             self.refresh_source_button.setEnabled(False)
             QThreadPool.globalInstance().start(job)
         except (ValueError, OSError, LibraryOperationError) as error:
-            self._show_save_error(error)
+            self._show_source_error(error, url=url.strip())
 
     def _source_ready(self, plant, error):
         self._source_job = None
         self.url_button.setEnabled(True)
         self.refresh_source_button.setEnabled(True)
         if error:
-            QMessageBox.warning(self, self.tr("Could Not Read Plant Sources"),
-                                self.tr("Use a local file or create the plant manually.\n\n{error}").format(error=error))
+            self._show_source_error(error)
             return
         identity, existing, revision = self._source_context
         if existing is None:
@@ -1554,12 +1560,24 @@ class PlantCatalogView(QWidget):
                 return
 
     def _show_save_error(self, error: Exception) -> None:
-        QMessageBox.warning(
+        from open_garden_planner.services.plant_source_errors import PlantSourceError
+
+        if isinstance(error, PlantSourceError):
+            self._show_source_error(error)
+            return
+        code = "CATALOG_CONFLICT" if isinstance(error, LibraryConflictError) else (
+            "CATALOG_STORAGE" if isinstance(error, OSError) else "CATALOG_ERROR")
+        show_copyable_error(
             self,
             self.tr("Could Not Save Plant"),
             self.tr("The catalog could not be saved. Your changes were not applied.\n\n{error}")
             .format(error=str(error)),
+            code=code,
         )
+
+    def _show_source_error(self, error, *, url=""):
+        CopyableErrorDialog(self.tr("Could Not Read Plant Sources"), "", self,
+                            source_error=error, url=url).exec()
 
 
 def _optional_text(value: float | int | None) -> str:

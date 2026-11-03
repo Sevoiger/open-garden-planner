@@ -19,6 +19,7 @@ from open_garden_planner.app.paths import default_dialog_dir
 from open_garden_planner.services.garden_queries import garden_objects
 from open_garden_planner.services.library_operations import LibraryOperationError
 from open_garden_planner.services.pdf_report_service import PdfReportService
+from open_garden_planner.ui.dialogs.copyable_error_dialog import show_copyable_error
 
 
 class PlantCatalogExportDialog(QDialog):
@@ -104,4 +105,4 @@ class PlantCatalogExportDialog(QDialog):
             self.exported = Path(destination)
             self.accept()
         except (OSError, ValueError, LibraryOperationError) as error:
-            QMessageBox.warning(self, self.tr("Could not export plant sheets"), str(error))
+            show_copyable_error(self, self.tr("Could not export plant sheets"), str(error))

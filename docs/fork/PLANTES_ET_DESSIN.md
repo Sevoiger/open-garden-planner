@@ -222,6 +222,18 @@ suivantes utilisent le lien fournisseur exact et protègent les corrections manu
 Une réimportation de cette même source est reconnue comme doublon exact, même si
 la fiche conserve son identifiant personnel. Il ne s'agit pas d'effacer la fiche.
 
+Les pages contenant aussi des produits recommandés sont acceptées si un seul
+produit est relié à l'URL canonique par son URL, son identifiant JSON-LD ou sa
+référence de page. Si cette identité reste ambiguë, l'import s'arrête sans écriture
+avec `SOURCE_PRODUCT_AMBIGUOUS` et la liste des produits concernés.
+
+Les erreurs de source distinguent refus robots, réponse HTTP (avec son statut),
+réseau, délai dépassé, taille, format et identité. La fenêtre affiche les détails
+dans une zone de texte sélectionnable ; **Copier les détails** copie le diagnostic
+complet, code et URL compris. Les identifiants et paramètres secrets des URL sont
+masqués. Le catalogue utilise aussi cette fenêtre pour les erreurs de sauvegarde,
+de médias et d'export.
+
 La photo type est récupérée après validation d'un import URL ou d'un enrichissement.
 Pour une ancienne fiche sans photo, **Récupérer la photo de référence** utilise sa
 page source connue. Ce téléchargement est explicite, conserve le crédit et passe

@@ -18,7 +18,7 @@ def reference_photo_request(*args, **kwargs):
 
 
 class _Signals(QObject):
-    ready = pyqtSignal(object, str)
+    ready = pyqtSignal(object, object)
 
 
 class PlantSourceWorker(QRunnable):
@@ -31,6 +31,8 @@ class PlantSourceWorker(QRunnable):
         try:
             plant = fetch_plant_source(self.url)
         except Exception as error:
-            self.signals.ready.emit(None, str(error))
+            from open_garden_planner.services.plant_source_errors import plant_source_error_info
+
+            self.signals.ready.emit(None, plant_source_error_info(error, url=self.url))
         else:
-            self.signals.ready.emit(plant, "")
+            self.signals.ready.emit(plant, None)

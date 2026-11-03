@@ -92,21 +92,34 @@ def test_photo_result_cannot_replace_a_concurrent_manual_edit(qtbot, tmp_path):
 
 
 def test_enrichment_preview_keeps_the_selected_record_and_manual_dimensions(qtbot, tmp_path, monkeypatch):
-    from hashlib import sha256
+    from io import BytesIO
 
-    from PyQt6.QtWidgets import QDialog
+    from PyQt6.QtWidgets import QDialog, QInputDialog
 
+    from open_garden_planner.services.plant_source_import import fetch_plant_source
     from open_garden_planner.ui.views.plant_catalog_view import PlantSpeciesEditDialog
     from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
 
     library = PlantLibrary(tmp_path / "plants.json")
     identity = library.add_plant(PlantSpeciesData("Rosa", "Mon rosier", max_height_cm=123,
                                                 raw_data={"future": {"keep": True}}))
-    original = library.get_plant(identity)
     url = "https://www.promessedefleurs.com/rose.html"
-    incoming = PlantSpeciesData("Rosa canina", "Églantier", family="Rosaceae", max_height_cm=200,
-        data_source="promesse_de_fleurs", source_id="local-sheet:" + sha256(url.encode()).hexdigest()[:32],
-        raw_data={"promesse_de_fleurs": {"source_url": url, "fields": {}}})
+    page = f'''<html><head><link rel="canonical" href="{url}">
+      <script type="application/ld+json">[
+        {{"@type":"Product","name":"Églantier","url":"{url}"}},
+        {{"@type":"Product","name":"Tulipe recommandée","url":"/tulipe.html"}}]
+      </script></head><body><h1>Églantier</h1><dl>
+        <dt>Famille</dt><dd>Rosaceae</dd><dt>Hauteur à maturité</dt><dd>2 m</dd>
+      </dl></body></html>'''.encode()
+    class Opener:
+        def open(self, request, timeout):
+            response = BytesIO(b"User-agent: *\nAllow: /" if request.full_url.endswith("robots.txt") else page)
+            response.url, response.headers = request.full_url, {}
+            return response
+    incoming = fetch_plant_source(url, opener=Opener())
+    monkeypatch.setattr("open_garden_planner.ui.widgets.plant_source_worker.fetch_plant_source",
+                        lambda source: fetch_plant_source(source, opener=Opener()))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: (url, True))
     view = PlantCatalogView(library)
     qtbot.addWidget(view)
     photo_requests = []
@@ -116,8 +129,9 @@ def test_enrichment_preview_keeps_the_selected_record_and_manual_dimensions(qtbo
         editor._save()
         return QDialog.DialogCode.Accepted
     monkeypatch.setattr(PlantSpeciesEditDialog, "exec", accept_editor)
-    view._source_context = (identity, original, library.revision)
-    view._source_ready(incoming, "")
+    view._select_id(identity)
+    view._retrieve_source(True)
+    qtbot.waitUntil(lambda: library.get_plant(identity).family == "Rosaceae")
     saved = PlantLibrary(library.path).get_plant(identity)
     assert library.count == 1
     assert saved.common_name == "Mon rosier"

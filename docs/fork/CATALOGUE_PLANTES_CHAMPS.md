@@ -80,6 +80,18 @@ personnelles et ne sont pas intégrés au catalogue réel.
 
 ## Limites explicites et extensions
 
+L'enrichissement et l'import botanique acceptent désormais les pages multi-produits
+si un seul produit correspond explicitement à l'URL canonique (`url`, `@id` ou
+`mainEntityOfPage`). Une ambiguïté réelle reste bloquante : aucune sélection par
+ressemblance de nom. Les erreurs portent un code stable, l'étape et le statut HTTP
+lorsqu'il existe ; la fenêtre de diagnostic offre une zone sélectionnable et un
+bouton de copie. Les régressions couvrent la copie effective dans le presse-papiers,
+le retour sur le thread Qt et la conservation des octets de bibliothèque en échec.
+
+Validation de ce correctif : 122 tests ciblés réussis en headless, Ruff et contrôle
+des traductions EN/FR/DE réussis. Capture synthétique vérifiée :
+`tmp/catalogue-erreurs-source/erreur-source-copiable-offscreen.png`.
+
 Le correctif photo du 3 novembre sépare la collecte d'images du parseur botanique
 strict. Une page avec plusieurs produits peut proposer un choix illustré de douze
 images au maximum ; les hôtes sont filtrés avant ce plafond. Les aperçus restent

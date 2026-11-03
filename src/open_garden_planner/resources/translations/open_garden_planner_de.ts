@@ -3482,6 +3482,114 @@ Verwenden Sie das Randbedingungen-Werkzeug (K), um eine hinzuzufügen.</translat
         </message>
     </context>
     <context>
+        <name>CopyableErrorDialog</name>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="77" />
+            <source>Check the source URL. No changes were saved; the diagnostic below can be copied.</source>
+            <translation>Prüfen Sie die Quell-URL. Es wurden keine Änderungen gespeichert; die Diagnose unten kann kopiert werden.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="52" />
+            <source>Close</source>
+            <translation>Schließen</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="49" />
+            <source>Copy details</source>
+            <translation>Details kopieren</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="71" />
+            <source>Enter an HTTPS Promesse de Fleurs product URL. Your record has not been changed.</source>
+            <translation>Geben Sie eine HTTPS-Produkt-URL von Promesse de Fleurs ein. Ihr Eintrag wurde nicht geändert.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="34" />
+            <source>Error code: {code}</source>
+            <translation>Fehlercode: {code}</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="45" />
+            <source>Error details</source>
+            <translation>Fehlerdetails</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="36" />
+            <source>HTTP status: {status}</source>
+            <translation>HTTP-Status: {status}</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="65" />
+            <source>Several plants were found, but the main plant could not be identified reliably.</source>
+            <translation>Es wurden mehrere Pflanzen gefunden, aber die Hauptpflanze konnte nicht zuverlässig bestimmt werden.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="38" />
+            <source>Source URL: {url}</source>
+            <translation>Quell-URL: {url}</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="40" />
+            <source>Step: {step}</source>
+            <translation>Schritt: {step}</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="67" />
+            <source>The downloaded page does not match the requested plant.</source>
+            <translation>Die heruntergeladene Seite entspricht nicht der angefragten Pflanze.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="69" />
+            <source>The plant source could not be read.</source>
+            <translation>Die Pflanzenquelle konnte nicht gelesen werden.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="63" />
+            <source>The source could not be reached. Check the network connection.</source>
+            <translation>Die Quelle war nicht erreichbar. Prüfen Sie die Netzwerkverbindung.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="62" />
+            <source>The source did not respond in time.</source>
+            <translation>Die Quelle hat nicht rechtzeitig geantwortet.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="60" />
+            <source>The source does not allow automated retrieval.</source>
+            <translation>Die Quelle erlaubt keinen automatisierten Abruf.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="64" />
+            <source>The source exceeds the supported size limit.</source>
+            <translation>Die Quelle überschreitet die unterstützte Größenbegrenzung.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="66" />
+            <source>The source format could not be read.</source>
+            <translation>Das Quellenformat konnte nicht gelesen werden.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="61" />
+            <source>The source returned HTTP {status}.</source>
+            <translation>Die Quelle hat den HTTP-Status {status} zurückgegeben.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="59" />
+            <source>This source URL is not supported.</source>
+            <translation>Diese Quell-URL wird nicht unterstützt.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="75" />
+            <source>Use a local file you already have. Your record has not been changed.</source>
+            <translation>Verwenden Sie eine lokale Datei, die Sie bereits besitzen. Ihr Eintrag wurde nicht geändert.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/dialogs/copyable_error_dialog.py" line="73" />
+            <source>You can retry later. Your record has not been changed.</source>
+            <translation>Sie können es später erneut versuchen. Ihr Eintrag wurde nicht geändert.</translation>
+        </message>
+    </context>
+    <context>
         <name>CropRotationPanel</name>
         <message>
             <location filename="../../ui/panels/crop_rotation_panel.py" line="565" />
@@ -9250,67 +9358,67 @@ Bitte speichern Sie Ihr Projekt an einem dauerhaften Speicherort.</translation>
     <context>
         <name>LocalPlantImportPreviewDialog</name>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="542" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="546" />
             <source>Cancel</source>
             <translation>Abbrechen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="496" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="500" />
             <source>Common Name</source>
             <translation>Allgemeiner Name</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="561" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="565" />
             <source>Duplicate source ID — will be skipped</source>
             <translation>Doppelte Quellen-ID — wird übersprungen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="528" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="532" />
             <source>Edit Preview</source>
             <translation>Vorschau bearbeiten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="498" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="502" />
             <source>Family</source>
             <translation>Familie</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="499" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="503" />
             <source>Import Status</source>
             <translation>Importstatus</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="593" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="597" />
             <source>Import {count} New Species</source>
             <translation>{count} neue Arten importieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="563" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="567" />
             <source>Possible name match — compare</source>
             <translation>Mögliche Namensübereinstimmung — vergleichen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="479" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="483" />
             <source>Preview Local Plant Import</source>
             <translation>Vorschau des Imports lokaler Pflanzen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="564" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="568" />
             <source>Ready to import</source>
             <translation>Bereit zum Import</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="486" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="490" />
             <source>Review the species read from this folder. Existing records will be skipped only when the source ID matches. Similar names are flagged for comparison. Edit preview records before importing if needed.</source>
             <translation>Prüfen Sie die aus diesem Ordner gelesenen Arten. Vorhandene Einträge werden nur übersprungen, wenn die Quellen-ID übereinstimmt. Ähnliche Namen werden zum Vergleich markiert. Bearbeiten Sie bei Bedarf die Einträge in der Vorschau vor dem Import.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="497" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="501" />
             <source>Scientific Name</source>
             <translation>Wissenschaftlicher Name</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="585" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="589" />
             <source>{new_count} records can be imported; {duplicate_count} duplicate source ID(s) will be skipped; {possible_count} possible name match(es) are flagged.</source>
             <translation>{new_count} Einträge können importiert werden; {duplicate_count} doppelte Quellen-ID(s) werden übersprungen; {possible_count} mögliche Namensübereinstimmung(en) sind markiert.</translation>
         </message>
@@ -11651,49 +11759,49 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
     <context>
         <name>PlantCatalogExportDialog</name>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="51" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="52" />
             <source>Cancel</source>
             <translation>Abbrechen</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="33" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="34" />
             <source>Choose the botanical sheets to export.</source>
             <translation>Wählen Sie die zu exportierenden botanischen Pflanzenblätter aus.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="107" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="108" />
             <source>Could not export plant sheets</source>
             <translation>Pflanzenblätter konnten nicht exportiert werden</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="53" />
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="92" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="54" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="93" />
             <source>Export PDF</source>
             <translation>Als PDF exportieren</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="30" />
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="89" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="31" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="90" />
             <source>Export plant sheets</source>
             <translation>Pflanzenblätter exportieren</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="41" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="42" />
             <source>Include my specimens, measurements and observations</source>
             <translation>Meine Exemplare, Messungen und Beobachtungen einbeziehen</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="44" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="45" />
             <source>Include only the personal photos checked below.</source>
             <translation>Nur die unten markierten persönlichen Fotos einbeziehen.</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="94" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="95" />
             <source>PDF files (*.pdf)</source>
             <translation>PDF-Dateien (*.pdf)</translation>
         </message>
         <message>
-            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="89" />
+            <location filename="../../ui/dialogs/plant_catalog_export_dialog.py" line="90" />
             <source>Select at least one sheet.</source>
             <translation>Wählen Sie mindestens ein Pflanzenblatt aus.</translation>
         </message>
@@ -11701,27 +11809,27 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
     <context>
         <name>PlantCatalogRelations</name>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1572" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1592" />
             <source>Archived</source>
             <translation>Archiviert</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1570" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1590" />
             <source>Ordered</source>
             <translation>Bestellt</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1571" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1591" />
             <source>Owned</source>
             <translation>Im Besitz</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1568" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1588" />
             <source>To study</source>
             <translation>Zu prüfen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1569" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1589" />
             <source>Wanted</source>
             <translation>Gesucht</translation>
         </message>
@@ -11733,28 +11841,28 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Pflanze hinzufügen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="977" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="985" />
             <source>Adult H {height} × W {spread} cm</source>
             <translation>Ausgewachsen: H {height} × B {spread} cm</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="712" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="716" />
             <source>All calendar activities</source>
             <translation>Alle Kalenderaktivitäten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="698" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="921" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="702" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="929" />
             <source>All categories</source>
             <translation>Alle Kategorien</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="705" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="709" />
             <source>All cultivation modes</source>
             <translation>Alle Kulturformen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="700" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="704" />
             <source>All relations</source>
             <translation>Alle Beziehungen</translation>
         </message>
@@ -11763,27 +11871,27 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Eine leere Zeile bedeutet, dass der Wert unbekannt ist.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1211" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1220" />
             <source>Annual</source>
             <translation>Einjährig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="662" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="666" />
             <source>Any month</source>
             <translation>Alle Monate</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1212" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1221" />
             <source>Biennial</source>
             <translation>Zweijährig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="646" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="650" />
             <source>Botanical Catalog</source>
             <translation>Botanischer Katalog</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="706" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="710" />
             <source>Bottomless container</source>
             <translation>Bodenloses Gefäß</translation>
         </message>
@@ -11796,71 +11904,71 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Sehen Sie botanische Pflanzenblätter und ihre Exemplare an, ob im Plan platziert oder nicht.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1322" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1331" />
             <source>Catalog Changed</source>
             <translation>Katalog geändert</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1428" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1436" />
             <source>Common Name</source>
             <translation>Allgemeiner Name</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="756" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="875" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="760" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="883" />
             <source>Copy details</source>
             <translation>Details kopieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="874" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="882" />
             <source>Copy name</source>
             <translation>Namen kopieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1273" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1382" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1282" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1576" />
             <source>Could Not Read Plant Sources</source>
             <translation>Pflanzenquellen konnten nicht gelesen werden</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1332" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1554" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1341" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1569" />
             <source>Could Not Save Plant</source>
             <translation>Pflanze konnte nicht gespeichert werden</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="665" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="669" />
             <source>Create manually</source>
             <translation>Manuell erstellen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="886" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="894" />
             <source>Cultivar</source>
             <translation>Kultivar</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1400" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1408" />
             <source>Current value</source>
             <translation>Aktueller Wert</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1429" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="816" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="820" />
             <source>Description</source>
             <translation>Beschreibung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1072" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1080" />
             <source>Downloading the reference photo…</source>
             <translation>Referenzfoto wird heruntergeladen…</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="682" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="686" />
             <source>Enrich from source</source>
             <translation>Daten aus Quelle ergänzen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1308" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1317" />
             <source>Every selected species is already in the catalog.</source>
             <translation>Alle ausgewählten Arten sind bereits im Katalog enthalten.</translation>
         </message>
@@ -11869,89 +11977,89 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Alle Arten in diesem Ordner sind bereits im Katalog vorhanden.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="838" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="842" />
             <source>Export PDF</source>
             <translation>Als PDF exportieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1429" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="887" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="895" />
             <source>Family</source>
             <translation>Familie</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1216" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1225" />
             <source>Fast</source>
             <translation>Schnell</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1400" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1408" />
             <source>Field</source>
             <translation>Feld</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="686" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="690" />
             <source>Filters</source>
             <translation>Filter</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1433" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="896" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="904" />
             <source>Flower Color</source>
             <translation>Blütenfarbe</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1434" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="712" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="716" />
             <source>Flowering</source>
             <translation>Blütezeit</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1433" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="897" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="905" />
             <source>Foliage Color</source>
             <translation>Laubfarbe</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1220" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1229" />
             <source>Full Shade</source>
             <translation>Vollschatten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1217" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1226" />
             <source>Full Sun</source>
             <translation>Volle Sonne</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1429" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="888" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="896" />
             <source>Genus</source>
             <translation>Gattung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="780" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="784" />
             <source>Get reference photo</source>
             <translation>Referenzfoto abrufen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1432" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="890" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="898" />
             <source>Growth Rate</source>
             <translation>Wachstumsgeschwindigkeit</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="714" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="718" />
             <source>Harvest and fruiting</source>
             <translation>Ernte und Fruchtbildung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1222" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1231" />
             <source>High</source>
             <translation>Hoch</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="673" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="677" />
             <source>Import JSON/HTML File</source>
             <translation>JSON-/HTML-Datei importieren</translation>
         </message>
@@ -11960,91 +12068,91 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Lokale Quellen importieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="675" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="679" />
             <source>Import Source Folder</source>
             <translation>Quellordner importieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="669" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="673" />
             <source>Import file</source>
             <translation>Datei importieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1358" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="679" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1367" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="683" />
             <source>Import from URL</source>
             <translation>Von URL importieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1342" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1351" />
             <source>Imported {count} new species. Existing records were not changed.</source>
             <translation>{count} neue Arten importiert. Vorhandene Einträge wurden nicht geändert.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="705" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="709" />
             <source>In ground</source>
             <translation>Im Freiland</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="721" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="725" />
             <source>Incomplete sheets</source>
             <translation>Unvollständige Pflanzenblätter</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="889" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="897" />
             <source>Life Cycle</source>
             <translation>Lebenszyklus</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="710" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="714" />
             <source>Location or bed</source>
             <translation>Standort oder Beet</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1221" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1230" />
             <source>Low</source>
             <translation>Niedrig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1401" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1409" />
             <source>Manual value protected</source>
             <translation>Manueller Wert geschützt</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1430" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="891" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1438" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="899" />
             <source>Maximum Height (cm)</source>
             <translation>Maximale Höhe (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1430" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="892" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1438" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="900" />
             <source>Maximum Spread (cm)</source>
             <translation>Maximale Breite (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1215" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1224" />
             <source>Medium</source>
             <translation>Mittel</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="722" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="726" />
             <source>Missing scientific name, adult dimensions, exposure or a known calendar period.</source>
             <translation>Botanischer Name, Endmaße, Lichtverhältnisse oder ein bekannter Kalenderzeitraum fehlen.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="834" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="838" />
             <source>My specimens</source>
             <translation>Meine Exemplare</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1307" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1316" />
             <source>No New Species</source>
             <translation>Keine neuen Arten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1274" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1333" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1283" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1342" />
             <source>No records were imported.
 
 {error}</source>
@@ -12053,12 +12161,12 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
 {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1089" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1097" />
             <source>No reference photo was found in this source.</source>
             <translation>In dieser Quelle wurde kein Referenzfoto gefunden.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="997" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1005" />
             <source>No species found. Add a plant to start your catalog.</source>
             <translation>Keine Arten gefunden. Fügen Sie eine Pflanze hinzu, um Ihren Katalog zu beginnen.</translation>
         </message>
@@ -12067,94 +12175,94 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Öffnen / Bearbeiten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="841" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="845" />
             <source>Open plant sheet</source>
             <translation>Pflanzenblatt öffnen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1436" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="714" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1444" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="718" />
             <source>Optimal planting</source>
             <translation>Optimaler Pflanzzeitraum</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="707" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="711" />
             <source>Other</source>
             <translation>Sonstiges</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1219" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1228" />
             <source>Partial Shade</source>
             <translation>Halbschatten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1218" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1227" />
             <source>Partial Sun</source>
             <translation>Teilsonne</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1213" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1222" />
             <source>Perennial</source>
             <translation>Mehrjährig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1341" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1350" />
             <source>Plant Sources Imported</source>
             <translation>Pflanzenquellen importiert</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1258" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1267" />
             <source>Plant sources (*.json *.html *.htm);;All files (*)</source>
             <translation>Pflanzenquellen (*.json *.html *.htm);;Alle Dateien (*)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1434" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="713" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="717" />
             <source>Planting</source>
             <translation>Pflanzung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="706" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="710" />
             <source>Pot with bottom</source>
             <translation>Topf oder Kübel mit Boden</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="703" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="961" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="707" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="969" />
             <source>Present</source>
             <translation>Vorhanden</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1438" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="715" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1446" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="719" />
             <source>Propagation</source>
             <translation>Anzucht</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1435" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="713" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="717" />
             <source>Pruning</source>
             <translation>Schnitt</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1435" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="807" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="811" />
             <source>Recommended periods</source>
             <translation>Empfohlene Zeiträume</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1156" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="773" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1165" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="777" />
             <source>Reference photo</source>
             <translation>Referenzfoto</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1035" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1043" />
             <source>Reference photo is missing or unreadable.</source>
             <translation>Das Referenzfoto fehlt oder ist nicht lesbar.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1081" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1089" />
             <source>Reference photo unavailable. Use a local file. {error}</source>
             <translation>Referenzfoto nicht verfügbar. Verwenden Sie eine lokale Datei. {error}</translation>
         </message>
@@ -12163,106 +12271,106 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Aus Quelle aktualisieren</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1411" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1419" />
             <source>Review and edit before saving</source>
             <translation>Vor dem Speichern prüfen und bearbeiten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1396" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1404" />
             <source>Review source changes</source>
             <translation>Änderungen der Quelle prüfen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1428" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1436" />
             <source>Scientific Name</source>
             <translation>Wissenschaftlicher Name</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="656" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="660" />
             <source>Search by common name, scientific name, or family</source>
             <translation>Nach allgemeinem Namen, wissenschaftlichem Namen oder Familie suchen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1256" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1265" />
             <source>Select JSON/HTML Plant Source</source>
             <translation>JSON-/HTML-Pflanzenquelle auswählen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1247" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1256" />
             <source>Select Plant Source Folder</source>
             <translation>Ordner mit Pflanzenquellen auswählen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1160" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="786" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1169" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="790" />
             <source>Select a species to view its details.</source>
             <translation>Wählen Sie eine Art aus, um deren Details anzuzeigen.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1214" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1223" />
             <source>Slow</source>
             <translation>Langsam</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1432" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="895" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="903" />
             <source>Soil Type</source>
             <translation>Bodentyp</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="718" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="722" />
             <source>Sort by botanical name</source>
             <translation>Nach botanischem Namen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="719" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="723" />
             <source>Sort by category</source>
             <translation>Nach Kategorie</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="718" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="722" />
             <source>Sort by common name</source>
             <translation>Nach gebräuchlichem Namen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="719" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="723" />
             <source>Sort by specimen count</source>
             <translation>Nach Exemplarenanzahl</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1359" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1368" />
             <source>Source URL</source>
             <translation>Quell-URL</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1401" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1409" />
             <source>Source value</source>
             <translation>Wert der Quelle</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1228" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1237" />
             <source>Source: {text}</source>
             <translation>Quelle: {text}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="715" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="719" />
             <source>Sowing</source>
             <translation>Aussaat</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1431" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="893" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="901" />
             <source>Sun Requirement</source>
             <translation>Lichtbedarf</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1096" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1104" />
             <source>The botanical record no longer exists.</source>
             <translation>Der botanische Eintrag ist nicht mehr vorhanden.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1555" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1570" />
             <source>The catalog could not be saved. Your changes were not applied.
 
 {error}</source>
@@ -12271,7 +12379,7 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
 {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1323" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1332" />
             <source>The library changed while the import was being prepared. No imported records were saved. Refresh the catalog and retry.
 
 {error}</source>
@@ -12288,7 +12396,7 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
 {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1102" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1110" />
             <source>The photo could not be associated. {error}</source>
             <translation>Das Foto konnte nicht zugeordnet werden. {error}</translation>
         </message>
@@ -12297,62 +12405,62 @@ Sie können die Satellitenansicht stattdessen direkt aus der unten angezeigten K
             <translation type="vanished">Diese Art ist nicht mehr in der benutzerdefinierten Bibliothek vorhanden.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1447" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1454" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="707" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1455" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1462" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="711" />
             <source>Unknown</source>
             <translation>Unbekannt</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="953" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="961" />
             <source>Unnamed Plant</source>
             <translation>Unbenannte Pflanze</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1450" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1458" />
             <source>Unrecognized format (preserved)</source>
             <translation>Nicht erkanntes Format (beibehalten)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1383" />
             <source>Use a local file or create the plant manually.
 
 {error}</source>
-            <translation>Verwenden Sie eine lokale Datei oder legen Sie die Pflanze manuell an.
+            <translation type="vanished">Verwenden Sie eine lokale Datei oder legen Sie die Pflanze manuell an.
 
 {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1431" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="894" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="902" />
             <source>Water Needs</source>
             <translation>Wasserbedarf</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="723" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="727" />
             <source>Without personal photo</source>
             <translation>Ohne persönliches Foto</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1407" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1415" />
             <source>Yes</source>
             <translation>Ja</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="995" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1003" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1119" />
             <source>{count} species in the custom library</source>
             <translation>{count} Arten in der benutzerdefinierten Pflanzenbibliothek</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="963" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="971" />
             <source>{count} specimen(s)</source>
             <translation>{count} Exemplar(e)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1179" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1182" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1192" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1209" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1188" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1191" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1201" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1218" />
             <source>—</source>
             <translation>—</translation>
         </message>
@@ -13388,18 +13496,18 @@ Verwenden Sie 'Eigene erstellen', um Pflanzen hinzuzufügen, oder das Pflanzen-M
     <context>
         <name>PlantMediaGallery</name>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="231" />
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="99" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="105" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="237" />
             <source>Add photo or document</source>
             <translation>Foto oder Dokument hinzufügen</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="93" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="99" />
             <source>Caption</source>
             <translation>Bildunterschrift</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="154" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="160" />
             <source>Category: {kind}
 Date taken: {taken}
 Imported: {imported}
@@ -13412,136 +13520,136 @@ Quelle: {source}
 Bildnachweis: {credit}</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="107" />
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="343" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="113" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="349" />
             <source>Choose photo folder</source>
             <translation>Fotoordner auswählen</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="96" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="102" />
             <source>Credit</source>
             <translation>Bildnachweis</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="94" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="100" />
             <source>Date taken</source>
             <translation>Aufnahmedatum</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="85" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="91" />
             <source>Document</source>
             <translation>Dokument</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="288" />
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="298" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="294" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="304" />
             <source>Loading…</source>
             <translation>Wird geladen…</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="92" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="98" />
             <source>Media category</source>
             <translation>Medienkategorie</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="165" />
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="174" />
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="303" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="171" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="180" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="309" />
             <source>Missing or unreadable file</source>
             <translation>Datei fehlt oder ist nicht lesbar</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="319" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="325" />
             <source>Next</source>
             <translation>Weiter</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="102" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="108" />
             <source>Open / compare</source>
             <translation>Öffnen / vergleichen</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="106" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="112" />
             <source>Open folder</source>
             <translation>Ordner öffnen</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="83" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="89" />
             <source>Personal garden photo</source>
             <translation>Persönliches Gartenfoto</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="281" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="287" />
             <source>Photos</source>
             <translation>Fotos</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="85" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="91" />
             <source>Plan illustration</source>
             <translation>Illustration für den Plan</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="316" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="322" />
             <source>Previous</source>
             <translation>Zurück</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="84" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="90" />
             <source>Reference photo</source>
             <translation>Referenzfoto</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="105" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="111" />
             <source>Remove association</source>
             <translation>Zuordnung entfernen</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="103" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="109" />
             <source>Save media details</source>
             <translation>Medienangaben speichern</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="229" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="235" />
             <source>Save the project before attaching files.</source>
             <translation>Vor dem Anhängen von Dateien das Projekt speichern.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="95" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="101" />
             <source>Source URL</source>
             <translation>Quell-URL</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="245" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="251" />
             <source>The project changed during import; no association was saved.</source>
             <translation>Das Projekt wurde während des Imports geändert; es wurde keine Zuordnung gespeichert.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="213" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="219" />
             <source>This photo changed while its details were open. Reload before saving.</source>
             <translation>Dieses Foto wurde geändert, während seine Angaben geöffnet waren. Laden Sie es vor dem Speichern neu.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="156" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="162" />
             <source>Unknown</source>
             <translation>Unbekannt</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="191" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="197" />
             <source>Unknown media category</source>
             <translation>Unbekannte Medienkategorie</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="89" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="95" />
             <source>Unknown, or YYYY-MM-DD</source>
             <translation>Unbekannt, oder JJJJ-MM-TT</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="144" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="150" />
             <source>Unrecognized media collection; the original data was preserved.</source>
             <translation>Nicht erkannte Mediensammlung; die ursprünglichen Daten wurden beibehalten.</translation>
         </message>
         <message>
-            <location filename="../../ui/widgets/plant_media_gallery.py" line="104" />
+            <location filename="../../ui/widgets/plant_media_gallery.py" line="110" />
             <source>Use as main personal photo</source>
             <translation>Als persönliches Hauptfoto verwenden</translation>
         </message>
@@ -14431,478 +14539,478 @@ Bitte überprüfen Sie Ihre Internetverbindung und API-Zugangsdaten.</translatio
     <context>
         <name>PlantSpeciesEditDialog</name>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="77" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="81" />
             <source>Add Plant to Catalog</source>
             <translation>Pflanze zum Katalog hinzufügen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="263" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="267" />
             <source>Additional information from the source</source>
             <translation>Zusätzliche Informationen aus der Quelle</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="424" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="428" />
             <source>Adult dimensions must be positive or unknown.</source>
             <translation>Die Endmaße müssen positiv oder unbekannt sein.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="114" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="118" />
             <source>Annual</source>
             <translation>Einjährig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="210" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="214" />
             <source>Appearance and uses</source>
             <translation>Aussehen und Verwendung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="115" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="119" />
             <source>Biennial</source>
             <translation>Zweijährig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="202" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="206" />
             <source>Botanical identity</source>
             <translation>Botanische Identität</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="293" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="297" />
             <source>Cancel</source>
             <translation>Abbrechen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="230" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="234" />
             <source>Care</source>
             <translation>Pflege</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="207" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="211" />
             <source>Category</source>
             <translation>Kategorie</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="225" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="229" />
             <source>Climate context</source>
             <translation>Klimatischer Kontext</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="205" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="209" />
             <source>Commercial name</source>
             <translation>Handelsname</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="105" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="109" />
             <source>Common Name</source>
             <translation>Allgemeiner Name</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="204" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="208" />
             <source>Cultivar</source>
             <translation>Kultivar</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="178" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="182" />
             <source>Description</source>
             <translation>Beschreibung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="239" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="243" />
             <source>Documented edible uses</source>
             <translation>Dokumentierte essbare Verwendungen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="222" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="226" />
             <source>Drainage</source>
             <translation>Drainage</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="226" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="230" />
             <source>Drought tolerance</source>
             <translation>Trockenheitstoleranz</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="357" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="361" />
             <source>Enter a common name or a scientific name.</source>
             <translation>Geben Sie einen allgemeinen oder wissenschaftlichen Namen ein.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="107" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="111" />
             <source>Family</source>
             <translation>Familie</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="125" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="129" />
             <source>Fast</source>
             <translation>Schnell</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="174" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="178" />
             <source>Flower Color</source>
             <translation>Blütenfarbe</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="214" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="218" />
             <source>Flower characteristics</source>
             <translation>Blütenmerkmale</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="175" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="179" />
             <source>Foliage Color</source>
             <translation>Laubfarbe</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="213" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="217" />
             <source>Foliage characteristics</source>
             <translation>Laubmerkmale</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="212" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="272" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="216" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="276" />
             <source>Foliage persistence</source>
             <translation>Blattpersistenz</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="215" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="219" />
             <source>Fragrance</source>
             <translation>Duft</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="215" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="219" />
             <source>Fruiting</source>
             <translation>Fruchtbildung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="135" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="139" />
             <source>Full Shade</source>
             <translation>Vollschatten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="132" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="136" />
             <source>Full Sun</source>
             <translation>Volle Sonne</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="108" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="112" />
             <source>Genus</source>
             <translation>Gattung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="220" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="224" />
             <source>Growing conditions and care</source>
             <translation>Kulturbedingungen und Pflege</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="148" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="152" />
             <source>Growth Rate</source>
             <translation>Wachstumsgeschwindigkeit</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="211" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="271" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="215" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="275" />
             <source>Growth habit</source>
             <translation>Wuchsform</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="224" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="273" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="228" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="277" />
             <source>Hardiness</source>
             <translation>Winterhärte</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="421" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="425" />
             <source>Hardiness zones must be whole numbers from 1 to 13.</source>
             <translation>Winterhärtezonen müssen ganze Zahlen von 1 bis 13 sein.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="144" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="148" />
             <source>High</source>
             <translation>Hoch</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="237" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="241" />
             <source>Interest for pollinators</source>
             <translation>Nutzen für Bestäuber</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="147" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="151" />
             <source>Life Cycle</source>
             <translation>Lebenszyklus</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="142" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="146" />
             <source>Low</source>
             <translation>Niedrig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="154" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="158" />
             <source>Maximum Height (cm)</source>
             <translation>Maximale Höhe (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="155" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="159" />
             <source>Maximum Spread (cm)</source>
             <translation>Maximale Breite (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="162" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="166" />
             <source>Maximum hardiness zone</source>
             <translation>Maximale Winterhärtezone</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="160" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="164" />
             <source>Maximum soil pH</source>
             <translation>Maximaler Boden-pH-Wert</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="124" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="143" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="128" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="147" />
             <source>Medium</source>
             <translation>Mittel</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="158" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="162" />
             <source>Minimum adult height (cm)</source>
             <translation>Minimale Endhöhe (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="159" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="163" />
             <source>Minimum adult spread (cm)</source>
             <translation>Minimale Endbreite (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="161" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="165" />
             <source>Minimum hardiness zone</source>
             <translation>Minimale Winterhärtezone</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="160" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="164" />
             <source>Minimum soil pH</source>
             <translation>Minimaler Boden-pH-Wert</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="230" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="234" />
             <source>Mulching</source>
             <translation>Mulchen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="188" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="192" />
             <source>My catalogue relations</source>
             <translation>Meine Katalogbeziehungen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="206" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="210" />
             <source>Other common names</source>
             <translation>Weitere gebräuchliche Namen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="233" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="237" />
             <source>Overwintering</source>
             <translation>Überwinterung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="134" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="138" />
             <source>Partial Shade</source>
             <translation>Halbschatten</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="133" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="137" />
             <source>Partial Sun</source>
             <translation>Teilsonne</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="116" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="120" />
             <source>Perennial</source>
             <translation>Mehrjährig</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="208" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="212" />
             <source>Personal tags</source>
             <translation>Persönliche Schlagwörter</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="78" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="82" />
             <source>Plant Details</source>
             <translation>Pflanzendetails</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="229" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="233" />
             <source>Planting advice</source>
             <translation>Pflanzhinweise</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="275" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="279" />
             <source>Planting density</source>
             <translation>Pflanzdichte</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="236" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="240" />
             <source>Pollination</source>
             <translation>Bestäubung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="221" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="225" />
             <source>Possible exposures</source>
             <translation>Geeignete Lichtverhältnisse</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="240" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="244" />
             <source>Precautions</source>
             <translation>Vorsichtsmaßnahmen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="238" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="242" />
             <source>Propagation</source>
             <translation>Anzucht</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="235" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="239" />
             <source>Propagation and precautions</source>
             <translation>Vermehrung und Vorsichtsmaßnahmen</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="231" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="277" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="235" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="281" />
             <source>Pruning advice</source>
             <translation>Hinweise zum Rückschnitt</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="232" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="236" />
             <source>Pruning group and warnings</source>
             <translation>Schnittgruppe und Warnhinweise</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="180" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="184" />
             <source>Recommended periods</source>
             <translation>Empfohlene Zeiträume</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="241" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="245" />
             <source>Safety source and certainty</source>
             <translation>Quelle und Gewissheit der Sicherheitshinweise</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="295" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="299" />
             <source>Save</source>
             <translation>Speichern</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="106" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="110" />
             <source>Scientific Name</source>
             <translation>Wissenschaftlicher Name</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="216" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="220" />
             <source>Seasonal interest</source>
             <translation>Saisonaler Zierwert</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="183" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="187" />
             <source>Select months; an empty row means unknown.</source>
             <translation>Wählen Sie Monate aus; eine leere Zeile bedeutet, dass der Wert unbekannt ist.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="227" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="231" />
             <source>Sensitivity to excess water</source>
             <translation>Empfindlichkeit gegenüber zu viel Wasser</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="197" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="201" />
             <source>Several relations can apply at once; importing a sheet does not mean you own a specimen.</source>
             <translation>Mehrere Beziehungen können gleichzeitig gelten; der Import eines Pflanzenblatts bedeutet nicht, dass Sie ein Exemplar besitzen.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="123" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="127" />
             <source>Slow</source>
             <translation>Langsam</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="171" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="175" />
             <source>Soil Type</source>
             <translation>Bodentyp</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="223" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="227" />
             <source>Soil moisture</source>
             <translation>Bodenfeuchtigkeit</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="224" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="274" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="228" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="278" />
             <source>Soil pH</source>
             <translation>pH-Wert des Bodens</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="418" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="422" />
             <source>Soil pH must be between 0 and 14.</source>
             <translation>Der Boden-pH-Wert muss zwischen 0 und 14 liegen.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="222" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="226" />
             <source>Soil richness</source>
             <translation>Nährstoffgehalt des Bodens</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="217" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="221" />
             <source>Spacing or density with units</source>
             <translation>Pflanzabstand oder -dichte mit Einheit</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="204" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="208" />
             <source>Species</source>
             <translation>Art</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="228" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="232" />
             <source>Suitability for containers</source>
             <translation>Eignung für die Gefäßkultur</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="203" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="207" />
             <source>Summary</source>
             <translation>Kurzbeschreibung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="149" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="153" />
             <source>Sun Requirement</source>
             <translation>Lichtbedarf</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="218" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="222" />
             <source>Support requirements</source>
             <translation>Bedarf an Rankhilfe oder Stütze</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="207" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="211" />
             <source>Synonyms</source>
             <translation>Synonyme</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="382" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="386" />
             <source>This period uses an unrecognized format and cannot be edited safely.</source>
             <translation>Dieser Zeitraum verwendet ein unbekanntes Format und kann nicht sicher bearbeitet werden.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="166" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="170" />
             <source>Unknown</source>
             <translation>Unbekannt</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="218" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="276" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="222" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="280" />
             <source>Uses</source>
             <translation>Verwendung</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="150" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="154" />
             <source>Water Needs</source>
             <translation>Wasserbedarf</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="113" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="122" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="131" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="141" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="323" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="117" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="126" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="135" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="145" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="327" />
             <source>—</source>
             <translation>—</translation>
         </message>
@@ -16658,6 +16766,7 @@ angehakt = immer schützen, nicht angehakt = nie schützen, unbestimmt = Standar
             <translation>Vorschau wird geladen…</translation>
         </message>
         <message>
+            <location filename="../../ui/dialogs/reference_photo_dialog.py" line="102" />
             <location filename="../../ui/dialogs/reference_photo_dialog.py" line="99" />
             <source>Preview unavailable</source>
             <translation>Vorschau nicht verfügbar</translation>

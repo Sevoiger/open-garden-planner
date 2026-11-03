@@ -44,7 +44,13 @@ class _MediaTask(QRunnable):
         try:
             result = self.operation()
         except Exception as error:
-            self.signals.done.emit(id(self), None, str(error))
+            from open_garden_planner.services.plant_source_errors import (
+                PlantSourceError,
+                format_plant_source_error,
+            )
+
+            diagnostic = format_plant_source_error(error) if isinstance(error, PlantSourceError) else str(error)
+            self.signals.done.emit(id(self), None, diagnostic)
         else:
             self.signals.done.emit(id(self), result, "")
 

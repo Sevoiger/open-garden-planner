@@ -37,8 +37,10 @@ def capture(destination):
             edit_media_metadata,
             import_specimen_media,
         )
+        from open_garden_planner.services.plant_source_errors import PlantSourceError
         from open_garden_planner.services.plant_specimens import add_specimen
         from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
+        from open_garden_planner.ui.dialogs.copyable_error_dialog import CopyableErrorDialog
         from open_garden_planner.ui.dialogs.plant_sheet_dialog import PlantSheetDialog
         from open_garden_planner.ui.dialogs.reference_photo_dialog import ReferencePhotoDialog
         from open_garden_planner.ui.dialogs.tab_configuration_dialog import TabConfigurationDialog
@@ -106,12 +108,16 @@ def capture(destination):
             source_import.ReferencePhotoCandidate("https://www.promessedefleurs.com/photo.jpg", "Vue générale — fixture", "https://www.promessedefleurs.com/fixture.html", True),
             source_import.ReferencePhotoCandidate("https://www.promessedefleurs.com/detail.jpg", "Détail de la fleur — fixture", "https://www.promessedefleurs.com/fixture.html", False),
         ))
+        source_error = CopyableErrorDialog("Erreur de source", "", source_error=PlantSourceError(
+            "HTTP Error 403: Forbidden", code="SOURCE_HTTP_ERROR", http_status=403,
+            url="https://www.promessedefleurs.com/fixture.html", stage="fetch"))
         destination.mkdir(parents=True, exist_ok=True)
         steps = [(view, None, "catalogue"), (view, None, "catalogue-compact"),
                  (sheet, 0, "presentation"), (sheet, 1, "culture"),
                  (sheet, 2, "exemplaires"), (sheet, 3, "medias"), (sheet, 3, "photos-personnelles"),
                  (sheet, 4, "sources"), (dashboard, None, "onglets"),
-                 (tabs_dialog, None, "configurer-onglets"), (photo_choice, None, "choisir-photo")]
+                 (tabs_dialog, None, "configurer-onglets"), (photo_choice, None, "choisir-photo"),
+                 (source_error, None, "erreur-source-copiable")]
         position = [0]
         def take():
             if QThreadPool.globalInstance().activeThreadCount():
@@ -144,6 +150,7 @@ def capture(destination):
         view.close()
         tabs_dialog.close()
         photo_choice.close()
+        source_error.close()
         dashboard._project_manager.mark_clean()
         dashboard.close()
         QThreadPool.globalInstance().waitForDone(5000)

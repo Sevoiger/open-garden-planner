@@ -36,6 +36,12 @@ from open_garden_planner.services.local_plant_import import (
     read_sheet_bytes,
     read_source_bytes,
 )
+from open_garden_planner.services.plant_source_errors import (
+    SOURCE_PARSE_ERROR,
+    SOURCE_PRODUCT_AMBIGUOUS,
+    SOURCE_TOO_LARGE,
+    PlantSourceError,
+)
 
 # Kept for existing callers; the same limits now apply to JSON and HTML.
 MAX_HTML_FILE_BYTES = MAX_SOURCE_FILE_BYTES
@@ -199,7 +205,18 @@ def _jsonld_objects(root: _Node) -> list[dict[str, Any]]:
         except (json.JSONDecodeError, ValueError):
             continue
         visit(decoded)
-    return products
+    # A provider can repeat the exact same Product object in separate JSON-LD
+    # blocks. Collapse only structural duplicates; distinct records remain
+    # separate so a recommendation can never silently become the main plant.
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for product in products:
+        marker = json.dumps(product, ensure_ascii=False, sort_keys=True,
+                            separators=(",", ":"))
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(product)
+    return unique
 
 
 def _walk(node: _Node):
@@ -208,8 +225,140 @@ def _walk(node: _Node):
         yield from _walk(child)
 
 
-def _collect_fields(root: _Node) -> dict[str, list[str]]:
+def _walk_unexcluded(node: _Node, excluded: set[int]):
+    if id(node) in excluded:
+        return
+    yield node
+    for child in _children(node):
+        yield from _walk_unexcluded(child, excluded)
+
+
+def _text_unexcluded(node: _Node | str, excluded: set[int]) -> str:
+    if isinstance(node, str):
+        return " ".join(node.split())
+    if id(node) in excluded or node.tag in {"script", "style", "noscript"}:
+        return ""
+    parts = [_text_unexcluded(child, excluded) for child in node.children]
+    return " ".join(part for part in parts if part).strip()
+
+
+def _is_product_scope(node: _Node) -> bool:
+    if "itemscope" not in node.attrs:
+        return False
+    for itemtype in node.attrs.get("itemtype", "").split():
+        try:
+            parsed = urlsplit(itemtype)
+        except ValueError:
+            continue
+        kind = (parsed.path.rstrip("/").rsplit("/", 1)[-1]
+                or parsed.fragment.rsplit("/", 1)[-1])
+        if kind.casefold() == "product":
+            return True
+    return False
+
+
+def _dom_product_references(scope: _Node, page_url: str) -> list[str]:
+    values = [scope.attrs.get("itemid", "")]
+
+    def descendants(node: _Node):
+        for child in _children(node):
+            if _is_product_scope(child):
+                continue
+            yield child
+            yield from descendants(child)
+
+    for node in descendants(scope):
+        itemprops = {part.casefold() for part in node.attrs.get("itemprop", "").split()}
+        if "url" not in itemprops:
+            continue
+        values.extend(node.attrs.get(attribute, "")
+                      for attribute in ("href", "content", "value"))
+    references = []
+    seen = set()
+    for value in values:
+        if not value.strip():
+            continue
+        try:
+            resolved = _without_fragment(urljoin(page_url, value.strip()))
+        except ValueError:
+            continue
+        if resolved not in seen:
+            seen.add(resolved)
+            references.append(resolved)
+    return references
+
+
+def _recommendation_container(node: _Node) -> bool:
+    if node.tag == "aside":
+        return True
+    labels = " ".join(node.attrs.get(key, "") for key in ("id", "class", "aria-label"))
+    normalized = _normalize(labels)
+    return any(hint in normalized for hint in (
+        "recommendation", "recommandation", "similaire", "related product",
+        "related products", "produits associes", "produits complementaires",
+        "cross sell", "crosssell",
+    ))
+
+
+def _secondary_product_nodes(root: _Node, page_url: str, *, multiple_products: bool) -> set[int]:
+    excluded: set[int] = set()
+    try:
+        target_identity = _url_identity(page_url) if page_url else None
+    except ValueError:
+        target_identity = None
+
+    product_scopes = [node for node in _walk(root) if _is_product_scope(node)]
+    primary_products: set[int] = set()
+    for node in product_scopes:
+        references = _dom_product_references(node, page_url)
+        if references:
+            for reference in references:
+                try:
+                    if target_identity is not None and _url_identity(reference) == target_identity:
+                        primary_products.add(id(node))
+                        break
+                except ValueError:
+                    continue
+            if id(node) not in primary_products:
+                excluded.add(id(node))
+        elif multiple_products:
+            # In a multi-product response, an unlinked DOM Product could be a
+            # recommendation. Do not copy its traits into the selected record.
+            excluded.add(id(node))
+
+    def contains_primary_product(node: _Node) -> bool:
+        if id(node) in excluded:
+            return False
+        return (id(node) in primary_products
+                or any(contains_primary_product(child) for child in _children(node)))
+
+    def keep_only_primary_path(node: _Node) -> None:
+        for child in _children(node):
+            if contains_primary_product(child):
+                if id(child) not in primary_products:
+                    keep_only_primary_path(child)
+            else:
+                excluded.add(id(child))
+
+    for node in _walk(root):
+        if not _recommendation_container(node) or id(node) in excluded:
+            continue
+        if id(node) in primary_products:
+            # The recommendation-shaped element is itself the canonical
+            # Product scope, so its own fields and heading are authoritative.
+            continue
+        if contains_primary_product(node):
+            # A side column can hold the explicit canonical product. Keep only
+            # the DOM path to that identity and prune its recommendation peers.
+            keep_only_primary_path(node)
+        else:
+            excluded.add(id(node))
+    return excluded
+
+
+def _collect_fields(root: _Node, excluded_nodes: set[int] | None = None) -> dict[str, list[str]]:
     fields: dict[str, list[str]] = {}
+    excluded = excluded_nodes or set()
 
     def add(label: str, value: str) -> None:
         canonical = _label(label)
@@ -219,32 +368,33 @@ def _collect_fields(root: _Node) -> dict[str, list[str]]:
             if cleaned not in values:
                 values.append(cleaned)
 
-    for node in _walk(root):
+    for node in _walk_unexcluded(root, excluded):
         # Standard definition lists and table rows.
         if node.tag == "dl":
             pending_label = ""
             for child in _children(node):
-                value = _text(child)
+                value = _text_unexcluded(child, excluded)
                 if child.tag == "dt":
                     pending_label = value
                 elif child.tag == "dd" and pending_label:
                     add(pending_label, value)
                     pending_label = ""
         elif node.tag == "tr":
-            cells = [child for child in _children(node) if child.tag in {"th", "td"}]
+            cells = [child for child in _children(node)
+                     if child.tag in {"th", "td"} and id(child) not in excluded]
             if len(cells) >= 2:
-                add(_text(cells[0]), _text(cells[1]))
+                add(_text_unexcluded(cells[0], excluded), _text_unexcluded(cells[1], excluded))
 
         # Promesse de Fleurs renders some labels and values as adjacent blocks
         # (including headings for its botanical taxonomy section).
         for index, child in enumerate(node.children):
-            if not isinstance(child, _Node):
+            if not isinstance(child, _Node) or id(child) in excluded:
                 continue
-            field_name = _label(_text(child))
+            field_name = _label(_text_unexcluded(child, excluded))
             if not field_name:
                 continue
             for next_child in node.children[index + 1:]:
-                value = _text(next_child)
+                value = _text_unexcluded(next_child, excluded)
                 if value:
                     add(field_name, value)
                     break
@@ -286,6 +436,79 @@ def _canonical_url(root: _Node, meta: dict[str, str], products: list[dict[str, A
     if len(products) == 1 and isinstance(products[0].get("url"), str):
         return products[0]["url"].strip()
     return ""
+
+
+def _reference_values(value: Any) -> list[str]:
+    """Read URL-like JSON-LD references without inferring from product names."""
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        return [reference for item in value for reference in _reference_values(item)]
+    if isinstance(value, dict):
+        return [reference for key in ("url", "@id")
+                for reference in _reference_values(value.get(key))]
+    return []
+
+
+def _without_fragment(url: str) -> str:
+    return urlsplit(url)._replace(fragment="").geturl()
+
+
+def _canonical_product_references(product: dict[str, Any], page_url: str) -> list[str]:
+    values = []
+    for key in ("url", "@id", "mainEntityOfPage"):
+        values.extend(_reference_values(product.get(key)))
+    references = []
+    seen = set()
+    for value in values:
+        try:
+            resolved = _without_fragment(urljoin(page_url, value))
+        except ValueError:
+            continue
+        if resolved not in seen:
+            seen.add(resolved)
+            references.append(resolved)
+    return references
+
+
+def _url_identity(url: str) -> tuple[str, str, str, str]:
+    parts = urlsplit(_without_fragment(url))
+    if parts.username or parts.password:
+        raise ValueError("Product references must not contain URL credentials")
+    port = parts.port
+    if port == (443 if parts.scheme.casefold() == "https" else 80):
+        port = None
+    host = (parts.hostname or "").casefold()
+    authority = host + (f":{port}" if port is not None else "")
+    return (parts.scheme.casefold(), authority, parts.path or "/", parts.query)
+
+
+def _matching_canonical_products(products: list[dict[str, Any]], page_url: str) -> list[dict[str, Any]]:
+    if not page_url:
+        return []
+    target = _url_identity(page_url)
+    matching = []
+    for product in products:
+        for reference in _canonical_product_references(product, page_url):
+            try:
+                is_match = _url_identity(reference) == target
+            except ValueError:
+                is_match = False
+            if is_match:
+                matching.append(product)
+                break
+    return matching
+
+
+def _ambiguous_product_message(path: Path, products: list[dict[str, Any]], page_url: str) -> str:
+    details = []
+    for product in products:
+        name = _first_product_text(product.get("name")) or "Product sans nom"
+        urls = _canonical_product_references(product, page_url) if page_url else []
+        location = ", ".join(urls) if urls else "URL non indiquée"
+        details.append(f"{name} ({location})")
+    return (f"HTML contains multiple product records: {path.name}; "
+            f"products: {'; '.join(details)}")
 
 
 def _first_product_text(value: Any) -> str:
@@ -412,21 +635,35 @@ def collect_reference_photo_candidates(
         raise ValueError("Plant source is too deeply nested") from error
 
 
-def _product_page(path: Path, source: bytes) -> PlantSpeciesData:
+def _parse_product_page(path: Path, source: bytes, requested_url: str = "") -> PlantSpeciesData:
     if len(source) > MAX_HTML_FILE_BYTES:
-        raise ValueError(f"HTML plant source exceeds {MAX_HTML_FILE_BYTES} bytes: {path.name}")
+        raise PlantSourceError(
+            f"HTML plant source exceeds {MAX_HTML_FILE_BYTES} bytes: {path.name}",
+            code=SOURCE_TOO_LARGE, url=requested_url, stage="parse",
+        )
     try:
         document = source.decode("utf-8-sig")
     except UnicodeDecodeError:
         document = source.decode("cp1252")
 
-    parser = _DocumentParser()
-    parser.feed(document)
-    parser.close()
+    try:
+        parser = _DocumentParser()
+        parser.feed(document)
+        parser.close()
+    except RecursionError as error:
+        raise PlantSourceError("Plant source is too deeply nested", code=SOURCE_PARSE_ERROR,
+                               url=requested_url, stage="parse") from error
     root = parser.root
     meta = _meta(root)
     products = _jsonld_objects(root)
     url = _canonical_url(root, meta, products)
+    if url and requested_url:
+        url = urljoin(requested_url, url)
+    elif requested_url:
+        # When the page omits an explicit canonical tag, its requested URL is
+        # still a strong page reference against which Product URLs can be
+        # checked. Product names are deliberately never used as a substitute.
+        url = requested_url
     host = urlsplit(url).hostname or ""
     provider_mark = _normalize(meta.get("og:site_name", ""))
     is_promesse = (host == "promessedefleurs.com"
@@ -434,10 +671,18 @@ def _product_page(path: Path, source: bytes) -> PlantSpeciesData:
                    or "promesse de fleurs" in provider_mark)
     if not is_promesse:
         raise ValueError(f"Unsupported local HTML plant source: {path.name}")
-    if len(products) > 1:
-        raise ValueError(f"HTML contains multiple product records: {path.name}")
+    multiple_products = len(products) > 1
+    if multiple_products:
+        matching = _matching_canonical_products(products, url)
+        if len(matching) != 1:
+            raise PlantSourceError(
+                _ambiguous_product_message(path, products, url),
+                code=SOURCE_PRODUCT_AMBIGUOUS, url=url or requested_url, stage="parse",
+            )
+        products = matching
 
-    fields = _collect_fields(root)
+    excluded_nodes = _secondary_product_nodes(root, url, multiple_products=multiple_products)
+    fields = _collect_fields(root, excluded_nodes)
     genus = _single(fields, "Genre")
     species = _single(fields, "Espèce")
     explicit_scientific_name = _single(fields, "Nom botanique")
@@ -454,9 +699,9 @@ def _product_page(path: Path, source: bytes) -> PlantSpeciesData:
 
     product = products[0] if products else {}
     title = ""
-    for node in _walk(root):
-        if node.tag == "h1" and _text(node):
-            title = _text(node)
+    for node in _walk_unexcluded(root, excluded_nodes):
+        if node.tag == "h1" and _text_unexcluded(node, excluded_nodes):
+            title = _text_unexcluded(node, excluded_nodes)
             break
     if not title:
         title = _first_product_text(product.get("name"))
@@ -527,12 +772,26 @@ def _product_page(path: Path, source: bytes) -> PlantSpeciesData:
     return plant
 
 
+def _product_page(path: Path, source: bytes, requested_url: str = "") -> PlantSpeciesData:
+    """Parse one local product page and classify parser failures for callers."""
+    try:
+        return _parse_product_page(path, source, requested_url)
+    except PlantSourceError:
+        raise
+    except RecursionError as error:
+        raise PlantSourceError("Plant source is too deeply nested", code=SOURCE_PARSE_ERROR,
+                               url=requested_url, stage="parse") from error
+    except (ValueError, TypeError, KeyError) as error:
+        raise PlantSourceError(str(error), code=SOURCE_PARSE_ERROR, url=requested_url,
+                               stage="parse") from error
+
+
 def read_local_plant_sources(source: Path) -> list[PlantSpeciesData]:
     """Read one JSON/HTML file or a selected, non-recursive directory.
 
     JSON sheets are parsed only by the established JSON sheet adapter.
-    HTML is accepted only when it is an identifiable, single-product Promesse
-    de Fleurs page. Other HTML, including irrigation print tables without an
+    HTML is accepted only when it identifies one main Promesse de Fleurs
+    product reliably. Other HTML, including irrigation print tables without an
     explicit botanical identity, is refused instead of being guessed into a
     species record. Nothing is written to a library or project file.
     """
