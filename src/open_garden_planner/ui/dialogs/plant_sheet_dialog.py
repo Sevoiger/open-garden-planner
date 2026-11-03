@@ -45,6 +45,7 @@ class PlantSheetDialog(QDialog):
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self.title = QLabel()
         self.title.setTextFormat(Qt.TextFormat.PlainText)
+        self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         font = self.title.font()
         font.setPointSize(19)
         font.setBold(True)
@@ -108,7 +109,7 @@ class PlantSheetDialog(QDialog):
         label = QLabel(str(value))
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setWordWrap(True)
-        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         return label
 
     def _fill(self, page, rows, *, paragraphs=()):

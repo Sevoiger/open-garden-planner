@@ -6,8 +6,9 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from PyQt6.QtCore import QCoreApplication, QLocale, QSize, Qt, QThreadPool, pyqtSignal
-from PyQt6.QtGui import QKeyEvent, QMouseEvent
+from PyQt6.QtGui import QAction, QKeyEvent, QKeySequence, QMouseEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -750,6 +751,13 @@ class PlantCatalogView(QWidget):
         self.results_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.results_list.itemSelectionChanged.connect(self._update_preview)
         self.results_list.itemActivated.connect(self._open_selected)
+        self.results_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.results_list.customContextMenuRequested.connect(self._copy_context_menu)
+        copy_action = QAction(self.tr("Copy details"), self.results_list)
+        copy_action.setShortcut(QKeySequence(QKeySequence.StandardKey.Copy))
+        copy_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        copy_action.triggered.connect(lambda _checked=False: self._copy_selected_text())
+        self.results_list.addAction(copy_action)
         splitter.addWidget(self.results_list)
 
         self.preview_scroll = QScrollArea()
@@ -819,6 +827,8 @@ class PlantCatalogView(QWidget):
         footer = QHBoxLayout()
         self.status_label = QLabel()
         self.status_label.setWordWrap(True)
+        self.status_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         set_text_role(self.status_label, "secondary")
         footer.addWidget(self.status_label, 1)
         self.specimens_button = QPushButton(self.tr("My specimens"))
@@ -837,7 +847,37 @@ class PlantCatalogView(QWidget):
 
         self._preview_rows: list[tuple[QLabel, QLabel]] = []
         self._set_preview_rows()
+        for label in (self.preview_name, self.preview_scientific_name, self.preview_description,
+                      *(value for row in self._preview_rows for value in row)):
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         self._populate_list()
+
+    def _copy_selected_text(self, name_only=False):
+        item = self.results_list.currentItem()
+        if item is None:
+            return
+        from open_garden_planner.ui.widgets.plant_catalog_cards import CARD_ROLE
+
+        data = item.data(CARD_ROLE)
+        if not isinstance(data, dict):
+            return
+        text = data["name"] if name_only else "\n".join(
+            str(data[key]) for key in ("name", "botanical", "badges", "conditions") if data.get(key))
+        if not name_only:
+            fields = [f"{label.text()}: {value.text()}" for label, value in self._preview_rows
+                      if self.preview_form.isRowVisible(label) and value.text()]
+            text = "\n".join((text, *fields, self.preview_description.text()))
+        QApplication.clipboard().setText(text)
+
+    def _copy_context_menu(self, position):
+        item = self.results_list.itemAt(position)
+        if item is None:
+            return
+        self.results_list.setCurrentItem(item)
+        menu = QMenu(self.results_list)
+        menu.addAction(self.tr("Copy name"), lambda: self._copy_selected_text(True))
+        menu.addAction(self.tr("Copy details"), lambda: self._copy_selected_text())
+        menu.exec(self.results_list.viewport().mapToGlobal(position))
 
     def _set_preview_rows(self) -> None:
         for label, value in self._preview_rows:
@@ -1025,11 +1065,11 @@ class PlantCatalogView(QWidget):
         except (OSError, ValueError, LibraryOperationError) as error:
             self._show_save_error(error)
             return
-        from open_garden_planner.services.plant_source_import import fetch_reference_photo_for_plant
         from open_garden_planner.ui.widgets.plant_media_gallery import _MediaTask
+        from open_garden_planner.ui.widgets.plant_source_worker import reference_photo_request
 
         path = self._library.path
-        job = _MediaTask(lambda: fetch_reference_photo_for_plant(plant, path, identity))
+        job = _MediaTask(lambda: reference_photo_request(plant, path, identity))
         self._photo_jobs[id(job)] = (job, identity, revision)
         job.signals.done.connect(self._reference_photo_ready)
         self.photo_button.setEnabled(False)
@@ -1044,6 +1084,11 @@ class PlantCatalogView(QWidget):
         if error:
             self.status_label.setText(self.tr("Reference photo unavailable. Use a local file. {error}").format(error=error))
             return
+        from open_garden_planner.services.plant_source_import import ReferencePhotoSelectionRequired
+
+        if isinstance(asset, ReferencePhotoSelectionRequired):
+            self._choose_reference_photo(asset, pending[1], pending[2])
+            return
         if asset is None:
             self.status_label.setText(self.tr("No reference photo was found in this source."))
             return
@@ -1053,11 +1098,31 @@ class PlantCatalogView(QWidget):
             plant = self._library.get_plant(pending[1])
             if plant is None:
                 raise LibraryConflictError(self.tr("The botanical record no longer exists."))
-            updated = edit_reference_media(plant, asset=asset)
+            primary = asset["id"] if len(pending) > 3 and pending[3] else None
+            updated = edit_reference_media(plant, asset=asset, primary_id=primary)
             self._library.update_plant(pending[1], updated, expected_revision=pending[2])
             self._populate_list()
         except (OSError, ValueError, LibraryOperationError) as error:
             self.status_label.setText(self.tr("The photo could not be associated. {error}").format(error=error))
+
+    def _choose_reference_photo(self, choices, identity, revision):
+        from open_garden_planner.services.plant_source_import import import_reference_photo_bytes
+        from open_garden_planner.ui.dialogs.reference_photo_dialog import ReferencePhotoDialog
+        from open_garden_planner.ui.widgets.plant_media_gallery import _MediaTask
+
+        dialog = ReferencePhotoDialog(choices.candidates, self)
+        if not dialog.exec():
+            self.status_label.setText(self.tr("{count} species in the custom library").format(count=len(self._entries)))
+            return
+        candidate, payload = dialog.selected_candidate, dialog.selected_payload
+        path = self._library.path
+        job = _MediaTask(lambda: import_reference_photo_bytes(
+            payload, path, identity, source_url=candidate.url, page_url=candidate.source_url,
+            caption=candidate.caption, credit="Promesse de Fleurs"))
+        self._photo_jobs[id(job)] = (job, identity, revision, dialog.use_as_main)
+        job.signals.done.connect(self._reference_photo_ready)
+        self.photo_button.setEnabled(False)
+        QThreadPool.globalInstance().start(job)
 
     def _open_specimens(self):
         identity = self._selected_id()

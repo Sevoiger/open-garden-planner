@@ -82,6 +82,8 @@ class BotanicalReferenceGallery(QWidget):
             actions.addWidget(button, index // 3, index % 3)
         layout.addLayout(actions)
         self.status = QLabel()
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.refresh()
@@ -238,26 +240,44 @@ class BotanicalReferenceGallery(QWidget):
             return
         if saved_page_is_provider:
             from open_garden_planner.services.plant_source_import import (
-                fetch_reference_photo_for_plant,
+                ReferencePhotoSelectionRequired,
+                import_reference_photo_bytes,
             )
+            from open_garden_planner.ui.dialogs.reference_photo_dialog import ReferencePhotoDialog
+            from open_garden_planner.ui.widgets.plant_source_worker import reference_photo_request
 
             caption, credit = self.caption.text().strip(), self.credit.text().strip()
+            use_primary = [False]
             self.download_button.setEnabled(False)
+            self.status.clear()
 
             def imported(asset, error):
                 self.download_button.setEnabled(True)
                 if error:
                     self.status.setText(self.tr("The reference photo could not be downloaded. You can import a local file.") + "\n" + error)
                     return
+                if isinstance(asset, ReferencePhotoSelectionRequired):
+                    dialog = ReferencePhotoDialog(asset.candidates, self)
+                    if not dialog.exec():
+                        return
+                    candidate, payload = dialog.selected_candidate, dialog.selected_payload
+                    use_primary[0] = dialog.use_as_main
+                    self.download_button.setEnabled(False)
+                    self._run(lambda: import_reference_photo_bytes(
+                        payload, self.library.path, self.library_id, source_url=candidate.url,
+                        page_url=candidate.source_url, caption=caption or candidate.caption,
+                        credit=credit or "Promesse de Fleurs"), imported)
+                    return
                 if asset is None:
                     self.status.setText(self.tr("The reference photo could not be downloaded. You can import a local file."))
                     return
                 try:
-                    self._commit(asset=asset, expected_revision=revision)
+                    self._commit(asset=asset, primary_id=asset["id"] if use_primary[0] else None,
+                                 expected_revision=revision)
                 except (ValueError, OSError, RuntimeError) as error:
                     self.status.setText(str(error))
 
-            self._run(lambda: fetch_reference_photo_for_plant(
+            self._run(lambda: reference_photo_request(
                 plant, self.library.path, self.library_id, caption=caption, credit=credit
             ), imported)
             return

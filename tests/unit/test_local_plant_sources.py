@@ -8,6 +8,7 @@ import pytest
 from open_garden_planner.models.plant_data import GrowthRate, SunRequirement, WaterNeeds
 from open_garden_planner.services.local_plant_sources import (
     MAX_HTML_FILE_BYTES,
+    collect_reference_photo_candidates,
     read_local_plant_sources,
 )
 
@@ -188,6 +189,50 @@ def test_promesse_html_maps_explicit_fields_and_keeps_unmapped_source_values(tmp
     assert source["fields"]["Période de floraison"] == ["Août à Octobre"]
     assert source["product_json_ld"]["name"] == "Hibiscus syriacus Diana - Althéa blanc"
     assert source["sha256"] == hashlib.sha256(page.encode()).hexdigest()
+
+
+def test_photo_candidates_keep_recommended_product_titles_and_dedupe_images():
+    url = "https://www.promessedefleurs.com/rosier.html"
+    page = f'''<html><head>
+      <link rel="canonical" href="{url}">
+      <meta property="og:title" content="Rose ancienne">
+      <meta property="og:image" content="/media/rose.jpg">
+      <script type="application/ld+json">{{"@graph":[
+        {{"@type":"Product","name":"Rose ancienne","url":"{url}",
+         "image":[{{"@type":"ImageObject","url":"/media/rose.jpg"}},
+                  {{"url":"/media/rose-detail.jpg"}}]}},
+        {{"@type":"Product","name":"Tulipe recommandée",
+         "url":"https://www.promessedefleurs.com/tulipe.html",
+         "image":["/media/tulipe.jpg",{{"url":"/media/tulipe-close.jpg"}}]}}
+      ]}}</script></head><body><h1>Rose ancienne</h1></body></html>'''.encode()
+
+    canonical, candidates = collect_reference_photo_candidates(page, url)
+
+    assert canonical == url
+    assert [candidate.url for candidate in candidates] == [
+        "https://www.promessedefleurs.com/media/rose.jpg",
+        "https://www.promessedefleurs.com/media/rose-detail.jpg",
+        "https://www.promessedefleurs.com/media/tulipe.jpg",
+        "https://www.promessedefleurs.com/media/tulipe-close.jpg",
+    ]
+    assert candidates[0].caption == "Rose ancienne"
+    assert candidates[0].primary is True
+    assert candidates[2].caption == "Tulipe recommandée"
+    assert candidates[2].primary is False
+    assert all(candidate.source_url == url for candidate in candidates)
+
+
+def test_botanical_html_import_still_refuses_multiple_product_records(tmp_path):
+    url = "https://www.promessedefleurs.com/arbustes/hibiscus-diana.html"
+    page = f'''<html><head><link rel="canonical" href="{url}">
+      <script type="application/ld+json">[{{"@type":"Product","name":"Hibiscus"}},
+        {{"@type":"Product","name":"Rosier recommandé"}}]</script>
+      </head><body><h1>Hibiscus</h1></body></html>'''
+    path = tmp_path / "multiple.html"
+    path.write_text(page, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="multiple product records"):
+        read_local_plant_sources(path)
 
 
 def test_promesse_html_and_json_for_same_url_are_rejected_as_duplicates(tmp_path):

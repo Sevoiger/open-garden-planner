@@ -1,4 +1,5 @@
 """Explicit source imports do not mutate the library and preserve corrections."""
+import json
 from copy import deepcopy
 from io import BytesIO
 from urllib.error import URLError
@@ -7,12 +8,15 @@ import pytest
 
 from open_garden_planner.models.plant_data import PlantSpeciesData
 from open_garden_planner.services.plant_source_import import (
+    ReferencePhotoSelectionRequired,
     fetch_plant_source,
     fetch_reference_photo,
     fetch_reference_photo_for_plant,
+    import_reference_photo_bytes,
     mark_import_baseline,
     plan_source_refresh,
     plan_source_update,
+    retrieve_reference_photo,
     source_identity,
     validate_source_url,
 )
@@ -142,6 +146,173 @@ def test_explicit_reference_download_reuses_local_media_and_retains_credit(tmp_p
     with pytest.raises(ValueError, match="does not permit"):
         fetch_reference_photo(URL, library.path, identity, opener=forbidden)
     assert len(forbidden.calls) == 1
+
+
+def test_reference_photo_bytes_can_be_retrieved_and_imported_with_page_context(tmp_path):
+    from PIL import Image
+
+    from open_garden_planner.services.botanical_media import resolve_reference_media
+    from open_garden_planner.services.plant_library import PlantLibrary
+
+    stream = BytesIO()
+    Image.new("RGB", (24, 24), "green").save(stream, "PNG")
+    image_url = "https://www.promessedefleurs.com/media/rose.png"
+    opener = FakeOpener(payloads={image_url: stream.getvalue()})
+    payload = retrieve_reference_photo(image_url, opener=opener)
+
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData("Rosa", "Rose"))
+    page_url = "https://www.promessedefleurs.com/rosier.html"
+    asset = import_reference_photo_bytes(
+        payload, library.path, identity, source_url=image_url,
+        page_url=page_url, caption="Rose ancienne", credit="Promesse de Fleurs",
+    )
+
+    assert opener.calls == ["https://www.promessedefleurs.com/robots.txt", image_url]
+    assert asset["source_url"] == image_url
+    assert asset["source_page_url"] == page_url
+    assert asset["caption"] == "Rose ancienne"
+    assert resolve_reference_media(library.path, asset["photo_path"]).read_bytes() == payload
+
+
+def test_multiple_page_images_raise_selection_before_any_media_is_written(tmp_path):
+    from open_garden_planner.services.plant_library import PlantLibrary
+
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <meta property="og:title" content="Rose ancienne">
+      <meta property="og:image" content="/media/rose.jpg">
+      <script type="application/ld+json">[{{"@type":"Product","name":"Rose",
+        "url":"{URL}","image":["/media/rose.jpg"]}},
+        {{"@type":"Product","name":"Tulipe recommandée",
+         "url":"https://www.promessedefleurs.com/tulipe.html",
+         "image":[{{"url":"/media/tulipe.jpg"}}]}}]</script>
+      </head><body><h1>Rose ancienne</h1></body></html>'''.encode()
+    opener = FakeOpener(payloads={URL: page})
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData("Rosa", "Rose"))
+    plant = PlantSpeciesData("Rosa", "Rose", raw_data={"local_sheet": {"url": URL}})
+
+    with pytest.raises(ReferencePhotoSelectionRequired) as raised:
+        fetch_reference_photo_for_plant(plant, library.path, identity, opener=opener)
+
+    assert [candidate.url for candidate in raised.value.candidates] == [
+        "https://www.promessedefleurs.com/media/rose.jpg",
+        "https://www.promessedefleurs.com/media/tulipe.jpg",
+    ]
+    assert [candidate.caption for candidate in raised.value.candidates] == [
+        "Rose ancienne", "Tulipe recommandée",
+    ]
+    assert all(candidate.source_url == URL for candidate in raised.value.candidates)
+    assert opener.calls == ["https://www.promessedefleurs.com/robots.txt", URL]
+    assert not (tmp_path / "botanical-media").exists()
+
+
+@pytest.mark.parametrize("image_markup", [
+    b'<meta property="og:image" content="https://outside.example/rose.jpg">',
+    b"",
+], ids=["external-host", "absent-image"])
+def test_page_photo_fallback_ignores_external_hosts_and_returns_none_when_absent(
+    tmp_path, image_markup,
+):
+    from open_garden_planner.services.plant_library import PlantLibrary
+
+    no_image_page = _source_page().replace(
+        b'<meta property="og:image" content="/media/rose.jpg">',
+        image_markup,
+    )
+    opener = FakeOpener(payloads={URL: no_image_page})
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData("Rosa", "Rose"))
+    plant = PlantSpeciesData("Rosa", "Rose", raw_data={"local_sheet": {"url": URL}})
+
+    assert fetch_reference_photo_for_plant(plant, library.path, identity, opener=opener) is None
+    assert opener.calls == ["https://www.promessedefleurs.com/robots.txt", URL]
+    assert not (tmp_path / "botanical-media").exists()
+
+
+def test_reference_photo_selection_exposes_no_more_than_twelve_safe_candidates(tmp_path):
+    from open_garden_planner.services.plant_library import PlantLibrary
+
+    products = [
+        {"@type": "Product", "name": f"Plante {index}",
+         "url": URL if index == 0 else f"https://www.promessedefleurs.com/plante-{index}.html",
+         "image": f"/media/plante-{index}.jpg"}
+        for index in range(16)
+    ]
+    page = (f'<html><head><link rel="canonical" href="{URL}">'
+            f'<script type="application/ld+json">{json.dumps(products)}'
+            "</script></head><body><h1>Plantes</h1></body></html>").encode()
+    opener = FakeOpener(payloads={URL: page})
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData("Rosa", "Rose"))
+    plant = PlantSpeciesData("Rosa", "Rose", raw_data={"local_sheet": {"url": URL}})
+
+    with pytest.raises(ReferencePhotoSelectionRequired) as raised:
+        fetch_reference_photo_for_plant(plant, library.path, identity, opener=opener)
+
+    assert len(raised.value.candidates) == 12
+    assert all(candidate.url.startswith("https://www.promessedefleurs.com/")
+               for candidate in raised.value.candidates)
+    assert opener.calls == ["https://www.promessedefleurs.com/robots.txt", URL]
+    assert not (tmp_path / "botanical-media").exists()
+
+
+def test_reference_photo_selection_filters_hosts_before_applying_twelve_choice_limit(tmp_path):
+    from open_garden_planner.services.plant_library import PlantLibrary
+
+    external_images = "".join(
+        f'<meta property="og:image" content="https://outside.example/{index}.jpg">'
+        for index in range(50)
+    )
+    products = [
+        {"@type": "Product", "name": f"Plante {index}",
+         "url": URL if index == 0 else f"https://www.promessedefleurs.com/plante-{index}.html",
+         "image": f"/media/plante-{index}.jpg"}
+        for index in range(13)
+    ]
+    page = (f'<html><head><link rel="canonical" href="{URL}">{external_images}'
+            f'<script type="application/ld+json">{json.dumps(products)}'
+            "</script></head><body><h1>Plantes</h1></body></html>").encode()
+    opener = FakeOpener(payloads={URL: page})
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData("Rosa", "Rose"))
+    plant = PlantSpeciesData("Rosa", "Rose", raw_data={"local_sheet": {"url": URL}})
+
+    with pytest.raises(ReferencePhotoSelectionRequired) as raised:
+        fetch_reference_photo_for_plant(plant, library.path, identity, opener=opener)
+
+    assert len(raised.value.candidates) == 12
+    assert [candidate.url for candidate in raised.value.candidates] == [
+        f"https://www.promessedefleurs.com/media/plante-{index}.jpg"
+        for index in range(12)
+    ]
+    assert opener.calls == ["https://www.promessedefleurs.com/robots.txt", URL]
+    assert not any("outside.example" in request for request in opener.calls)
+    assert not (tmp_path / "botanical-media").exists()
+
+
+def test_reference_photo_fallback_rejects_mismatched_canonical_page(tmp_path):
+    from open_garden_planner.services.plant_library import PlantLibrary
+
+    other_url = "https://www.promessedefleurs.com/another-plant.html"
+    opener = FakeOpener(payloads={URL: _source_page(other_url)})
+    library = PlantLibrary(tmp_path / "custom_plants.json")
+    identity = library.add_plant(PlantSpeciesData("Rosa", "Rose"))
+    plant = PlantSpeciesData("Rosa", "Rose", raw_data={"local_sheet": {"url": URL}})
+
+    with pytest.raises(ValueError, match="identity differs"):
+        fetch_reference_photo_for_plant(plant, library.path, identity, opener=opener)
+    assert opener.calls == ["https://www.promessedefleurs.com/robots.txt", URL]
+    assert not (tmp_path / "botanical-media").exists()
+
+
+def test_strict_plant_source_import_still_rejects_multiple_products():
+    page = f'''<html><head><link rel="canonical" href="{URL}">
+      <script type="application/ld+json">[{{"@type":"Product","name":"Rose"}},
+        {{"@type":"Product","name":"Tulipe recommandée"}}]</script>
+      </head><body><h1>Rose</h1></body></html>'''.encode()
+    with pytest.raises(ValueError, match="multiple product records"):
+        fetch_plant_source(URL, opener=FakeOpener(payload=page))
 
 
 def test_provider_redirect_cannot_fetch_a_path_outside_the_robots_check():
@@ -397,6 +568,7 @@ def test_reference_photo_helper_can_recover_old_source_image_and_reject_external
     asset = fetch_reference_photo_for_plant(old_plant, library.path, identity, opener=opener)
 
     assert asset["source_url"] == photo_url
+    assert asset["source_page_url"] == URL
     assert opener.calls == [
         "https://www.promessedefleurs.com/robots.txt", URL,
         "https://www.promessedefleurs.com/robots.txt", photo_url,

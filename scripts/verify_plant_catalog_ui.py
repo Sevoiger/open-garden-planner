@@ -19,6 +19,7 @@ def capture(destination):
         app_settings.APPLICATION_NAME = "synthetic-catalogue-" + root.name
         cleanup.callback(lambda: app_settings.create_qsettings().clear())
         library_module._default_app_data_dir = lambda: root / "app-data"
+        import open_garden_planner.services.plant_source_import as source_import
         from open_garden_planner.app.application import (
             TAB_PLAN,
             TAB_PLANT_CATALOG,
@@ -39,6 +40,7 @@ def capture(destination):
         from open_garden_planner.services.plant_specimens import add_specimen
         from open_garden_planner.ui.canvas.canvas_scene import CanvasScene
         from open_garden_planner.ui.dialogs.plant_sheet_dialog import PlantSheetDialog
+        from open_garden_planner.ui.dialogs.reference_photo_dialog import ReferencePhotoDialog
         from open_garden_planner.ui.dialogs.tab_configuration_dialog import TabConfigurationDialog
         from open_garden_planner.ui.specimen_placement import place_specimen
         from open_garden_planner.ui.theme import ThemeMode, apply_theme
@@ -97,12 +99,19 @@ def capture(destination):
         entries = [(tab_id, dashboard._tab_widget.tabText(dashboard._tab_widget.indexOf(dashboard._tab_widgets_by_id[tab_id])), True)
                    for tab_id in dashboard._tab_order_ids()]
         tabs_dialog = TabConfigurationDialog(entries, permanent_tab_id=TAB_PLAN, parent=dashboard)
+        original_retrieve = source_import.retrieve_reference_photo
+        cleanup.callback(lambda: setattr(source_import, "retrieve_reference_photo", original_retrieve))
+        source_import.retrieve_reference_photo = lambda _url: source.read_bytes()
+        photo_choice = ReferencePhotoDialog((
+            source_import.ReferencePhotoCandidate("https://www.promessedefleurs.com/photo.jpg", "Vue générale — fixture", "https://www.promessedefleurs.com/fixture.html", True),
+            source_import.ReferencePhotoCandidate("https://www.promessedefleurs.com/detail.jpg", "Détail de la fleur — fixture", "https://www.promessedefleurs.com/fixture.html", False),
+        ))
         destination.mkdir(parents=True, exist_ok=True)
         steps = [(view, None, "catalogue"), (view, None, "catalogue-compact"),
                  (sheet, 0, "presentation"), (sheet, 1, "culture"),
                  (sheet, 2, "exemplaires"), (sheet, 3, "medias"), (sheet, 3, "photos-personnelles"),
                  (sheet, 4, "sources"), (dashboard, None, "onglets"),
-                 (tabs_dialog, None, "configurer-onglets")]
+                 (tabs_dialog, None, "configurer-onglets"), (photo_choice, None, "choisir-photo")]
         position = [0]
         def take():
             if QThreadPool.globalInstance().activeThreadCount():
@@ -134,6 +143,7 @@ def capture(destination):
         sheet.close()
         view.close()
         tabs_dialog.close()
+        photo_choice.close()
         dashboard._project_manager.mark_clean()
         dashboard.close()
         QThreadPool.globalInstance().waitForDone(5000)

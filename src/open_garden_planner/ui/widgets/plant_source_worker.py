@@ -4,6 +4,19 @@ from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 from open_garden_planner.services.plant_source_import import fetch_plant_source
 
 
+def reference_photo_request(*args, **kwargs):
+    """Carry an explicit image choice through a worker without stringifying it."""
+    from open_garden_planner.services.plant_source_import import (
+        ReferencePhotoSelectionRequired,
+        fetch_reference_photo_for_plant,
+    )
+
+    try:
+        return fetch_reference_photo_for_plant(*args, **kwargs)
+    except ReferencePhotoSelectionRequired as choice:
+        return choice
+
+
 class _Signals(QObject):
     ready = pyqtSignal(object, str)
 

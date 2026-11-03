@@ -110,6 +110,8 @@ class PlantMediaGallery(QWidget):
             buttons.addWidget(button, index // 4, index % 4)
         layout.addLayout(buttons)
         self.status = QLabel()
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.refresh()

@@ -80,6 +80,20 @@ personnelles et ne sont pas intégrés au catalogue réel.
 
 ## Limites explicites et extensions
 
+Le correctif photo du 3 novembre sépare la collecte d'images du parseur botanique
+strict. Une page avec plusieurs produits peut proposer un choix illustré de douze
+images au maximum ; les hôtes sont filtrés avant ce plafond. Les aperçus restent
+en mémoire, seul l'original choisi est importé après validation. L'annulation
+conserve bibliothèque et disque inchangés. Le texte et les diagnostics sont
+copiables, y compris via le menu des cartes. Les tests de bouton couvrent le
+catalogue et la galerie sur une fixture HTML multi-produits.
+
+Validation : 93 tests ciblés headless réussis, Ruff et traductions compilées
+EN/FR/DE vérifiés (3 645 clés), revue indépendante des frontières import/Qt et
+du choix des images. La capture synthétique est
+`tmp/catalogue-photo-choix/choisir-photo-offscreen.png`. Le refus d'un import
+botanique ambigu est conservé ; choisir une photo ne choisit pas une autre espèce.
+
 La passe UI du 2 novembre allège l'aperçu et les cartes (floraison/taille,
 champs renseignés, résumé court, photo plus grande et filtres repliables).
 Affichage > Onglets conserve l'ordre et la visibilité par identifiants stables ;

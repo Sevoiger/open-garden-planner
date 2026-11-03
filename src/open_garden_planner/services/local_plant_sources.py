@@ -55,6 +55,16 @@ class _Node:
     children: list[_Node | str] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class ReferencePhotoCandidate:
+    """One page image proposal, kept separate from botanical product fields."""
+
+    url: str
+    caption: str
+    source_url: str
+    primary: bool | None = None
+
+
 class _DocumentParser(HTMLParser):
     """Small tolerant tree builder for the few HTML structures used here."""
 
@@ -287,6 +297,119 @@ def _first_product_text(value: Any) -> str:
         text = value.get("@value")
         return text.strip() if isinstance(text, str) else ""
     return ""
+
+
+def _image_records(value: Any, fallback_caption: str = "") -> list[tuple[str, str]]:
+    """Return image URLs and their own short label from common JSON-LD shapes."""
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [(cleaned, fallback_caption)] if cleaned else []
+    if isinstance(value, list):
+        records: list[tuple[str, str]] = []
+        for item in value:
+            records.extend(_image_records(item, fallback_caption))
+        return records
+    if isinstance(value, dict):
+        image_caption = next((item.strip() for key in ("caption", "name", "alt")
+                              if isinstance((item := value.get(key)), str) and item.strip()),
+                             fallback_caption)
+        records: list[tuple[str, str]] = []
+        for key in ("url", "contentUrl", "@id"):
+            if key in value:
+                records.extend(_image_records(value[key], image_caption))
+        return records
+    return []
+
+
+def _page_identity(url: str) -> tuple[str, str, str]:
+    parts = urlsplit(url)
+    return (parts.hostname or "").casefold(), parts.path.rstrip("/"), parts.query
+
+
+def collect_reference_photo_candidates(
+    source: bytes, requested_url: str,
+) -> tuple[str, tuple[ReferencePhotoCandidate, ...]]:
+    """Extract bounded page-image proposals without interpreting product traits.
+
+    Product JSON-LD objects remain independent: each image keeps the title of
+    its own record, including related-product records on a recommendation page.
+    The first product is used as a primary hint only when no product URL matches
+    the page's canonical URL.
+    """
+    if len(source) > MAX_HTML_FILE_BYTES:
+        raise ValueError(f"HTML plant source exceeds {MAX_HTML_FILE_BYTES} bytes")
+    try:
+        document = source.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        document = source.decode("cp1252")
+
+    try:
+        parser = _DocumentParser()
+        parser.feed(document)
+        parser.close()
+        root = parser.root
+        meta = _meta(root)
+        products = _jsonld_objects(root)
+        canonical = _canonical_url(root, meta, products)
+        page_url = urljoin(requested_url, canonical) if canonical else requested_url
+
+        # Validate that candidate references retain page context. Provider and
+        # requested-page security checks are performed by plant_source_import.
+        page_title = meta.get("og:title", "")
+        if not page_title:
+            for node in _walk(root):
+                if node.tag == "h1" and _text(node):
+                    page_title = _text(node)
+                    break
+        if not page_title:
+            for node in _walk(root):
+                if node.tag == "title" and _text(node):
+                    page_title = _text(node)
+                    break
+
+        primary_product = 0 if products else None
+        for index, product in enumerate(products):
+            product_url = _first_product_text(product.get("url"))
+            if product_url and _page_identity(urljoin(page_url, product_url)) == _page_identity(page_url):
+                primary_product = index
+                break
+
+        candidates: dict[str, ReferencePhotoCandidate] = {}
+
+        def add(raw_url: str, caption: str, primary: bool | None) -> None:
+            cleaned = raw_url.strip()
+            if not cleaned:
+                return
+            absolute = urljoin(page_url, cleaned)
+            parts = urlsplit(absolute)
+            if parts.fragment:
+                absolute = parts._replace(fragment="").geturl()
+            if absolute in candidates:
+                previous = candidates[absolute]
+                candidates[absolute] = ReferencePhotoCandidate(
+                    url=absolute,
+                    caption=previous.caption or caption.strip(),
+                    source_url=previous.source_url,
+                    primary=True if previous.primary is True or primary is True else previous.primary,
+                )
+                return
+            candidates[absolute] = ReferencePhotoCandidate(
+                url=absolute, caption=caption.strip(), source_url=page_url, primary=primary,
+            )
+
+        for node in _walk(root):
+            if node.tag == "meta" and node.attrs.get("property", "").casefold() == "og:image":
+                add(node.attrs.get("content", ""), page_title, True)
+
+        for index, product in enumerate(products):
+            product_title = _first_product_text(product.get("name")) or page_title
+            primary = index == primary_product
+            for image_url, image_caption in _image_records(product.get("image"), product_title):
+                add(image_url, product_title or image_caption or page_title, primary)
+
+        return page_url, tuple(candidates.values())
+    except RecursionError as error:
+        raise ValueError("Plant source is too deeply nested") from error
 
 
 def _product_page(path: Path, source: bytes) -> PlantSpeciesData:

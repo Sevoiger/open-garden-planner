@@ -229,6 +229,19 @@ par les mêmes limites et restrictions que l'import. Un échec laisse la fiche
 enregistrée intacte et permet le recours au fichier local. Ouvrir ou sélectionner
 une fiche ne déclenche aucun téléchargement.
 
+La recherche de photos est indépendante de l'import botanique : une page contenant
+plusieurs blocs produits ou des recommandations peut proposer plusieurs images.
+Une fenêtre présente alors jusqu'à douze photos avec leur aperçu et leurs URL.
+Choisir une image, éventuellement la définir comme référence principale, puis
+valider. Annuler ne conserve aucun nouveau fichier ni aucune association. Les
+photos des produits recommandés gardent leur propre légende ; les données
+botaniques et les exemplaires ne sont pas fusionnés.
+
+Les textes de l'aperçu, de la fiche et les messages d'erreur sont sélectionnables
+à la souris et copiables au clavier. Sur une carte, le menu contextuel propose
+**Copier le nom** et **Copier les détails** ; le raccourci de copie du système
+copie également les détails de la carte sélectionnée.
+
 Dans **Mes exemplaires**, créez un exemplaire en pot ou en terre sans forme sur le
 plan. Le projet conserve son UUID, ses dates ou périodes d'acquisition et plantation,
 son prix payé et justificatif, son emplacement textuel et ses particularités locales.

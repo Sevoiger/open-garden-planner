@@ -9,10 +9,16 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.robotparser import RobotFileParser
 
-from open_garden_planner.services.local_plant_sources import MAX_HTML_FILE_BYTES, _product_page
+from open_garden_planner.services.local_plant_sources import (
+    MAX_HTML_FILE_BYTES,
+    ReferencePhotoCandidate,
+    _product_page,
+    collect_reference_photo_candidates,
+)
 
 USER_AGENT = "OpenGardenPlanner/plant-catalog"
 _PROVIDER = "promesse_de_fleurs"
+_MAX_REFERENCE_PHOTO_CHOICES = 12
 _PROVIDER_PAGE_HOSTS = frozenset({"www.promessedefleurs.com", "promessedefleurs.com"})
 # The provider currently serves product and media URLs on these exact hosts.
 # Keep this a host allowlist, not a suffix rule: a page cannot nominate an
@@ -105,35 +111,127 @@ class _ProviderPhotoRedirects(_ProviderRedirects):
         return HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, headers, newurl)
 
 
-def fetch_reference_photo(url, library_path, library_id, *, caption="", credit="", opener=None):
-    """Explicit provider-photo download into the existing library media store.
+class ReferencePhotoSelectionRequired(ValueError):
+    """A source page offers multiple safe images and requires a user choice."""
 
-    Runs in a worker; returns an unattached asset for the Qt-side transaction.
-    Unsupported external image hosts use the local-file fallback, never a
-    relaxed redirect policy. Image dimensions and originals use the same
-    checks as local reference imports.
-    """
+    def __init__(self, candidates):
+        self.candidates = tuple(candidates)
+        if not self.candidates or len(self.candidates) > _MAX_REFERENCE_PHOTO_CHOICES:
+            raise ValueError("Reference photo choices must contain between 1 and 12 candidates")
+        super().__init__("The source page offers multiple reference photos; choose one to continue")
+
+
+def _reference_image_suffix(payload):
     from io import BytesIO
-    from tempfile import TemporaryDirectory
 
-    from PIL import Image
+    from PIL import Image, UnidentifiedImageError
 
-    from open_garden_planner.services.botanical_media import import_reference_media
+    from open_garden_planner.services.plant_media import MAX_MEDIA_BYTES
+
+    if not isinstance(payload, (bytes, bytearray, memoryview)):
+        raise ValueError("Reference photo data must be bytes")
+    payload = bytes(payload)
+    if len(payload) > MAX_MEDIA_BYTES:
+        raise ValueError("Reference photo exceeds the download size limit")
+    try:
+        with Image.open(BytesIO(payload)) as image:
+            suffix = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp",
+                      "GIF": ".gif", "TIFF": ".tif"}.get(image.format)
+            if suffix is None:
+                raise ValueError("Unsupported reference image; use a local file")
+            if image.width * image.height > 50_000_000:
+                raise ValueError("Image exceeds the supported pixel limit")
+            image.verify()
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as error:
+        raise ValueError("Unsupported reference image; use a local file") from error
+    return suffix
+
+
+def retrieve_reference_photo(url, opener=None):
+    """Retrieve one allowed image and validate its format, size and dimensions."""
     from open_garden_planner.services.plant_media import MAX_MEDIA_BYTES
 
     payload = _permitted_payload(url, MAX_MEDIA_BYTES, opener,
                                  validator=validate_reference_photo_url, accept="image/*")
-    with Image.open(BytesIO(payload)) as image:
-        suffix = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "GIF": ".gif", "TIFF": ".tif"}.get(image.format)
-        if suffix is None:
-            raise ValueError("Unsupported reference image; use a local file")
-        if image.width * image.height > 50_000_000:
-            raise ValueError("Image exceeds the supported pixel limit")
+    _reference_image_suffix(payload)
+    return payload
+
+
+def import_reference_photo_bytes(payload, library_path, library_id, source_url, *,
+                                 caption="", credit="", page_url=""):
+    """Import already retrieved bytes as an unattached reference media asset.
+
+    This is intended to run in a worker. ``source_url`` remains the image URL;
+    optional ``page_url`` retains the product page from which it was selected.
+    """
+    from tempfile import TemporaryDirectory
+
+    from open_garden_planner.services.botanical_media import import_reference_media
+
+    validate_reference_photo_url(source_url)
+    if page_url:
+        validate_source_url(page_url)
+    payload = bytes(payload) if isinstance(payload, (bytes, bytearray, memoryview)) else payload
+    suffix = _reference_image_suffix(payload)
     with TemporaryDirectory(prefix="ogp-reference-") as directory:
         source = Path(directory) / ("reference" + suffix)
         source.write_bytes(payload)
-        return import_reference_media(source, library_path, library_id, kind="reference",
-                                      source_url=url, caption=caption, credit=credit)
+        asset = import_reference_media(source, library_path, library_id, kind="reference",
+                                       source_url=source_url, caption=caption, credit=credit)
+        if page_url:
+            asset["source_page_url"] = page_url
+        return asset
+
+
+def fetch_reference_photo(url, library_path, library_id, *, caption="", credit="", opener=None,
+                          page_url=""):
+    """Download one explicit provider image into the existing media store.
+
+    Unsupported external image hosts use the local-file fallback, never a
+    relaxed redirect policy. The returned asset is unattached and must be
+    associated by a separate Qt-side transaction.
+    """
+    payload = retrieve_reference_photo(url, opener=opener)
+    return import_reference_photo_bytes(payload, library_path, library_id, url,
+                                        caption=caption, credit=credit, page_url=page_url)
+
+
+def _same_product_page(requested_url, canonical_url):
+    requested = urlsplit(requested_url)
+    canonical = urlsplit(canonical_url)
+    return (canonical.path.rstrip("/"), canonical.query) == (
+        requested.path.rstrip("/"), requested.query,
+    )
+
+
+def _page_reference_photo_candidates(page_url, opener):
+    """Read a provider product page, then retain only exact-host image URLs."""
+    validate_source_url(page_url)
+    payload = _permitted_payload(page_url, MAX_HTML_FILE_BYTES, opener)
+    canonical_url, candidates = collect_reference_photo_candidates(payload, page_url)
+    validate_source_url(canonical_url)
+    if not _same_product_page(page_url, canonical_url):
+        raise ValueError("The downloaded product identity differs from the requested URL")
+
+    safe_candidates = []
+    seen = set()
+    for candidate in candidates:
+        try:
+            validate_reference_photo_url(candidate.url)
+        except ValueError:
+            continue
+        if candidate.url in seen:
+            continue
+        seen.add(candidate.url)
+        safe_candidates.append(ReferencePhotoCandidate(
+            url=candidate.url,
+            caption=candidate.caption,
+            source_url=canonical_url,
+            primary=candidate.primary,
+        ))
+        if len(safe_candidates) == _MAX_REFERENCE_PHOTO_CHOICES:
+            break
+    return tuple(safe_candidates)
 
 
 def fetch_reference_photo_for_plant(plant, library_path, library_id, *, opener=None,
@@ -163,20 +261,28 @@ def fetch_reference_photo_for_plant(plant, library_path, library_id, *, opener=N
                 # The catalogue may have a personal URL here. It remains
                 # protected as a field and is never fetched from this path.
                 image_url = ""
+    selected_page_url = ""
+    selected_caption = ""
     if not image_url:
-        # Older local HTML/JSON imports may have retained their product page
-        # but not its proposed image URL. A gallery download is explicit, so
-        # it can retrieve that one page and parse only the image metadata.
+        # The botanical import stays strict about multiple product records.
+        # Photo recovery reads only image metadata and keeps product captions
+        # attached to their own candidate records.
         if not page_url:
             return None
-        validate_source_url(page_url)
-        image_url = fetch_plant_source(page_url, opener=opener).image_url
-    if not image_url:
-        return None
+        candidates = _page_reference_photo_candidates(page_url, opener)
+        if not candidates:
+            return None
+        if len(candidates) > 1:
+            raise ReferencePhotoSelectionRequired(candidates)
+        image_url = candidates[0].url
+        selected_page_url = candidates[0].source_url
+        selected_caption = candidates[0].caption
     if not caption:
-        caption = getattr(plant, "common_name", "") or getattr(plant, "scientific_name", "")
+        caption = (selected_caption or getattr(plant, "common_name", "")
+                   or getattr(plant, "scientific_name", ""))
     return fetch_reference_photo(image_url, library_path, library_id, opener=opener,
-                                 caption=caption, credit=credit or "Promesse de Fleurs")
+                                 caption=caption, credit=credit or "Promesse de Fleurs",
+                                 page_url=selected_page_url)
 
 
 def fetch_plant_source(url, *, opener=None):
