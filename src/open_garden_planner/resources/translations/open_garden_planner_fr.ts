@@ -11464,27 +11464,27 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
     <context>
         <name>PlantCatalogRelations</name>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1592" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1595" />
             <source>Archived</source>
             <translation>Archivée</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1590" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1593" />
             <source>Ordered</source>
             <translation>Commandée</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1591" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1594" />
             <source>Owned</source>
             <translation>Possédée</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1588" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1591" />
             <source>To study</source>
             <translation>À étudier</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1589" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1592" />
             <source>Wanted</source>
             <translation>Recherchée</translation>
         </message>
@@ -11559,12 +11559,12 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation type="vanished">Consultez les fiches botaniques et leurs exemplaires, placés sur le plan ou non.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1331" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1332" />
             <source>Catalog Changed</source>
             <translation>Catalogue modifié</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1436" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
             <source>Common Name</source>
             <translation>Nom commun</translation>
         </message>
@@ -11581,13 +11581,13 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
         </message>
         <message>
             <location filename="../../ui/views/plant_catalog_view.py" line="1282" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1576" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1579" />
             <source>Could Not Read Plant Sources</source>
             <translation>Impossible de lire les sources de plantes</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1341" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1569" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1343" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1572" />
             <source>Could Not Save Plant</source>
             <translation>Impossible d’enregistrer la plante</translation>
         </message>
@@ -11602,12 +11602,12 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Cultivar</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1408" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1411" />
             <source>Current value</source>
             <translation>Valeur actuelle</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
             <location filename="../../ui/views/plant_catalog_view.py" line="820" />
             <source>Description</source>
             <translation>Description</translation>
@@ -11623,7 +11623,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Compléter depuis la source</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1317" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1318" />
             <source>Every selected species is already in the catalog.</source>
             <translation>Toutes les espèces sélectionnées figurent déjà dans le catalogue.</translation>
         </message>
@@ -11637,7 +11637,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Exporter en PDF</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
             <location filename="../../ui/views/plant_catalog_view.py" line="895" />
             <source>Family</source>
             <translation>Famille</translation>
@@ -11648,7 +11648,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Rapide</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1408" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1411" />
             <source>Field</source>
             <translation>Champ</translation>
         </message>
@@ -11658,19 +11658,19 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Filtres</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1444" />
             <location filename="../../ui/views/plant_catalog_view.py" line="904" />
             <source>Flower Color</source>
             <translation>Couleur des fleurs</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
             <location filename="../../ui/views/plant_catalog_view.py" line="716" />
             <source>Flowering</source>
             <translation>Floraison</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1444" />
             <location filename="../../ui/views/plant_catalog_view.py" line="905" />
             <source>Foliage Color</source>
             <translation>Couleur du feuillage</translation>
@@ -11686,7 +11686,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Plein soleil</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1437" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
             <location filename="../../ui/views/plant_catalog_view.py" line="896" />
             <source>Genus</source>
             <translation>Genre</translation>
@@ -11697,13 +11697,13 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Récupérer la photo de référence</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
             <location filename="../../ui/views/plant_catalog_view.py" line="898" />
             <source>Growth Rate</source>
             <translation>Vitesse de croissance</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1448" />
             <location filename="../../ui/views/plant_catalog_view.py" line="718" />
             <source>Harvest and fruiting</source>
             <translation>Récolte et fructification</translation>
@@ -11733,13 +11733,13 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Importer un fichier</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1367" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1370" />
             <location filename="../../ui/views/plant_catalog_view.py" line="683" />
             <source>Import from URL</source>
             <translation>Importer depuis une URL</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1351" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1354" />
             <source>Imported {count} new species. Existing records were not changed.</source>
             <translation>{count} nouvelles espèces importées. Les fiches existantes n’ont pas été modifiées.</translation>
         </message>
@@ -11769,18 +11769,18 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Faible</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1409" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1412" />
             <source>Manual value protected</source>
             <translation>Valeur manuelle protégée</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1438" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
             <location filename="../../ui/views/plant_catalog_view.py" line="899" />
             <source>Maximum Height (cm)</source>
             <translation>Hauteur maximale (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1438" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
             <location filename="../../ui/views/plant_catalog_view.py" line="900" />
             <source>Maximum Spread (cm)</source>
             <translation>Envergure maximale (cm)</translation>
@@ -11801,13 +11801,13 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Mes exemplaires</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1316" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1317" />
             <source>No New Species</source>
             <translation>Aucune nouvelle espèce</translation>
         </message>
         <message>
             <location filename="../../ui/views/plant_catalog_view.py" line="1283" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1342" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1344" />
             <source>No records were imported.
 
 {error}</source>
@@ -11835,7 +11835,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Ouvrir la fiche</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1444" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1447" />
             <location filename="../../ui/views/plant_catalog_view.py" line="718" />
             <source>Optimal planting</source>
             <translation>Plantation optimale</translation>
@@ -11861,7 +11861,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Vivace</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1350" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1353" />
             <source>Plant Sources Imported</source>
             <translation>Sources de plantes importées</translation>
         </message>
@@ -11871,7 +11871,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Sources de plantes (*.json *.html *.htm);;Tous les fichiers (*)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
             <location filename="../../ui/views/plant_catalog_view.py" line="717" />
             <source>Planting</source>
             <translation>Plantation</translation>
@@ -11888,19 +11888,19 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Présente</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1446" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1449" />
             <location filename="../../ui/views/plant_catalog_view.py" line="719" />
             <source>Propagation</source>
             <translation>Multiplication</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1446" />
             <location filename="../../ui/views/plant_catalog_view.py" line="717" />
             <source>Pruning</source>
             <translation>Taille</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1446" />
             <location filename="../../ui/views/plant_catalog_view.py" line="811" />
             <source>Recommended periods</source>
             <translation>Périodes recommandées</translation>
@@ -11926,17 +11926,17 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation type="vanished">Actualiser depuis la source</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1419" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1422" />
             <source>Review and edit before saving</source>
             <translation>Vérifier et corriger avant d’enregistrer</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1404" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1407" />
             <source>Review source changes</source>
             <translation>Examiner les changements de la source</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1436" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
             <source>Scientific Name</source>
             <translation>Nom scientifique</translation>
         </message>
@@ -11967,7 +11967,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Lent</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
             <location filename="../../ui/views/plant_catalog_view.py" line="903" />
             <source>Soil Type</source>
             <translation>Type de sol</translation>
@@ -11993,12 +11993,12 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Tri par nombre d’exemplaires</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1368" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1371" />
             <source>Source URL</source>
             <translation>URL de la source</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1409" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1412" />
             <source>Source value</source>
             <translation>Valeur de la source</translation>
         </message>
@@ -12008,13 +12008,13 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Source : {text}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1448" />
             <location filename="../../ui/views/plant_catalog_view.py" line="719" />
             <source>Sowing</source>
             <translation>Semis</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
             <location filename="../../ui/views/plant_catalog_view.py" line="901" />
             <source>Sun Requirement</source>
             <translation>Exposition au soleil</translation>
@@ -12025,7 +12025,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>La fiche botanique n’existe plus.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1570" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1573" />
             <source>The catalog could not be saved. Your changes were not applied.
 
 {error}</source>
@@ -12034,7 +12034,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
 {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1332" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1333" />
             <source>The library changed while the import was being prepared. No imported records were saved. Refresh the catalog and retry.
 
 {error}</source>
@@ -12060,8 +12060,8 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation type="vanished">Cette espèce ne figure plus dans la bibliothèque personnalisée.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1455" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1462" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1458" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1465" />
             <location filename="../../ui/views/plant_catalog_view.py" line="711" />
             <source>Unknown</source>
             <translation>Inconnu</translation>
@@ -12072,7 +12072,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Plante sans nom</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1458" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1461" />
             <source>Unrecognized format (preserved)</source>
             <translation>Format non reconnu (conservé)</translation>
         </message>
@@ -12085,7 +12085,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
 {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
             <location filename="../../ui/views/plant_catalog_view.py" line="902" />
             <source>Water Needs</source>
             <translation>Besoins en eau</translation>
@@ -12096,7 +12096,7 @@ Vous pouvez capturer directement la vue satellite depuis la carte ci-dessous.</t
             <translation>Sans photo personnelle</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1415" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1418" />
             <source>Yes</source>
             <translation>Oui</translation>
         </message>
@@ -19072,119 +19072,140 @@ Continuer ?</translation>
     <context>
         <name>WeatherView</name>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="300" />
+            <location filename="../../ui/views/weather_view.py" line="258" />
+            <source>Analysing {count} maps with AI. This can take several minutes.</source>
+            <translation>Analyse de {count} cartes par l’IA. Cette étape peut prendre plusieurs minutes.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/weather_view.py" line="345" />
             <source>Bulletin from %1 · GPT-6.1 Sol</source>
             <translation>Bulletin du %1 · GPT-6.1 Sol</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="210" />
+            <location filename="../../ui/views/weather_view.py" line="233" />
             <source>Check your OpenAI API key to generate a bulletin.</source>
             <translation>Vérifiez votre clé API OpenAI pour générer un bulletin.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="186" />
+            <location filename="../../ui/views/weather_view.py" line="201" />
+            <location filename="../../ui/views/weather_view.py" line="264" />
             <source>Collecting maps and preparing your bulletin…</source>
             <translation>Récupération des cartes et préparation du bulletin…</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="240" />
+            <location filename="../../ui/views/weather_view.py" line="262" />
+            <source>Collecting weather sources: {done}/{total} processed.</source>
+            <translation>Récupération des données météo : {done}/{total} sources traitées.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/weather_view.py" line="285" />
             <source>Daily forecast</source>
             <translation>Prévision du jour</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="242" />
+            <location filename="../../ui/views/weather_view.py" line="287" />
             <source>Ensemble trend</source>
             <translation>Tendance</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="85" />
+            <location filename="../../ui/views/weather_view.py" line="96" />
             <source>Forecasts update at most once a day.</source>
             <translation>Les prévisions sont actualisées au maximum une fois par jour.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="253" />
+            <location filename="../../ui/views/weather_view.py" line="298" />
             <source>Forecasts updated %1 · once per day</source>
             <translation>Prévisions actualisées le %1 · une fois par jour</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="101" />
+            <location filename="../../ui/views/weather_view.py" line="112" />
             <source>Generate bulletin</source>
             <translation>Générer le bulletin</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="239" />
+            <location filename="../../ui/views/weather_view.py" line="284" />
             <source>Gusts: %1</source>
             <translation>Rafales : %1</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="296" />
+            <location filename="../../ui/views/weather_view.py" line="341" />
             <source>In the garden</source>
             <translation>Au jardin</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="255" />
+            <location filename="../../ui/views/weather_view.py" line="300" />
             <source>No forecast available yet.</source>
             <translation>Aucune prévision disponible pour le moment.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="244" />
+            <location filename="../../ui/views/weather_view.py" line="289" />
             <source>Older forecast</source>
             <translation>Ancienne prévision</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="109" />
+            <location filename="../../ui/views/weather_view.py" line="120" />
             <source>On demand · GPT-6.1 Sol · high reasoning</source>
             <translation>À la demande · GPT-6.1 Sol · raisonnement élevé</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="240" />
+            <location filename="../../ui/views/weather_view.py" line="285" />
             <source>Partial day</source>
             <translation>Journée partielle</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="236" />
+            <location filename="../../ui/views/weather_view.py" line="281" />
             <source>Rain: %1</source>
             <translation>Pluie : %1</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="250" />
+            <location filename="../../ui/views/weather_view.py" line="260" />
+            <source>Saving your bulletin…</source>
+            <translation>Enregistrement du bulletin…</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/weather_view.py" line="295" />
             <source>Showing saved forecasts; update unavailable.</source>
             <translation>Prévisions enregistrées · actualisation indisponible.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="87" />
+            <location filename="../../ui/views/weather_view.py" line="98" />
             <source>The days ahead</source>
             <translation>Les prochains jours</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="212" />
+            <location filename="../../ui/views/weather_view.py" line="235" />
             <source>Today’s update has already been requested. Try again tomorrow.</source>
             <translation>L’actualisation du jour a déjà été demandée. Réessayez demain.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="78" />
+            <location filename="../../ui/views/weather_view.py" line="89" />
             <source>Update forecasts</source>
             <translation>Actualiser les prévisions</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="188" />
+            <location filename="../../ui/views/weather_view.py" line="203" />
             <source>Updating forecasts…</source>
             <translation>Actualisation des prévisions…</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="72" />
+            <location filename="../../ui/views/weather_view.py" line="83" />
             <source>Weather</source>
             <translation>Météo</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="214" />
+            <location filename="../../ui/views/weather_view.py" line="237" />
             <source>Weather update unavailable. The last saved data remains displayed.</source>
             <translation>Actualisation météo indisponible. Les dernières données enregistrées restent affichées.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/weather_view.py" line="100" />
+            <location filename="../../ui/views/weather_view.py" line="111" />
             <source>Your garden weather bulletin</source>
             <translation>Le bulletin météo de votre jardin</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/weather_view.py" line="265" />
+            <source>{stage} · Elapsed: {elapsed}</source>
+            <translation>{stage} · Temps écoulé : {elapsed}</translation>
         </message>
     </context>
     <context>

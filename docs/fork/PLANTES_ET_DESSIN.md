@@ -973,6 +973,10 @@ prévisions anciennes. Une source récente est préférée à une source périm�
 À l’ouverture de la page, seules les prévisions numériques sont actualisées,
 au maximum une fois par jour civil Europe/Paris. **Générer le bulletin** récupère
 les cartes utiles puis appelle **GPT-6.1 Sol, raisonnement élevé**.
+Pendant la génération, l'onglet affiche le nombre de sources traitées, puis le
+passage à l'analyse IA des cartes et le temps écoulé. La collecte utilise une
+barre d'avancement ; l'analyse conserve un indicateur d'activité sans pourcentage
+estimé. Ces étapes peuvent prendre plusieurs minutes.
 Il s’agit d’un clic explicite ; aucun appel IA ne part à l’ouverture. Le service
 conserve une seule tentative IA par jour, même après redémarrage ou échec réseau.
 Un bulletin déjà généré reste affiché ; en cas d’échec, le précédent est conservé.

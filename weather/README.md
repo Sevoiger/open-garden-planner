@@ -7,6 +7,11 @@ Prévisions et appel IA sont limités à une tentative quotidienne chacun ; les
 sources numériques du jour sont réutilisées lors de la collecte des cartes.
 L’échec d’un appel IA n’autorise pas un second appel le même jour (pas de double
 facturation après timeout). Les derniers résultats valides restent disponibles.
+Pendant la génération, l'onglet indique les sources traitées, le passage à
+l'analyse des cartes par l'IA et le temps écoulé. La progression de collecte
+compte les sources traitées, y compris celles réutilisées ou indisponibles ;
+elle ne garantit pas que toutes ont pu être récupérées. La phase IA affiche
+une activité sans pourcentage estimé et peut durer plusieurs minutes.
 
 Les archives vivent dans `get_app_data_dir()/weather`, sur macOS
 `~/Library/Application Support/OpenGardenPlanner/weather`. Les anciens essais du

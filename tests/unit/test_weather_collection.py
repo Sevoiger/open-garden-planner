@@ -41,6 +41,24 @@ def test_missing_is_not_zero_and_unknown_run_stays_unknown():
     assert "precipitation" in result["missing"]
 
 
+def test_collection_reports_completed_sources_even_when_one_is_unavailable(tmp_path, monkeypatch):
+    import json
+
+    settings = config()
+    settings["models"]["gfs_global"] = 168
+    def get(_client, url):
+        if "gfs_global" in url:
+            raise RuntimeError("offline")
+        return json.dumps(raw()).encode()
+    monkeypatch.setattr(wc.CurlClient, "get", get)
+    seen = []
+    report = wc.collect(settings, tmp_path, progress=lambda *args: seen.append(args))
+    assert seen[0] == ("collection", 0, 2)
+    assert seen[-1] == ("collection", 2, 2)
+    assert report["sources"]["meteofrance_arome_france"]["state"] == "ok"
+    assert report["sources"]["gfs_global"]["state"] == "unavailable"
+
+
 @pytest.mark.parametrize("mutation", ["duplicate", "unit", "length", "negative", "nan", "all_null"])
 def test_invalid_response_is_rejected(mutation):
     data = raw()

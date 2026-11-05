@@ -282,17 +282,19 @@ def freshness(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def collect(
-    config: dict[str, Any], output: Path, force: bool = False, *, include_maps: bool = True
+    config: dict[str, Any], output: Path, force: bool = False, *, include_maps: bool = True,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, Any]:
     validate_config(config)
     output.mkdir(parents=True, exist_ok=True)
     with (output / ".collect.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return _collect_locked(config, output, force, include_maps=include_maps)
+        return _collect_locked(config, output, force, include_maps=include_maps, progress=progress)
 
 
 def _collect_locked(
-    config: dict[str, Any], output: Path, force: bool, *, include_maps: bool = True
+    config: dict[str, Any], output: Path, force: bool, *, include_maps: bool = True,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     fingerprint = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
@@ -323,6 +325,10 @@ def _collect_locked(
     (run / MARKER).write_text("OpenGardenPlanner weather archive v1\n")
     client = CurlClient(config["request_spacing_seconds"])
     sources = dict(previous.get("sources", {}))
+    total_sources = len(config["models"]) + len(config.get("ensembles", {}))
+    if include_maps and config["meteociel"]["enabled"]:
+        total_sources += 1 + sum(len(group["products"]) for group in config["meteociel"]["groups"].values())
+    completed_sources = 0
 
     def save(name: str, payload: bytes) -> dict[str, Any]:
         path = run / name
@@ -332,7 +338,7 @@ def _collect_locked(
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
 
-    def attempt(key: str, action: Callable[[], dict[str, Any]]) -> None:
+    def attempt_source(key: str, action: Callable[[], dict[str, Any]]) -> None:
         old_source = previous.get("sources", {}).get(key, {})
         last_attempt = old_source.get("attempted_at", old_source.get("fetched_at"))
         if not force and last_attempt:
@@ -363,6 +369,15 @@ def _collect_locked(
                 "error": str(exc),
                 "attempted_at": started_at.isoformat(),
             }
+
+    def attempt(key: str, action: Callable[[], dict[str, Any]]) -> None:
+        nonlocal completed_sources
+        if progress is not None:
+            progress("collection", completed_sources, total_sources)
+        attempt_source(key, action)
+        completed_sources += 1
+        if progress is not None:
+            progress("collection", completed_sources, total_sources)
 
     for model, hours in config["models"].items():
 

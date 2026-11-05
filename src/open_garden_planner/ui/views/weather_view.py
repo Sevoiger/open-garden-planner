@@ -6,12 +6,13 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from PyQt6.QtCore import QDate, QLocale, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QDate, QElapsedTimer, QLocale, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -29,6 +30,7 @@ from open_garden_planner.ui.theme import set_text_role
 class _WeatherJob(QThread):
     success = pyqtSignal(object)
     error = pyqtSignal(str)
+    progress = pyqtSignal(str, int, int)
 
     def __init__(self, workspace: WeatherWorkspace, analysis: bool, language: str):
         super().__init__()
@@ -37,7 +39,7 @@ class _WeatherJob(QThread):
     def run(self) -> None:
         try:
             result = (
-                self.workspace.generate(self.language)
+                self.workspace.generate(self.language, progress=self._progress)
                 if self.analysis
                 else self.workspace.refresh()
             )
@@ -46,6 +48,10 @@ class _WeatherJob(QThread):
         except Exception as exc:  # noqa: BLE001 — worker errors never reach Qt.
             if not self.isInterruptionRequested():
                 self.error.emit(str(exc) if isinstance(exc, RuntimeError) else "WEATHER_ERROR")
+
+    def _progress(self, phase: str, completed: int, total: int) -> None:
+        if not self.isInterruptionRequested():
+            self.progress.emit(phase, completed, total)
 
 
 class WeatherView(QWidget):
@@ -58,6 +64,11 @@ class WeatherView(QWidget):
         self._loaded = False
         self._forecast: WeatherForecast | None = None
         self._report: dict[str, Any] | None = None
+        self._elapsed = QElapsedTimer()
+        self._phase = ("collection", 0, 0)
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(1000)
+        self._progress_timer.timeout.connect(self._update_progress)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea()
@@ -109,6 +120,10 @@ class WeatherView(QWidget):
             self.tr("On demand · GPT-6.1 Sol · high reasoning"), "caption"
         )
         self._body.addWidget(self.bulletin_status)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.hide()
+        self._body.addWidget(self.progress_bar)
         self.bulletin = QVBoxLayout()
         self.bulletin.setSpacing(14)
         self._body.addLayout(self.bulletin)
@@ -191,11 +206,18 @@ class WeatherView(QWidget):
         self._worker = job
         job.success.connect(self._success)
         job.error.connect(self._error)
+        job.progress.connect(self._progress)
         job.finished.connect(self._finished)
+        if analysis:
+            self._elapsed.start()
+            self._progress("collection", 0, 0)
+            self.progress_bar.show()
+            self._progress_timer.start()
         self._buttons()
         job.start()
 
     def _success(self, result: dict[str, Any]) -> None:
+        self._progress_timer.stop()
         job = self._worker
         if job and job.analysis:
             self.render_bulletin(result)
@@ -206,6 +228,7 @@ class WeatherView(QWidget):
             self.render_forecast(result)
 
     def _error(self, code: str) -> None:
+        self._progress_timer.stop()
         if code == "MISSING_API_KEY" or code == "API_HTTP_401":
             message = self.tr("Check your OpenAI API key to generate a bulletin.")
         elif code == "DAILY_LIMIT":
@@ -216,8 +239,30 @@ class WeatherView(QWidget):
 
     def _finished(self) -> None:
         if self.sender() is self._worker:
+            self._progress_timer.stop()
+            self.progress_bar.hide()
             self._worker = None
             self._buttons()
+
+    def _progress(self, phase: str, completed: int, total: int) -> None:
+        self._phase = (phase, completed, total)
+        self.progress_bar.setRange(0, total if phase == "collection" else 0)
+        self.progress_bar.setValue(completed if phase == "collection" else 0)
+        self._update_progress()
+
+    def _update_progress(self) -> None:
+        phase, completed, total = self._phase
+        seconds = max(0, self._elapsed.elapsed() // 1000)
+        elapsed = f"{seconds // 60:02d}:{seconds % 60:02d}"
+        if phase == "analysis":
+            message = self.tr("Analysing {count} maps with AI. This can take several minutes.").format(count=total)
+        elif phase == "saving":
+            message = self.tr("Saving your bulletin…")
+        elif total:
+            message = self.tr("Collecting weather sources: {done}/{total} processed.").format(done=completed, total=total)
+        else:
+            message = self.tr("Collecting maps and preparing your bulletin…")
+        self.status.setText(self.tr("{stage} · Elapsed: {elapsed}").format(stage=message, elapsed=elapsed))
 
     def render_forecast(self, report: dict[str, Any]) -> None:
         self._report = report
@@ -308,11 +353,14 @@ class WeatherView(QWidget):
         return self._forecast
 
     def shutdown(self) -> None:
+        self._progress_timer.stop()
+        self.progress_bar.hide()
         worker = self._worker
         self._worker = None
         if worker is not None:
             worker.requestInterruption()
             worker.success.disconnect(self._success)
             worker.error.disconnect(self._error)
+            worker.progress.disconnect(self._progress)
             retain_worker_until_finished(worker)
             worker.wait(100)

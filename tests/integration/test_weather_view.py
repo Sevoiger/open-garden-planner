@@ -49,7 +49,7 @@ class Workspace(WeatherWorkspace):
     def refresh(self):
         return self.report
 
-    def generate(self, language="fr"):
+    def generate(self, language="fr", *, progress=None):
         self.calls += 1
         self.done = True
         return self.record
@@ -141,3 +141,66 @@ def test_close_retains_running_worker_until_finished(qtbot, tmp_path):
     finally:
         release.set()
         qtbot.waitUntil(lambda: not worker.isRunning())
+
+
+def test_bulletin_shows_collection_then_analysis_with_elapsed_time(qtbot, tmp_path):
+    import threading
+
+    from PyQt6.QtCore import QThread
+    from PyQt6.QtWidgets import QApplication
+
+    service = Workspace(tmp_path)
+    collection_done, analysis_done = threading.Event(), threading.Event()
+    delivered_on = []
+    def generate(language="fr", *, progress=None):
+        progress("collection", 1, 2)
+        collection_done.wait(5)
+        progress("analysis", 98, 98)
+        analysis_done.wait(5)
+        service.done = True
+        return service.record
+    service.generate = generate
+    class ObservedView(WeatherView):
+        def _progress(self, *args):
+            delivered_on.append(QThread.currentThread())
+            super()._progress(*args)
+    page = ObservedView(service)
+    qtbot.addWidget(page)
+    page._start(True)
+    try:
+        qtbot.waitUntil(lambda: "1/2 processed" in page.status.text())
+        assert not page.progress_bar.isHidden()
+        assert page.progress_bar.value() == 1
+        assert not page.generate_button.isEnabled()
+        qtbot.waitUntil(lambda: "00:01" in page.status.text(), timeout=2500)
+        collection_done.set()
+        qtbot.waitUntil(lambda: "Analysing 98 maps" in page.status.text())
+        assert page.progress_bar.maximum() == 0  # No invented percentage for model reasoning.
+        analysis_done.set()
+        qtbot.waitUntil(lambda: page._worker is None)
+        assert page.progress_bar.isHidden()
+        assert not page._progress_timer.isActive()
+        assert "Elapsed" not in page.status.text()
+        assert all(thread == QApplication.instance().thread() for thread in delivered_on)
+        assert "Sec puis plus frais." in [label.text() for label in page.findChildren(QLabel)]
+    finally:
+        collection_done.set()
+        analysis_done.set()
+        page.shutdown()
+
+
+def test_generation_error_stops_progress_and_preserves_saved_bulletin(qtbot, tmp_path):
+    service = Workspace(tmp_path)
+    page = WeatherView(service)
+    qtbot.addWidget(page)
+    page.render_bulletin(service.record)
+    def generate(language="fr", *, progress=None):
+        progress("analysis", 98, 98)
+        raise RuntimeError("API_NETWORK_ERROR")
+    service.generate = generate
+    page._start(True)
+    qtbot.waitUntil(lambda: page._worker is None)
+    assert not page._progress_timer.isActive()
+    assert page.progress_bar.isHidden()
+    assert "update unavailable" in page.status.text()
+    assert "Sec puis plus frais." in [label.text() for label in page.findChildren(QLabel)]

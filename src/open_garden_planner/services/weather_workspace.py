@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -212,7 +213,10 @@ class WeatherWorkspace:
             )
         return rows
 
-    def generate(self, language: str = "fr") -> dict[str, Any]:
+    def generate(
+        self, language: str = "fr", *,
+        progress: Callable[[str, int, int], None] | None = None,
+    ) -> dict[str, Any]:
         check_workspace_path(self.root)
         self.root.mkdir(parents=True, exist_ok=True)
         with (self.root / ".bulletin.lock").open("a") as lock:
@@ -227,7 +231,9 @@ class WeatherWorkspace:
             )
             if not key or not key.strip():
                 raise RuntimeError("MISSING_API_KEY")
-            report = collect(self.config, self.root)
+            if progress is not None:
+                progress("collection", 0, 0)
+            report = collect(self.config, self.root, progress=progress)
             brief = build_brief(freshness(report))
             content = [
                 {
@@ -289,6 +295,8 @@ class WeatherWorkspace:
                 {"date": self._today(), "requested_at": datetime.now(UTC).isoformat()},
             )
             try:
+                if progress is not None:
+                    progress("analysis", image_count, image_count)
                 with requests.Session() as session:
                     response = session.post(
                         "https://api.openai.com/v1/responses",
@@ -312,6 +320,8 @@ class WeatherWorkspace:
                 if part.get("type") == "output_text"
             )
             data = validate_bulletin(json.loads(text))
+            if progress is not None:
+                progress("saving", 0, 0)
             record = {
                 "date": self._today(),
                 "generated_at": datetime.now(UTC).isoformat(),

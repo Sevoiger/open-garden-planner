@@ -89,7 +89,8 @@ def setup_api(service, monkeypatch, status=200, data=None):
 def test_single_daily_request_survives_restart_and_language_change(tmp_path, monkeypatch):
     service = workspace(tmp_path, monkeypatch)
     post, collect = setup_api(service, monkeypatch)
-    first = service.generate("fr")
+    progress = MagicMock()
+    first = service.generate("fr", progress=progress)
     restarted = ws.WeatherWorkspace(service.root, service.config, service.key_file)
     assert restarted.generate("de") == first
     assert post.call_count == 1 and collect.call_count == 1
@@ -100,6 +101,9 @@ def test_single_daily_request_survives_restart_and_language_change(tmp_path, mon
     assert payload["text"]["format"]["strict"] is True
     assert payload["input"][0]["content"][-1]["detail"] == "original"
     assert restarted.load_bulletin()["content"] == content()
+    assert [call.args for call in progress.call_args_list] == [
+        ("collection", 0, 0), ("analysis", 1, 1), ("saving", 0, 0),
+    ]
 
 
 @pytest.mark.parametrize("failure", ["http", "timeout", "invalid", "incomplete"])
