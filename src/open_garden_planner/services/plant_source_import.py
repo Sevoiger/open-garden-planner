@@ -342,20 +342,21 @@ def fetch_reference_photo_for_plant(plant, library_path, library_id, *, opener=N
                 image_url = ""
     selected_page_url = ""
     selected_caption = ""
-    if not image_url:
+    if image_url:
+        validate_reference_photo_url(image_url)
+    if page_url:
         # The botanical import stays strict about multiple product records.
         # Photo recovery reads only image metadata and keeps product captions
         # attached to their own candidate records.
-        if not page_url:
-            return None
         candidates = _page_reference_photo_candidates(page_url, opener)
-        if not candidates:
-            return None
         if len(candidates) > 1:
             raise ReferencePhotoSelectionRequired(candidates)
-        image_url = candidates[0].url
-        selected_page_url = candidates[0].source_url
-        selected_caption = candidates[0].caption
+        if candidates:
+            image_url = candidates[0].url
+            selected_page_url = candidates[0].source_url
+            selected_caption = candidates[0].caption
+    if not image_url:
+        return None
     if not caption:
         caption = (selected_caption or getattr(plant, "common_name", "")
                    or getattr(plant, "scientific_name", ""))

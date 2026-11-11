@@ -52,6 +52,7 @@ class ReferencePhotoDialog(QDialog):
         self.details.setMaximumHeight(100)
         layout.addWidget(self.details)
         self.main_photo = QCheckBox(self.tr("Use as the main reference photo"))
+        self.main_photo.setChecked(True)
         layout.addWidget(self.main_photo)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)

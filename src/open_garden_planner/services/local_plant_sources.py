@@ -587,6 +587,21 @@ def _page_identity(url: str) -> tuple[str, str, str]:
     return (parts.hostname or "").casefold(), parts.path.rstrip("/"), parts.query
 
 
+def _photo_identity(url: str) -> str:
+    """Collapse PdF's responsive/format/cache variants of one product photo."""
+    parts = urlsplit(url)
+    if (parts.hostname or "").casefold() not in {"promessedefleurs.com", "www.promessedefleurs.com"}:
+        return url
+    path = re.sub(
+        r"^/media/(?:opti_image/webp/)?(?:ri/\d+/)?catalog/product/(?:cache/[^/]+/)?",
+        "/media/catalog/product/", parts.path,
+    )
+    if path.startswith("/media/catalog/product/"):
+        path = re.sub(r"\.(?:jpg|jpeg|png|webp)$", "", path, flags=re.IGNORECASE)
+        return parts._replace(path=path, query="", fragment="").geturl()
+    return url
+
+
 def collect_reference_photo_candidates(
     source: bytes, requested_url: str,
 ) -> tuple[str, tuple[ReferencePhotoCandidate, ...]]:
@@ -645,22 +660,34 @@ def collect_reference_photo_candidates(
             parts = urlsplit(absolute)
             if parts.fragment:
                 absolute = parts._replace(fragment="").geturl()
-            if absolute in candidates:
-                previous = candidates[absolute]
-                candidates[absolute] = ReferencePhotoCandidate(
-                    url=absolute,
+            identity = _photo_identity(absolute)
+            if identity in candidates:
+                previous = candidates[identity]
+                candidates[identity] = ReferencePhotoCandidate(
+                    url=previous.url,
                     caption=previous.caption or caption.strip(),
                     source_url=previous.source_url,
                     primary=True if previous.primary is True or primary is True else previous.primary,
                 )
                 return
-            candidates[absolute] = ReferencePhotoCandidate(
+            candidates[identity] = ReferencePhotoCandidate(
                 url=absolute, caption=caption.strip(), source_url=page_url, primary=primary,
             )
 
         for node in _walk(root):
             if node.tag == "meta" and node.attrs.get("property", "").casefold() == "og:image":
                 add(node.attrs.get("content", ""), page_title, True)
+
+        # Restrict DOM extraction to the product gallery: unrelated page images
+        # (logos, reviews, recommendations) are not botanical photo proposals.
+        # Read only img, so picture sources and zoom templates deduplicate.
+        for gallery in _walk(root):
+            if gallery.attrs.get("id") != "gallery":
+                continue
+            for node in _walk(gallery):
+                if node.tag == "img":
+                    add(node.attrs.get("src") or node.attrs.get("data-src", ""),
+                        node.attrs.get("alt") or page_title, True)
 
         for index, product in enumerate(products):
             product_title = _first_product_text(product.get("name")) or page_title

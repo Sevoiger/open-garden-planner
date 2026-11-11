@@ -194,7 +194,9 @@ def test_multiple_page_images_raise_selection_before_any_media_is_written(tmp_pa
     opener = FakeOpener(payloads={URL: page})
     library = PlantLibrary(tmp_path / "custom_plants.json")
     identity = library.add_plant(PlantSpeciesData("Rosa", "Rose"))
-    plant = PlantSpeciesData("Rosa", "Rose", raw_data={"local_sheet": {"url": URL}})
+    plant = PlantSpeciesData("Rosa", "Rose", image_url="https://www.promessedefleurs.com/media/rose.jpg",
+                            raw_data={"promesse_de_fleurs": {"source_url": URL,
+                                      "image_url": "https://www.promessedefleurs.com/media/rose.jpg"}})
 
     with pytest.raises(ReferencePhotoSelectionRequired) as raised:
         fetch_reference_photo_for_plant(plant, library.path, identity, opener=opener)

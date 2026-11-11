@@ -222,6 +222,29 @@ def test_photo_candidates_keep_recommended_product_titles_and_dedupe_images():
     assert all(candidate.source_url == url for candidate in candidates)
 
 
+def test_photo_candidates_include_product_gallery_without_responsive_or_zoom_duplicates():
+    url = "https://www.promessedefleurs.com/allium.html"
+    pictures = []
+    for index in range(7):
+        name = f"A/i/Allium-Gladiator-{index}"
+        picture = (f'<picture><source type="image/webp" srcset="/media/opti_image/webp/ri/1640/catalog/product/{name}.webp 1640w">'
+                   f'<img alt="Allium Gladiator" src="/media/catalog/product/cache/hash/{name}.jpg" '
+                   f'srcset="/media/ri/320/catalog/product/{name}.jpg 320w,/media/ri/1640/catalog/product/{name}.jpg 1640w"></picture>')
+        pictures.append(picture + f'<template id="gallery-image-{index}">{picture}</template>')
+    page = ('<meta property="og:image" content="/media/ri/820/catalog/product/A/i/Allium-Gladiator-0.jpg">'
+            '<div id="gallery">' + ''.join(pictures) + '</div>'
+            '<img src="/media/logo.jpg"><div id="recommendations"><img src="/media/other.jpg"></div>').encode()
+
+    canonical, candidates = collect_reference_photo_candidates(page, url)
+
+    assert canonical == url
+    assert len(candidates) == 7
+    assert all(candidate.caption == "Allium Gladiator" for candidate in candidates)
+    assert [candidate.url.rsplit("/", 1)[-1] for candidate in candidates] == [
+        f"Allium-Gladiator-{index}.jpg" for index in range(7)
+    ]
+
+
 def test_botanical_html_import_still_refuses_multiple_product_records(tmp_path):
     url = "https://www.promessedefleurs.com/arbustes/hibiscus-diana.html"
     page = f'''<html><head><link rel="canonical" href="{url}">
