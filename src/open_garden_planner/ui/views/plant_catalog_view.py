@@ -192,13 +192,13 @@ class PlantSpeciesEditDialog(ResponsiveDialog):
         relations = QGroupBox(self.tr("My catalogue relations"))
         relations_layout = QHBoxLayout(relations)
         self.relation_checks = {}
-        self._relations_initial = catalogue_relations(plant) & set(CATALOG_RELATIONS) if plant else set()
+        self._relations_initial = catalogue_relations(plant) & set(CATALOG_RELATIONS) if plant else {"owned"}
         for key, label in _relation_choices():
             check = QCheckBox(label)
             check.setChecked(key in self._relations_initial)
             self.relation_checks[key] = check
             relations_layout.addWidget(check)
-        relations.setToolTip(self.tr("Several relations can apply at once; importing a sheet does not mean you own a specimen."))
+        relations.setToolTip(self.tr("A catalogue entry defaults to one owned plant. Other relations can also apply."))
         body_layout.addWidget(relations)
         self.trait_edits = {}
         self._trait_initial = {}
@@ -752,6 +752,8 @@ class PlantCatalogView(QWidget):
         self.results_list.setObjectName("plantCatalogResults")
         self.results_list.setMinimumWidth(340)
         self.results_list.setUniformItemSizes(True)
+        self.results_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.results_list.verticalScrollBar().setSingleStep(24)
         self.results_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.results_list.itemSelectionChanged.connect(self._update_preview)
         self.results_list.itemActivated.connect(self._open_selected)
@@ -835,8 +837,8 @@ class PlantCatalogView(QWidget):
         self.status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         set_text_role(self.status_label, "secondary")
         footer.addWidget(self.status_label, 1)
-        self.specimens_button = QPushButton(self.tr("My specimens"))
-        self.specimens_button.setEnabled(project is not None)
+        self.specimens_button = QPushButton(self.tr("Quantity and personal details"))
+        self.specimens_button.setEnabled(True)
         self.specimens_button.clicked.connect(self._open_specimens)
         footer.addWidget(self.specimens_button)
         self.export_button = QPushButton(self.tr("Export PDF"))
@@ -881,7 +883,29 @@ class PlantCatalogView(QWidget):
         menu = QMenu(self.results_list)
         menu.addAction(self.tr("Copy name"), lambda: self._copy_selected_text(True))
         menu.addAction(self.tr("Copy details"), lambda: self._copy_selected_text())
+        menu.addSeparator()
+        identity = item.data(Qt.ItemDataRole.UserRole)
+        menu.addAction(self.tr("Delete"), lambda: self._delete_plant(identity))
         menu.exec(self.results_list.viewport().mapToGlobal(position))
+
+    def _delete_plant(self, identity):
+        plant = self._entries.get(identity)
+        if plant is None:
+            return
+        answer = QMessageBox.question(
+            self, self.tr("Delete plant"),
+            self.tr('Delete "{name}" from the catalogue? Existing plants on your plans will be preserved.').format(
+                name=plant.common_name or plant.scientific_name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if self._library.remove_plant(identity):
+                self._populate_list()
+                self.species_saved.emit(identity)
+        except (OSError, LibraryOperationError) as error:
+            self._show_save_error(error)
 
     def _set_preview_rows(self) -> None:
         for label, value in self._preview_rows:
@@ -1168,15 +1192,27 @@ class PlantCatalogView(QWidget):
 
     def _open_specimens(self):
         identity = self._selected_id()
-        if identity and self._project is not None:
+        if identity:
             from open_garden_planner.ui.dialogs.plant_specimens_dialog import PlantSpecimensDialog
 
             plant = self._library.get_plant(identity)
             dialog = PlantSpecimensDialog(identity, self._project, self._scene, self._commands, self,
-                                           species=plant.to_dict() if plant else None)
+                                           species=plant.to_dict() if plant else None, library=self._library)
+            if self._project is not None:
+                legacy = QPushButton(self.tr("Individual records on this plan"))
+                legacy.clicked.connect(lambda: self._open_individual_records(identity, plant))
+                dialog.layout().addWidget(legacy)
             dialog.show_on_plan.connect(self.show_on_plan)
             dialog.exec()
             self._populate_list()
+
+    def _open_individual_records(self, identity, plant):
+        from open_garden_planner.ui.dialogs.plant_specimens_dialog import PlantSpecimensDialog
+
+        dialog = PlantSpecimensDialog(identity, self._project, self._scene, self._commands, self,
+                                     species=plant.to_dict() if plant else None)
+        dialog.show_on_plan.connect(self.show_on_plan)
+        dialog.exec()
 
     def _export_pdf(self):
         from open_garden_planner.ui.dialogs.plant_catalog_export_dialog import (

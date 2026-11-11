@@ -60,17 +60,18 @@ class PlantSheetDialog(QDialog):
         self.sources = self._page()
         self.tabs.addTab(self.presentation, self.tr("Presentation"))
         self.tabs.addTab(self.culture, self.tr("Culture and calendar"))
-        if project is not None and scene is not None and commands is not None:
-            from open_garden_planner.ui.dialogs.plant_specimens_dialog import PlantSpecimensDialog
+        from open_garden_planner.ui.dialogs.plant_specimens_dialog import PlantSpecimensDialog
 
-            plant = library.get_plant(identity)
-            self.specimens = PlantSpecimensDialog(identity, project, scene, commands, self,
-                                                  species=plant.to_dict() if plant else None, embedded=True)
-            self.specimens.show_on_plan.connect(self._navigate)
-            self.tabs.addTab(self.specimens, self.tr("My specimens"))
-        else:
-            self.specimens = None
-            self.tabs.addTab(QLabel(self.tr("Open a project to manage personal specimens.")), self.tr("My specimens"))
+        plant = library.get_plant(identity)
+        self.specimens = PlantSpecimensDialog(identity, project, scene, commands, self,
+                                              species=plant.to_dict() if plant else None,
+                                              embedded=True, library=library)
+        self.specimens.catalogue_saved.connect(self._reference_changed)
+        self.tabs.addTab(self.specimens, self.tr("Quantity and personal details"))
+        if project is not None and scene is not None and commands is not None:
+            individual = QPushButton(self.tr("Individual records on this plan"))
+            individual.clicked.connect(self._individual_records)
+            self.specimens.layout().addWidget(individual)
         self.tabs.addTab(self._media_page(), self.tr("Photos and documents"))
         self.tabs.addTab(self.sources, self.tr("Sources"))
         self.tabs.currentChanged.connect(self._tab_changed)
@@ -85,6 +86,14 @@ class PlantSheetDialog(QDialog):
             actions.addWidget(button)
         layout.addLayout(actions)
         self._refresh()
+
+    def _individual_records(self):
+        from open_garden_planner.ui.dialogs.plant_specimens_dialog import PlantSpecimensDialog
+
+        dialog = PlantSpecimensDialog(self.identity, self.project, self.scene, self.commands, self,
+                                     species=self.plant.to_dict())
+        dialog.show_on_plan.connect(self._navigate)
+        dialog.exec()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -247,6 +256,7 @@ class PlantSheetDialog(QDialog):
         self._fill(self.sources, source_rows, paragraphs=[self.tr("Opening this sheet does not download or refresh its sources.")])
         if self.specimens is not None:
             self.specimens.species = plant.to_dict()
+            self.specimens.sync_catalogue()
 
     def _tab_changed(self, index):
         if index == 3 and hasattr(self, "photo_chooser"):

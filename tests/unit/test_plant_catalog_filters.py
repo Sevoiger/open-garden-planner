@@ -33,16 +33,16 @@ def snapshot():
     }}}}
 
 
-def test_wanted_and_owned_are_not_exclusive_and_import_implies_no_ownership():
+def test_wanted_and_owned_are_not_exclusive_and_import_defaults_to_one_owned():
     entries = [("rose", plant("Rose", catalog_relations=["wanted"])), ("imported", plant("Imported"))]
     before = deepcopy(entries[0][1].to_dict())
     summaries = specimen_summaries(entries, snapshot())
     assert summaries["rose"]["relations"] == {"wanted", "owned", "present"}
     assert summaries["rose"]["count"] == 2
-    assert summaries["imported"]["relations"] == set()
-    assert summaries["imported"]["count"] == 0
+    assert summaries["imported"]["relations"] == {"owned"}
+    assert summaries["imported"]["count"] == 1
     assert entries[0][1].to_dict() == before
-    for relation in ("wanted", "owned", "present"):
+    for relation in ("wanted", "present"):
         assert [identity for identity, _ in filter_catalogue(entries, summaries, relation=relation)] == ["rose"]
 
 

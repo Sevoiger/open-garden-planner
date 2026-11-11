@@ -14,7 +14,7 @@ def _mapping(value):
 
 
 def catalogue_relations(plant):
-    values = plant.raw_data.get("catalog_relations", [])
+    values = plant.raw_data.get("catalog_relations", ["owned"])
     return {value for value in values if isinstance(value, str)} if isinstance(values, list) else set()
 
 
@@ -28,7 +28,39 @@ def update_catalogue_relations(plant, selected):
     result = deepcopy(plant)
     future = [value for value in original if value not in CATALOG_RELATIONS]
     result.raw_data["catalog_relations"] = future + [value for value in CATALOG_RELATIONS if value in selected]
+    personal = result.raw_data.get("catalog_personal")
+    if isinstance(personal, dict):
+        instance = personal.get("record", {}).get("metadata", {}).get("plant_instance", {})
+        if isinstance(instance, dict) and instance.get("relation") not in selected:
+            replacement = next((key for key in ("owned", "ordered", "wanted", "study", "archived")
+                                if key in selected), None)
+            if replacement is None:
+                instance.pop("relation", None)
+            else:
+                instance["relation"] = replacement
     return result
+
+
+def catalogue_personal_record(plant, identity):
+    """Return a detached aggregate, with one plant by default and no invented dates."""
+    from open_garden_planner.services.plant_specimens import add_specimen
+
+    document, record_id = add_specimen({}, identity, plant.common_name or plant.scientific_name)
+    record = document["plant_specimens"][record_id]
+    personal = plant.raw_data.get("catalog_personal")
+    if personal is not None:
+        if not isinstance(personal, dict):
+            raise ValueError("Unrecognized personal catalogue data")
+        record.update(deepcopy(personal.get("record", {})))
+        record["item_id"] = record_id
+    else:
+        relations = catalogue_relations(plant)
+        record["metadata"]["plant_instance"]["relation"] = next(
+            (key for key in ("owned", "ordered", "wanted", "study", "archived") if key in relations), "owned")
+    quantity = personal.get("quantity", 1) if personal is not None else 1
+    if type(quantity) is not int or not 0 <= quantity <= 1000000:
+        raise ValueError("Invalid catalogue quantity")
+    return record, quantity
 
 
 def specimen_summaries(entries, snapshot=None):
@@ -40,9 +72,10 @@ def specimen_summaries(entries, snapshot=None):
         relations = catalogue_relations(plant)
         linked = [record for record in records
                   if _mapping(_mapping(record.get("metadata")).get("plant_instance")).get("library_plant_id") == identity]
+        personal, quantity = catalogue_personal_record(plant, identity)
         modes, locations = set(), []
         has_personal_photo = False
-        for record in linked:
+        for record in [personal, *linked]:
             metadata = _mapping(record.get("metadata"))
             instance = _mapping(metadata.get("plant_instance"))
             tracking = _mapping(metadata.get("garden_tracking"))
@@ -67,7 +100,7 @@ def specimen_summaries(entries, snapshot=None):
                       or (plant.sun_requirement.value == "unknown" and not trait(plant, "exposures"))
                       or not any(period.months is not None for period in
                                  (calendar.planting, calendar.flowering, calendar.pruning)))
-        summaries[identity] = {"count": len(linked), "relations": relations, "modes": modes,
+        summaries[identity] = {"count": quantity if "catalog_personal" in plant.raw_data else max(quantity, len(linked)), "relations": relations, "modes": modes,
                                "location": " ".join(locations).casefold(), "incomplete": incomplete,
                                "has_personal_photo": has_personal_photo}
     return summaries

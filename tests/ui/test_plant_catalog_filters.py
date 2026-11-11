@@ -22,7 +22,7 @@ def test_relation_editor_preserves_future_flags_and_can_mark_wanted_without_spec
     assert saved.raw_data["catalog_relations"] == ["future", "wanted", "owned"]
     view = PlantCatalogView(library)
     qtbot.addWidget(view)
-    assert "0 specimen(s)" in view.results_list.item(0).text()
+    assert "1 specimen(s)" in view.results_list.item(0).text()
     assert "Wanted" in view.results_list.item(0).text()
     assert "Owned" in view.results_list.item(0).text()
 
@@ -38,6 +38,8 @@ def test_catalogue_filters_and_badges_use_project_specimens(qtbot, tmp_path):
     view = PlantCatalogView(library, project=project, scene=scene, commands=commands)
     qtbot.addWidget(view)
     view.relation_filter.setCurrentIndex(view.relation_filter.findData("owned"))
+    assert view.results_list.count() == 2
+    view.relation_filter.setCurrentIndex(view.relation_filter.findData("wanted"))
     assert view.results_list.count() == 1
     assert "Diana" in view.results_list.item(0).text()
     assert "1 specimen(s)" in view.results_list.item(0).text()

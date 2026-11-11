@@ -24,7 +24,7 @@ def test_complete_sheet_is_read_only_on_open_and_never_downloads(qtbot, tmp_path
     qtbot.addWidget(sheet)
     sheet.show()
     assert [sheet.tabs.tabText(i) for i in range(sheet.tabs.count())] == [
-        "Presentation", "Culture and calendar", "My specimens", "Photos and documents", "Sources",
+        "Presentation", "Culture and calendar", "Quantity and personal details", "Photos and documents", "Sources",
     ]
     assert sheet.title.text() == "Églantier"
     assert any("-15°C" in label.text() for label in sheet.sources.findChildren(QLabel))
