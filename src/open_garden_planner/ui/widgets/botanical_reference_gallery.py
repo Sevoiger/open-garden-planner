@@ -165,9 +165,11 @@ class BotanicalReferenceGallery(QWidget):
                                 "taken_at": self.taken_at.text() or None}
         self._detail_revision = self.library.revision
 
-    def _commit(self, *, expected_revision=None, **changes):
+    def _commit(self, *, expected_revision=None, assets=(), **changes):
         revision = self.library.revision if expected_revision is None else expected_revision
         plant = edit_reference_media(self._plant(), **changes)
+        for asset in assets:
+            plant = edit_reference_media(plant, asset=asset)
         if not self.library.update_plant(self.library_id, plant, expected_revision=revision):
             raise ValueError(self.tr("The botanical record no longer exists."))
         self.refresh()
@@ -241,6 +243,7 @@ class BotanicalReferenceGallery(QWidget):
         if saved_page_is_provider:
             from open_garden_planner.services.plant_source_import import (
                 ReferencePhotoSelectionRequired,
+                fetch_reference_photo_gallery,
                 import_reference_photo_bytes,
             )
             from open_garden_planner.ui.dialogs.reference_photo_dialog import ReferencePhotoDialog
@@ -260,6 +263,17 @@ class BotanicalReferenceGallery(QWidget):
                     dialog = ReferencePhotoDialog(asset.candidates, self)
                     if not dialog.exec():
                         return
+                    if dialog.keep_all:
+                        try:
+                            urls = [photo.get("source_url", "") for photo in reference_assets(self._plant())]
+                        except (ValueError, OSError, RuntimeError) as error:
+                            self.status.setText(str(error))
+                            return
+                        self.download_button.setEnabled(False)
+                        self._run(lambda: fetch_reference_photo_gallery(
+                            asset.candidates, self.library.path, self.library_id,
+                            existing_urls=urls, caption=caption, credit=credit), imported)
+                        return
                     candidate, payload = dialog.selected_candidate, dialog.selected_payload
                     use_primary[0] = dialog.use_as_main
                     self.download_button.setEnabled(False)
@@ -272,6 +286,10 @@ class BotanicalReferenceGallery(QWidget):
                     self.status.setText(self.tr("The reference photo could not be downloaded. You can import a local file."))
                     return
                 try:
+                    if isinstance(asset, tuple):
+                        if asset:
+                            self._commit(assets=asset, expected_revision=revision)
+                        return
                     self._commit(asset=asset, primary_id=asset["id"] if use_primary[0] else None,
                                  expected_revision=revision)
                 except (ValueError, OSError, RuntimeError) as error:

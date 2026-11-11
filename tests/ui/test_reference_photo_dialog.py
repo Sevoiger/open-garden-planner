@@ -9,11 +9,16 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QDialog
 
 from open_garden_planner.models.plant_data import PlantSpeciesData
-from open_garden_planner.services.botanical_media import primary_reference, reference_assets
+from open_garden_planner.services.botanical_media import (
+    edit_reference_media,
+    primary_reference,
+    reference_assets,
+)
 from open_garden_planner.services.plant_library import PlantLibrary
 from open_garden_planner.services.plant_source_import import (
     ReferencePhotoCandidate,
     ReferencePhotoSelectionRequired,
+    import_reference_photo_bytes,
 )
 from open_garden_planner.ui.dialogs.reference_photo_dialog import ReferencePhotoDialog
 from open_garden_planner.ui.views.plant_catalog_view import PlantCatalogView
@@ -114,6 +119,67 @@ def test_catalogue_labels_and_error_message_can_be_copied(qtbot, tmp_path):
     view._copy_selected_text()
     assert "Églantier" in QApplication.clipboard().text()
     assert "Rosa" in QApplication.clipboard().text()
+
+
+@pytest.mark.parametrize("entry", ["catalogue", "gallery"])
+@pytest.mark.parametrize("failure", [False, True])
+def test_download_all_preserves_main_photo_and_commits_only_complete_batch(
+    qtbot, tmp_path, monkeypatch, entry, failure,
+):
+    library = PlantLibrary(tmp_path / "plants.json")
+    candidates = _candidates() + (ReferencePhotoCandidate(
+        _candidates()[0].source_url + "?image=3", "Rose — feuillage", _candidates()[0].source_url),)
+    identity = library.add_plant(PlantSpeciesData("Rosa", "Mon nom", max_height_cm=123,
+        raw_data={"local_sheet": {"url": candidates[0].source_url}}))
+    first = import_reference_photo_bytes(_photo("pink"), library.path, identity,
+        source_url=candidates[0].url, page_url=candidates[0].source_url)
+    library.update_plant(identity, edit_reference_media(library.get_plant(identity),
+                                                      asset=first, primary_id=first["id"]))
+    before = library.path.read_bytes()
+    requests = []
+    def retrieve(url, *, opener=None):
+        requests.append((url, QThread.currentThread()))
+        if failure and url == candidates[2].url:
+            raise ValueError("Photo unavailable")
+        return _photo("green" if url == candidates[1].url else "blue")
+    monkeypatch.setattr("open_garden_planner.services.plant_source_import.retrieve_reference_photo", retrieve)
+    monkeypatch.setattr("open_garden_planner.ui.widgets.plant_source_worker.reference_photo_request",
+                        lambda *_args, **_kwargs: ReferencePhotoSelectionRequired(candidates))
+    def choose_all(dialog):
+        qtbot.waitUntil(lambda: dialog.selected_payload is not None)
+        dialog.all_button.click()
+        assert dialog.keep_all
+        return dialog.result()
+    monkeypatch.setattr(ReferencePhotoDialog, "exec", choose_all)
+    if entry == "catalogue":
+        widget = PlantCatalogView(library)
+        button_name, jobs_name = "photo_button", "_photo_jobs"
+    else:
+        widget = BotanicalReferenceGallery(library, identity)
+        button_name, jobs_name = "download_button", "_jobs"
+    qtbot.addWidget(widget)
+    getattr(widget, button_name).click()
+    qtbot.waitUntil(lambda: not getattr(widget, jobs_name))
+    reopened = PlantLibrary(library.path).get_plant(identity)
+    assert primary_reference(reopened)["id"] == first["id"]
+    assert reopened.common_name == "Mon nom" and reopened.max_height_cm == 123
+    assert all(thread != QApplication.instance().thread() for _, thread in requests)
+    if failure:
+        assert library.path.read_bytes() == before
+        assert len(reference_assets(reopened)) == 1
+        status = widget.status_label if entry == "catalogue" else widget.status
+        assert "Photo unavailable" in status.text()
+        return
+    status = widget.status_label if entry == "catalogue" else widget.status
+    assert {asset["source_url"] for asset in reference_assets(reopened)} == {c.url for c in candidates}, status.text()
+    assert all(asset["source_page_url"] == candidates[0].source_url for asset in reference_assets(reopened))
+    before = library.path.read_bytes()
+    requests.clear()
+    getattr(widget, button_name).click()
+    qtbot.waitUntil(lambda: not getattr(widget, jobs_name))
+    assert library.path.read_bytes() == before
+    # Only the dialog preview is re-read; all associated URLs are skipped.
+    assert [url for url, _thread in requests] == [candidates[0].url]
 
 
 @pytest.mark.parametrize("entry", ["catalogue", "gallery"])
