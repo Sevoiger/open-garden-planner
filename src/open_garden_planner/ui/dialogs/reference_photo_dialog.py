@@ -25,6 +25,7 @@ class ReferencePhotoDialog(QDialog):
         self.candidates = tuple(candidates)
         self.selected_candidate = None
         self.selected_payload = None
+        self.keep_all = False
         self._job = None
         self.setWindowTitle(self.tr("Choose a reference photo"))
         self.resize(900, 640)
@@ -57,6 +58,11 @@ class ReferencePhotoDialog(QDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
+        self.all_button = self.buttons.addButton(self.tr("Download all photos"), QDialogButtonBox.ButtonRole.ActionRole)
+        self.all_button.setToolTip(self.tr("Add all source photos to the gallery and use the selected photo as main if checked."))
+        self.all_button.clicked.connect(self._accept_all)
+        self.main_photo.toggled.connect(lambda checked: self.all_button.setEnabled(
+            not checked or self.selected_candidate is not None))
         layout.addWidget(self.buttons)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         if self.candidates:
@@ -66,11 +72,17 @@ class ReferencePhotoDialog(QDialog):
     def use_as_main(self):
         return self.main_photo.isChecked()
 
+    def _accept_all(self):
+        if self.candidates and (not self.use_as_main or self.selected_candidate is not None):
+            self.keep_all = True
+            super().accept()
+
     def _preview(self, index):
         if self._job is not None or not 0 <= index < len(self.candidates):
             return
         candidate = self.candidates[index]
         self.selected_candidate, self.selected_payload = None, None
+        self.all_button.setEnabled(not self.use_as_main)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         self.preview.clear()
         self.preview.setText(self.tr("Loading preview…"))
@@ -103,6 +115,7 @@ class ReferencePhotoDialog(QDialog):
             self.details.appendPlainText(self.tr("Preview unavailable") + ":\n" + error)
             return
         self.selected_candidate = entry[1]
+        self.all_button.setEnabled(True)
         self.selected_payload, image = result
         self.preview.setPixmap(QPixmap.fromImage(image))
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)

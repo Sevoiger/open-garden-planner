@@ -266,6 +266,16 @@ sans remplacer celle affichée. Annuler ne conserve aucun nouveau fichier ni auc
 photos des produits recommandés gardent leur propre légende ; les données
 botaniques et les exemplaires ne sont pas fusionnés.
 
+Dans ce sélecteur, **Télécharger toutes les photos** ajoute en une seule action
+toutes les propositions affichées (jusqu'à douze) à la galerie de la fiche.
+Les photos déjà associées sont ignorées. Comme avec **OK**, la photo sélectionnée
+devient la référence principale si **Utiliser comme photo principale** est cochée.
+Décocher cette case conserve la principale actuelle ; sans référence existante,
+la première référence devient celle affichée.
+Le téléchargement s'effectue en arrière-plan ; les associations sont enregistrées
+ensemble après réussite. En cas d'échec, la fiche reste intacte ; les fichiers
+déjà téléchargés avant l'échec peuvent rester dans le stockage local des médias.
+
 Les textes de l'aperçu, de la fiche et les messages d'erreur sont sélectionnables
 à la souris et copiables au clavier. Sur une carte, le menu contextuel propose
 **Copier le nom** et **Copier les détails** ; le raccourci de copie du système

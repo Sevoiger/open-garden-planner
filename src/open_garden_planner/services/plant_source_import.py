@@ -313,6 +313,32 @@ def _page_reference_photo_candidates(page_url, opener):
     return tuple(safe_candidates)
 
 
+def fetch_reference_photo_gallery(candidates, library_path, library_id, *, existing_urls=(),
+                                  caption="", credit="Promesse de Fleurs", opener=None):
+    """Download a bounded explicit selection; associations remain a Qt-thread operation.
+
+    Skip URLs already associated with this record. Callers attach the returned
+    assets together only after the entire download has succeeded.
+    """
+    candidates = tuple(candidates)
+    if not 1 <= len(candidates) <= _MAX_REFERENCE_PHOTO_CHOICES:
+        raise ValueError("Reference photo choices must contain between 1 and 12 candidates")
+    for candidate in candidates:
+        validate_reference_photo_url(candidate.url)
+        validate_source_url(candidate.source_url)
+    seen = set(existing_urls)
+    assets = []
+    for candidate in candidates:
+        if candidate.url in seen:
+            continue
+        assets.append(fetch_reference_photo(
+            candidate.url, library_path, library_id, opener=opener,
+            caption=caption or candidate.caption, credit=credit or "Promesse de Fleurs",
+            page_url=candidate.source_url))
+        seen.add(candidate.url)
+    return tuple(assets)
+
+
 def fetch_reference_photo_for_plant(plant, library_path, library_id, *, opener=None,
                                     caption="", credit="Promesse de Fleurs"):
     """Explicitly save the provider's proposed image as an unattached reference.
