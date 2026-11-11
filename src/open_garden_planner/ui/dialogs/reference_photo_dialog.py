@@ -59,8 +59,10 @@ class ReferencePhotoDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.all_button = self.buttons.addButton(self.tr("Download all photos"), QDialogButtonBox.ButtonRole.ActionRole)
-        self.all_button.setToolTip(self.tr("Add all source photos to the gallery without changing the main photo."))
+        self.all_button.setToolTip(self.tr("Add all source photos to the gallery and use the selected photo as main if checked."))
         self.all_button.clicked.connect(self._accept_all)
+        self.main_photo.toggled.connect(lambda checked: self.all_button.setEnabled(
+            not checked or self.selected_candidate is not None))
         layout.addWidget(self.buttons)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         if self.candidates:
@@ -71,7 +73,7 @@ class ReferencePhotoDialog(QDialog):
         return self.main_photo.isChecked()
 
     def _accept_all(self):
-        if self.candidates:
+        if self.candidates and (not self.use_as_main or self.selected_candidate is not None):
             self.keep_all = True
             super().accept()
 
@@ -80,6 +82,7 @@ class ReferencePhotoDialog(QDialog):
             return
         candidate = self.candidates[index]
         self.selected_candidate, self.selected_payload = None, None
+        self.all_button.setEnabled(not self.use_as_main)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
         self.preview.clear()
         self.preview.setText(self.tr("Loading preview…"))
@@ -112,6 +115,7 @@ class ReferencePhotoDialog(QDialog):
             self.details.appendPlainText(self.tr("Preview unavailable") + ":\n" + error)
             return
         self.selected_candidate = entry[1]
+        self.all_button.setEnabled(True)
         self.selected_payload, image = result
         self.preview.setPixmap(QPixmap.fromImage(image))
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)

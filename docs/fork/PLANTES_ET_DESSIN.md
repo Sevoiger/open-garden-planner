@@ -268,8 +268,10 @@ botaniques et les exemplaires ne sont pas fusionnés.
 
 Dans ce sélecteur, **Télécharger toutes les photos** ajoute en une seule action
 toutes les propositions affichées (jusqu'à douze) à la galerie de la fiche.
-Les photos déjà associées sont ignorées et la photo principale actuelle est
-conservée. Sans photo principale, la première référence devient celle affichée.
+Les photos déjà associées sont ignorées. Comme avec **OK**, la photo sélectionnée
+devient la référence principale si **Utiliser comme photo principale** est cochée.
+Décocher cette case conserve la principale actuelle ; sans référence existante,
+la première référence devient celle affichée.
 Le téléchargement s'effectue en arrière-plan ; les associations sont enregistrées
 ensemble après réussite. En cas d'échec, la fiche reste intacte ; les fichiers
 déjà téléchargés avant l'échec peuvent rester dans le stockage local des médias.

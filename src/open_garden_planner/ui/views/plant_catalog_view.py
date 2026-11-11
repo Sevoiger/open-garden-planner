@@ -1096,7 +1096,10 @@ class PlantCatalogView(QWidget):
         if asset is None:
             self.status_label.setText(self.tr("No reference photo was found in this source."))
             return
-        from open_garden_planner.services.botanical_media import edit_reference_media
+        from open_garden_planner.services.botanical_media import (
+            edit_reference_media,
+            reference_assets,
+        )
 
         try:
             plant = self._library.get_plant(pending[1])
@@ -1107,7 +1110,14 @@ class PlantCatalogView(QWidget):
             for photo in assets:
                 primary = photo["id"] if len(pending) > 3 and pending[3] else None
                 updated = edit_reference_media(updated, asset=photo, primary_id=primary)
-            if not assets:
+            primary_url = pending[4] if len(pending) > 4 else None
+            if primary_url:
+                primary = next((photo["id"] for photo in (*assets, *reference_assets(plant))
+                                if photo.get("source_url") == primary_url), None)
+                if primary is None:
+                    raise ValueError("Selected reference photo is no longer available")
+                updated = edit_reference_media(updated, primary_id=primary)
+            if updated.raw_data == plant.raw_data:
                 self._populate_list()
                 return
             self._library.update_plant(pending[1], updated, expected_revision=pending[2])
@@ -1141,7 +1151,8 @@ class PlantCatalogView(QWidget):
                 return
             job = _MediaTask(lambda: fetch_reference_photo_gallery(
                 choices.candidates, path, identity, existing_urls=urls))
-            self._photo_jobs[id(job)] = (job, identity, revision)
+            primary_url = dialog.selected_candidate.url if dialog.use_as_main else None
+            self._photo_jobs[id(job)] = (job, identity, revision, False, primary_url)
             job.signals.done.connect(self._reference_photo_ready)
             self.photo_button.setEnabled(False)
             QThreadPool.globalInstance().start(job)

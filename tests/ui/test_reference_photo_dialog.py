@@ -122,9 +122,9 @@ def test_catalogue_labels_and_error_message_can_be_copied(qtbot, tmp_path):
 
 
 @pytest.mark.parametrize("entry", ["catalogue", "gallery"])
-@pytest.mark.parametrize("failure", [False, True])
-def test_download_all_preserves_main_photo_and_commits_only_complete_batch(
-    qtbot, tmp_path, monkeypatch, entry, failure,
+@pytest.mark.parametrize("mode", ["selected", "unchecked", "failure"])
+def test_download_all_uses_selected_main_photo_and_commits_only_complete_batch(
+    qtbot, tmp_path, monkeypatch, entry, mode,
 ):
     library = PlantLibrary(tmp_path / "plants.json")
     candidates = _candidates() + (ReferencePhotoCandidate(
@@ -139,14 +139,18 @@ def test_download_all_preserves_main_photo_and_commits_only_complete_batch(
     requests = []
     def retrieve(url, *, opener=None):
         requests.append((url, QThread.currentThread()))
-        if failure and url == candidates[2].url:
+        if mode == "failure" and url == candidates[2].url:
             raise ValueError("Photo unavailable")
         return _photo("green" if url == candidates[1].url else "blue")
     monkeypatch.setattr("open_garden_planner.services.plant_source_import.retrieve_reference_photo", retrieve)
     monkeypatch.setattr("open_garden_planner.ui.widgets.plant_source_worker.reference_photo_request",
                         lambda *_args, **_kwargs: ReferencePhotoSelectionRequired(candidates))
+    selected_index = [1]
     def choose_all(dialog):
         qtbot.waitUntil(lambda: dialog.selected_payload is not None)
+        dialog.options.setCurrentRow(selected_index[0])
+        qtbot.waitUntil(lambda: dialog.selected_candidate == candidates[selected_index[0]])
+        dialog.main_photo.setChecked(mode != "unchecked")
         dialog.all_button.click()
         assert dialog.keep_all
         return dialog.result()
@@ -161,10 +165,10 @@ def test_download_all_preserves_main_photo_and_commits_only_complete_batch(
     getattr(widget, button_name).click()
     qtbot.waitUntil(lambda: not getattr(widget, jobs_name))
     reopened = PlantLibrary(library.path).get_plant(identity)
-    assert primary_reference(reopened)["id"] == first["id"]
+    assert primary_reference(reopened)["source_url"] == candidates[1 if mode == "selected" else 0].url
     assert reopened.common_name == "Mon nom" and reopened.max_height_cm == 123
     assert all(thread != QApplication.instance().thread() for _, thread in requests)
-    if failure:
+    if mode == "failure":
         assert library.path.read_bytes() == before
         assert len(reference_assets(reopened)) == 1
         status = widget.status_label if entry == "catalogue" else widget.status
@@ -179,7 +183,14 @@ def test_download_all_preserves_main_photo_and_commits_only_complete_batch(
     qtbot.waitUntil(lambda: not getattr(widget, jobs_name))
     assert library.path.read_bytes() == before
     # Only the dialog preview is re-read; all associated URLs are skipped.
-    assert [url for url, _thread in requests] == [candidates[0].url]
+    assert [url for url, _thread in requests] == [candidates[0].url, candidates[1].url]
+    if mode == "selected":
+        selected_index[0] = 0
+        getattr(widget, button_name).click()
+        qtbot.waitUntil(lambda: not getattr(widget, jobs_name))
+        reopened = PlantLibrary(library.path).get_plant(identity)
+        assert primary_reference(reopened)["id"] == first["id"]
+        assert len(reference_assets(reopened)) == 3
 
 
 @pytest.mark.parametrize("entry", ["catalogue", "gallery"])

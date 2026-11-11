@@ -167,9 +167,10 @@ class BotanicalReferenceGallery(QWidget):
 
     def _commit(self, *, expected_revision=None, assets=(), **changes):
         revision = self.library.revision if expected_revision is None else expected_revision
-        plant = edit_reference_media(self._plant(), **changes)
+        plant = self._plant()
         for asset in assets:
             plant = edit_reference_media(plant, asset=asset)
+        plant = edit_reference_media(plant, **changes)
         if not self.library.update_plant(self.library_id, plant, expected_revision=revision):
             raise ValueError(self.tr("The botanical record no longer exists."))
         self.refresh()
@@ -251,6 +252,7 @@ class BotanicalReferenceGallery(QWidget):
 
             caption, credit = self.caption.text().strip(), self.credit.text().strip()
             use_primary = [False]
+            bulk_primary_url = [None]
             self.download_button.setEnabled(False)
             self.status.clear()
 
@@ -264,6 +266,7 @@ class BotanicalReferenceGallery(QWidget):
                     if not dialog.exec():
                         return
                     if dialog.keep_all:
+                        bulk_primary_url[0] = dialog.selected_candidate.url if dialog.use_as_main else None
                         try:
                             urls = [photo.get("source_url", "") for photo in reference_assets(self._plant())]
                         except (ValueError, OSError, RuntimeError) as error:
@@ -287,8 +290,15 @@ class BotanicalReferenceGallery(QWidget):
                     return
                 try:
                     if isinstance(asset, tuple):
-                        if asset:
-                            self._commit(assets=asset, expected_revision=revision)
+                        primary = None
+                        if bulk_primary_url[0]:
+                            photos = (*asset, *reference_assets(self._plant()))
+                            primary = next((photo["id"] for photo in photos
+                                            if photo.get("source_url") == bulk_primary_url[0]), None)
+                            if primary is None:
+                                raise ValueError("Selected reference photo is no longer available")
+                        if asset or (primary and self._plant().raw_data.get("reference_primary_media_id") != primary):
+                            self._commit(assets=asset, primary_id=primary, expected_revision=revision)
                         return
                     self._commit(asset=asset, primary_id=asset["id"] if use_primary[0] else None,
                                  expected_revision=revision)
