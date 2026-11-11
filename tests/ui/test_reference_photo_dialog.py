@@ -158,7 +158,6 @@ def test_reference_button_handles_a_real_multi_product_fixture(qtbot, tmp_path, 
         dialog.options.setCurrentRow(1 if selected_url[0] == second else 0)
         qtbot.waitUntil(lambda: dialog.selected_candidate is not None
                        and dialog.selected_candidate.url == selected_url[0])
-        dialog.main_photo.setChecked(True)
         return QDialog.DialogCode.Accepted
     monkeypatch.setattr(ReferencePhotoDialog, "exec", choose)
     if entry == "catalogue":
@@ -187,3 +186,6 @@ def test_reference_button_handles_a_real_multi_product_fixture(qtbot, tmp_path, 
     assert {asset["source_url"] for asset in reference_assets(reopened)} == {first, second}
     assert reopened.image_url == first
     assert reopened.common_name == "Mon nom" and reopened.max_height_cm == 123
+    if entry == "catalogue":
+        qtbot.waitUntil(lambda: widget.preview_photo.pixmap() is not None
+                       and widget.preview_photo.pixmap().toImage().pixelColor(0, 0).name() == "#ffc0cb")

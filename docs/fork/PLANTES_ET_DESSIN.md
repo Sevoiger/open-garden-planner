@@ -260,8 +260,9 @@ une fiche ne déclenche aucun téléchargement.
 La recherche de photos est indépendante de l'import botanique : une page contenant
 plusieurs blocs produits ou des recommandations peut proposer plusieurs images.
 Une fenêtre présente alors jusqu'à douze photos avec leur aperçu et leurs URL.
-Choisir une image, éventuellement la définir comme référence principale, puis
-valider. Annuler ne conserve aucun nouveau fichier ni aucune association. Les
+Choisir une image puis valider la définit par défaut comme référence principale.
+Décocher **Utiliser comme photo principale** permet de l'ajouter à la galerie
+sans remplacer celle affichée. Annuler ne conserve aucun nouveau fichier ni aucune association. Les
 photos des produits recommandés gardent leur propre légende ; les données
 botaniques et les exemplaires ne sont pas fusionnés.
 
