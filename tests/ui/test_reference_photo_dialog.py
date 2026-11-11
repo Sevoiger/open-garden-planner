@@ -148,12 +148,17 @@ def test_reference_button_handles_a_real_multi_product_fixture(qtbot, tmp_path, 
     monkeypatch.setattr("open_garden_planner.services.plant_source_import.build_opener", lambda *_args: Opener())
     library = PlantLibrary(tmp_path / "plants.json")
     identity = library.add_plant(PlantSpeciesData("Rosa", "Mon nom", max_height_cm=123,
-                                                raw_data={"local_sheet": {"url": page}}))
+                                                image_url=first,
+                                                raw_data={"promesse_de_fleurs": {
+                                                    "source_url": page, "image_url": first}}))
+    selected_url = [second]
     def choose(dialog):
         qtbot.waitUntil(lambda: dialog.selected_payload is not None)
         assert len(dialog.candidates) == 2
-        dialog.options.setCurrentRow(1)
-        qtbot.waitUntil(lambda: dialog.selected_candidate is not None and dialog.selected_candidate.url == second)
+        dialog.options.setCurrentRow(1 if selected_url[0] == second else 0)
+        qtbot.waitUntil(lambda: dialog.selected_candidate is not None
+                       and dialog.selected_candidate.url == selected_url[0])
+        dialog.main_photo.setChecked(True)
         return QDialog.DialogCode.Accepted
     monkeypatch.setattr(ReferencePhotoDialog, "exec", choose)
     if entry == "catalogue":
@@ -169,3 +174,16 @@ def test_reference_button_handles_a_real_multi_product_fixture(qtbot, tmp_path, 
     assert primary_reference(saved)["source_url"] == second
     assert len(reference_assets(saved)) == 1
     assert saved.common_name == "Mon nom" and saved.max_height_cm == 123
+
+    selected_url[0] = first
+    if entry == "catalogue":
+        assert not widget.photo_button.isHidden()
+        widget.photo_button.click()
+    else:
+        widget.download_button.click()
+    qtbot.waitUntil(lambda: len(reference_assets(library.get_plant(identity))) == 2)
+    reopened = PlantLibrary(library.path).get_plant(identity)
+    assert primary_reference(reopened)["source_url"] == first
+    assert {asset["source_url"] for asset in reference_assets(reopened)} == {first, second}
+    assert reopened.image_url == first
+    assert reopened.common_name == "Mon nom" and reopened.max_height_cm == 123

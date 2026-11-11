@@ -1157,10 +1157,7 @@ class PlantCatalogView(QWidget):
         self.open_button.setEnabled(enabled)
         self.refresh_source_button.setEnabled(enabled and getattr(self, "_source_job", None) is None)
         self.photo_button.setEnabled(enabled and not self._photo_jobs)
-        current_item = self.results_list.currentItem()
-        card = current_item.data(int(Qt.ItemDataRole.UserRole) + 1) if current_item else None
-        has_reference = isinstance(card, dict) and bool(card.get("thumbnail"))
-        self.photo_button.setVisible(enabled and not has_reference)
+        self.photo_button.setVisible(enabled)
         self.preview_photo.clear()
         self.preview_photo.setText(self.tr("Reference photo"))
         self.preview_description_label.setVisible(enabled)

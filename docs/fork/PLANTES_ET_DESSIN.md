@@ -246,8 +246,13 @@ masqués. Le catalogue utilise aussi cette fenêtre pour les erreurs de sauvegar
 de médias et d'export.
 
 La photo type est récupérée après validation d'un import URL ou d'un enrichissement.
-Pour une ancienne fiche sans photo, **Récupérer la photo de référence** utilise sa
-page source connue. Ce téléchargement est explicite, conserve le crédit et passe
+**Récupérer la photo de référence** relit la page source connue, même si une photo
+est déjà enregistrée ou si la mise à jour de la fiche a été validée. La galerie
+HTML du produit complète les images des métadonnées ; les tailles, formats et
+copies de zoom d'une même photo ne créent pas de choix supplémentaires.
+Cette action permet de choisir une autre photo et de la définir comme référence
+principale ; les photos déjà associées restent disponibles dans la galerie.
+Ce téléchargement est explicite, conserve le crédit et passe
 par les mêmes limites et restrictions que l'import. Un échec laisse la fiche
 enregistrée intacte et permet le recours au fichier local. Ouvrir ou sélectionner
 une fiche ne déclenche aucun téléchargement.
