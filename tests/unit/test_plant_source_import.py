@@ -891,6 +891,28 @@ def test_import_accepts_explicit_packaging_variants_and_keeps_original_records(t
     assert sorted(p.name for p in tmp_path.iterdir()) == ["allium.html"]
 
 
+@pytest.mark.parametrize("spacing", ["  - ", "\u00a0 -\u00a0", "\n-\t"])
+def test_import_accepts_prunus_packaging_spacing_and_preserves_source_names(spacing):
+    title = "Cerisier à fleurs d'automne - Prunus subhirtella Autumnalis Rosea"
+    variants = _allium_variants()
+    for variant, packaging in zip(variants, (
+        "Pot de 4L/5L (Hauteur livrée env. 40/60cm)",
+        "Pot de 7,5L/10L (Hauteur livrée env. 60/80cm)",
+        "Racines nues, Tige, Tige 10/12 (Hauteur livrée env. 400cm)",
+    ), strict=True):
+        variant["name"] = title + spacing + packaging
+        variant["description"] = variant["name"]
+        variant["disambiguatingDescription"] = packaging
+    before = deepcopy(variants)
+    page = _variant_page(variants).replace(b"Allium Gladiator", title.encode())
+
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=page))
+
+    assert plant.common_name == title
+    assert plant.raw_data["promesse_de_fleurs"]["product_variants_json_ld"] == before
+    assert plant.description == ""
+
+
 def test_product_reference_is_not_a_second_definition():
     product = {"@type": "Product", "@id": URL + "#product", "url": URL, "name": "Rose"}
     product["offers"] = {"@type": "Offer", "itemOffered": {

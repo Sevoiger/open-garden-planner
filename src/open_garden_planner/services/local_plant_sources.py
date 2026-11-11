@@ -513,7 +513,8 @@ def _packaging_variants(products: list[dict[str, Any]], page_url: str, title: st
     """Recognize PdF's explicit variant records, never merely similar names.
 
     Every variant must link directly to this page, use the provider's variant
-    identifier and identify its packaging as the exact suffix of the page title.
+    identifier and identify its packaging as the suffix of the page title,
+    comparing whitespace as rendered by HTML while preserving source records.
     URL agreement alone is insufficient to merge distinct botanical products.
     """
     if not title or len(products) < 2:
@@ -526,7 +527,7 @@ def _packaging_variants(products: list[dict[str, Any]], page_url: str, title: st
         direct_url = _first_product_text(product.get("url"))
         page_references = _reference_values(product.get("mainEntityOfPage"))
         try:
-            if (not packaging or name != f"{title} - {packaging}"
+            if (not packaging or " ".join(name.split()) != " ".join(f"{title} - {packaging}".split())
                     or not direct_url or _url_identity(urljoin(page_url, direct_url)) != target
                     or not identifier or _url_identity(urljoin(page_url, identifier)) != target
                     or not re.fullmatch(r"product-variant-\d+", urlsplit(identifier).fragment)
