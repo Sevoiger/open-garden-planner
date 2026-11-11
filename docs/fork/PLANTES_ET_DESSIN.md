@@ -224,7 +224,12 @@ la fiche conserve son identifiant personnel. Il ne s'agit pas d'effacer la fiche
 
 Les pages contenant aussi des produits recommandés sont acceptées si un seul
 produit est relié à l'URL canonique par son URL, son identifiant JSON-LD ou sa
-référence de page. Si cette identité reste ambiguë, l'import s'arrête sans écriture
+référence de page. Les références JSON-LD vers un produit déjà défini ne comptent
+pas comme des produits supplémentaires. Les conditionnements d'une même plante
+sont acceptés lorsque leurs liens de page, leurs identifiants de variante et leur
+suffixe de conditionnement explicite concordent avec le titre principal. Toutes
+les variantes restent conservées dans la provenance ; leur description commerciale
+ne remplace pas la description botanique. Si cette identité reste ambiguë, l'import s'arrête sans écriture
 avec `SOURCE_PRODUCT_AMBIGUOUS` et la liste des produits concernés.
 
 Les erreurs de source distinguent refus robots, réponse HTTP (avec son statut),

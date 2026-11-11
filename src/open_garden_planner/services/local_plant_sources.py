@@ -216,7 +216,16 @@ def _jsonld_objects(root: _Node) -> list[dict[str, Any]]:
         if marker not in seen:
             seen.add(marker)
             unique.append(product)
-    return unique
+    # Offer.itemOffered can repeat only a typed @id reference to a Product
+    # defined elsewhere. It is not another definition. Keep unresolved references
+    # so missing definitions cannot silently hide an ambiguous response.
+    defined_ids = {product["@id"] for product in unique
+                   if isinstance(product.get("@id"), str)
+                   and set(product) - {"@type", "@id"}}
+    return [product for product in unique
+            if set(product) - {"@type", "@id"}
+            or not isinstance(product.get("@id"), str)
+            or product["@id"] not in defined_ids]
 
 
 def _walk(node: _Node):
@@ -500,6 +509,35 @@ def _matching_canonical_products(products: list[dict[str, Any]], page_url: str) 
     return matching
 
 
+def _packaging_variants(products: list[dict[str, Any]], page_url: str, title: str) -> bool:
+    """Recognize PdF's explicit variant records, never merely similar names.
+
+    Every variant must link directly to this page, use the provider's variant
+    identifier and identify its packaging as the exact suffix of the page title.
+    URL agreement alone is insufficient to merge distinct botanical products.
+    """
+    if not title or len(products) < 2:
+        return False
+    target = _url_identity(page_url)
+    for product in products:
+        packaging = _first_product_text(product.get("disambiguatingDescription"))
+        name = _first_product_text(product.get("name"))
+        identifier = _first_product_text(product.get("@id"))
+        direct_url = _first_product_text(product.get("url"))
+        page_references = _reference_values(product.get("mainEntityOfPage"))
+        try:
+            if (not packaging or name != f"{title} - {packaging}"
+                    or not direct_url or _url_identity(urljoin(page_url, direct_url)) != target
+                    or not identifier or _url_identity(urljoin(page_url, identifier)) != target
+                    or not re.fullmatch(r"product-variant-\d+", urlsplit(identifier).fragment)
+                    or not any(_url_identity(urljoin(page_url, ref)) == target
+                               for ref in page_references)):
+                return False
+        except ValueError:
+            return False
+    return True
+
+
 def _ambiguous_product_message(path: Path, products: list[dict[str, Any]], page_url: str) -> str:
     details = []
     for product in products:
@@ -671,9 +709,18 @@ def _parse_product_page(path: Path, source: bytes, requested_url: str = "") -> P
                    or "promesse de fleurs" in provider_mark)
     if not is_promesse:
         raise ValueError(f"Unsupported local HTML plant source: {path.name}")
+    variants: list[dict[str, Any]] = []
     multiple_products = len(products) > 1
     if multiple_products:
         matching = _matching_canonical_products(products, url)
+        if len(matching) > 1:
+            excluded = _secondary_product_nodes(root, url, multiple_products=True)
+            heading = next((_text_unexcluded(node, excluded)
+                            for node in _walk_unexcluded(root, excluded)
+                            if node.tag == "h1" and _text_unexcluded(node, excluded)), "")
+            if _packaging_variants(matching, url, heading):
+                variants = matching
+                matching = matching[:1]
         if len(matching) != 1:
             raise PlantSourceError(
                 _ambiguous_product_message(path, products, url),
@@ -718,9 +765,16 @@ def _parse_product_page(path: Path, source: bytes, requested_url: str = "") -> P
     if not common_name or not (has_product_identity or len(products) == 1):
         raise ValueError(f"HTML is not an identifiable Promesse de Fleurs product page: {path.name}")
 
+    # A representative variant remains verbatim in provenance, but its packaging
+    # description must not become the botanical description. A variant-specific
+    # fallback image is usable only when all variants explicitly agree on it.
     description = (meta.get("description") or meta.get("og:description")
-                   or _first_product_text(product.get("description")))
-    image_url = meta.get("og:image", "") or _first_product_text(product.get("image"))
+                   or ("" if variants else _first_product_text(product.get("description"))))
+    fallback_image = _first_product_text(product.get("image"))
+    if variants and any(_first_product_text(item.get("image")) != fallback_image
+                        for item in variants):
+        fallback_image = ""
+    image_url = meta.get("og:image", "") or fallback_image
     if image_url and url:
         image_url = urljoin(url, image_url)
 
@@ -766,6 +820,8 @@ def _parse_product_page(path: Path, source: bytes, requested_url: str = "") -> P
             }
         },
     )
+    if variants:
+        plant.raw_data["promesse_de_fleurs"]["product_variants_json_ld"] = variants
     # This is also the installer's JSON safety boundary. Reject a malformed
     # source before it can become a partially usable import preview.
     json.dumps(plant.to_dict(), ensure_ascii=False, allow_nan=False)

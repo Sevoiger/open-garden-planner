@@ -838,3 +838,93 @@ def test_reference_photo_helper_can_recover_old_source_image_and_reject_external
     with pytest.raises(ValueError, match="Promesse de Fleurs"):
         fetch_reference_photo_for_plant(old_plant, library.path, identity, opener=forbidden)
     assert forbidden.calls == []
+
+
+def _variant_page(products):
+    return (f'<html><head><link rel="canonical" href="{URL}">'
+            f'<script type="application/ld+json">{json.dumps(products)}</script>'
+            '</head><body><h1>Allium Gladiator</h1><dl>'
+            '<dt>Nom botanique</dt><dd>Allium Gladiator</dd>'
+            '<dt>Hauteur à maturité</dt><dd>1,20 m</dd>'
+            '</dl></body></html>').encode()
+
+
+def _allium_variants():
+    variants = []
+    for index, packaging in enumerate(("Bulbe calibre 20+", "Pot de 2L/3L calibre 18",
+                                       "Pot de 12 cm / 13 cm calibre 18")):
+        reference = {"@type": "Product", "@id": f"{URL}#product-variant-{index}"}
+        variants.append({
+            **reference, "url": URL, "name": f"Allium Gladiator - {packaging}",
+            "description": f"Allium Gladiator - {packaging}",
+            "disambiguatingDescription": packaging,
+            "mainEntityOfPage": {"@type": "WebPage", "@id": URL + "#webpage"},
+            "image": "/media/allium.jpg",
+            "offers": [{"@type": "Offer", "itemOffered": reference}],
+        })
+    return variants
+
+
+def test_import_accepts_explicit_packaging_variants_and_keeps_original_records(tmp_path):
+    from open_garden_planner.services.local_plant_sources import read_local_plant_sources
+
+    variants = _allium_variants()
+    page = _variant_page(variants)
+    before = deepcopy(variants)
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert plant.common_name == "Allium Gladiator"
+    assert plant.scientific_name == "Allium Gladiator"
+    assert plant.max_height_cm == 120
+    assert plant.description == ""
+    assert plant.image_url == "https://www.promessedefleurs.com/media/allium.jpg"
+    raw = plant.raw_data["promesse_de_fleurs"]
+    assert raw["product_json_ld"] == variants[0]
+    assert raw["product_variants_json_ld"] == before
+    assert raw["source_url"] == URL
+    path = tmp_path / "allium.html"
+    path.write_bytes(page)
+    local, = read_local_plant_sources(path)
+    assert local.source_id == plant.source_id
+    assert local.raw_data["promesse_de_fleurs"]["product_variants_json_ld"] == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["allium.html"]
+
+
+def test_product_reference_is_not_a_second_definition():
+    product = {"@type": "Product", "@id": URL + "#product", "url": URL, "name": "Rose"}
+    product["offers"] = {"@type": "Offer", "itemOffered": {
+        "@type": "Product", "@id": URL + "#product"}}
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=_variant_page([product])))
+    assert plant.raw_data["promesse_de_fleurs"]["product_json_ld"] == product
+
+
+@pytest.mark.parametrize("change", ["name", "url", "packaging", "id", "page", "heading", "extra"])
+def test_import_rejects_unproven_or_conflicting_variants(change):
+    variants = _allium_variants()
+    if change == "name":
+        variants[1]["name"] = "Allium Globemaster - " + variants[1]["disambiguatingDescription"]
+    elif change == "url":
+        variants[1]["url"] = "https://www.promessedefleurs.com/globemaster.html"
+    elif change == "packaging":
+        del variants[1]["disambiguatingDescription"]
+    elif change == "id":
+        variants[1]["@id"] = URL + "#other-product"
+    elif change == "page":
+        del variants[1]["mainEntityOfPage"]
+    elif change == "extra":
+        variants.append({"@type": "Product", "url": URL, "name": "Autre plante"})
+    page = _variant_page(variants)
+    if change == "heading":
+        page = page.replace(b"<h1>Allium Gladiator</h1>", b"<h1>Allium Globemaster</h1>")
+    with pytest.raises(ValueError) as raised:
+        fetch_plant_source(URL, opener=FakeOpener(payload=page))
+    assert raised.value.code == "SOURCE_PRODUCT_AMBIGUOUS"
+
+
+def test_variant_import_excludes_recommendations_and_conflicting_fallback_images():
+    variants = _allium_variants()
+    variants[1]["image"] = "/media/packaging.jpg"
+    variants.append({"@type": "Product", "url": "https://www.promessedefleurs.com/other.html",
+                     "name": "Autre plante", "image": "/media/other.jpg"})
+    plant = fetch_plant_source(URL, opener=FakeOpener(payload=_variant_page(variants)))
+    assert plant.image_url == ""
+    assert len(plant.raw_data["promesse_de_fleurs"]["product_variants_json_ld"]) == 3
