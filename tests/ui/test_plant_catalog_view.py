@@ -419,3 +419,85 @@ def test_specialized_calendar_is_collapsible_editable_and_preserves_context(qtbo
     reopened.month_filter.setCurrentIndex(reopened.month_filter.findData(9))
     reopened.activity_filter.setCurrentIndex(reopened.activity_filter.findData("harvest"))
     assert reopened.results_list.count() == 1
+
+
+@pytest.mark.parametrize("outcome", ["save", "cancel_review", "cancel_editor", "conflict"])
+def test_source_review_choices_reach_editor_and_save_atomically(qtbot, tmp_path, monkeypatch, outcome):
+    from copy import deepcopy
+    from hashlib import sha256
+
+    from PyQt6.QtWidgets import QTableWidget
+
+    from open_garden_planner.services.plant_source_import import mark_import_baseline
+    from open_garden_planner.ui.widgets.responsive_dialog import ResponsiveDialog
+
+    url = "https://www.promessedefleurs.com/rose.html"
+    existing = mark_import_baseline(_plant(
+        source_id="local-sheet:" + sha256(url.encode()).hexdigest()[:32],
+        data_source="promesse_de_fleurs", max_height_cm=100,
+        raw_data={"promesse_de_fleurs": {"source_url": url, "fields": {}}},
+    ))
+    existing.max_height_cm = 123  # A personal correction is kept by default.
+    incoming = deepcopy(existing)
+    incoming.max_height_cm = 200
+    incoming.common_name = "Nom fournisseur"
+    library = PlantLibrary(tmp_path / "library.json")
+    identity = library.add_plant(existing)
+    before = library.path.read_bytes()
+    view = PlantCatalogView(library)
+    qtbot.addWidget(view)
+    view._source_context = (identity, library.get_plant(identity), library.revision)
+    errors, downloads, edited = [], [], []
+    monkeypatch.setattr(view, "_show_save_error", errors.append)
+    monkeypatch.setattr(view, "_download_reference_photo", downloads.append)
+
+    def review(dialog):
+        table = dialog.findChild(QTableWidget, "sourceConflictTable")
+        assert table is not None
+        for row in range(table.rowCount()):
+            label = table.item(row, 0).text()
+            selector = table.cellWidget(row, 3)
+            if label == "Maximum Height (cm)":
+                assert selector.currentData() is False
+                selector.setCurrentIndex(1)
+            elif label == "Common Name":
+                assert selector.currentData() is True
+                selector.setCurrentIndex(0)
+        assert library.path.read_bytes() == before
+        return 0 if outcome == "cancel_review" else 1
+
+    def edit(dialog):
+        edited.append(True)
+        assert dialog._original.max_height_cm == 200
+        assert dialog._original.common_name == existing.common_name
+        assert library.path.read_bytes() == before
+        if outcome == "cancel_editor":
+            return 0
+        dialog._save()
+        if outcome == "conflict":
+            external = PlantLibrary(library.path)
+            latest = external.get_plant(identity)
+            latest.common_name = "Modification concurrente"
+            external.update_plant(identity, latest, expected_revision=external.revision)
+        return 1
+
+    monkeypatch.setattr(ResponsiveDialog, "exec", review)
+    monkeypatch.setattr(PlantSpeciesEditDialog, "exec", edit)
+    view._source_ready(incoming, None)
+    reopened = PlantLibrary(library.path).get_plant(identity)
+    if outcome == "save":
+        assert reopened.max_height_cm == 200
+        assert reopened.common_name == existing.common_name
+        state = reopened.raw_data["catalog_import"]
+        assert "common_name" in state["manual_fields"]
+        assert "max_height_cm" not in state["manual_fields"]
+        assert downloads == [identity]
+    elif outcome == "conflict":
+        assert errors
+        assert reopened.common_name == "Modification concurrente"
+        assert reopened.max_height_cm == 123
+    else:
+        assert library.path.read_bytes() == before
+        assert not errors
+        assert not downloads
+        assert bool(edited) == (outcome == "cancel_editor")

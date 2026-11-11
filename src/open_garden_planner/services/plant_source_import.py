@@ -427,6 +427,12 @@ def plan_source_refresh(existing, incoming):
     if not isinstance(manual_fields, list) or any(not isinstance(key, str) for key in manual_fields):
         raise ValueError("Unrecognized manual source corrections; refusing to replace them")
     manual_fields = set(manual_fields)
+    source_profile_values = deepcopy(state.get("source_profile_values", {}))
+    if not isinstance(source_profile_values, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in source_profile_values.items()
+    ):
+        raise ValueError("Unrecognized source profile choices; refusing to replace them")
     protected_periods = state.get("protected_periods", [])
     if not isinstance(protected_periods, list) or any(not isinstance(key, str) for key in protected_periods):
         raise ValueError("Unrecognized protected calendar periods; refusing to replace them")
@@ -452,13 +458,16 @@ def plan_source_refresh(existing, incoming):
     from open_garden_planner.services.botanical_profile import SOURCE_FIELDS, source_trait, trait
 
     overrides = existing.raw_data.get("botanical_profile", {})
+    source_owned = {key for key, value in source_profile_values.items()
+                    if isinstance(overrides, dict) and overrides.get(key) == value}
     for key in SOURCE_FIELDS:
-        previous_source, proposed = source_trait(existing, key), source_trait(incoming, key)
-        if previous_source != proposed:
+        current_trait, proposed = trait(existing, key), source_trait(incoming, key)
+        if current_trait != proposed:
             if not isinstance(overrides, dict):
                 raise ValueError("Unrecognized botanical corrections; source refresh cannot replace them safely")
-            changes.append({"field": "profile." + key, "current": trait(existing, key), "source": proposed,
-                            "protected": key in overrides})
+            changes.append({"field": "profile." + key,
+                            "current": deepcopy(overrides.get(key, current_trait)), "source": proposed,
+                            "protected": key in overrides and key not in source_owned})
     for key in ("promesse_de_fleurs", "local_sheet", "source_file", "sha256"):
         if key in incoming.raw_data:
             if key in candidate.raw_data and candidate.raw_data[key] != incoming.raw_data[key]:
@@ -467,6 +476,21 @@ def plan_source_refresh(existing, incoming):
                     raise ValueError("Unrecognized source history; refusing to replace it")
                 history.append({"provider": key, "payload": deepcopy(candidate.raw_data[key])})
             candidate.raw_data[key] = deepcopy(incoming.raw_data[key])
+    # An accepted empty provider trait can need an explicit blank to mask the
+    # historical local-sheet fallback. It follows the provider, unlike a manual
+    # override. A later edit to a different value restores personal ownership.
+    for key in list(source_profile_values):
+        if key not in source_owned:
+            source_profile_values.pop(key)
+            continue
+        profile = candidate.raw_data["botanical_profile"]
+        profile.pop(key, None)
+        proposed = source_trait(incoming, key)
+        if source_trait(candidate, key) != proposed:
+            profile[key] = proposed
+            source_profile_values[key] = proposed
+        else:
+            source_profile_values.pop(key)
     # Preserve profile overrides and manually edited calendar bands.
     from open_garden_planner.services.botanical_calendar import calendar_for_species
 
@@ -492,6 +516,7 @@ def plan_source_refresh(existing, incoming):
     refreshed_state = {
         **deepcopy(state), **deepcopy(mark_import_baseline(incoming).raw_data["catalog_import"]),
         "manual_fields": sorted(manual_fields),
+        "source_profile_values": source_profile_values,
     }
     if state_key == "catalog_enrichment":
         refreshed_state["source_identity"] = _identity_record(incoming_identity)
@@ -744,3 +769,63 @@ def plan_source_update(existing, incoming):
             code=SOURCE_IDENTITY_MISMATCH, url=_source_url_hint(incoming), stage="identity",
         )
     return plan_source_refresh(existing, incoming)
+
+
+def resolve_source_choices(existing, incoming, choices):
+    """Prepare explicit per-field choices without writing to the library.
+
+    Omitted fields retain the planner's safe defaults. A retained current value
+    becomes a personal correction; accepting a source value releases that
+    protection so subsequent source refreshes can update it again.
+    """
+    candidate, changes = plan_source_update(existing, incoming)
+    available = {change["field"]: change for change in changes}
+    if not isinstance(choices, dict) or any(
+        field not in available or type(use_source) is not bool
+        for field, use_source in choices.items()
+    ):
+        raise ValueError("Invalid source conflict choices")
+    state_key = "catalog_enrichment" if "catalog_enrichment" in candidate.raw_data else "catalog_import"
+    state = candidate.raw_data[state_key]
+    manual_fields = set(state.get("manual_fields", []))
+    protected_periods = set(state.get("protected_periods", []))
+    source_profile_values = deepcopy(state.get("source_profile_values", {}))
+    for field, use_source in choices.items():
+        value = deepcopy(available[field]["source" if use_source else "current"])
+        if field.startswith("profile."):
+            key = field.partition(".")[2]
+            profile = candidate.raw_data.setdefault("botanical_profile", {})
+            source_profile_values.pop(key, None)
+            if use_source:
+                profile.pop(key, None)
+                from open_garden_planner.services.botanical_profile import source_trait
+
+                if source_trait(candidate, key) != value:
+                    profile[key] = value
+                    source_profile_values[key] = value
+            else:
+                original_profile = existing.raw_data.get("botanical_profile", {})
+                profile[key] = deepcopy(original_profile.get(key, value))
+        elif field == "calendar":
+            candidate.raw_data["botanical_calendar"] = value
+        elif field.startswith("calendar."):
+            key = field.partition(".")[2]
+            calendar = candidate.raw_data.setdefault("botanical_calendar", {})
+            previous = calendar.get(key)
+            calendar[key] = ({**previous, **value}
+                             if isinstance(previous, dict) and isinstance(value, dict) else value)
+            if use_source:
+                protected_periods.discard(key)
+            else:
+                protected_periods.add(key)
+        else:
+            selected = incoming if use_source else existing
+            setattr(candidate, field, deepcopy(getattr(selected, field)))
+            if use_source:
+                manual_fields.discard(field)
+            else:
+                manual_fields.add(field)
+    state["manual_fields"] = sorted(manual_fields)
+    state["protected_periods"] = sorted(protected_periods)
+    state["source_profile_values"] = source_profile_values
+    return candidate

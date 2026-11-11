@@ -219,6 +219,12 @@ Promesse de Fleurs et de consulter les différences avant validation. Le premier
 enrichissement complète les informations inconnues et conserve les valeurs déjà
 renseignées, l'identifiant de la fiche et ses exemplaires. Les actualisations
 suivantes utilisent le lien fournisseur exact et protègent les corrections manuelles.
+Dans l'aperçu des changements, chaque champ permet de choisir **Conserver la valeur
+actuelle** ou **Utiliser la valeur de la source**, y compris les traits botaniques et
+les périodes du calendrier. Les corrections personnelles sont conservées par défaut.
+Un choix de valeur actuelle reste protégé lors des actualisations suivantes ; accepter
+la source permet de suivre à nouveau ses changements. Les choix sont transmis à
+l'éditeur avant l'enregistrement ; annuler l'une des étapes ne modifie pas la fiche.
 Une réimportation de cette même source est reconnue comme doublon exact, même si
 la fiche conserve son identifiant personnel. Il ne s'agit pas d'effacer la fiche.
 

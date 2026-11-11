@@ -928,3 +928,118 @@ def test_variant_import_excludes_recommendations_and_conflicting_fallback_images
     plant = fetch_plant_source(URL, opener=FakeOpener(payload=_variant_page(variants)))
     assert plant.image_url == ""
     assert len(plant.raw_data["promesse_de_fleurs"]["product_variants_json_ld"]) == 3
+
+
+def test_explicit_conflict_choices_survive_refresh_and_release_source_protection():
+    from open_garden_planner.services.botanical_profile import trait
+    from open_garden_planner.services.plant_source_import import resolve_source_choices
+
+    incoming = fetch_plant_source(URL, opener=FakeOpener(payload=_source_page()))
+    existing = deepcopy(incoming)
+    existing.max_height_cm = 123
+    existing.raw_data["botanical_profile"] = {"cultivar": "Personnel", "future": "keep"}
+    existing.raw_data["botanical_calendar"] = {"flowering": {
+        "months": [4], "source_text": "Avril", "manually_edited": True, "future": 17,
+    }}
+    original = deepcopy(existing.to_dict())
+    offered = deepcopy(incoming.to_dict())
+    choices = {"max_height_cm": True, "profile.cultivar": True, "calendar.flowering": True}
+    accepted = resolve_source_choices(existing, incoming, choices)
+    assert accepted.max_height_cm == 150
+    assert trait(accepted, "cultivar") == "Nouveau"
+    assert accepted.raw_data["botanical_profile"]["future"] == "keep"
+    assert accepted.raw_data["botanical_calendar"]["flowering"]["months"] == [5, 6, 7, 8, 9, 10]
+    assert accepted.raw_data["botanical_calendar"]["flowering"]["future"] == 17
+    assert not accepted.raw_data["botanical_calendar"]["flowering"]["manually_edited"]
+    retained = resolve_source_choices(existing, incoming, dict.fromkeys(choices, False))
+    assert retained.max_height_cm == 123
+    assert trait(retained, "cultivar") == "Personnel"
+    assert retained.raw_data["botanical_calendar"]["flowering"]["months"] == [4]
+    incoming.max_height_cm = 200
+    incoming.raw_data["promesse_de_fleurs"]["fields"]["Cultivar"] = ["Suivant"]
+    incoming.raw_data["promesse_de_fleurs"]["fields"]["Période de floraison"] = ["Juillet"]
+    following, _ = plan_source_refresh(accepted, incoming)
+    assert following.max_height_cm == 200
+    assert trait(following, "cultivar") == "Suivant"
+    assert following.raw_data["botanical_calendar"]["flowering"]["months"] == [7]
+    following, _ = plan_source_refresh(retained, incoming)
+    assert following.max_height_cm == 123
+    assert trait(following, "cultivar") == "Personnel"
+    assert following.raw_data["botanical_calendar"]["flowering"]["months"] == [4]
+    assert existing.to_dict() == original
+    assert offered["max_height_cm"] == 150
+
+
+def test_retaining_automatic_updates_pins_the_old_values():
+    from open_garden_planner.services.plant_source_import import resolve_source_choices
+
+    existing = fetch_plant_source(URL, opener=FakeOpener(payload=_source_page()))
+    incoming = deepcopy(existing)
+    incoming.max_height_cm = 200
+    incoming.raw_data["promesse_de_fleurs"]["fields"]["Période de floraison"] = ["Juillet"]
+    retained = resolve_source_choices(existing, incoming, {
+        "max_height_cm": False, "calendar.flowering": False,
+    })
+    # Persistence of the explicit refusal, even across a supplier agreement.
+    agreed, _ = plan_source_refresh(retained, existing)
+    following, _ = plan_source_refresh(agreed, incoming)
+    assert following.max_height_cm == 150
+    assert following.raw_data["botanical_calendar"]["flowering"]["months"] == [5, 6, 7, 8, 9, 10]
+
+
+@pytest.mark.parametrize("choices", [{"source_id": True}, {"max_height_cm": "new"}])
+def test_source_choices_refuse_unknown_fields_and_non_boolean_choices(choices):
+    from open_garden_planner.services.plant_source_import import resolve_source_choices
+
+    incoming = fetch_plant_source(URL, opener=FakeOpener(payload=_source_page()))
+    existing = deepcopy(incoming)
+    existing.max_height_cm = 123
+    with pytest.raises(ValueError, match="Invalid source conflict choices"):
+        resolve_source_choices(existing, incoming, choices)
+
+
+
+def test_keep_current_profile_choice_preserves_unknown_override_format():
+    from open_garden_planner.services.plant_source_import import resolve_source_choices
+
+    incoming = fetch_plant_source(URL, opener=FakeOpener(payload=_source_page()))
+    existing = deepcopy(incoming)
+    future = {"future_format": "Personnel", "version": 2}
+    existing.raw_data["botanical_profile"] = {"cultivar": future}
+    _, changes = plan_source_update(existing, incoming)
+    cultivar = next(change for change in changes if change["field"] == "profile.cultivar")
+    assert cultivar["current"] == future
+    assert cultivar["protected"]
+    retained = resolve_source_choices(existing, incoming, {"profile.cultivar": False})
+    assert retained.raw_data["botanical_profile"]["cultivar"] == future
+    accepted = resolve_source_choices(existing, incoming, {"profile.cultivar": True})
+    assert "cultivar" not in accepted.raw_data["botanical_profile"]
+    assert existing.raw_data["botanical_profile"]["cultivar"] == future
+
+
+
+def test_accepting_empty_source_trait_masks_history_but_follows_future_source():
+    from open_garden_planner.services.botanical_profile import trait
+    from open_garden_planner.services.plant_source_import import resolve_source_choices
+
+    existing = fetch_plant_source(URL, opener=FakeOpener(payload=_source_page()))
+    existing.raw_data["local_sheet"] = {"characteristics": {"Cultivar": ["Historique"]}}
+    incoming = deepcopy(existing)
+    incoming.raw_data.pop("local_sheet")
+    incoming.raw_data["promesse_de_fleurs"]["fields"].pop("Cultivar")
+    accepted = resolve_source_choices(existing, incoming, {"profile.cultivar": True})
+    assert trait(accepted, "cultivar") == ""
+    assert accepted.raw_data["local_sheet"] == existing.raw_data["local_sheet"]
+    empty_refresh, _ = plan_source_refresh(accepted, incoming)
+    assert trait(empty_refresh, "cultivar") == ""
+    incoming.raw_data["promesse_de_fleurs"]["fields"]["Cultivar"] = ["Suivant"]
+    following, changes = plan_source_refresh(empty_refresh, incoming)
+    assert trait(following, "cultivar") == "Suivant"
+    change = next(row for row in changes if row["field"] == "profile.cultivar")
+    assert not change["protected"]
+    assert following.raw_data["local_sheet"] == existing.raw_data["local_sheet"]
+    # A later personal edit regains protection despite the earlier source choice.
+    accepted.raw_data["botanical_profile"]["cultivar"] = "Correction personnelle"
+    edited, _ = plan_source_refresh(accepted, incoming)
+    assert trait(edited, "cultivar") == "Correction personnelle"
+    assert "cultivar" not in edited.raw_data["catalog_import"]["source_profile_values"]

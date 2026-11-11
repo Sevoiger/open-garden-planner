@@ -1400,30 +1400,60 @@ class PlantCatalogView(QWidget):
                 self._download_reference_photo(imported[0])
             return
         try:
-            from open_garden_planner.services.plant_source_import import plan_source_update
+            from open_garden_planner.services.plant_source_import import (
+                plan_source_update,
+                resolve_source_choices,
+            )
 
             candidate, changes = plan_source_update(existing, plant)
             review = ResponsiveDialog(self)
             review.setWindowTitle(self.tr("Review source changes"))
-            review.resize(760, 440)
+            review.resize(1000, 520)
             layout = QVBoxLayout(review)
+            explanation = QLabel(self.tr(
+                "Choose the value to keep for each field. Current values are selected "
+                "by default for personal corrections. Nothing is saved until you confirm the editor."
+            ))
+            explanation.setWordWrap(True)
+            layout.addWidget(explanation)
             table = QTableWidget(len(changes), 4)
+            table.setObjectName("sourceConflictTable")
             table.setHorizontalHeaderLabels([self.tr("Field"), self.tr("Current value"),
-                                             self.tr("Source value"), self.tr("Manual value protected")])
+                                             self.tr("Source value"), self.tr("Value to keep")])
             table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            selectors = {}
             for row, change in enumerate(changes):
                 for column, value in enumerate((self._source_field_label(change["field"]),
                                                  self._source_diff_value(change["current"]),
-                                                 self._source_diff_value(change["source"]),
-                                                 self.tr("Yes") if change["protected"] else "")):
-                    table.setItem(row, column, QTableWidgetItem(str(value)))
+                                                 self._source_diff_value(change["source"]))):
+                    item = QTableWidgetItem(str(value))
+                    item.setToolTip(str(value))
+                    table.setItem(row, column, item)
+                selector = QComboBox()
+                selector.addItem(self.tr("Keep current value"), False)
+                selector.addItem(self.tr("Use source value"), True)
+                selector.setCurrentIndex(0 if change["protected"] else 1)
+                selector.setAccessibleName(self._source_field_label(change["field"]))
+                table.setCellWidget(row, 3, selector)
+                selectors[change["field"]] = selector
             table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            for column in (0, 3):
+                table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+            table.resizeRowsToContents()
             layout.addWidget(table)
             proceed = QPushButton(self.tr("Review and edit before saving"))
             proceed.clicked.connect(review.accept)
-            layout.addWidget(proceed)
+            buttons = QHBoxLayout()
+            cancel = QPushButton(self.tr("Cancel"))
+            cancel.clicked.connect(review.reject)
+            buttons.addWidget(cancel)
+            buttons.addWidget(proceed)
+            layout.addLayout(buttons)
             if not review.exec():
                 return
+            candidate = resolve_source_choices(existing, plant, {
+                field: selector.currentData() for field, selector in selectors.items()
+            })
             editor = PlantSpeciesEditDialog(candidate, parent=self)
             if not editor.exec() or editor.plant is None:
                 return

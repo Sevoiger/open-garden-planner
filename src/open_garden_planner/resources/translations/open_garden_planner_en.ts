@@ -11663,27 +11663,27 @@ You can capture the satellite view directly from the map below instead.</transla
     <context>
         <name>PlantCatalogRelations</name>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1595" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1620" />
             <source>Archived</source>
             <translation>Archived</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1593" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1618" />
             <source>Ordered</source>
             <translation>Ordered</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1594" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1619" />
             <source>Owned</source>
             <translation>Owned</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1591" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1616" />
             <source>To study</source>
             <translation>To study</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1592" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1617" />
             <source>Wanted</source>
             <translation>Wanted</translation>
         </message>
@@ -11758,12 +11758,22 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation type="vanished">Browse botanical sheets and their specimens, placed on the plan or not.</translation>
         </message>
         <message>
+            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
+            <source>Cancel</source>
+            <translation>Cancel</translation>
+        </message>
+        <message>
             <location filename="../../ui/views/plant_catalog_view.py" line="1332" />
             <source>Catalog Changed</source>
             <translation>Catalog Changed</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1413" />
+            <source>Choose the value to keep for each field. Current values are selected by default for personal corrections. Nothing is saved until you confirm the editor.</source>
+            <translation>Choose the value to keep for each field. Current values are selected by default for personal corrections. Nothing is saved until you confirm the editor.</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/plant_catalog_view.py" line="1464" />
             <source>Common Name</source>
             <translation>Common Name</translation>
         </message>
@@ -11780,13 +11790,13 @@ You can capture the satellite view directly from the map below instead.</transla
         </message>
         <message>
             <location filename="../../ui/views/plant_catalog_view.py" line="1282" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1579" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1604" />
             <source>Could Not Read Plant Sources</source>
             <translation>Could Not Read Plant Sources</translation>
         </message>
         <message>
             <location filename="../../ui/views/plant_catalog_view.py" line="1343" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1572" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1597" />
             <source>Could Not Save Plant</source>
             <translation>Could Not Save Plant</translation>
         </message>
@@ -11801,12 +11811,12 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Cultivar</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1411" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1421" />
             <source>Current value</source>
             <translation>Current value</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1465" />
             <location filename="../../ui/views/plant_catalog_view.py" line="820" />
             <source>Description</source>
             <translation>Description</translation>
@@ -11836,7 +11846,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Export PDF</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1465" />
             <location filename="../../ui/views/plant_catalog_view.py" line="895" />
             <source>Family</source>
             <translation>Family</translation>
@@ -11847,7 +11857,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Fast</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1411" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1421" />
             <source>Field</source>
             <translation>Field</translation>
         </message>
@@ -11857,19 +11867,19 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Filters</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1444" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1469" />
             <location filename="../../ui/views/plant_catalog_view.py" line="904" />
             <source>Flower Color</source>
             <translation>Flower Color</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1470" />
             <location filename="../../ui/views/plant_catalog_view.py" line="716" />
             <source>Flowering</source>
             <translation>Flowering</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1444" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1469" />
             <location filename="../../ui/views/plant_catalog_view.py" line="905" />
             <source>Foliage Color</source>
             <translation>Foliage Color</translation>
@@ -11885,7 +11895,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Full Sun</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1440" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1465" />
             <location filename="../../ui/views/plant_catalog_view.py" line="896" />
             <source>Genus</source>
             <translation>Genus</translation>
@@ -11896,13 +11906,13 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Get reference photo</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1468" />
             <location filename="../../ui/views/plant_catalog_view.py" line="898" />
             <source>Growth Rate</source>
             <translation>Growth Rate</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1448" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1473" />
             <location filename="../../ui/views/plant_catalog_view.py" line="718" />
             <source>Harvest and fruiting</source>
             <translation>Harvest and fruiting</translation>
@@ -11953,6 +11963,11 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Incomplete sheets</translation>
         </message>
         <message>
+            <location filename="../../ui/views/plant_catalog_view.py" line="1431" />
+            <source>Keep current value</source>
+            <translation>Keep current value</translation>
+        </message>
+        <message>
             <location filename="../../ui/views/plant_catalog_view.py" line="897" />
             <source>Life Cycle</source>
             <translation>Life Cycle</translation>
@@ -11968,18 +11983,17 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Low</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1412" />
             <source>Manual value protected</source>
-            <translation>Manual value protected</translation>
+            <translation type="vanished">Manual value protected</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1466" />
             <location filename="../../ui/views/plant_catalog_view.py" line="899" />
             <source>Maximum Height (cm)</source>
             <translation>Maximum Height (cm)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1441" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1466" />
             <location filename="../../ui/views/plant_catalog_view.py" line="900" />
             <source>Maximum Spread (cm)</source>
             <translation>Maximum Spread (cm)</translation>
@@ -12034,7 +12048,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Open plant sheet</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1447" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1472" />
             <location filename="../../ui/views/plant_catalog_view.py" line="718" />
             <source>Optimal planting</source>
             <translation>Optimal planting</translation>
@@ -12070,7 +12084,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Plant sources (*.json *.html *.htm);;All files (*)</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1445" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1470" />
             <location filename="../../ui/views/plant_catalog_view.py" line="717" />
             <source>Planting</source>
             <translation>Planting</translation>
@@ -12087,19 +12101,19 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Present</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1449" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1474" />
             <location filename="../../ui/views/plant_catalog_view.py" line="719" />
             <source>Propagation</source>
             <translation>Propagation</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1446" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1471" />
             <location filename="../../ui/views/plant_catalog_view.py" line="717" />
             <source>Pruning</source>
             <translation>Pruning</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1446" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1471" />
             <location filename="../../ui/views/plant_catalog_view.py" line="811" />
             <source>Recommended periods</source>
             <translation>Recommended periods</translation>
@@ -12125,17 +12139,17 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation type="vanished">Refresh source</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1422" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
             <source>Review and edit before saving</source>
             <translation>Review and edit before saving</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1407" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1410" />
             <source>Review source changes</source>
             <translation>Review source changes</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1439" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1464" />
             <source>Scientific Name</source>
             <translation>Scientific Name</translation>
         </message>
@@ -12166,7 +12180,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Slow</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1443" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1468" />
             <location filename="../../ui/views/plant_catalog_view.py" line="903" />
             <source>Soil Type</source>
             <translation>Soil Type</translation>
@@ -12197,7 +12211,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Source URL</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1412" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1422" />
             <source>Source value</source>
             <translation>Source value</translation>
         </message>
@@ -12207,13 +12221,13 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Source: {text}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1448" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1473" />
             <location filename="../../ui/views/plant_catalog_view.py" line="719" />
             <source>Sowing</source>
             <translation>Sowing</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1467" />
             <location filename="../../ui/views/plant_catalog_view.py" line="901" />
             <source>Sun Requirement</source>
             <translation>Sun Requirement</translation>
@@ -12224,7 +12238,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>The botanical record no longer exists.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1573" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1598" />
             <source>The catalog could not be saved. Your changes were not applied.
 
 {error}</source>
@@ -12259,8 +12273,8 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation type="vanished">This species is no longer in the custom library.</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1458" />
-            <location filename="../../ui/views/plant_catalog_view.py" line="1465" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1483" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1490" />
             <location filename="../../ui/views/plant_catalog_view.py" line="711" />
             <source>Unknown</source>
             <translation>Unknown</translation>
@@ -12271,7 +12285,7 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Unnamed Plant</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1461" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1486" />
             <source>Unrecognized format (preserved)</source>
             <translation>Unrecognized format (preserved)</translation>
         </message>
@@ -12284,7 +12298,17 @@ You can capture the satellite view directly from the map below instead.</transla
 {error}</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1442" />
+            <location filename="../../ui/views/plant_catalog_view.py" line="1432" />
+            <source>Use source value</source>
+            <translation>Use source value</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/plant_catalog_view.py" line="1422" />
+            <source>Value to keep</source>
+            <translation>Value to keep</translation>
+        </message>
+        <message>
+            <location filename="../../ui/views/plant_catalog_view.py" line="1467" />
             <location filename="../../ui/views/plant_catalog_view.py" line="902" />
             <source>Water Needs</source>
             <translation>Water Needs</translation>
@@ -12295,9 +12319,8 @@ You can capture the satellite view directly from the map below instead.</transla
             <translation>Without personal photo</translation>
         </message>
         <message>
-            <location filename="../../ui/views/plant_catalog_view.py" line="1418" />
             <source>Yes</source>
-            <translation>Yes</translation>
+            <translation type="vanished">Yes</translation>
         </message>
         <message>
             <location filename="../../ui/views/plant_catalog_view.py" line="1003" />
