@@ -234,7 +234,9 @@ référence de page. Les références JSON-LD vers un produit déjà défini ne 
 pas comme des produits supplémentaires. Les conditionnements d'une même plante
 sont acceptés lorsque leurs liens de page, leurs identifiants de variante et leur
 suffixe de conditionnement explicite concordent avec le titre principal. Toutes
-les variantes restent conservées dans la provenance ; leur description commerciale
+les différences d'espacement (espaces répétés, insécables, retours à la ligne)
+sont ignorées pour cette comparaison ; les noms source sont conservés tels quels.
+Toutes les variantes restent conservées dans la provenance ; leur description commerciale
 ne remplace pas la description botanique. Si cette identité reste ambiguë, l'import s'arrête sans écriture
 avec `SOURCE_PRODUCT_AMBIGUOUS` et la liste des produits concernés.
 
