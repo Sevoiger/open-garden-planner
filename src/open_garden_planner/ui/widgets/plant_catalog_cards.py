@@ -7,18 +7,18 @@ CARD_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 
 
 def _card_metrics(font):
-    line = max(22, QFontMetrics(font).height() + 6)
+    line = max(18, QFontMetrics(font).height() + 2)
     small = QFont(font)
     if small.pointSizeF() > 0:
         small.setPointSizeF(max(9, small.pointSizeF() - 1))
     elif small.pixelSize() > 0:
         small.setPixelSize(max(11, small.pixelSize() - 2))
-    month_line = max(17, QFontMetrics(small).height() + 4)
-    header = max(76, line * 3)
-    conditions = 12 + header + 10
-    months = conditions + line + 10
-    bands = months + month_line + 4
-    height = bands + 2 * (month_line + 4) + 12
+    month_line = max(14, QFontMetrics(small).height() + 1)
+    header = max(58, line * 3)
+    conditions = 6 + header + 3
+    months = conditions + line + 2
+    bands = months + month_line + 1
+    height = bands + 2 * (month_line + 2) + 6
     return line, small, month_line, header, conditions, months, bands, height
 
 
@@ -46,11 +46,11 @@ class PlantCatalogCardDelegate(QStyledItemDelegate):
         painter.save()
         painter.setClipRect(option.rect)
         line_height, small_font, month_height, _header, conditions, months, bands, _height = _card_metrics(option.font)
-        rect = option.rect.adjusted(12, 12, -12, -12)
+        rect = option.rect.adjusted(8, 6, -8, -6)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         color = option.palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
         painter.setPen(color)
-        image_rect = QRect(rect.left(), rect.top(), 76, 76)
+        image_rect = QRect(rect.left(), rect.top(), 58, 58)
         if not icon.isNull():
             icon.paint(painter, image_rect, Qt.AlignmentFlag.AlignCenter)
         else:
@@ -60,7 +60,7 @@ class PlantCatalogCardDelegate(QStyledItemDelegate):
             painter.setPen(color)
             if data.get("thumbnail"):
                 self.thumbnail_needed.emit(data["identity"])
-        text_left = image_rect.right() + 14
+        text_left = image_rect.right() + 10
         width = max(20, rect.right() - text_left)
         def line(text, top, *, bold=False, italic=False):
             font = QFont(option.font)
@@ -86,7 +86,7 @@ class PlantCatalogCardDelegate(QStyledItemDelegate):
             cell = QRect(month_left + (month - 1) * month_width, option.rect.top() + months, month_width, month_height)
             painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, QLocale().monthName(month, QLocale.FormatType.ShortFormat)[:1])
         for row, (key, label) in enumerate((("flowering", self.tr("Flowering")), ("pruning", self.tr("Pruning")))):
-            top = option.rect.top() + bands + row * (month_height + 4)
+            top = option.rect.top() + bands + row * (month_height + 2)
             painter.setPen(color)
             painter.drawText(QRect(rect.left(), top, label_width - 4, month_height), Qt.AlignmentFlag.AlignVCenter, label)
             for month in range(1, 13):

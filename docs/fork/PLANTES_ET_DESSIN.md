@@ -178,7 +178,7 @@ L'onglet **Catalogue de plantes** consulte la bibliothèque existante sans séle
 sur le plan et sans réseau. Une carte représente une fiche botanique et affiche
 ses exemplaires du projet courant. Un clic donne l'aperçu ; Entrée, un double-clic
 ou **Ouvrir la fiche** ouvrent le même détail à cinq sections : présentation,
-culture et calendrier, exemplaires, médias et sources.
+culture et calendrier, quantité et détails personnels, médias et sources.
 
 **Créer manuellement** accepte un simple nom provisoire. Les autres informations
 restent inconnues. Les dimensions adultes, le cultivar, les conditions de culture
@@ -283,8 +283,22 @@ Les textes de l'aperçu, de la fiche et les messages d'erreur sont sélectionnab
 **Copier le nom** et **Copier les détails** ; le raccourci de copie du système
 copie également les détails de la carte sélectionnée.
 
-Dans **Mes exemplaires**, créez un exemplaire en pot ou en terre sans forme sur le
-plan. Le projet conserve son UUID, ses dates ou périodes d'acquisition et plantation,
+**Quantité et détails personnels** remplace la création manuelle d'exemplaires pour
+le suivi courant : chaque fiche vaut par défaut une plante acquise, avec quantité
+modifiable (y compris zéro), relation (acquise, souhaitée, commandée, à étudier ou
+archivée), mode de culture, état, emplacement, acquisition, plantation et notes.
+Les dates et prix inconnus restent vides. Ces informations sont enregistrées dans
+la bibliothèque, même sans projet ouvert ; les autres motifs restent disponibles
+dans l'éditeur botanique. La quantité est un total, pas un ajout aux objets du plan.
+Les anciens dossiers individuels ne sont pas fusionnés ni supprimés.
+
+Un clic droit sur une carte propose **Supprimer**, avec confirmation ; les objets
+et historiques des projets restent conservés. Le défilement est continu au pixel,
+et les cartes compactes gardent photo, identité, quantité, conditions et calendriers
+pour permettre quatre cartes sur une hauteur d'écran usuelle.
+
+**Dossiers individuels de ce plan** conserve l'ancien suivi détaillé. Créez-y si
+nécessaire un exemplaire en pot ou en terre sans forme sur le plan. Le projet conserve son UUID, ses dates ou périodes d'acquisition et plantation,
 son prix payé et justificatif, son emplacement textuel et ses particularités locales.
 Mesures et interventions ouvrent les formulaires et l'historique existants.
 **Placer sur le plan** est une action explicite ; **Voir sur le plan** retrouve un

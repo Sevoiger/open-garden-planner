@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -30,10 +31,13 @@ from open_garden_planner.ui.dialogs.copyable_error_dialog import show_copyable_e
 
 class PlantSpecimensDialog(QDialog):
     show_on_plan = pyqtSignal(object)
+    catalogue_saved = pyqtSignal()
 
-    def __init__(self, library_id, project, scene, commands, parent=None, *, species=None, embedded=False):
+    def __init__(self, library_id, project, scene, commands, parent=None, *, species=None, embedded=False, library=None):
         super().__init__(parent)
         self.embedded = embedded
+        self.library = library
+        self._revision = library.revision if library else None
         if embedded:
             self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle(self.tr("My specimens"))
@@ -47,6 +51,14 @@ class PlantSpecimensDialog(QDialog):
         self.list = QListWidget()
         self.list.setMaximumHeight(140)
         layout.addWidget(self.list)
+        self.quantity = QSpinBox()
+        self.quantity.setRange(0, 1000000)
+        if library:
+            self.setWindowTitle(self.tr("Quantity and personal details"))
+            self.list.hide()
+            quantity_form = QFormLayout()
+            quantity_form.addRow(self.tr("Quantity"), self.quantity)
+            layout.addLayout(quantity_form)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = QWidget()
@@ -142,6 +154,10 @@ class PlantSpecimensDialog(QDialog):
         close = QPushButton(self.tr("Close"))
         close.clicked.connect(self.accept)
         actions = [add, save, place, show, photos, measurements, records, repot, relocate]
+        if library:
+            for button in actions:
+                button.setVisible(button is save)
+            save.setText(self.tr("Save"))
         if not embedded:
             actions.append(close)
         for index, button in enumerate(actions):
@@ -157,6 +173,18 @@ class PlantSpecimensDialog(QDialog):
         self.list.clear()
         self._identities = []
         self._placed = {}
+        if self.library:
+            from open_garden_planner.services.plant_catalog_filters import catalogue_personal_record
+
+            plant = self.library.get_plant(self.library_id)
+            self._catalogue_record, quantity = catalogue_personal_record(plant, self.library_id)
+            self._catalogue_documents()
+            self.quantity.setValue(quantity)
+            identity = self._catalogue_record["item_id"]
+            self._identities = [identity]
+            self.list.addItem(self._catalogue_record["name"])
+            self.list.setCurrentRow(0)
+            return
         for identity, record in self.project.plant_specimens.items():
             if record.get("metadata", {}).get("plant_instance", {}).get("library_plant_id") == self.library_id:
                 self._identities.append(identity)
@@ -178,7 +206,8 @@ class PlantSpecimensDialog(QDialog):
             return
         identity = self._identities[row]
         item = self._placed.get(identity)
-        record = {"name": item.name, "metadata": item.metadata} if item else self.project.plant_specimens[identity]
+        record = (self._catalogue_record if self.library else
+                  {"name": item.name, "metadata": item.metadata} if item else self.project.plant_specimens[identity])
         instance = record["metadata"]["plant_instance"]
         self.name.setText(record["name"])
         for key, edit in self.text_fields.items():
@@ -266,6 +295,9 @@ class PlantSpecimensDialog(QDialog):
         item = self._placed.get(identity)
         values = self._field_values()
         changed = {key: value for key, value in values.items() if value != self._initial_fields.get(key)}
+        if self.library:
+            self._save_catalogue(changed)
+            return
         if not changed:
             return
         try:
@@ -280,6 +312,64 @@ class PlantSpecimensDialog(QDialog):
                 self.commands.execute(SpecimenEditCommand(self.project, candidate))
             self._reload()
         except (OSError, ValueError) as error:
+            show_copyable_error(self, self.tr("Could not save specimen"), str(error))
+
+    def sync_catalogue(self):
+        """Accept a sibling editor's committed revision, retaining pending fields."""
+        from open_garden_planner.services.plant_catalog_filters import catalogue_personal_record
+
+        plant = self.library.get_plant(self.library_id)
+        record, _quantity = catalogue_personal_record(plant, self.library_id)
+        record["item_id"] = self._identities[0]
+        self._catalogue_record = record
+        self._catalogue_documents()
+        self._revision = self.library.revision
+        # Reflect a sibling's relation edit unless this control has a pending edit.
+        if self.relation.currentData() == self._initial_fields.get("relation"):
+            relation = record["metadata"]["plant_instance"].get("relation", "owned")
+            self.relation.setCurrentIndex(self.relation.findData(relation))
+            self._initial_fields["relation"] = self.relation.currentData()
+
+    def _catalogue_documents(self):
+        from open_garden_planner.services.botanical_media import reference_assets
+
+        instance = self._catalogue_record["metadata"]["plant_instance"]
+        assets = instance.setdefault("media_assets", [])
+        known = {asset.get("id") for asset in assets if isinstance(asset, dict)}
+        assets.extend(asset for asset in reference_assets(self.library.get_plant(self.library_id))
+                      if asset.get("kind") == "document" and asset.get("id") not in known)
+
+    def _save_catalogue(self, changed):
+        from copy import deepcopy
+
+        from open_garden_planner.services.library_operations import LibraryOperationError
+        from open_garden_planner.services.plant_catalog_filters import update_catalogue_relations
+
+        try:
+            identity = self._identities[0]
+            candidate = prepare_personal_specimen_fields(
+                {"plant_specimens": {identity: self._catalogue_record}}, identity, changed)
+            record = candidate["plant_specimens"][identity]
+            plant = deepcopy(self.library.get_plant(self.library_id))
+            previous = self._catalogue_record["metadata"]["plant_instance"].get("relation", "owned")
+            selected = record["metadata"]["plant_instance"].get("relation", "owned")
+            if selected != previous:
+                from open_garden_planner.services.plant_catalog_filters import (
+                    CATALOG_RELATIONS,
+                    catalogue_relations,
+                )
+
+                relations = (catalogue_relations(plant) & set(CATALOG_RELATIONS)) - {previous}
+                plant = update_catalogue_relations(plant, relations | {selected})
+            personal = deepcopy(plant.raw_data.get("catalog_personal", {}))
+            personal.update(quantity=self.quantity.value(), record=record)
+            plant.raw_data["catalog_personal"] = personal
+            if not self.library.update_plant(self.library_id, plant, expected_revision=self._revision):
+                raise ValueError("The botanical record no longer exists")
+            self._revision = self.library.revision
+            self._reload()
+            self.catalogue_saved.emit()
+        except (OSError, ValueError, LibraryOperationError) as error:
             show_copyable_error(self, self.tr("Could not save specimen"), str(error))
 
     def _place(self):
@@ -318,6 +408,26 @@ class PlantSpecimensDialog(QDialog):
     def _photos(self, _checked=False, *, receipt=False):
         row = self.list.currentRow()
         if row < 0:
+            return
+        if self.library:
+            from open_garden_planner.ui.widgets.botanical_reference_gallery import (
+                BotanicalReferenceGallery,
+            )
+
+            popup = QDialog(self)
+            popup.setWindowTitle(self.tr("Photos and documents"))
+            popup.resize(1000, 700)
+            layout = QVBoxLayout(popup)
+            gallery = BotanicalReferenceGallery(self.library, self.library_id, popup)
+            gallery.changed.connect(self.catalogue_saved)
+            if receipt:
+                gallery.kind.setCurrentIndex(gallery.kind.findData("document"))
+            layout.addWidget(gallery)
+            popup.exec()
+            popup.deleteLater()
+            self._catalogue_documents()
+            self._refresh_receipts(self._catalogue_record["metadata"]["plant_instance"])
+            self._revision = self.library.revision
             return
         from open_garden_planner.ui.widgets.plant_media_gallery import PlantMediaGallery
 
